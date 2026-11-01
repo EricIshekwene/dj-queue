@@ -46,7 +46,7 @@ struct HealthView: View {
            tint: model.engineRunning ? .primary : .orange, symbol: "clock",
            sub: model.engine?.lastTick.map { "\($0.steps.count) steps\($0.errors.isEmpty ? "" : " · \($0.errors.count) errors")" } ?? model.lastHeartbeat?.kind.rawValue.capitalized)
       Tile(title: "Render queue", value: "\(model.renderQueue)", tint: .primary, symbol: "gearshape.2",
-           sub: (model.engine?.isRendering ?? false) ? "Rendering" : "Idle")
+           sub: model.renderLine?.capitalized ?? ((model.engine?.isRendering ?? false) ? "Rendering" : "Idle"))
       Tile(title: "Disk free", value: disk.map { Fmt.bytes($0) } ?? "—", tint: (disk ?? .max) < 50_000_000_000 ? .orange : .primary,
            symbol: "internaldrive", sub: (disk ?? .max) < 50_000_000_000 ? "Under 50 GB" : "OK")
       Tile(title: "Last backup", value: lastBackup.map { Fmt.relative($0, now: model.now) } ?? "None yet",

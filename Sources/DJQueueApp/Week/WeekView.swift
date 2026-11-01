@@ -52,11 +52,9 @@ struct WeekView: View {
       Text("\(Fmt.day(start, tz: model.tz, style: "d MMM")) – \(Fmt.day(end, tz: model.tz, style: "d MMM"))")
         .font(.system(size: 17, weight: .semibold))
       Text(label).font(DS.Font.body).foregroundStyle(.secondary)
-      if !slots.isEmpty {
-        switch state {
-        case .approved: StatusPill(text: "Approved", tint: .green, icon: "checkmark.seal.fill")
-        default: StatusPill(text: "Draft", tint: .orange, icon: "pencil")
-        }
+      if !slots.isEmpty, let l = model.weekLabel(ws) {
+        StatusPill(text: l.text, tint: l.tint, icon: l.icon)
+          .help(l.text == "Locked" ? "The week has started: past days are fixed; future days can still change." : "")
       }
       if model.settings.paused { StatusPill(text: "Paused", tint: .orange, icon: "pause.fill") }
       Spacer()
@@ -284,16 +282,18 @@ struct WeekCard: View {
   private var hasProblem: Bool { posts.values.contains { $0.state.isProblem && $0.resolution == nil } }
 
   @ViewBuilder private var menu: some View {
+    // Locked: past days are fixed; only future slots can be swapped, removed or pinned.
     Menu("Swap with") {
-      ForEach(otherSlots.filter { $0.id != slot.id }) { o in
+      ForEach(otherSlots.filter { $0.id != slot.id && $0.date >= model.todayKey }) { o in
         Button("\(Fmt.day(model.dm.date(o.date), tz: model.tz, style: "EEE d")) · \(model.video(o.videoId).map(model.title) ?? "")") {
           model.swap(slot.id, o.id)
         }
       }
     }
-    Button("Remove from week", systemImage: "minus.circle") { model.removeSlot(slot.id) }
+    .disabled(isPast)
+    Button("Remove from week", systemImage: "minus.circle") { model.removeSlot(slot.id) }.disabled(isPast)
     Button(slot.pinned ? "Pinned to this day" : "Pin to this day", systemImage: "pin") { model.pin(video.id, dayKey: slot.date) }
-      .disabled(slot.pinned)
+      .disabled(slot.pinned || isPast)
     Menu("Skip platform") {
       ForEach(posts.values.filter { !$0.state.isTerminal }.sorted { $0.platform < $1.platform }) { p in
         Button(p.platform.displayName) { model.skip(p) }

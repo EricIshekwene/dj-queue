@@ -91,7 +91,9 @@ enum SnapshotRunner {
         m.update { $0.paused = false }
         if let editId { m.openEditor(editId, in: m.ordered.map(\.id)) }
       }
-      main("15-queue-after-editor") { m in m.editor = nil; m.screen = .queue }
+      main("15-queue-after-editor") { m in m.editor = nil; m.screen = .queue; m.loaded = true }
+      main("16-loading-skeleton") { m in m.editor = nil; m.screen = .today; m.loaded = false }
+      main("17-week-locked") { m in m.loaded = true; m.screen = .week; m.weekStart = m.planner.weekStart(for: m.now) }
       main("20-empty-queue", empty) { m in m.screen = .queue }
       main("21-empty-week", empty) { m in m.screen = .week }
       main("22-empty-today", empty) { m in m.screen = .today }

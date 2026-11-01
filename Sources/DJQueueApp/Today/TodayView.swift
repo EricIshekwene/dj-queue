@@ -10,7 +10,9 @@ struct TodayView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
         header.padding(.bottom, 18)
-        if model.dueToday.isEmpty {
+        if !model.loaded {
+          SkeletonRows(count: 6, height: DS.Row.today)
+        } else if model.dueToday.isEmpty {
           empty
         } else {
           let firstDue = model.dueToday.first { $0.state == .due || $0.state == .overdue || (!$0.state.isTerminal && $0.scheduledAt <= model.now) }?.id
@@ -101,7 +103,11 @@ struct TodayRow: View {
       }
       .frame(minWidth: 160, alignment: .leading)
       Spacer(minLength: 8)
-      StatusPill(post: post, now: model.now)
+      if let f = model.renderFraction(post) {
+        StatusPill(text: "Rendering \(Int(f * 100))%", tint: DS.Status.planned, icon: "gearshape")
+      } else {
+        StatusPill(post: post, now: model.now)
+      }
       actions
     }
     .padding(.horizontal, 10)
@@ -127,7 +133,7 @@ struct TodayRow: View {
       }
     } else if isCopyright {
       HStack(spacing: 6) {
-        Button("Re-upload anyway") { model.resolve(post, .reuploadAnyway(versionNo: nil)) }
+        ReuploadMenu(model: model, post: post)
         Button("Skip platform") { model.resolve(post, .skipPlatform) }
         Button("Accept") { model.resolve(post, .accept) }
         moreMenu
@@ -410,5 +416,54 @@ struct LongformPostedSheet: View {
     }
     .padding(22)
     .frame(width: 480)
+  }
+}
+
+/// T.S4 "Re-upload anyway" with a version choice: same, an existing later one, or a new version (opens the editor).
+struct ReuploadMenu: View {
+  @Bindable var model: AppModel
+  let post: PlatformPost
+  var body: some View {
+    let versions = max(1, model.versionCounts[post.videoId] ?? 1)
+    Menu("Re-upload anyway") {
+      Button("Same version (v\(post.versionNo))") { model.reupload(post, version: post.versionNo) }
+      ForEach(Array(stride(from: post.versionNo + 1, through: versions, by: 1)), id: \.self) { n in
+        Button("v\(n)") { model.reupload(post, version: n) }
+      }
+      Divider()
+      Button("New version (v\(versions + 1))…") { model.reupload(post, version: nil, newVersion: true) }
+    }
+    .fixedSize()
+  }
+}
+
+/// Placeholder rows while the first load runs (Q.states / T.states / L.states "Ld").
+struct SkeletonRows: View {
+  var count = 8
+  var height: CGFloat = DS.Row.queue
+  @State private var pulse = false
+  var body: some View {
+    VStack(spacing: 0) {
+      ForEach(0..<count, id: \.self) { i in
+        HStack(spacing: 12) {
+          RoundedRectangle(cornerRadius: 3).frame(width: 18, height: 10)
+          RoundedRectangle(cornerRadius: DS.Radius.thumb).frame(width: 28, height: 50)
+          VStack(alignment: .leading, spacing: 6) {
+            RoundedRectangle(cornerRadius: 3).frame(width: CGFloat(140 + (i * 37) % 120), height: 11)
+            RoundedRectangle(cornerRadius: 3).frame(width: 110, height: 8)
+          }
+          Spacer()
+          RoundedRectangle(cornerRadius: 8).frame(width: 52, height: 16)
+          RoundedRectangle(cornerRadius: 3).frame(width: 60, height: 8)
+        }
+        .foregroundStyle(Color.primary.opacity(pulse ? 0.06 : 0.11))
+        .padding(.horizontal, DS.Space.l)
+        .frame(height: height)
+        Divider().padding(.leading, DS.Space.l)
+      }
+      Spacer(minLength: 0)
+    }
+    .accessibilityLabel("Loading")
+    .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever()) { pulse = true } }
   }
 }

@@ -187,8 +187,17 @@ final class EditorFrameStrip: ObservableObject {
     let tol = CMTime(seconds: 0.4, preferredTimescale: 600)
     gen.requestedTimeToleranceBefore = tol
     gen.requestedTimeToleranceAfter = tol
-    return times.compactMap { t in
-      (try? gen.copyCGImage(at: CMTime(seconds: t, preferredTimescale: 600), actualTime: nil)).map { (t, $0) }
+    // Async image(at:) (copyCGImage is deprecated); this function is synchronous for its callers, so wait here.
+    // The work runs on a detached task, never on the calling thread, so waiting can't deadlock.
+    let sem = DispatchSemaphore(value: 0)
+    nonisolated(unsafe) var out: [(Double, CGImage)] = []
+    Task.detached {
+      for t in times {
+        if let img = try? await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image { out.append((t, img)) }
+      }
+      sem.signal()
     }
+    sem.wait()
+    return out
   }
 }
