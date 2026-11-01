@@ -25,6 +25,11 @@ import Testing
     #expect(Prefill.text(tag: "aura salad x tobetse 3.0", kind: .djVid, rules: rules) == "Aura Salad x Tobetse 3.0")
   }
 
+  @Test func danglingXAndCommonWords() {
+    #expect(Prefill.text(tag: "jago x", kind: .djVid, rules: rules) == "Jago")
+    #expect(Prefill.text(tag: "mmmnn x take all my money", kind: .djVid, rules: rules) == "Mmmnn\nx\nTake All My Money")
+  }
+
   @Test func talkingHasNoPrefill() {
     #expect(Prefill.text(tag: "yayo x johnny", kind: .talking, rules: rules) == "")
   }

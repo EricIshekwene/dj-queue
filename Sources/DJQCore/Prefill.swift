@@ -17,7 +17,7 @@ public struct PrefillRules: Codable, Sendable, Hashable {
   /// Lowercased tag fragment → replacement, applied to each name before title-casing.
   public var replacements: [String: String] = [:]
   /// Words kept lowercase inside names (except at the start).
-  public var lowercaseWords: [String] = ["a", "of", "the", "and", "to", "in", "on", "my", "ya", "via"]
+  public var lowercaseWords: [String] = ["a", "of", "the", "and", "to", "in", "on", "ya", "via"]
   /// Words kept exactly as written (e.g. "DJ", "3.0").
   public var keepWords: [String] = ["DJ", "SA", "BB"]
 
@@ -44,7 +44,9 @@ public struct PrefillRules: Codable, Sendable, Hashable {
 
 public enum Prefill {
   public static func names(from tag: String) -> [String] {
-    let normalized = tag.replacingOccurrences(of: #"\s+[xX×]\s+"#, with: "\u{1}", options: .regularExpression)
+    let trimmed = tag.trimmingCharacters(in: .whitespaces)
+      .replacingOccurrences(of: #"^[xX×]\s+|\s+[xX×]$"#, with: "", options: .regularExpression)
+    let normalized = trimmed.replacingOccurrences(of: #"\s+[xX×]\s+"#, with: "\u{1}", options: .regularExpression)
     return normalized.split(separator: "\u{1}").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
   }
 
