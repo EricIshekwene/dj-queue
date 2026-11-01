@@ -1,0 +1,56 @@
+# Mobbin sources — round 2 (refs/r2/)
+
+Slot → Mobbin screen. Images are kept only locally in the gitignored `refs/r2/` folder (file name = `<slot>--<app>-<what>.webp`); `-alt` rows are the considered alternates. Rationale and specs: `design/DESIGN-v2.md`.
+
+| Slot | File | Mobbin |
+|---|---|---|
+| R2.BULK | R2.BULK--cosmos-floating-pill-bar | https://mobbin.com/screens/ca5fc71d-56ce-4486-934a-586bbbefa500 |
+| R2.BULK-alt | R2.BULK-alt--grok-top-floating-selection | https://mobbin.com/screens/9f74b211-14d5-4d8c-a78e-521ce19a27f9 |
+| R2.BULK-alt | R2.BULK-alt--recraft-dark-pill-bar | https://mobbin.com/screens/338b6ed9-5452-4432-a847-bd9b31491f30 |
+| R2.DARK | R2.DARK--chatgpt-web-images-dark | https://mobbin.com/screens/163f007a-ec3d-4796-b9f6-950f8d639f3c |
+| R2.EDIT | R2.EDIT--searchable-issue-cards-chips-actions | https://mobbin.com/screens/2f0fbd3a-a396-4545-90c4-10da4ccba41c |
+| R2.EDIT-alt | R2.EDIT-alt--copyai-inline-missing-chips | https://mobbin.com/screens/6074b8e9-f289-468e-8e17-74cd825e224f |
+| R2.EDITOR | R2.EDITOR--arcade-floating-inspector-segmented | https://mobbin.com/screens/f8c71b76-f0e3-4615-a6b4-dadd3c93becc |
+| R2.EDITOR-alt | R2.EDITOR-alt--chatgpt-ios-composer-chips | https://mobbin.com/screens/02cdd130-9866-42d3-b19f-45b717ed9692 |
+| R2.EDITOR-alt | R2.EDITOR-alt--elevenlabs-vertical-preview-sliders | https://mobbin.com/screens/68b0f986-d0cd-4269-b44e-ef0744bb2dc3 |
+| R2.EMPTY | R2.EMPTY--v0-icon-line-pill-button | https://mobbin.com/screens/6e23d772-5780-4383-8aa9-50bf26b2c952 |
+| R2.EMPTY-alt | R2.EMPTY-alt--babbel-icon-black-pill | https://mobbin.com/screens/274c64f1-0d4f-410c-ab11-11ca75f329b4 |
+| R2.FEEL | R2.FEEL--chatgpt-web-composer-menu | https://mobbin.com/screens/18548847-534b-4263-9ffb-3f6cfdda7582 |
+| R2.FEEL-alt | R2.FEEL-alt--chatgpt-ios-project-segmented | https://mobbin.com/screens/b6ad5d40-1980-432a-bc68-e547bbc07dcc |
+| R2.FEEL-alt | R2.FEEL-alt--claude-web-composer-suggestion-chips | https://mobbin.com/screens/99067951-15dc-4fba-8ca8-94686a70985c |
+| R2.HEALTH | R2.HEALTH--openai-platform-service-health | https://mobbin.com/screens/fd98bb68-c8c4-446c-a0fc-0e1089003e1c |
+| R2.HEALTH-alt | R2.HEALTH-alt--vanta-ok-needs-attention-summary | https://mobbin.com/screens/7b3e98c2-b1fd-4c66-b4f4-51fbbb0a346f |
+| R2.LIBRARY | R2.LIBRARY--frameio-portrait-tiles-fields | https://mobbin.com/screens/a1d6dd05-728c-470d-90c1-0677a7d09fca |
+| R2.LIBRARY-alt | R2.LIBRARY-alt--clickup-clips-subnav-counts | https://mobbin.com/screens/cd13cd94-378a-4421-800f-462b79571473 |
+| R2.MENU | R2.MENU--chatgpt-web-account-menu | https://mobbin.com/screens/7eb619eb-3da0-47f8-a7a5-6061b1d6becb |
+| R2.MENUBAR | R2.MENUBAR--crouton-anchored-popover-metric-chips | https://mobbin.com/screens/d4f7df3b-0b48-4401-b10a-81fa1514dcff |
+| R2.MENUBAR-alt | R2.MENUBAR-alt--lyssna-next-session-countdown | https://mobbin.com/screens/177f7dff-bab7-42ea-9d53-92fc89f9affa |
+| R2.MOCK.facebook | R2.MOCK.facebook--facebook-ios-reels-feed | https://mobbin.com/screens/a76da39c-a061-4eed-8bff-d4173be83782 |
+| R2.MOCK.facebook-alt | R2.MOCK.facebook-alt--facebook-ios-reels-playlist-chip | https://mobbin.com/screens/1cb5d1bd-dd9b-479b-b434-1aa8ae93d39f |
+| R2.MOCK.instagram | R2.MOCK.instagram--instagram-ios-reels-feed | https://mobbin.com/screens/c1ecdb34-ebee-4b77-adc8-9f33f56a0eb2 |
+| R2.MOCK.instagram-alt | R2.MOCK.instagram-alt--instagram-ios-reels-audio-line | https://mobbin.com/screens/04ad8bc0-e993-4a42-a869-145a1a462713 |
+| R2.MOCK.threads | R2.MOCK.threads--threads-ios-post-media | https://mobbin.com/screens/c4fff05d-c5fb-4e8c-a82a-3b9e3fc01572 |
+| R2.MOCK.threads-alt | R2.MOCK.threads-alt--threads-ios-video-mute-badge | https://mobbin.com/screens/ec30d387-78bf-4963-95ee-9955cfb09cdd |
+| R2.MOCK.tiktok | R2.MOCK.tiktok--tiktok-ios-foryou-feed | https://mobbin.com/screens/e8a9730d-ff55-4ed9-b969-3918178bdf4a |
+| R2.MOCK.tiktok-alt | R2.MOCK.tiktok-alt--tiktok-ios-foryou-tabs-more | https://mobbin.com/screens/05e0b98a-bd68-441c-bb71-84f051944c9b |
+| R2.MOCK.x | R2.MOCK.x--x-ios-post-video | https://mobbin.com/screens/db2de9cd-1339-4e10-81a2-8bf08f152258 |
+| R2.MOCK.x-alt | R2.MOCK.x-alt--x-ios-post-tall-video | https://mobbin.com/screens/25e68b95-4af7-4319-bca6-759ebfbe26d9 |
+| R2.MOCK.youtube | R2.MOCK.youtube--youtube-ios-shorts-feed | https://mobbin.com/screens/5af0915b-bced-4ce0-8a2c-3638cc7712bb |
+| R2.MOCK.youtube-alt | R2.MOCK.youtube-alt--youtube-ios-shorts-progress | https://mobbin.com/screens/a0b84ac6-c02c-4d28-af29-238e53a3316f |
+| R2.NAV | R2.NAV--chatgpt-web-sidebar-sections | https://mobbin.com/screens/eebd03db-a802-47aa-a61b-8d68a5fe78f7 |
+| R2.NAV-alt | R2.NAV-alt--chatgpt-ios-drawer-sections | https://mobbin.com/screens/ab1d0c55-4180-4ad4-b9b6-5a21242092f1 |
+| R2.POSTS | R2.POSTS--substack-posts-segmented-list | https://mobbin.com/screens/07d006c3-724e-48ba-ab5d-e34873263beb |
+| R2.POSTS-alt | R2.POSTS-alt--n8n-executions-status-table | https://mobbin.com/screens/b759b3dc-8a0f-4575-8f63-f25b15485fbf |
+| R2.QUEUE | R2.QUEUE--hootsuite-horizontal-post-cards | https://mobbin.com/screens/a7fce7a6-32e4-4886-9f7e-32794fcf72f8 |
+| R2.QUEUE-alt | R2.QUEUE-alt--buffer-queue-tabs-viewtoggle | https://mobbin.com/screens/72d4bfa1-5c2b-46a7-8165-cc6050b32f63 |
+| R2.SCORE | R2.SCORE--googlephotos-ios-large-card-review | https://mobbin.com/screens/fe08f11d-55f0-43b7-a506-2acc10e4bc26 |
+| R2.SCORE-alt | R2.SCORE-alt--midjourney-rank-progress-keys | https://mobbin.com/screens/6886324f-b99f-4152-8625-aa657a04f0be |
+| R2.SCORE-alt | R2.SCORE-alt--runway-large-player-prev-next | https://mobbin.com/screens/aa016d55-74f1-47fb-8918-2ccb33a6c9b3 |
+| R2.SETTINGS | R2.SETTINGS--chatgpt-web-settings-rows | https://mobbin.com/screens/07c4b5b1-7857-47f0-ad2e-5ab6619e84d7 |
+| R2.SETTINGS-alt | R2.SETTINGS-alt--chatgpt-web-fields-toggles | https://mobbin.com/screens/87187ade-b0ee-4a89-9cd9-6b696bd0451f |
+| R2.TODAY | R2.TODAY--todoist-today-centered-column | https://mobbin.com/screens/15d32901-2cde-4eaf-9dce-142c4507eac4 |
+| R2.TODAY-alt | R2.TODAY-alt--open-wide-media-cards-action | https://mobbin.com/screens/d5d00070-d101-403a-a0f9-1f468e4117dc |
+| R2.VIEWMODES | R2.VIEWMODES--arcade-library-filters-grid-list | https://mobbin.com/screens/40ecfb3c-1903-43fb-9470-3dbc47004c82 |
+| R2.VIEWMODES-alt | R2.VIEWMODES-alt--frameio-compact-list-rating | https://mobbin.com/screens/5ada6f2e-a1e2-4a3b-af69-7b232eed2b94 |
+| R2.WEEK | R2.WEEK--hootsuite-week-media-cards | https://mobbin.com/screens/fcb9a7cc-9ae1-4ee7-87b6-acf74e33e7c7 |
+| R2.WEEK-alt | R2.WEEK-alt--tiktok-web-scheduler-portrait-tiles | https://mobbin.com/screens/0c5202c7-2201-4d78-aa94-f5b82f2522a4 |
