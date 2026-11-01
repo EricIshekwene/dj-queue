@@ -1,2 +1,0 @@
-import DJQCore
-print("app")
