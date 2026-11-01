@@ -143,7 +143,7 @@ public final class PostActions: @unchecked Sendable {
       if p.kind == .regular {
         let pos = try store.position(of: p)
         guard try makeRoom(platform: p.platform, position: pos, day: today, excluding: p.id, dm: dm, settings: settings) else {
-          throw EngineError("\(p.platform.displayName) already posted today — use Shift plan to put this on the next free day")
+          throw EngineError("\(p.platform.displayName) already has a posted or pinned post today — use Shift plan to put this on the next free day")
         }
       }
       p.state = .due
@@ -177,24 +177,15 @@ public final class PostActions: @unchecked Sendable {
     try store.refreshState(videoId: p.videoId)
   }
 
-  /// Frees (platform, day, position) for one regular post: if an un-posted regular post sits there, that platform's
-  /// un-posted regular posts at this position from `day` on move one day later. False when a posted post sits there.
+  /// Frees (platform, day, position) for one regular post: un-posted, unpinned regular posts of that platform at this
+  /// position from `day` on move later, flowing around pinned/posted days. False when a posted or pinned post
+  /// holds that day (a pinned video never moves).
   func makeRoom(platform: Platform, position: Int, day: String, excluding id: String, dm: DayMath, settings: Settings) throws -> Bool {
     let placer = try Placer(store: store, dm: dm, excluding: [id])
     guard placer.isTaken(platform, day: day, position: position) else { return true }
-    let here = try store.posts(where: "platform=? AND kind='regular' AND id<>? AND scheduled_at>=? AND scheduled_at<?",
-                               [platform.rawValue, id, dm.date(day), dm.date(dm.addDays(day, 1))])
-    let postedHere = try here.filter { $0.state == .posted }.map { try store.position(of: $0) }
-    if postedHere.contains(position) { return false }
-    let later = try store.posts(where: "platform=? AND kind='regular' AND id<>? AND scheduled_at>=?",
-                                [platform.rawValue, id, dm.date(day)])
-      .filter { !$0.state.isTerminal && $0.state != .overdue }
-    for var o in later {
-      guard try store.position(of: o) == position else { continue }
-      o.scheduledAt = Sched.shift(o.scheduledAt, days: 1, dm)
-      if o.state == .due { o.state = o.renderId == nil ? .planned : .rendered }
-      try store.save(o, note: "made room on \(day): +1 d")
-    }
+    let movable = try store.movablePosts(platform: platform, position: position, after: dm.date(day), inclusive: true, excluding: id)
+    guard movable.contains(where: { dm.key($0.scheduledAt) == day }) else { return false }  // posted/pinned holds it
+    try store.reflow(movable, days: 0, reserve: [day], dm: dm, note: "made room on \(day)")
     return true
   }
 
@@ -328,20 +319,14 @@ public final class PostActions: @unchecked Sendable {
     let dm = DayMath(settings: settings)
     let today = store.today(dm)
     let position = try store.position(of: skipped)
-    let rest = try store.posts(where: "platform=? AND kind='regular' AND scheduled_at>=?", [skipped.platform.rawValue, dm.date(today)])
-      .filter { !$0.state.isTerminal && $0.state != .overdue }
-      .filter { (try? store.position(of: $0)) == position }
+    let rest = try store.movablePosts(platform: skipped.platform, position: position, after: dm.date(today), inclusive: true,
+                                      excluding: skipped.id)
     guard let first = rest.first else { return }
     var placer = try Placer(store: store, dm: dm, excluding: Set(rest.map(\.id)))
     let free = placer.place(skipped.platform, position: position, from: today)
     let gap = dm.days(from: free, to: dm.key(first.scheduledAt))
     guard gap > 0 else { return }
-    try store.db.transaction {
-      for var o in rest {
-        o.scheduledAt = Sched.shift(o.scheduledAt, days: -gap, dm)
-        try store.save(o, note: "gap closed −\(gap) d")
-      }
-    }
+    try store.db.transaction { try store.reflow(rest, days: -gap, dm: dm, note: "gap closed −\(gap) d") }
   }
 
   /// Records the edit's length-related state for a platform when a too_long failure happens, so the engine only

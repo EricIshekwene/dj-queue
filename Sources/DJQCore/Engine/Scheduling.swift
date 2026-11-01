@@ -121,3 +121,38 @@ extension Store {
     try p.planSlotId.flatMap { try planSlot(id: $0)?.position } ?? 0
   }
 }
+
+extension Store {
+  /// Regular posts of a platform at a plan position that a plan shift may move: un-posted, not overdue, and not
+  /// belonging to a pinned slot (a pinned video never moves — Eric's decision).
+  func movablePosts(platform: Platform, position: Int, after: Date, inclusive: Bool = false, excluding id: String) throws -> [PlatformPost] {
+    let pinned = Set(try planSlots(where: "pinned=1").map(\.id))
+    return try posts(where: "platform=? AND kind='regular' AND id<>? AND scheduled_at\(inclusive ? ">=" : ">")?",
+                     [platform.rawValue, id, after])
+      .filter { !$0.state.isTerminal && $0.state != .overdue && !pinned.contains($0.planSlotId ?? "") }
+      .filter { (try? self.position(of: $0)) == position }
+  }
+
+  /// Moves `posts` (one platform, one position) by `days`, earliest first, each to the first day ≥ its target that
+  /// has no other live regular post there — so they flow around pinned and posted days, never onto them.
+  /// `reserve` days are kept free (e.g. today for a post being shifted in). Returns how many moved.
+  @discardableResult
+  func reflow(_ posts: [PlatformPost], days: Int, reserve: [String] = [], dm: DayMath, note: String) throws -> Int {
+    guard let first = posts.first else { return 0 }
+    var placer = try Placer(store: self, dm: dm, excluding: Set(posts.map(\.id)))
+    let pos = try position(of: first)
+    for d in reserve { _ = placer.place(first.platform, position: pos, from: d) }
+    var moved = 0
+    for var o in posts.sorted(by: { $0.scheduledAt < $1.scheduledAt }) {
+      let from = dm.key(o.scheduledAt)
+      let to = placer.place(o.platform, position: pos, from: dm.addDays(from, days))
+      let delta = dm.days(from: from, to: to)
+      guard delta != 0 else { continue }
+      o.scheduledAt = Sched.shift(o.scheduledAt, days: delta, dm)
+      if o.state == .due { o.state = o.renderId == nil ? .planned : .rendered }
+      try save(o, note: "\(note) → \(to)")
+      moved += 1
+    }
+    return moved
+  }
+}

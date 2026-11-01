@@ -230,4 +230,62 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: f.sessionDir.appendingPathComponent(clip).path))
     #expect(try FileManager.default.contentsOfDirectory(atPath: f.sessionDir.appendingPathComponent("Posted/Longform").path).isEmpty)
   }
+  /// Eric's decision: a pinned video never moves. Fri pinned, Monday missed → Fri still posts the pinned video on
+  /// every platform; the shifted posts flow around Friday.
+  @Test func missedDayFlowsAroundPinnedDay() throws {
+    let f = try Fixture.engine(8)
+    let p = Planner(store: f.store)
+    try p.proposeWeek(f.week)
+    try p.pin(videoId: "clip-7", date: "2026-11-06")
+    try p.approveWeek(f.week)
+    let (e, _) = engine(f)
+    e.tick(reason: "t")
+    f.setTime("2026-11-03", "10:00")  // Monday missed on every platform
+    e.tick(reason: "wake")
+    for pl in Platform.allCases {
+      #expect(try f.post(pl, day: "2026-11-06")?.videoId == "clip-7", "\(pl)")  // pinned stays Friday
+      #expect(try f.post(pl, day: "2026-11-04")?.videoId == "clip-1", "\(pl)")  // Tue → Wed
+      #expect(try f.post(pl, day: "2026-11-05")?.videoId == "clip-2", "\(pl)")  // Wed → Thu
+      #expect(try f.post(pl, day: "2026-11-07")?.videoId == "clip-3", "\(pl)")  // Thu → skips Fri → Sat
+      #expect(try f.post(pl, day: "2026-11-09")?.videoId == "clip-6", "\(pl)")  // Sun → next Mon
+      #expect(try f.post(pl, day: "2026-11-02")?.state == .overdue, "\(pl)")
+    }
+    #expect(try f.doublePosts().isEmpty)
+    // Skip and Shift plan also flow around the pinned Friday.
+    let a = PostActions(store: f.store)
+    try a.skip(postId: try #require(try f.post(.facebook, day: "2026-11-02")).id)  // FB pulls back to Tue
+    #expect(try f.post(.facebook, day: "2026-11-03")?.videoId == "clip-1")
+    #expect(try f.post(.facebook, day: "2026-11-06")?.videoId == "clip-7")
+    #expect(try f.doublePosts().isEmpty)
+    try a.shiftPlan(postId: try #require(try f.post(.tiktok, day: "2026-11-02")).id)  // TikTok's Tue is free
+    #expect(try f.post(.tiktok, day: "2026-11-03")?.videoId == "clip-0")
+    #expect(try f.post(.tiktok, day: "2026-11-06")?.videoId == "clip-7")
+    #expect(try f.doublePosts().isEmpty)
+    // Post now when today holds the pinned video is refused.
+    f.setTime("2026-11-06", "09:00")
+    let th = try #require(try f.post(.threads, day: "2026-11-02"))
+    #expect(throws: EngineError.self) { try a.postNow(postId: th.id) }
+  }
+
+  @Test func failedPostsKeepTheirRenderUntilResolvedOrAWeek() throws {
+    let f = try Fixture.engine(8)
+    try Planner(store: f.store).approveWeek(f.week)
+    let fake = FakeRenderer(store: f.store)
+    let (e, _) = engine(f, renderer: fake)
+    e.tick(reason: "t")
+    let monday = try f.posts().filter { f.dm.key($0.scheduledAt) == "2026-11-02" }
+    let rid = try #require(monday.first?.renderId)
+    let a = PostActions(store: f.store)
+    for p in monday { try a.reportProblem(postId: p.id, type: .copyrightBlocked, message: "blocked") }
+    let failed = Render(id: "bad", videoId: "clip-3", versionNo: 1, editHash: "h", scope: "all", outputPath: nil, coverPath: nil,
+                        loudness: nil, duration: nil, size: nil, status: .failed, error: "ffmpeg", createdAt: f.clock.now, deletedAt: nil)
+    try f.store.save(failed)
+    f.setTime("2026-11-04", "10:00")
+    e.tick(reason: "t")
+    #expect(try f.store.render(id: rid)?.deletedAt == nil)  // unresolved, < 7 days
+    #expect(try f.store.render(id: "bad")?.deletedAt == nil)  // failed render stays visible to Doctor
+    for p in monday { try a.resolveCopyright(postId: p.id, .accept) }
+    e.tick(reason: "t")
+    #expect(try f.store.render(id: rid)?.deletedAt != nil)  // resolved → retired
+  }
 }
