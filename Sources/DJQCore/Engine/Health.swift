@@ -69,7 +69,21 @@ public enum LaunchAgent {
   public static let label = "com.djlovd.queue.engine"
 
   /// Writes the plist. `appPath` is the .app bundle (its CFBundleExecutable is used) or an executable.
+  /// Refuses (readable error) in a dev environment (DJQ_HOME / DJQ_ROOT set) or when `appPath` isn't inside the
+  /// real `~/Applications` — a plist from a dev build would otherwise run an engine against the real database.
   public static func install(appPath: String, paths: Paths, load: Bool = false) throws {
+    try install(appPath: appPath, paths: paths, load: load, environment: ProcessInfo.processInfo.environment, home: realHome)
+  }
+
+  static func install(appPath: String, paths: Paths, load: Bool, environment: [String: String], home: String) throws {
+    for k in ["DJQ_HOME", "DJQ_ROOT"] where !(environment[k] ?? "").isEmpty {
+      throw EngineError("Won't install the LaunchAgent while \(k) is set (dev environment) — it would run the engine on the real database. Unset \(k) and use the installed app.")
+    }
+    let apps = URL(fileURLWithPath: home).appendingPathComponent("Applications").standardizedFileURL.resolvingSymlinksInPath().path + "/"
+    let app = URL(fileURLWithPath: appPath).standardizedFileURL.resolvingSymlinksInPath().path
+    guard app.hasPrefix(apps) else {
+      throw EngineError("The LaunchAgent only runs the installed app in \(apps) (got \(appPath)). Install it with scripts/build-app.sh first.")
+    }
     let exe = executable(for: appPath)
     let plist: [String: Any] = [
       "Label": label,
@@ -89,6 +103,12 @@ public enum LaunchAgent {
       let r = run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", paths.agentPlist.path])
       if r.status != 0 { throw EngineError("launchctl bootstrap failed: \(r.output)") }
     }
+  }
+
+  /// The user's real home folder (not $HOME).
+  static var realHome: String {
+    if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir { return String(cString: dir) }
+    return NSHomeDirectory()
   }
 
   public static func isLoaded() -> Bool {
