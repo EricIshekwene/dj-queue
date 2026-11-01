@@ -24,7 +24,7 @@ public final class Queue: @unchecked Sendable {
       if let p = platform {
         if v.alreadyPostedOn.contains(p) { continue }
         if try !store.platformHistory(videoId: v.id, platform: p).isEmpty { continue }
-        if try store.edit(videoId: v.id).skippedPlatforms.contains(p) { continue }
+        if try store.edit(videoId: v.id).isSkipped(p, defaults: settings.defaults) { continue }
       } else if slotted.contains(v.id) {
         continue
       }

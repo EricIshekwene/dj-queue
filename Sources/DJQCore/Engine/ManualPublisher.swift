@@ -24,12 +24,9 @@ public final class ManualPublisher: Publisher, @unchecked Sendable {
     guard let rv = try store.resolvedVersion(videoId: v.id, number: p.versionNo, settings: settings) else {
       throw EngineError("\(v.tag) has no v\(p.versionNo)")
     }
-    let rules = PrefillRules.load(store.paths)
     let caption = Captions.caption(for: p.platform, version: rv, video: v, sessionName: try store.sessionName(for: v),
-                                   sets: try store.hashtagSets(), templates: try store.captionTemplates(), settings: settings,
-                                   rules: rules)
-    let title = p.platform == .youtube
-      ? Captions.youtubeTitle(rv, video: v, limit: settings.limits[.youtube]?.titleLimit ?? 100, rules: rules) : nil
+                                   sets: try store.hashtagSets(), templates: try store.captionTemplates(), settings: settings)
+    let title = p.platform == .youtube ? Captions.youtubeTitle(rv, video: v, settings: settings) : nil
     return PreparedPost(postId: p.id, platform: p.platform, fileURL: URL(fileURLWithPath: out),
                         coverURL: r.coverPath.map { URL(fileURLWithPath: $0) }, caption: caption, title: title,
                         uploadURL: p.platform.uploadURL)

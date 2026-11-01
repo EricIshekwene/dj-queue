@@ -332,12 +332,13 @@ public final class PostActions: @unchecked Sendable {
   /// Records the edit's length-related state for a platform when a too_long failure happens, so the engine only
   /// re-queues after Eric actually changes the trim/skip for it.
   static func snapshotTrim(store: Store, post p: PlatformPost) throws {
-    try store.setKV("tooLong.\(p.id)", trimSignature(try store.edit(videoId: p.videoId), p.platform))
+    try store.setKV("tooLong.\(p.id)", trimSignature(try store.resolvedEdit(videoId: p.videoId), p.platform))
   }
 
-  static func trimSignature(_ e: Edit, _ p: Platform) -> String {
+  /// What a platform's length depends on (resolved: the markers default counts).
+  static func trimSignature(_ e: ResolvedEdit, _ p: Platform) -> String {
     let t = e.platformTrims[p].map { "\($0.start)-\($0.end)" } ?? "-"
-    return "\(t)|\(e.skippedPlatforms.contains(p))|\(e.trimIn ?? -1)|\(e.trimOut ?? -1)"
+    return "\(t)|\(e.isSkipped(p))|\(e.trimIn)|\(e.trimOut)"
   }
 
   static func freeURL(_ url: URL) -> URL {

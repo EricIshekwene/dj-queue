@@ -1,5 +1,10 @@
 import Foundation
 
+// DEPRECATED (round 2 #9 "no intelligence inside the app"): nothing in DJQCore calls this any more.
+// The formatter now lives upstream in `scripts/prefill_titles.py`, which writes `title_suggestions` into
+// videos.json (docs/metadata.md). This copy only keeps the round-1 app compiling until the UI is rebuilt;
+// delete it once `Sources/DJQueueApp` no longer references Prefill/PrefillRules.
+
 /// Turns a marker tag into the first overlay text (decision Q14).
 ///
 /// Rules (all in `prefill-rules.json` in the app-support folder, so agents can read and edit them;
@@ -9,6 +14,7 @@ import Foundation
 /// - If every name is short (≤ `maxShortName` chars and the line ≤ `maxOneLine`), one line: `Yayo x Johnny`.
 ///   Otherwise one name per line with "x" on its own line: `Song One` / `x` / `Song Two`.
 /// - `talking` videos get no prefill.
+@available(*, deprecated, message: "Removed from the app (round 2 #9): use scripts/prefill_titles.py upstream")
 public struct PrefillRules: Codable, Sendable, Hashable {
   public var joiner: String = "x"
   public var maxShortName: Int = 14
@@ -47,6 +53,7 @@ public struct PrefillRules: Codable, Sendable, Hashable {
   }
 }
 
+@available(*, deprecated, message: "Removed from the app (round 2 #9): show Video.displayName; titles come from metadata")
 public enum Prefill {
   public static func names(from tag: String) -> [String] {
     let trimmed = tag.trimmingCharacters(in: .whitespaces)
@@ -86,5 +93,19 @@ public enum Prefill {
     var out = short ? oneLine : parts.joined(separator: "\n\(rules.joiner)\n")
     if !rules.emoji.isEmpty { out += " " + rules.emoji }
     return out
+  }
+}
+
+@available(*, deprecated, message: "Prefill fallbacks were removed (round 2 #9): call the overload without rules:")
+extension Captions {
+  public static func caption(for platform: Platform, version v: ResolvedVersion, video: Video, sessionName: String,
+                             sets: [HashtagSet], templates: [CaptionTemplate], settings: Settings,
+                             rules: PrefillRules) -> String {
+    caption(for: platform, version: v, video: video, sessionName: sessionName, sets: sets, templates: templates,
+            settings: settings)
+  }
+
+  public static func youtubeTitle(_ v: ResolvedVersion, video: Video, limit: Int = 100, rules: PrefillRules) -> String {
+    youtubeTitle(v, video: video, limit: limit)
   }
 }

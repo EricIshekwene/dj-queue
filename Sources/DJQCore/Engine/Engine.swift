@@ -324,12 +324,12 @@ public final class Engine: @unchecked Sendable {
     let settings = try store.settings()
     let active = Set(settings.activePlatforms)
     var failed = 0, requeued = 0, skipped = 0
-    var cache: [String: (Video, Edit, [ValidationIssue])] = [:]
-    func info(_ id: String) throws -> (Video, Edit, [ValidationIssue])? {
+    var cache: [String: (Video, ResolvedEdit, [ValidationIssue])] = [:]
+    func info(_ id: String) throws -> (Video, ResolvedEdit, [ValidationIssue])? {
       if let c = cache[id] { return c }
       guard let v = try store.video(id: id) else { return nil }
-      let e = try store.edit(videoId: id)
-      let c = (v, e, Validation.platformIssues(video: v, edit: e, settings: settings))
+      let e = EditResolver.resolve(try store.edit(videoId: id), video: v, defaults: settings.defaults)
+      let c = (v, e, Validation.platformIssues(video: v, resolved: e, settings: settings))
       cache[id] = c
       return c
     }
@@ -354,7 +354,7 @@ public final class Engine: @unchecked Sendable {
       let changed = snapshot != nil && snapshot != PostActions.trimSignature(edit, p.platform)
       let byCheck = p.rawResponse == Self.platformCheckMarker
       guard byCheck || changed else { continue }
-      if edit.skippedPlatforms.contains(p.platform) {
+      if edit.isSkipped(p.platform) {
         p.state = .skipped
         p.resolution = "skipped"
         try store.save(p, note: "platform skipped in the editor")

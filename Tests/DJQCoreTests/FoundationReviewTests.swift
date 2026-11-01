@@ -73,17 +73,8 @@ import Testing
     #expect(try f.store.settings() == s)
   }
 
-  @Test func prefillRulesFileNotOverwritten() throws {
-    let f = try Fixture()
-    try FileManager.default.createDirectory(at: f.paths.appSupport, withIntermediateDirectories: true)
-    try Data(#"{"replacements":{"sugnba":"Sungba"}}"#.utf8).write(to: f.paths.prefillRules)
-    let r = PrefillRules.load(f.paths)
-    #expect(r.replacements == ["sugnba": "Sungba"])
-    #expect(r.joiner == "x")
-    try Data("{ typo".utf8).write(to: f.paths.prefillRules)
-    _ = PrefillRules.load(f.paths)
-    #expect(try String(contentsOf: f.paths.prefillRules, encoding: .utf8) == "{ typo")
-  }
+  // prefillRulesFileNotOverwritten was removed with Prefill (round 2 #9); scripts/prefill_titles.py only reads
+  // its replacements file.
 
   // D3
   @Test func draftWeekIsNotPlanned() throws {
@@ -185,15 +176,15 @@ import Testing
     #expect(Intake.size(link) == Intake.size(target))
   }
 
-  // R5 / Q15
-  @Test func autoHashtagsVaryPerVideo() {
+  // R5 / Q15. Round 2 #9 removed the rotating per-video sub-set ("autoHashtagsVaryPerVideo"): every clip uses
+  // exactly the chosen/default sets.
+  @Test func defaultHashtagsAreTheSameForEveryVideo() {
     let r = VersionResolver.resolve([Version(number: 1)], number: 1, settings: Settings())
     let all = Set((0..<12).map { Captions.hashtags(r, sets: Defaults.hashtagSets, videoId: "video-\($0)").joined(separator: " ") })
-    #expect(all.count > 1)
-    for i in 0..<12 {
-      let tags = Captions.hashtags(r, sets: Defaults.hashtagSets, videoId: "video-\(i)")
-      #expect(tags.starts(with: ["#amapiano", "#amapianomix", "#afrohouse", "#djlovd", "#dj"]))
-    }
+    #expect(all.count == 1)
+    #expect(Captions.hashtags(r, sets: Defaults.hashtagSets)
+      == ["#amapiano", "#amapianomix", "#afrohouse", "#djlovd", "#dj", "#djlife", "#djmix", "#transition"])
+    #expect(r.isDefault("hashtagSetIds"))
     var chosen = Version(number: 1)
     chosen.hashtagSetIds = ["afrobeats"]
     let rc = VersionResolver.resolve([chosen], number: 1, settings: Settings())

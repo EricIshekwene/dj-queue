@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 1
+  public static let schemaVersion = 2
 
   public init(paths: Paths, clock: Clock = SystemClock(), path: String? = nil) throws {
     self.paths = paths
@@ -82,6 +82,50 @@ public final class Store: @unchecked Sendable {
       """)
       try seedDefaults()
     }
+    if v < 2 { try migrateToV2(from: v) }
+  }
+
+  /// Round 2: titles + suggestions, batch journal, cached source size, override-only edits.
+  /// Lossless: every edit resolves to exactly what it did before (values equal to the round-1 hard defaults —
+  /// aspect 9:16, cover includes text — become "follow the default", whose seeded values are the same).
+  /// A file database with data is copied to `<app support>/backups/` first.
+  private func migrateToV2(from v: Int) throws {
+    if v >= 1, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-schema2-\(f.string(from: Date())).sqlite").path)
+    }
+    try db.transaction {
+      let cols = Set(try db.query("PRAGMA table_info(videos)").compactMap { $0.string("name") })
+      for (c, t) in [("title", "TEXT"), ("title_tracks", "TEXT"), ("title_source", "TEXT"),
+                     ("source_width", "INTEGER"), ("source_height", "INTEGER")] where !cols.contains(c) {
+        try db.exec("ALTER TABLE videos ADD COLUMN \(c) \(t)")
+      }
+      try db.exec("""
+        CREATE TABLE IF NOT EXISTS title_suggestions(id INTEGER PRIMARY KEY AUTOINCREMENT,
+          video_id TEXT NOT NULL REFERENCES videos(id), text TEXT NOT NULL, tracks TEXT NOT NULL DEFAULT '[]',
+          confidence REAL, source TEXT NOT NULL DEFAULT '', origin TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0,
+          created_at REAL NOT NULL, UNIQUE(video_id, origin, text, source));
+        CREATE INDEX IF NOT EXISTS suggestions_video ON title_suggestions(video_id);
+        CREATE TABLE IF NOT EXISTS batches(id TEXT PRIMARY KEY, action TEXT NOT NULL, params TEXT, video_ids TEXT NOT NULL,
+          before TEXT NOT NULL, after TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL,
+          undone_at REAL);
+        """)
+      for r in try db.query("SELECT video_id, json FROM edits") {
+        guard let id = r.string("video_id"), let s = r.string("json"),
+              var obj = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any] else { continue }
+        if obj["aspect"] as? String == Aspect.r9x16.rawValue { obj.removeValue(forKey: "aspect") }
+        if let b = obj["coverIncludesText"] as? Bool, b { obj.removeValue(forKey: "coverIncludesText") }
+        // Unreadable rows are left exactly as they are (Doctor reports them).
+        guard let d = try? JSONSerialization.data(withJSONObject: obj),
+              let e = try? JSONCoding.decoder.decode(Edit.self, from: d) else { continue }
+        try db.run("UPDATE edits SET json=? WHERE video_id=?", [JSONCoding.string(e), id])
+      }
+      try db.exec("PRAGMA user_version = 2")
+    }
   }
 
   private func seedDefaults() throws {
@@ -108,7 +152,18 @@ public final class Store: @unchecked Sendable {
   /// logged and defaults are used in memory; the row is only replaced when Settings are saved.
   public func settings() throws -> Settings {
     guard let s = try db.one("SELECT json FROM kv WHERE key='settings'")?.string("json") else { return Settings() }
-    do { return try JSONCoding.decodeLenient(Data(s.utf8), defaults: Settings()) } catch {
+    do {
+      var out = try JSONCoding.decodeLenient(Data(s.utf8), defaults: Settings())
+      // Round-1 rows kept the text/caption defaults at the top level: carry them into `defaults` once.
+      if let obj = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any], obj["defaults"] == nil {
+        if let x = (obj["defaultStyle"] as? String).flatMap(TextStyle.init) { out.defaults.textStyle = x }
+        if let x = obj["defaultTextSize"] as? Double { out.defaults.textSize = x }
+        if let x = obj["defaultPosY"] as? Double { out.defaults.textPosY = x }
+        if let x = obj["defaultCaptionTemplateId"] as? String { out.defaults.captionTemplateId = x }
+        if let x = obj["defaultHashtagSetIds"] as? [String] { out.defaults.hashtagSetIds = x }
+      }
+      return out
+    } catch {
       Log.shared.error("settings unreadable, using defaults in memory: \(error)")
       return Settings()
     }
@@ -151,19 +206,22 @@ public final class Store: @unchecked Sendable {
     try db.run("""
       INSERT INTO videos(id,session_id,name,tags,type,content_type,kind,file,fingerprint,file_size,duration,
         marked_start,marked_end,start,"end",grace,audio,part,score,state,excluded,missing,in_manifest,notes,
-        already_posted_on,longform_url,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        already_posted_on,longform_url,created_at,updated_at,title,title_tracks,title_source,source_width,source_height)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, name=excluded.name, tags=excluded.tags,
         type=excluded.type, content_type=excluded.content_type, kind=excluded.kind, file=excluded.file,
         fingerprint=excluded.fingerprint, file_size=excluded.file_size, duration=excluded.duration,
         marked_start=excluded.marked_start, marked_end=excluded.marked_end, start=excluded.start, "end"=excluded."end",
         grace=excluded.grace, audio=excluded.audio, part=excluded.part, score=excluded.score, state=excluded.state,
         excluded=excluded.excluded, missing=excluded.missing, in_manifest=excluded.in_manifest, notes=excluded.notes,
-        already_posted_on=excluded.already_posted_on, longform_url=excluded.longform_url, updated_at=excluded.updated_at
+        already_posted_on=excluded.already_posted_on, longform_url=excluded.longform_url, updated_at=excluded.updated_at,
+        title=excluded.title, title_tracks=excluded.title_tracks, title_source=excluded.title_source,
+        source_width=excluded.source_width, source_height=excluded.source_height
       """, [v.id, v.sessionId, v.name, JSONCoding.string(v.tags), v.type.rawValue, v.contentType, v.kind.rawValue,
             v.file, v.fingerprint, v.fileSize, v.duration, v.markedStart, v.markedEnd, v.start, v.end, v.grace,
             v.audio, v.part, v.score, v.state.rawValue, v.excluded, v.missing, v.inManifest, v.notes,
-            JSONCoding.string(v.alreadyPostedOn), v.longformURL, v.createdAt, v.updatedAt])
+            JSONCoding.string(v.alreadyPostedOn), v.longformURL, v.createdAt, v.updatedAt, v.title,
+            v.titleTracks.map { JSONCoding.string($0) }, v.titleSource, v.sourceWidth, v.sourceHeight])
   }
 
   /// Updates only the fields that come from videos.json / the file (spec §4: never overwrite app-owned fields).
@@ -198,6 +256,7 @@ public final class Store: @unchecked Sendable {
 
   public func setKind(_ id: String, _ kind: Kind) throws {
     try db.run("UPDATE videos SET kind=?, updated_at=? WHERE id=?", [kind.rawValue, now, id])
+    try refreshState(videoId: id)  // "No text for Talking" can change readiness
   }
 
   public func setNotes(_ id: String, _ notes: String) throws {
@@ -214,7 +273,9 @@ public final class Store: @unchecked Sendable {
           part: r.int("part"), score: r.int("score"), state: VideoState(rawValue: r.string("state")!) ?? .needsEdit,
           excluded: r.bool("excluded"), missing: r.bool("missing"), inManifest: r.bool("in_manifest"),
           notes: r.string("notes") ?? "", alreadyPostedOn: r.json("already_posted_on") ?? [],
-          longformURL: r.string("longform_url"), createdAt: r.date("created_at")!, updatedAt: r.date("updated_at")!)
+          longformURL: r.string("longform_url"), createdAt: r.date("created_at")!, updatedAt: r.date("updated_at")!,
+          title: r.string("title"), titleTracks: r.json("title_tracks"), titleSource: r.string("title_source"),
+          sourceWidth: r.int("source_width"), sourceHeight: r.int("source_height"))
   }
 
   public func fileURL(for v: Video) throws -> URL? {
@@ -237,6 +298,11 @@ public final class Store: @unchecked Sendable {
   }
 
   public func save(_ e: Edit, videoId: String) throws {
+    if let c = e.crop, let v = try video(id: videoId), let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0,
+       try edit(videoId: videoId).crop != c {
+      struct P: Codable { var x: Double; var y: Double }
+      try setKV("defaults.lastCropCentre", P(x: (c.x + c.w / 2) / Double(w), y: (c.y + c.h / 2) / Double(h)))
+    }
     try db.run("INSERT INTO edits(video_id,json,updated_at) VALUES(?,?,?) ON CONFLICT(video_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",
                [videoId, JSONCoding.string(e), now])
     try refreshState(videoId: videoId)
@@ -269,7 +335,7 @@ public final class Store: @unchecked Sendable {
     let all = try versions(videoId: videoId).filter { $0.number <= number }
     guard all.contains(where: { $0.number == number }) || number == 1 else { return nil }
     return VersionResolver.resolve(all.isEmpty ? [Version(number: 1)] : all, number: number,
-                                   settings: try settings ?? self.settings())
+                                   settings: try settings ?? self.settings(), video: try video(id: videoId))
   }
 
   // MARK: Hashtag sets and caption templates
@@ -491,9 +557,13 @@ public final class Store: @unchecked Sendable {
 }
 
 public enum VersionResolver {
-  public static func resolve(_ versions: [Version], number: Int, settings: Settings) -> ResolvedVersion {
+  /// Carry-forward + defaults. With `video`, text that no version sets comes from `defaults.textSource`
+  /// (Title / raw tag verbatim / empty) and talking clips get "No text" when `noTextForTalking` is on.
+  public static func resolve(_ versions: [Version], number: Int, settings: Settings, video: Video? = nil) -> ResolvedVersion {
+    let d = settings.defaults
     let chain = versions.filter { $0.number <= number }.sorted { $0.number < $1.number }
     var inherited = Set<String>()
+    var defaulted = Set<String>()
     func pick<T>(_ key: String, _ kp: KeyPath<Version, T?>) -> T? {
       for v in chain.reversed() {
         if let x = v[keyPath: kp] {
@@ -502,40 +572,57 @@ public enum VersionResolver {
           return x
         }
       }
+      defaulted.insert(key)
       return nil
     }
     // Text and "No text" resolve as one field: the latest version that sets either decides both.
-    var text = "", noText = false
+    var text = "", noText = false, decided = false
     for v in chain.reversed() {
       let t = v.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
       if v.noText == true || !t.isEmpty {
         text = v.text ?? ""
         noText = v.noText == true
+        decided = true
         if v.number != number { inherited.insert("text"); inherited.insert("noText") }
         break
       }
-      if v.noText == false, v.number == number { break }  // explicitly cleared "No text" with no text yet
+      if v.noText == false, v.number == number { decided = true; break }  // explicitly cleared "No text"
     }
-    let setIds = pick("hashtagSetIds", \.hashtagSetIds)
+    if !decided {
+      defaulted.insert("text"); defaulted.insert("noText")
+      if let video {
+        if video.kind == .talking && d.noTextForTalking {
+          noText = true
+        } else {
+          switch d.textSource {
+          case .title: text = video.titleText ?? ""
+          case .rawTag: text = video.type == .short ? video.tag : ""
+          case .empty: text = ""
+          }
+        }
+      }
+    }
+    let start = pick("textStart", \.textStart), end = pick("textEnd", \.textEnd)
+    let timingDefault = defaulted.contains("textStart") && defaulted.contains("textEnd")
     return ResolvedVersion(
       number: number,
       text: text,
       noText: noText,
-      style: pick("style", \.style) ?? settings.defaultStyle,
-      size: pick("size", \.size) ?? settings.defaultTextSize,
-      posX: pick("posX", \.posX) ?? 0.5,
-      posY: pick("posY", \.posY) ?? settings.defaultPosY,
-      align: pick("align", \.align) ?? .center,
-      textStart: pick("textStart", \.textStart),
-      textEnd: pick("textEnd", \.textEnd),
+      style: pick("style", \.style) ?? d.textStyle,
+      size: pick("size", \.size) ?? d.textSize,
+      posX: pick("posX", \.posX) ?? d.textPosX,
+      posY: pick("posY", \.posY) ?? d.textPosY,
+      align: pick("align", \.align) ?? d.textAlign,
+      textStart: timingDefault ? d.textWindow.start : start,
+      textEnd: timingDefault ? d.textWindow.end : end,
       caption: pick("caption", \.caption) ?? "",
       captionTemplateId: pick("captionTemplateId", \.captionTemplateId),
-      hashtagSetIds: setIds ?? settings.defaultHashtagSetIds,
-      extraHashtags: pick("extraHashtags", \.extraHashtags) ?? [],
+      hashtagSetIds: pick("hashtagSetIds", \.hashtagSetIds) ?? d.hashtagSetIds,
+      extraHashtags: pick("extraHashtags", \.extraHashtags) ?? d.extraHashtags,
       youtubeTitle: pick("youtubeTitle", \.youtubeTitle) ?? "",
       platformCaptions: pick("platformCaptions", \.platformCaptions) ?? [:],
       inherited: inherited,
-      autoHashtags: setIds == nil)
+      defaulted: defaulted)
   }
 }
 

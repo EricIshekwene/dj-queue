@@ -2,50 +2,8 @@ import Foundation
 import Testing
 @testable import DJQCore
 
-@Suite struct PrefillTests {
-  let rules = PrefillRules()
-
-  @Test func shortNamesOneLineWithX() {
-    #expect(Prefill.text(tag: "yayo x johnny", kind: .djVid, rules: rules) == "Yayo x Johnny")
-  }
-
-  @Test func longNamesThreeLines() {
-    #expect(Prefill.text(tag: "mabalabala x a collision of two worlds", kind: .djVid, rules: rules)
-      == "Mabalabala\nx\nA Collision of Two Worlds")
-  }
-
-  @Test func threeShortNames() {
-    #expect(Prefill.text(tag: "bele x aura salad", kind: .djVid, rules: rules) == "Bele x Aura Salad")
-    #expect(Prefill.text(tag: "evil jingle x mnike x escaladizzy", kind: .djVid, rules: rules)
-      == "Evil Jingle\nx\nMnike\nx\nEscaladizzy")
-  }
-
-  @Test func singleNameAndNumbers() {
-    #expect(Prefill.text(tag: "bone shaker", kind: .djVid, rules: rules) == "Bone Shaker")
-    #expect(Prefill.text(tag: "aura salad x tobetse 3.0", kind: .djVid, rules: rules) == "Aura Salad x Tobetse 3.0")
-  }
-
-  @Test func danglingXAndCommonWords() {
-    #expect(Prefill.text(tag: "jago x", kind: .djVid, rules: rules) == "Jago")
-    #expect(Prefill.text(tag: "mmmnn x take all my money", kind: .djVid, rules: rules) == "Mmmnn\nx\nTake All My Money")
-  }
-
-  @Test func talkingHasNoPrefill() {
-    #expect(Prefill.text(tag: "yayo x johnny", kind: .talking, rules: rules) == "")
-  }
-
-  @Test func noArrowNoEmoji() {
-    let t = Prefill.text(tag: "johnny x jago", kind: .djVid, rules: rules)
-    #expect(!t.contains("➜"))
-    #expect(!t.unicodeScalars.contains { $0.properties.isEmojiPresentation })
-  }
-
-  @Test func replacementsFixTypos() {
-    var r = rules
-    r.replacements = ["sugnba": "Sungba"]
-    #expect(Prefill.text(tag: "sugnba x tshwalabami", kind: .djVid, rules: r) == "Sungba x Tshwalabami")
-  }
-}
+// Round 2 #9: the Prefill formatter left the app. Its cases now live in `scripts/prefill_titles.py --self-test`
+// (run by MetadataTests.prefillScriptSelfTest), unchanged.
 
 @Suite struct CaptionTests {
   func video() -> Video {
@@ -70,12 +28,18 @@ import Testing
     #expect(!c.contains("➜"))
   }
 
-  @Test func xCaptionDropsHashtagsToFit() {
+  // Round 2 #9 replaced the old "xCaptionDropsHashtagsToFit": nothing is dropped silently any more. The caption
+  // stays over the limit (Validation reports it) and `withoutHashtags` is the explicit "Drop hashtags for X".
+  @Test func overLimitCaptionIsKeptAndWithoutHashtagsIsExplicit() {
     let r = resolved { $0.extraHashtags = (0..<40).map { "#tag\($0)" } }
     let c = Captions.caption(for: .x, version: r, video: video(), sessionName: "2026-10-23 – Afroween Jazz Piano",
                              sets: Defaults.hashtagSets, templates: Defaults.captionTemplates, settings: Settings())
-    #expect(c.count <= 280)
-    #expect(c.hasPrefix("Yayo x Johnny"))
+    #expect(c.count > 280)
+    #expect(c.contains("#tag39"))
+    let bare = Captions.withoutHashtags(for: .x, version: r, video: video(), sessionName: "2026-10-23 – Afroween Jazz Piano",
+                                        templates: Defaults.captionTemplates, settings: Settings())
+    #expect(bare.count <= 280)
+    #expect(bare.hasPrefix("Yayo x Johnny") && !bare.contains("#"))
   }
 
   @Test func platformOverrideWins() {
@@ -139,7 +103,8 @@ import Testing
     let v = try #require(try f.store.video(id: "clip-1"))  // poosh 5, 158 s
     let issues = Validation.platformIssues(video: v, edit: Edit(), settings: Settings())
     #expect(Set(issues.compactMap(\.platform)) == [.x, .facebook])
-    #expect(issues.contains { $0.message == "Too long for X (2:38 > 2:20)" })
+    // Round 2: the default trim is the markers (3 s in from each end) → 152 s, not the whole 158 s file.
+    #expect(issues.contains { $0.message == "Too long for X (2:32 > 2:20)" && $0.count == 152 && $0.limit == 140 })
     var e = Edit()
     e.platformTrims[.x] = TrimRange(start: 0, end: 130)
     e.skippedPlatforms = [.facebook]

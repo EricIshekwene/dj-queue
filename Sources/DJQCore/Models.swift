@@ -240,9 +240,31 @@ public struct Video: Codable, Sendable, Identifiable, Hashable {
   public var longformURL: String?
   public var createdAt: Date
   public var updatedAt: Date
+  /// Eric's title (app-owned). Seeded once from videos.json `title` when empty; never derived from the tag.
+  /// Feeds the overlay-text default, caption `{text}`, the YouTube title and the display name.
+  public var title: String? = nil
+  /// Optional structured track names behind the title (from an accepted suggestion or `djq title --tracks`).
+  public var titleTracks: [Track]? = nil
+  /// Who set `title`: "manifest" (videos.json seed), "app" (Eric in the app), "agent" (djq), "suggestion".
+  public var titleSource: String? = nil
+  /// Source picture size, cached the first time the file is probed (nil = not probed yet).
+  public var sourceWidth: Int? = nil
+  public var sourceHeight: Int? = nil
 
   /// The marker tag (the part of the name after the session), e.g. "yayo x johnny".
   public var tag: String { tags.first ?? name }
+
+  /// What every screen shows for this clip: the title, else the raw marker tag verbatim (no tidying, no guessing).
+  public var displayName: String {
+    if let t = title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty { return t }
+    return tag
+  }
+
+  /// The title if set (trimmed, non-empty), else nil.
+  public var titleText: String? {
+    guard let t = title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+    return t
+  }
 
   /// Eric's in/out markers relative to the clip file (spec §1).
   public var markerIn: Double? {
@@ -269,19 +291,85 @@ public struct TrimRange: Codable, Sendable, Hashable {
   public var duration: Double { end - start }
 }
 
-/// One per video (spec §3 Edit).
+/// One per video (spec §3 Edit). Round 2: stores ONLY Eric's overrides — every nil field follows
+/// `Settings.defaults` (NewClipDefaults). Read the effective values through `ResolvedEdit`
+/// (`Store.resolvedEdit(videoId:)` / `EditResolver.resolve`), which also says which fields are defaults.
 public struct Edit: Codable, Sendable, Hashable {
-  public var aspect: Aspect = .r9x16
+  /// nil = `defaults.aspect`. (JSON key "aspect".)
+  public var aspectOverride: Aspect?
+  /// Confirmed crop in source pixels. nil = not confirmed yet; previews use the default crop anchor.
   public var crop: CropRect?
+  /// Absolute seconds in the clip file. nil = default trim (markers ± extra seconds, or the whole file).
   public var trimIn: Double?
   public var trimOut: Double?
-  public var coverTime: Double?  // nil = first frame of trim
-  public var coverIncludesText: Bool = true  // decision Q18
+  /// Absolute seconds. nil = default cover frame (`defaults.coverFrame`).
+  public var coverTime: Double?
+  /// nil = `defaults.coverIncludesText`. (JSON key "coverIncludesText".)
+  public var coverIncludesTextOverride: Bool?
   public var platformTrims: [Platform: TrimRange] = [:]
+  /// Platforms Eric skipped for this clip.
   public var skippedPlatforms: Set<Platform> = []
+  /// Platforms Eric turned ON for this clip although `defaults.platforms` leaves them out.
+  public var includedPlatforms: Set<Platform> = []
 
   public init() {}
 
+  enum CodingKeys: String, CodingKey {
+    case aspectOverride = "aspect", crop, trimIn, trimOut, coverTime
+    case coverIncludesTextOverride = "coverIncludesText", platformTrims, skippedPlatforms, includedPlatforms
+  }
+
+  public init(from d: Decoder) throws {
+    let c = try d.container(keyedBy: CodingKeys.self)
+    aspectOverride = try c.decodeIfPresent(Aspect.self, forKey: .aspectOverride)
+    crop = try c.decodeIfPresent(CropRect.self, forKey: .crop)
+    trimIn = try c.decodeIfPresent(Double.self, forKey: .trimIn)
+    trimOut = try c.decodeIfPresent(Double.self, forKey: .trimOut)
+    coverTime = try c.decodeIfPresent(Double.self, forKey: .coverTime)
+    coverIncludesTextOverride = try c.decodeIfPresent(Bool.self, forKey: .coverIncludesTextOverride)
+    platformTrims = try c.decodeIfPresent([Platform: TrimRange].self, forKey: .platformTrims) ?? [:]
+    skippedPlatforms = try c.decodeIfPresent(Set<Platform>.self, forKey: .skippedPlatforms) ?? []
+    includedPlatforms = try c.decodeIfPresent(Set<Platform>.self, forKey: .includedPlatforms) ?? []
+  }
+
+  /// Deterministic JSON (sets sorted), so stored rows and hashes don't change when nothing changed.
+  public func encode(to enc: Encoder) throws {
+    var c = enc.container(keyedBy: CodingKeys.self)
+    try c.encodeIfPresent(aspectOverride, forKey: .aspectOverride)
+    try c.encodeIfPresent(crop, forKey: .crop)
+    try c.encodeIfPresent(trimIn, forKey: .trimIn)
+    try c.encodeIfPresent(trimOut, forKey: .trimOut)
+    try c.encodeIfPresent(coverTime, forKey: .coverTime)
+    try c.encodeIfPresent(coverIncludesTextOverride, forKey: .coverIncludesTextOverride)
+    try c.encode(platformTrims, forKey: .platformTrims)
+    try c.encode(skippedPlatforms.sorted { $0.rawValue < $1.rawValue }, forKey: .skippedPlatforms)
+    try c.encode(includedPlatforms.sorted { $0.rawValue < $1.rawValue }, forKey: .includedPlatforms)
+  }
+
+  /// True when the clip doesn't post on `p` (skipped, or left out by the default platforms and not turned on).
+  public func isSkipped(_ p: Platform, defaults: NewClipDefaults) -> Bool {
+    if skippedPlatforms.contains(p) { return true }
+    return !defaults.platforms.contains(p) && !includedPlatforms.contains(p)
+  }
+
+  /// True when nothing is overridden.
+  public var isEmpty: Bool { self == Edit() }
+
+  // MARK: Deprecated round-1 accessors (kept so the round-1 app compiles)
+
+  @available(*, deprecated, message: "Edits store overrides only: read ResolvedEdit.aspect, write aspectOverride")
+  public var aspect: Aspect {
+    get { aspectOverride ?? .r9x16 }
+    set { aspectOverride = newValue }
+  }
+
+  @available(*, deprecated, message: "Edits store overrides only: read ResolvedEdit.coverIncludesText, write coverIncludesTextOverride")
+  public var coverIncludesText: Bool {
+    get { coverIncludesTextOverride ?? true }
+    set { coverIncludesTextOverride = newValue }
+  }
+
+  @available(*, deprecated, message: "Ignores the markers default: use ResolvedEdit.trim(platform:)")
   public func trim(duration: Double, platform: Platform? = nil) -> TrimRange {
     if let p = platform, let t = platformTrims[p] { return t }
     return TrimRange(start: trimIn ?? 0, end: trimOut ?? duration)
@@ -330,10 +418,70 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
   public var platformCaptions: [Platform: String]
   /// Field names that came from an earlier version (shown faded in the editor).
   public var inherited: Set<String>
-  /// True when no version chose hashtag sets: the default sets plus one rotating sub-set per video are used (Q15).
-  public var autoHashtags: Bool = false
+  /// Field names (Version property names) that no version set, so they come from `Settings.defaults`
+  /// ("Default" vs "Custom" in the editor). "text"/"noText" are defaulted together.
+  public var defaulted: Set<String> = []
 
   public var hasText: Bool { !noText && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+  /// True when `field` (a Version property name) follows the defaults.
+  public func isDefault(_ field: String) -> Bool { defaulted.contains(field) }
+
+  @available(*, deprecated, message: "Rotating hashtags were removed in round 2; use isDefault(\"hashtagSetIds\")")
+  public var autoHashtags: Bool { defaulted.contains("hashtagSetIds") }
+
+  enum CodingKeys: String, CodingKey {
+    case number, text, noText, style, size, posX, posY, align, textStart, textEnd, caption, captionTemplateId,
+         hashtagSetIds, extraHashtags, youtubeTitle, platformCaptions, inherited, defaulted
+  }
+
+  /// Deterministic JSON (sets sorted), so hashes/snapshots of a resolved version are stable.
+  public func encode(to enc: Encoder) throws {
+    var c = enc.container(keyedBy: CodingKeys.self)
+    try c.encode(number, forKey: .number); try c.encode(text, forKey: .text); try c.encode(noText, forKey: .noText)
+    try c.encode(style, forKey: .style); try c.encode(size, forKey: .size); try c.encode(posX, forKey: .posX)
+    try c.encode(posY, forKey: .posY); try c.encode(align, forKey: .align)
+    try c.encodeIfPresent(textStart, forKey: .textStart); try c.encodeIfPresent(textEnd, forKey: .textEnd)
+    try c.encode(caption, forKey: .caption); try c.encodeIfPresent(captionTemplateId, forKey: .captionTemplateId)
+    try c.encode(hashtagSetIds, forKey: .hashtagSetIds); try c.encode(extraHashtags, forKey: .extraHashtags)
+    try c.encode(youtubeTitle, forKey: .youtubeTitle)
+    try c.encode(Dictionary(uniqueKeysWithValues: platformCaptions.map { ($0.key.rawValue, $0.value) }), forKey: .platformCaptions)
+    try c.encode(inherited.sorted(), forKey: .inherited); try c.encode(defaulted.sorted(), forKey: .defaulted)
+  }
+
+  public init(from dec: Decoder) throws {
+    let c = try dec.container(keyedBy: CodingKeys.self)
+    number = try c.decode(Int.self, forKey: .number)
+    text = try c.decode(String.self, forKey: .text)
+    noText = try c.decode(Bool.self, forKey: .noText)
+    style = try c.decode(TextStyle.self, forKey: .style)
+    size = try c.decode(Double.self, forKey: .size)
+    posX = try c.decode(Double.self, forKey: .posX)
+    posY = try c.decode(Double.self, forKey: .posY)
+    align = try c.decode(TextAlign.self, forKey: .align)
+    textStart = try c.decodeIfPresent(Double.self, forKey: .textStart)
+    textEnd = try c.decodeIfPresent(Double.self, forKey: .textEnd)
+    caption = try c.decode(String.self, forKey: .caption)
+    captionTemplateId = try c.decodeIfPresent(String.self, forKey: .captionTemplateId)
+    hashtagSetIds = try c.decode([String].self, forKey: .hashtagSetIds)
+    extraHashtags = try c.decode([String].self, forKey: .extraHashtags)
+    youtubeTitle = try c.decode(String.self, forKey: .youtubeTitle)
+    let pc = try c.decodeIfPresent([String: String].self, forKey: .platformCaptions) ?? [:]
+    platformCaptions = Dictionary(uniqueKeysWithValues: pc.compactMap { k, v in Platform(rawValue: k).map { ($0, v) } })
+    inherited = try c.decodeIfPresent(Set<String>.self, forKey: .inherited) ?? []
+    defaulted = try c.decodeIfPresent(Set<String>.self, forKey: .defaulted) ?? []
+  }
+
+  public init(number: Int, text: String, noText: Bool, style: TextStyle, size: Double, posX: Double, posY: Double,
+              align: TextAlign, textStart: Double?, textEnd: Double?, caption: String, captionTemplateId: String?,
+              hashtagSetIds: [String], extraHashtags: [String], youtubeTitle: String, platformCaptions: [Platform: String],
+              inherited: Set<String>, defaulted: Set<String> = []) {
+    self.number = number; self.text = text; self.noText = noText; self.style = style; self.size = size
+    self.posX = posX; self.posY = posY; self.align = align; self.textStart = textStart; self.textEnd = textEnd
+    self.caption = caption; self.captionTemplateId = captionTemplateId; self.hashtagSetIds = hashtagSetIds
+    self.extraHashtags = extraHashtags; self.youtubeTitle = youtubeTitle; self.platformCaptions = platformCaptions
+    self.inherited = inherited; self.defaulted = defaulted
+  }
 }
 
 public struct HashtagSet: Codable, Sendable, Identifiable, Hashable {
@@ -553,11 +701,8 @@ public struct Settings: Codable, Sendable, Hashable {
   public var cleanup: CleanupPolicy = .keep  // Q8
   public var allowEarlyPosting: Bool = true  // Q3
   public var timeZone: String = "America/New_York"
-  public var defaultStyle: TextStyle = .box  // Q11
-  public var defaultTextSize: Double = 64  // Q13 (medium)
-  public var defaultPosY: Double = 0.5  // Q12 (centre)
-  public var defaultCaptionTemplateId: String = "set-link"
-  public var defaultHashtagSetIds: [String] = ["amapiano", "dj"]
+  /// New clip defaults (round 2 #10). Edits/versions store only overrides on top of these.
+  public var defaults = NewClipDefaults()
   public var wakeBeforeFirstSlot: Bool = false
   public var limits: [Platform: PlatformLimits] = PlatformLimits.defaults
 
@@ -577,6 +722,19 @@ public struct Settings: Codable, Sendable, Hashable {
   }
 
   public func slot(for p: Platform) -> Int { slotMinutes[p] ?? p.defaultSlotMinutes }
+
+  // MARK: Deprecated round-1 names (forward to `defaults`)
+
+  @available(*, deprecated, message: "Use defaults.textStyle")
+  public var defaultStyle: TextStyle { get { defaults.textStyle } set { defaults.textStyle = newValue } }
+  @available(*, deprecated, message: "Use defaults.textSize")
+  public var defaultTextSize: Double { get { defaults.textSize } set { defaults.textSize = newValue } }
+  @available(*, deprecated, message: "Use defaults.textPosY")
+  public var defaultPosY: Double { get { defaults.textPosY } set { defaults.textPosY = newValue } }
+  @available(*, deprecated, message: "Use defaults.captionTemplateId")
+  public var defaultCaptionTemplateId: String { get { defaults.captionTemplateId } set { defaults.captionTemplateId = newValue } }
+  @available(*, deprecated, message: "Use defaults.hashtagSetIds")
+  public var defaultHashtagSetIds: [String] { get { defaults.hashtagSetIds } set { defaults.hashtagSetIds = newValue } }
 }
 
 public struct PlatformLimits: Codable, Sendable, Hashable {

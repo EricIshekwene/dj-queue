@@ -212,7 +212,9 @@ import Testing
   @Test func tooLongForXFailsThenPerPlatformTrimRequeuesNextDay() throws {
     let f = try Fixture.engine(8, scores: [20, 10, 30, 40, 50, 60, 70, 80])  // clip-1 (21 s) posts Monday
     try Planner(store: f.store).approveWeek(f.week)
-    try f.updateSettings { $0.limits[.x]!.maxDuration = 20 }
+    // Round 2: the default trim is Eric's markers (3 s in from each end in the fixture); this test is about the
+    // whole-file length, so use the whole-file trim default (behaviour under markers is covered in DefaultsTests).
+    try f.updateSettings { $0.limits[.x]!.maxDuration = 20; $0.defaults.trimMode = .wholeFile }
     let (e, n) = engine(f)
     e.tick(reason: "t")
     let x = try #require(try f.post(.x, day: "2026-11-02"))
