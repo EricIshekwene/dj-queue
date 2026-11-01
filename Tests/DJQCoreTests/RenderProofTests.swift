@@ -18,7 +18,7 @@ import Testing
 
   @Test(.enabled(if: env["DJQ_PROOF"] == "1"), .timeLimit(.minutes(10)))
   func milestone3Proof() throws {
-    let evidence = URL(fileURLWithPath: Self.env["DJQ_EVIDENCE"] ?? "~/code/dj-queue-dev/evidence/render")
+    let evidence = URL(fileURLWithPath: Self.env["DJQ_EVIDENCE"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("code/dj-queue-dev/evidence/render").path)
     try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
     let paths = Paths.standard
     #expect(!paths.root.path.hasPrefix(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies").path),

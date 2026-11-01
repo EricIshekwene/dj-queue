@@ -2,7 +2,7 @@
 
 **Status:** LOCKED — Eric answered round 1 on 2026-11-01 (`DECISIONS.md`); ⟨Qn⟩ markers point at those answers, which win over any default written here.
 
-Process: inventory → locked references → one decision page. Slot IDs from `INVENTORY.md`. Every image in `refs/` was looked at before it was locked.
+Process: inventory every slot → lock one visual reference per slot → one decision page for the owner → build. Slot IDs from `INVENTORY.md`. Every reference image was looked at before it was locked (reference screenshots are kept locally in `refs/`, not published — see `design/REFS.md` for the source links).
 
 ## Visual direction
 
