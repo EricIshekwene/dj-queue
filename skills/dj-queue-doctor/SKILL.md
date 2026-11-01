@@ -51,8 +51,8 @@ Work through errors first. Re-run `djq doctor` after each fix.
 
 ## How the engine behaves (so fixes don't fight it)
 
-- Ticks every minute while the Mac is awake (and on wake / any `djq` write): intake → plan → render-ahead →
-  missed → due → platform checks → alerts → move → heartbeat → backup. `djq tick` runs one by hand.
+- Ticks every minute while the Mac is awake (and on wake / any `djq` write): intake → plan → missed →
+  due → platform checks → alerts → render (one new render per tick) → move → heartbeat → backup. `djq tick` runs one by hand.
 - Only approved weeks have posts. One video per day goes to every enabled platform at staggered times
   (FB 12:30, Threads 1:30, YT 3:00, X 5:00, IG 6:00, TikTok 7:00 pm, New York).
 - Late < 6 h (or still the same day) → stays due. A whole day missed → `overdue`, and that platform's
@@ -69,7 +69,7 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | `files.missing` | Ask Eric to put the file back or undo the rename; `djq intake` relinks by fingerprint (any session). If it's gone for good: `djq exclude <video>` and, if it was planned, `djq remove-slot <slot>` or `djq skip-next <video>`. |
 | `files.relinked` | Info only. |
 | `files.duration` | File length ≠ `videos.json`. Re-export that clip with `export_clips.py --only N`, `djq intake`; the engine re-renders automatically when the edit/hash changes. |
-| `plan.notReady` | A planned video lost its crop/text/caption (or was excluded). Eric finishes the edit in the app, or swap it out: `djq skip-next <video>` / `djq remove-slot <slot>` then `djq pin <ready-video> <date>`. |
+| `plan.notReady` | A planned video lost its crop/text/caption (or was excluded). Eric finishes the edit in the app, or take it out: `djq remove-slot <slot>` then `djq pin <ready-video> <date>` (`skip-next` only defers it a slot). |
 | `plan.gaps` | An approved day has no post. `djq pin <ready-video> <YYYY-MM-DD>` (see `djq queue`), or `djq week --rebuild <monday>` then Eric approves. |
 | `runway.approved` | Show Eric `djq week <next-monday>` (propose with `--propose`); Eric approves (`--approve`). Don't approve on their behalf unless told. |
 | `runway.total` | Eric needs to score videos (`djq queue` shows "to score"), finish edits, or record/export a new set. Nothing to fix in data. |
@@ -81,7 +81,7 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | `platform.limits` | A scored video is longer than a platform allows, so it stays out of the queue. Eric adds a per-platform trim or skips that platform in the editor. Never auto-cut. |
 | `engine.launchAgent` | Ask Eric to run `djq agent install --app ~/Applications/DJ\ Queue.app --load` (or Settings → Start at login). Don't load it yourself. |
 | `engine.heartbeat` | The engine hasn't ticked recently: open DJ Queue / check `djq agent status`; `djq tick` runs one tick. Gaps while the Mac was off are normal (see `djq health`). |
-| `db.integrity` | Stop. Ask Eric to quit DJ Queue; copy the newest `_app/backups/queue-*.sqlite` over `queue.sqlite` after moving the broken file aside (never delete it). |
+| `db.integrity` | Stop and involve Eric. (1) Quit DJ Queue and stop the agent (Eric: `launchctl bootout gui/$(id -u)/com.djlovd.queue.engine`); make sure no `djq` is running. (2) In `~/Library/Application Support/DJ Queue/`, move `queue.sqlite`, `queue.sqlite-wal` and `queue.sqlite-shm` together into a new `broken-<date>/` folder (never delete them — a stale `-wal` left behind would replay onto the restored file). (3) Copy the newest `~/Movies/DJ Video/_app/backups/queue-YYYY-MM-DD.sqlite` to `queue.sqlite`. (4) Reopen the app; run `djq doctor`. Changes since that backup are lost — tell Eric which day it's from. |
 | `db.backup` | `djq tick` makes today's backup if it's missing. If it keeps failing, check `_app/backups/` is writable. |
 | `disk.free` | Tell Eric (< 50 GB). Suggest emptying Trash / archiving old raw footage. Don't delete anything yourself. Posted renders are kept by default (Settings → Cleanup). |
 | `tools.ffmpeg` | Eric: `brew install ffmpeg`. |

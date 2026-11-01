@@ -35,6 +35,7 @@ import Testing
     try f.updateSettings { $0.sortOverrides[.tiktok] = .bestFirst }
     let p = Planner(store: f.store)
     try p.approveWeek(f.week)
+    #expect(try f.doublePosts().isEmpty)
     let days = f.dm.weekDays(f.week)
     #expect(try f.post(.facebook, day: days[0])?.videoId == "clip-0")
     #expect(try f.post(.tiktok, day: days[0])?.videoId == "clip-7")
@@ -81,6 +82,7 @@ import Testing
     #expect(try f.posts().isEmpty)
     #expect(try f.store.video(id: "clip-0")?.state == .ready)  // draft doesn't plan
     try p.approveWeek(f.week)
+    #expect(try f.doublePosts().isEmpty)
     let posts = try f.posts()
     #expect(posts.count == 42)
     #expect(posts.allSatisfy { $0.state == .planned && $0.versionNo == 1 && $0.attemptNo == 1 && $0.kind == .regular && $0.publisher == "manual" })
@@ -116,18 +118,22 @@ import Testing
     try p.proposeWeek(f.week)
     // Pin the backlog video to Wednesday: replaces the unpinned slot there.
     try p.pin(videoId: "clip-7", date: "2026-11-04")
+    #expect(try f.doublePosts().isEmpty)
     var slots = try p.slots(week: f.week)
     let wed = try #require(slots.first { $0.date == "2026-11-04" })
     #expect(wed.videoId == "clip-7" && wed.pinned)
     #expect(try Queue(store: f.store).ordered().map(\.id) == ["clip-2"])
     // Swap Monday and Tuesday.
     try p.swap(slots[0].id, slots[1].id)
+    #expect(try f.doublePosts().isEmpty)
     slots = try p.slots(week: f.week)
     #expect(slots[0].videoId == "clip-1" && slots[1].videoId == "clip-0")
     // Approve, then rebuild: the pinned slot stays (with its posts), everything else is re-proposed as draft.
     try p.approveWeek(f.week)
+    #expect(try f.doublePosts().isEmpty)
     try f.updateSettings { $0.sort = .bestFirst }
     try p.rebuildWeek(f.week)
+    #expect(try f.doublePosts().isEmpty)
     #expect(try f.store.week(f.week)?.state == .draft)
     slots = try p.slots(week: f.week)
     #expect(slots.first { $0.date == "2026-11-04" }?.videoId == "clip-7")
@@ -135,9 +141,11 @@ import Testing
     #expect(try f.posts().count == 6)  // only the pinned slot's posts survive
     // Approve again and push from Thursday by one day.
     try p.approveWeek(f.week)
+    #expect(try f.doublePosts().isEmpty)
     let thu = try #require(slots.first { $0.date == "2026-11-05" })
     let thuTT = try #require(try f.store.slotPosts(thu.id).first { $0.platform == .tiktok })
     try p.pushPlan(from: "2026-11-05", days: 1)
+    #expect(try f.doublePosts().isEmpty)
     #expect(try f.store.planSlot(id: thu.id)?.date == "2026-11-06")
     #expect(try f.store.post(id: thuTT.id)?.scheduledAt == f.at("2026-11-06", "19:00"))
     let sunday = try #require(try f.store.planSlots(where: "date=?", ["2026-11-09"]).first)
@@ -149,9 +157,11 @@ import Testing
     let f = try Fixture.engine(8)
     let p = Planner(store: f.store)
     try p.approveWeek(f.week)
+    #expect(try f.doublePosts().isEmpty)
     var slots = try p.slots(week: f.week)
     // Move Monday's slot to Friday (occupied) → they trade places, posts regenerate at the new times.
     try p.move(slotId: slots[0].id, to: "2026-11-06")
+    #expect(try f.doublePosts().isEmpty)
     #expect(try f.store.planSlot(id: slots[0].id)?.date == "2026-11-06")
     #expect(try f.store.planSlot(id: slots[4].id)?.date == "2026-11-02")
     #expect(try f.post(.tiktok, day: "2026-11-06")?.videoId == "clip-0")
@@ -159,15 +169,18 @@ import Testing
     // Remove Sunday's slot → its posts go, the video returns to the backlog.
     slots = try p.slots(week: f.week)
     try p.remove(slotId: slots[6].id)
+    #expect(try f.doublePosts().isEmpty)
     #expect(try f.post(.tiktok, day: "2026-11-08") == nil)
     #expect(try Set(Queue(store: f.store).ordered().map(\.id)) == ["clip-6", "clip-7"])
     // Post today: clip-7 goes on today, everything else moves a day later.
     try p.postToday(videoId: "clip-7")
+    #expect(try f.doublePosts().isEmpty)
     #expect(try f.post(.tiktok, day: "2026-11-02")?.videoId == "clip-7")
     #expect(try f.post(.tiktok, day: "2026-11-03")?.videoId == "clip-4")
     #expect(try f.post(.tiktok, day: "2026-11-02", video: "clip-4") == nil)  // never two on a day
     // Skip next: clip-7 trades with the next slot.
     try p.skipNext(videoId: "clip-7")
+    #expect(try f.doublePosts().isEmpty)
     #expect(try f.post(.tiktok, day: "2026-11-02")?.videoId == "clip-4")
     #expect(try f.post(.tiktok, day: "2026-11-03")?.videoId == "clip-7")
   }
@@ -176,6 +189,7 @@ import Testing
     let f = try Fixture.engine(8)
     let p = Planner(store: f.store)
     try p.approveWeek(f.week)
+    #expect(try f.doublePosts().isEmpty)
     let fb = try #require(try f.post(.facebook, day: "2026-11-02"))
     try PostActions(store: f.store).markPosted(postId: fb.id, url: Fixture.postURLs[.facebook]!)
     #expect(throws: EngineError.self) { try p.remove(slotId: fb.planSlotId!) }

@@ -86,3 +86,38 @@ extension Store {
   func sessionName(for v: Video) throws -> String { try session(id: v.sessionId)?.name ?? "" }
 }
 
+
+/// Occupancy of live regular posts per (platform, local day, position) — the "never double-post" invariant.
+/// Live = not terminal, or posted. Retries/reposts are staggered extras and don't occupy a position.
+struct Placer {
+  let dm: DayMath
+  private(set) var taken: Set<String> = []
+
+  init(store: Store, dm: DayMath, excluding: Set<String> = []) throws {
+    self.dm = dm
+    let positions = Dictionary(uniqueKeysWithValues: try store.planSlots().map { ($0.id, $0.position) })
+    for p in try store.posts(where: "kind='regular'") where !excluding.contains(p.id) && Self.isLive(p) {
+      taken.insert(Self.key(p.platform, dm.key(p.scheduledAt), positions[p.planSlotId ?? ""] ?? 0))
+    }
+  }
+
+  static func isLive(_ p: PlatformPost) -> Bool { p.state == .posted || !p.state.isTerminal }
+  static func key(_ p: Platform, _ day: String, _ pos: Int) -> String { "\(p.rawValue)#\(day)#\(pos)" }
+
+  func isTaken(_ p: Platform, day: String, position: Int) -> Bool { taken.contains(Self.key(p, day, position)) }
+
+  /// Reserves and returns the first day ≥ `day` that is free for the platform at that position.
+  mutating func place(_ p: Platform, position: Int, from day: String) -> String {
+    var d = day
+    while taken.contains(Self.key(p, d, position)) { d = dm.addDays(d, 1) }
+    taken.insert(Self.key(p, d, position))
+    return d
+  }
+}
+
+extension Store {
+  /// The plan position of a post (its slot's position; 0 when it has no slot).
+  func position(of p: PlatformPost) throws -> Int {
+    try p.planSlotId.flatMap { try planSlot(id: $0)?.position } ?? 0
+  }
+}

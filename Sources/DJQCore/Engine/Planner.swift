@@ -4,6 +4,10 @@ import Foundation
 ///
 /// A slot counts as approved when its week is approved or it already has posts (e.g. it was pushed into a
 /// draft week, or created by Post today). Any edit to an approved slot regenerates its un-posted posts.
+///
+/// Never double-post: every regular post is placed with `Placer` on the first day ≥ its intended date that has
+/// no other live regular post for that platform and position, so per-platform shifts (missed days) survive
+/// approvals, swaps, moves and pushes. Retries/reposts are extras staggered ≥ 3 h from that day's post.
 public final class Planner: @unchecked Sendable {
   let store: Store
   lazy var queue = Queue(store: store)
@@ -63,7 +67,8 @@ public final class Planner: @unchecked Sendable {
     guard !upcoming.isEmpty else { throw EngineError("Nothing left to approve in the week of \(week)") }
     try store.db.transaction {
       var picker = PlatformPicker(queue: queue, settings: settings)
-      for s in upcoming { try createPosts(s, settings: settings, dm: dm, picker: &picker) }
+      var placer = try Placer(store: store, dm: dm)
+      for s in upcoming { try createPosts(s, settings: settings, dm: dm, picker: &picker, placer: &placer) }
       try store.save(Week(weekStart: week, state: .approved, approvedAt: store.clock.now))
     }
     try store.logEvent("plan", "Approved week of \(week) (\(upcoming.count) slots)")
@@ -75,12 +80,10 @@ public final class Planner: @unchecked Sendable {
     let today = store.today(dm)
     try store.db.transaction {
       for s in try slots(week: week) where s.date >= today && !s.pinned {
-        let posts = try store.slotPosts(s.id)
-        if posts.contains(where: { $0.state == .posted }) { continue }
-        for p in posts where !p.state.isTerminal { try store.deletePost(p.id) }
+        if try store.slotPosts(s.id).contains(where: { $0.state == .posted }) { continue }
+        try clearSlot(s)
         try store.deletePlanSlot(s.id)
         try store.refreshState(videoId: s.videoId)
-        for p in posts { try store.refreshState(videoId: p.videoId) }
       }
       try store.save(Week(weekStart: week, state: .draft, approvedAt: nil))
     }
@@ -88,32 +91,11 @@ public final class Planner: @unchecked Sendable {
     try store.logEvent("plan", "Rebuilt week of \(week)")
   }
 
-  /// Moves every slot on/after `date` (and their un-posted posts, plus retries/reposts on those days) by `days`.
+  /// Moves every unpinned, un-posted slot on/after `date` later by `days` (skipping over pinned/posted slots),
+  /// with its un-posted posts (each platform keeps its own shift) and the retries/reposts on those days.
   public func pushPlan(from date: String, days: Int) throws {
-    guard days != 0 else { return }
-    let dm = try store.dayMath()
-    try store.db.transaction {
-      var slots = try store.planSlots(where: "date>=?", [date])
-      slots.sort { days > 0 ? ($0.date, $0.position) > ($1.date, $1.position) : ($0.date, $0.position) < ($1.date, $1.position) }
-      for var s in slots {
-        let to = dm.addDays(s.date, days)
-        if days < 0, let clash = try store.planSlots(where: "date=? AND position=?", [to, s.position]).first,
-           !slots.contains(where: { $0.id == clash.id }) {
-          throw EngineError("Can't pull the plan back: \(to) already has a post")
-        }
-        s.date = to
-        s.weekStart = dm.weekStart(of: dm.date(to))
-        try store.save(s)
-        for var p in try store.slotPosts(s.id) where !p.state.isTerminal {
-          p.scheduledAt = Sched.shift(p.scheduledAt, days: days, dm)
-          try store.save(p, note: "plan pushed \(days > 0 ? "+" : "")\(days) d")
-        }
-      }
-      for var p in try store.posts(where: "plan_slot_id IS NULL AND scheduled_at>=?", [dm.date(date)]) where !p.state.isTerminal {
-        p.scheduledAt = Sched.shift(p.scheduledAt, days: days, dm)
-        try store.save(p, note: "plan pushed \(days > 0 ? "+" : "")\(days) d")
-      }
-    }
+    guard days > 0 else { throw EngineError("Push moves the plan later — use a positive number of days") }
+    try store.db.transaction { try push(from: date, days: days, until: nil) }
     try store.logEvent("plan", "Pushed plan from \(date) by \(days) day(s)")
   }
 
@@ -137,14 +119,15 @@ public final class Planner: @unchecked Sendable {
       if let pos = (0..<max(1, settings.postsPerDay)).first(where: { !used.contains($0) }) {
         let s = PlanSlot(id: newId(), date: date, position: pos, videoId: v.id, pinned: true, weekStart: week)
         try store.save(s)
-        if try store.week(week)?.state == .approved { try regenerate(s, settings: settings, dm: dm) }
+        try regenerateMany([(s, false)], settings: settings, dm: dm)
       } else if var s = here.first(where: { !$0.pinned }) {
         try ensureNothingPosted(s)
+        let was = try isApproved(s)
         let old = s.videoId
         s.videoId = v.id
         s.pinned = true
         try store.save(s)
-        try regenerateIfApproved(s, wasApproved: try isApproved(s), settings: settings, dm: dm)
+        try regenerateMany([(s, was)], settings: settings, dm: dm)
         try store.refreshState(videoId: old)
       } else {
         throw EngineError("Every slot on \(date) is pinned — unpin one first")
@@ -157,11 +140,9 @@ public final class Planner: @unchecked Sendable {
     guard let s = try store.planSlot(id: slotId) else { throw EngineError("No plan slot \(slotId)") }
     try ensureNothingPosted(s)
     try store.db.transaction {
-      let posts = try store.slotPosts(s.id)
-      for p in posts where !p.state.isTerminal { try store.deletePost(p.id) }
+      try clearSlot(s)
       try store.deletePlanSlot(s.id)
       try store.refreshState(videoId: s.videoId)
-      for p in posts { try store.refreshState(videoId: p.videoId) }
     }
   }
 
@@ -190,43 +171,38 @@ public final class Planner: @unchecked Sendable {
     try store.db.transaction { try moveSlot(&s, to: date, settings: settings, dm: dm) }
   }
 
-  /// Puts a video on today (pinned) and pushes the rest of the plan back a day.
+  /// Puts a video on today (pinned) and pushes the rest of the plan a day later. Pinned slots never move.
   public func postToday(videoId: String) throws {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     let today = store.today(dm)
+    let perDay = max(1, settings.postsPerDay)
     let existing = try store.planSlots(where: "video_id=? AND date>=?", [videoId, today]).first
     if let e = existing { try ensureNothingPosted(e) } else { _ = try readyVideo(videoId) }
     try store.db.transaction {
-      var s: PlanSlot
-      if var e = existing {
-        // Park it, close its gap by pushing the days between today and its old date.
-        let oldDate = e.date
-        e.date = "0000-00-00"
-        e.position = -1
-        try store.save(e)
-        let between = try store.planSlots(where: "date>=? AND date<?", [today, oldDate])
-          .sorted { ($0.date, $0.position) > ($1.date, $1.position) }
-        for var b in between {
-          b.date = dm.addDays(b.date, 1)
-          b.weekStart = dm.weekStart(of: dm.date(b.date))
-          try store.save(b)
-          for var p in try store.slotPosts(b.id) where !p.state.isTerminal {
-            p.scheduledAt = Sched.shift(p.scheduledAt, days: 1, dm)
-            try store.save(p, note: "post today: pushed +1 d")
-          }
-        }
-        s = e
-      } else {
-        try pushPlan(from: today, days: 1)
-        s = PlanSlot(id: newId(), date: today, position: 0, videoId: videoId, pinned: true, weekStart: "")
+      var until: String?
+      if let e = existing {
+        // Take it out of its old day; only the days between today and that day move.
+        try clearSlot(e)
+        try store.deletePlanSlot(e.id)
+        until = e.date
       }
-      s.date = today
-      s.position = 0
-      s.pinned = true
-      s.weekStart = dm.weekStart(of: dm.date(today))
+      func freePosition() throws -> Int? {
+        let used = Set(try store.planSlots(where: "date=?", [today]).map(\.position))
+        return (0..<perDay).first { !used.contains($0) }
+      }
+      var pos = try freePosition()
+      if pos == nil || existing != nil {
+        try push(from: today, days: 1, until: until)
+        pos = try freePosition()
+      }
+      guard let position = pos else {
+        throw EngineError("Today's slots are pinned or already posted — unpin one first")
+      }
+      let s = PlanSlot(id: existing?.id ?? newId(), date: today, position: position, videoId: videoId, pinned: true,
+                       weekStart: dm.weekStart(of: dm.date(today)))
       try store.save(s)
-      try regenerate(s, settings: settings, dm: dm)
+      try regenerateMany([(s, true)], settings: settings, dm: dm)
       try store.refreshState(videoId: videoId)
     }
     try store.logEvent("plan", "Post today", videoId: videoId)
@@ -274,9 +250,10 @@ public final class Planner: @unchecked Sendable {
     }
   }
 
-  /// One post per active platform that doesn't have one for this slot yet.
-  func createPosts(_ s: PlanSlot, settings: Settings, dm: DayMath, picker: inout PlatformPicker) throws {
-    let existing = Set(try store.slotPosts(s.id).map(\.platform))
+  /// One regular post per active platform that doesn't have one for this slot yet, each on the first free day
+  /// ≥ the slot date for that platform and position.
+  func createPosts(_ s: PlanSlot, settings: Settings, dm: DayMath, picker: inout PlatformPicker, placer: inout Placer) throws {
+    let existing = Set(try store.slotPosts(s.id).filter { $0.kind == .regular }.map(\.platform))
     let now = store.clock.now
     var touched: Set<String> = [s.videoId]
     for p in settings.activePlatforms where !existing.contains(p) {
@@ -290,11 +267,13 @@ public final class Planner: @unchecked Sendable {
       guard let vid = videoId else { continue }
       picker.used[p, default: []].insert(vid)
       touched.insert(vid)
+      let day = placer.place(p, position: s.position, from: s.date)
       try store.save(PlatformPost(
         id: newId(), videoId: vid, platform: p, versionNo: 1, attemptNo: try store.nextAttemptNo(videoId: vid, platform: p),
-        kind: .regular, planSlotId: s.id, scheduledAt: Sched.slotTime(settings, dm, date: s.date, position: s.position, platform: p),
+        kind: .regular, planSlotId: s.id, scheduledAt: Sched.slotTime(settings, dm, date: day, position: s.position, platform: p),
         renderId: nil, state: .planned, publisher: "manual", externalId: nil, url: nil, postedAt: nil, errorType: nil,
-        errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now), note: "approved")
+        errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now),
+        note: day == s.date ? "approved" : "approved (platform plan shifted to \(day))")
     }
     for v in touched { try store.refreshState(videoId: v) }
   }
@@ -307,31 +286,93 @@ public final class Planner: @unchecked Sendable {
     return try store.platformHistory(videoId: videoId, platform: p).isEmpty
   }
 
-  func regenerate(_ s: PlanSlot, settings: Settings, dm: DayMath) throws {
-    try regenerateMany([(s, true)], settings: settings, dm: dm)
+  /// Un-posted regular posts of the slot are deleted; everything else (failed/skipped history, pending retries and
+  /// reposts, which belong to their video) is detached from the slot and kept.
+  func clearSlot(_ s: PlanSlot) throws {
+    for var p in try store.slotPosts(s.id) where p.state != .posted {
+      if p.kind == .regular && !p.state.isTerminal {
+        try store.deletePost(p.id)
+      } else {
+        p.planSlotId = nil
+        try store.save(p, note: "detached from slot \(s.date)")
+      }
+      try store.refreshState(videoId: p.videoId)
+    }
   }
 
-  func regenerateIfApproved(_ s: PlanSlot, wasApproved: Bool, settings: Settings, dm: DayMath) throws {
-    try regenerateMany([(s, wasApproved)], settings: settings, dm: dm)
-  }
-
-  /// Deletes the un-posted posts of every approved slot first, then recreates them, so videos that just traded
-  /// places don't look "already planned" on a platform.
+  /// Clears every approved slot first, then recreates their posts in date order (so videos that just traded places
+  /// don't look "already planned", and each platform keeps its shift).
   func regenerateMany(_ list: [(PlanSlot, Bool)], settings: Settings, dm: DayMath) throws {
     var todo: [PlanSlot] = []
-    var touched = Set(list.map(\.0.videoId))
     for (s, was) in list {
       let weekApproved = try store.week(s.weekStart)?.state == .approved
       guard was || weekApproved else { continue }
-      for p in try store.slotPosts(s.id) where !p.state.isTerminal {
-        try store.deletePost(p.id)
-        touched.insert(p.videoId)
-      }
+      try clearSlot(s)
       todo.append(s)
     }
     var picker = PlatformPicker(queue: queue, settings: settings)
-    for s in todo { try createPosts(s, settings: settings, dm: dm, picker: &picker) }
-    for v in touched { try store.refreshState(videoId: v) }
+    var placer = try Placer(store: store, dm: dm)
+    for s in todo.sorted(by: { ($0.date, $0.position) < ($1.date, $1.position) }) {
+      try createPosts(s, settings: settings, dm: dm, picker: &picker, placer: &placer)
+    }
+    for (s, _) in list { try store.refreshState(videoId: s.videoId) }
+  }
+
+  /// Core of pushPlan/postToday. Slots that are pinned or have a posted post stay; the others move `days` later,
+  /// skipping occupied (date, position)s. Slots on/after `until` are treated as fixed.
+  func push(from date: String, days: Int, until: String?) throws {
+    let settings = try store.settings()
+    let dm = DayMath(settings: settings)
+    var all = try store.planSlots(where: "date>=?", [date])
+    var movable: [PlanSlot] = []
+    for s in all where !s.pinned && (until == nil || s.date < until!) {
+      if try !store.slotPosts(s.id).contains(where: { $0.state == .posted }) { movable.append(s) }
+    }
+    let movingIds = Set(movable.map(\.id))
+    all.removeAll { movingIds.contains($0.id) }
+    var occupied = Set(all.map { "\($0.date)#\($0.position)" })
+    // Park the moving slots so the UNIQUE(date, position) index never trips mid-way.
+    for (i, var s) in movable.enumerated() {
+      s.date = "0000-00-00"
+      s.position = -(i + 1)
+      try store.save(s)
+    }
+    // Posts that move: un-posted regular posts of moving slots, plus un-slotted extras (retries/reposts) on/after date.
+    var regular: [(PlatformPost, Int)] = []  // (post, slot delta days)
+    var placerExclude = Set<String>()
+    var newSlots: [PlanSlot] = []
+    for original in movable.sorted(by: { ($0.date, $0.position) < ($1.date, $1.position) }) {
+      var s = original
+      var target = dm.addDays(s.date, days)
+      while occupied.contains("\(target)#\(s.position)") { target = dm.addDays(target, 1) }
+      occupied.insert("\(target)#\(s.position)")
+      let delta = dm.days(from: s.date, to: target)
+      s.date = target
+      s.weekStart = dm.weekStart(of: dm.date(target))
+      newSlots.append(s)
+      for p in try store.slotPosts(s.id) where !p.state.isTerminal && p.kind == .regular {
+        regular.append((p, delta))
+        placerExclude.insert(p.id)
+      }
+    }
+    for s in newSlots { try store.save(s) }
+    var placer = try Placer(store: store, dm: dm, excluding: placerExclude)
+    let positions = Dictionary(uniqueKeysWithValues: newSlots.map { ($0.id, $0.position) })
+    for (var p, delta) in regular.sorted(by: { $0.0.scheduledAt < $1.0.scheduledAt }) {
+      let pos = positions[p.planSlotId ?? ""] ?? 0
+      let day = placer.place(p.platform, position: pos, from: dm.addDays(dm.key(p.scheduledAt), delta))
+      p.scheduledAt = Sched.slotTime(settings, dm, date: day, position: pos, platform: p.platform)
+      if p.state == .due || p.state == .overdue { p.state = p.renderId == nil ? .planned : .rendered }
+      try store.save(p, note: "plan pushed → \(day)")
+    }
+    let extras = try store.posts(where: "kind<>'regular' AND scheduled_at>=?", [dm.date(date)])
+      .filter { !$0.state.isTerminal && (until == nil || dm.key($0.scheduledAt) < until!) }
+    for var p in extras {
+      let day = dm.addDays(dm.key(p.scheduledAt), days)
+      p.scheduledAt = try Sched.staggered(store: store, platform: p.platform, day: day, settings: settings, dm: dm, excluding: [p.id])
+      if p.state == .due { p.state = p.renderId == nil ? .planned : .rendered }
+      try store.save(p, note: "plan pushed → \(day)")
+    }
   }
 
   func moveSlot(_ s: inout PlanSlot, to date: String, settings: Settings, dm: DayMath) throws {
@@ -343,17 +384,19 @@ public final class Planner: @unchecked Sendable {
       s.position = pos
       s.weekStart = dm.weekStart(of: dm.date(date))
       try store.save(s)
-      try regenerateIfApproved(s, wasApproved: wasApproved, settings: settings, dm: dm)
+      try regenerateMany([(s, wasApproved)], settings: settings, dm: dm)
     } else {
       var other = used.first { $0.position == s.position } ?? used[0]
+      if other.pinned { throw EngineError("\(date) is pinned — unpin it first") }
       try ensureNothingPosted(other)
       let otherApproved = try isApproved(other)
       let (d, p, w) = (s.date, s.position, s.weekStart)
+      let otherPos = other.position
       s.date = "0000-00-00"; s.position = -1
       try store.save(s)
       other.date = d; other.position = p; other.weekStart = w
       try store.save(other)
-      s.date = date; s.position = used.first { $0.id == other.id }!.position
+      s.date = date; s.position = otherPos
       s.weekStart = dm.weekStart(of: dm.date(date))
       try store.save(s)
       try regenerateMany([(s, wasApproved), (other, otherApproved)], settings: settings, dm: dm)

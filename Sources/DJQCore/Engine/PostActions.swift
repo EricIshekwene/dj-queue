@@ -63,6 +63,7 @@ public final class PostActions: @unchecked Sendable {
     p.rawResponse = raw
     p.resolution = nil
     try store.save(p, note: "\(type.rawValue): \(message)")
+    if type == .tooLong { try Self.snapshotTrim(store: store, post: p) }
     try store.logEvent("problem", "\(p.platform.displayName): \(type.displayName) — \(message)", videoId: p.videoId, postId: p.id)
     try store.refreshState(videoId: p.videoId)
   }
@@ -126,44 +127,75 @@ public final class PostActions: @unchecked Sendable {
     let wasOverdue = p.state == .overdue
     p.state = .skipped
     try store.save(p, note: "skipped")
-    if wasOverdue { try closeGap(platform: p.platform) }
+    if wasOverdue { try closeGap(after: p) }
     try store.refreshState(videoId: p.videoId)
   }
 
-  /// Missed-slot action: due right now.
+  /// Missed-slot action: due right now (on today's slot for its platform; the platform's later posts move a day
+  /// if today's slot was taken). Refused when that platform already posted today.
   public func postNow(postId: String) throws {
-    var p = try post(postId)
-    guard !p.state.isTerminal else { throw EngineError("Already \(p.state.displayName)") }
-    p.state = .due
-    p.scheduledAt = now
-    try store.save(p, note: "post now")
-    try store.refreshState(videoId: p.videoId)
-  }
-
-  /// Missed-slot action: into today's slot for the platform, pushing that platform's later posts a day if needed.
-  public func shiftPlan(postId: String) throws {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     var p = try post(postId)
     guard !p.state.isTerminal else { throw EngineError("Already \(p.state.displayName)") }
     let today = store.today(dm)
-    let position = try p.planSlotId.flatMap { try store.planSlot(id: $0)?.position } ?? 0
-    let target = Sched.slotTime(settings, dm, date: today, position: position, platform: p.platform)
     try store.db.transaction {
-      let later = try store.posts(where: "platform=? AND id<>? AND scheduled_at>=?", [p.platform.rawValue, p.id, dm.date(today)])
-        .filter { !$0.state.isTerminal && $0.state != .overdue }
-      if later.contains(where: { dm.key($0.scheduledAt) == today }) {
-        for var o in later {
-          o.scheduledAt = Sched.shift(o.scheduledAt, days: 1, dm)
-          if o.state == .due { o.state = o.renderId == nil ? .planned : .rendered }
-          try store.save(o, note: "shift plan +1 d")
+      if p.kind == .regular {
+        let pos = try store.position(of: p)
+        guard try makeRoom(platform: p.platform, position: pos, day: today, excluding: p.id, dm: dm, settings: settings) else {
+          throw EngineError("\(p.platform.displayName) already posted today — use Shift plan to put this on the next free day")
         }
       }
-      p.scheduledAt = target
-      p.state = target <= now ? .due : (p.renderId == nil ? .planned : .rendered)
-      try store.save(p, note: "shift plan → \(today)")
+      p.state = .due
+      p.scheduledAt = now
+      try store.save(p, note: "post now")
     }
     try store.refreshState(videoId: p.videoId)
+  }
+
+  /// Missed-slot action: into today's slot for the platform (or the next day it hasn't posted yet); if that slot is
+  /// taken, the platform's later posts move one day. Due at the slot time.
+  public func shiftPlan(postId: String) throws {
+    let settings = try store.settings()
+    let dm = DayMath(settings: settings)
+    var p = try post(postId)
+    guard !p.state.isTerminal else { throw EngineError("Already \(p.state.displayName)") }
+    let position = try store.position(of: p)
+    var day = store.today(dm)
+    try store.db.transaction {
+      if p.kind == .regular {
+        while try !makeRoom(platform: p.platform, position: position, day: day, excluding: p.id, dm: dm, settings: settings) {
+          day = dm.addDays(day, 1)
+        }
+        p.scheduledAt = Sched.slotTime(settings, dm, date: day, position: position, platform: p.platform)
+      } else {
+        p.scheduledAt = try Sched.staggered(store: store, platform: p.platform, day: day, settings: settings, dm: dm, excluding: [p.id])
+      }
+      p.state = p.scheduledAt <= now ? .due : (p.renderId == nil ? .planned : .rendered)
+      try store.save(p, note: "shift plan → \(day)")
+    }
+    try store.refreshState(videoId: p.videoId)
+  }
+
+  /// Frees (platform, day, position) for one regular post: if an un-posted regular post sits there, that platform's
+  /// un-posted regular posts at this position from `day` on move one day later. False when a posted post sits there.
+  func makeRoom(platform: Platform, position: Int, day: String, excluding id: String, dm: DayMath, settings: Settings) throws -> Bool {
+    let placer = try Placer(store: store, dm: dm, excluding: [id])
+    guard placer.isTaken(platform, day: day, position: position) else { return true }
+    let here = try store.posts(where: "platform=? AND kind='regular' AND id<>? AND scheduled_at>=? AND scheduled_at<?",
+                               [platform.rawValue, id, dm.date(day), dm.date(dm.addDays(day, 1))])
+    let postedHere = try here.filter { $0.state == .posted }.map { try store.position(of: $0) }
+    if postedHere.contains(position) { return false }
+    let later = try store.posts(where: "platform=? AND kind='regular' AND id<>? AND scheduled_at>=?",
+                                [platform.rawValue, id, dm.date(day)])
+      .filter { !$0.state.isTerminal && $0.state != .overdue }
+    for var o in later {
+      guard try store.position(of: o) == position else { continue }
+      o.scheduledAt = Sched.shift(o.scheduledAt, days: 1, dm)
+      if o.state == .due { o.state = o.renderId == nil ? .planned : .rendered }
+      try store.save(o, note: "made room on \(day): +1 d")
+    }
+    return true
   }
 
   /// Notification action router for the app.
@@ -218,12 +250,18 @@ public final class PostActions: @unchecked Sendable {
     guard v.type == .long else { throw EngineError("\(v.name) is short-form — mark its platform posts instead") }
     try Self.validate(url: url, for: .youtube)
     guard let s = try store.session(id: v.sessionId) else { throw EngineError("Session missing for \(v.name)") }
-    let base = URL(fileURLWithPath: s.folder)
-    let src = base.appendingPathComponent(v.file)
+    let base = URL(fileURLWithPath: s.folder).standardizedFileURL
+    let src = base.appendingPathComponent(v.file).standardizedFileURL  // the link itself is moved, never its target
     let fm = FileManager.default
-    if v.file.hasPrefix("Ready to Post/Longform/") {
+    let readyDir = base.appendingPathComponent("Ready to Post/Longform").path + "/"
+    if !v.file.hasPrefix("/"), !v.file.split(separator: "/").contains(".."), src.path.hasPrefix(readyDir),
+       src.deletingLastPathComponent().path + "/" == readyDir {
       let destDir = base.appendingPathComponent("Posted/Longform")
       try fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+      let realBase = base.resolvingSymlinksInPath().path
+      guard destDir.resolvingSymlinksInPath().path == realBase + "/Posted/Longform" else {
+        throw EngineError("Posted/Longform in \(s.name) points outside the session folder — not moving anything")
+      }
       let dest = Self.freeURL(destDir.appendingPathComponent(src.lastPathComponent))
       guard fm.fileExists(atPath: src.path) || (try? fm.destinationOfSymbolicLink(atPath: src.path)) != nil else {
         throw EngineError("Long-form file not found at \(src.path)")
@@ -282,15 +320,21 @@ public final class PostActions: @unchecked Sendable {
     return n
   }
 
-  /// After skipping an overdue post: pull the platform's remaining plan back so its next post lands today.
-  func closeGap(platform: Platform) throws {
+  /// After skipping an overdue regular post: pull that platform's remaining regular posts at the same position back
+  /// so the next one fills the first free day from today. Retries/reposts keep their cooldown/stagger.
+  func closeGap(after skipped: PlatformPost) throws {
+    guard skipped.kind == .regular else { return }
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     let today = store.today(dm)
-    let rest = try store.posts(where: "platform=? AND scheduled_at>=?", [platform.rawValue, dm.date(today)])
+    let position = try store.position(of: skipped)
+    let rest = try store.posts(where: "platform=? AND kind='regular' AND scheduled_at>=?", [skipped.platform.rawValue, dm.date(today)])
       .filter { !$0.state.isTerminal && $0.state != .overdue }
+      .filter { (try? store.position(of: $0)) == position }
     guard let first = rest.first else { return }
-    let gap = dm.days(from: today, to: dm.key(first.scheduledAt))
+    var placer = try Placer(store: store, dm: dm, excluding: Set(rest.map(\.id)))
+    let free = placer.place(skipped.platform, position: position, from: today)
+    let gap = dm.days(from: free, to: dm.key(first.scheduledAt))
     guard gap > 0 else { return }
     try store.db.transaction {
       for var o in rest {
@@ -298,6 +342,17 @@ public final class PostActions: @unchecked Sendable {
         try store.save(o, note: "gap closed −\(gap) d")
       }
     }
+  }
+
+  /// Records the edit's length-related state for a platform when a too_long failure happens, so the engine only
+  /// re-queues after Eric actually changes the trim/skip for it.
+  static func snapshotTrim(store: Store, post p: PlatformPost) throws {
+    try store.setKV("tooLong.\(p.id)", trimSignature(try store.edit(videoId: p.videoId), p.platform))
+  }
+
+  static func trimSignature(_ e: Edit, _ p: Platform) -> String {
+    let t = e.platformTrims[p].map { "\($0.start)-\($0.end)" } ?? "-"
+    return "\(t)|\(e.skippedPlatforms.contains(p))|\(e.trimIn ?? -1)|\(e.trimOut ?? -1)"
   }
 
   static func freeURL(_ url: URL) -> URL {

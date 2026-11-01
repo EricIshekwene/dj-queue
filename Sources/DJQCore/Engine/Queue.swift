@@ -74,7 +74,8 @@ public final class Queue: @unchecked Sendable {
 
   /// Moves a backlog video one place later in the order until it is planned.
   public func skipOnce(_ videoId: String) throws {
-    var ids: [String] = try store.kv("queue.skipNext") ?? []
+    let slotted = Set(try store.planSlots().map(\.videoId))
+    var ids: [String] = (try store.kv("queue.skipNext") ?? []).filter { !slotted.contains($0) }
     if !ids.contains(videoId) { ids.append(videoId) }
     try store.setKV("queue.skipNext", ids)
   }
@@ -116,10 +117,10 @@ public final class Queue: @unchecked Sendable {
   }
 
   private func applySkips(_ list: [Video], slotted: Set<String>) throws -> [Video] {
+    // Read-only (Doctor calls this): planned ids are ignored here and pruned in skipOnce.
     let ids: [String] = try store.kv("queue.skipNext") ?? []
     guard !ids.isEmpty else { return list }
     let live = ids.filter { !slotted.contains($0) }
-    if live.count != ids.count { try store.setKV("queue.skipNext", live) }
     var out = list
     for id in live {
       guard let i = out.firstIndex(where: { $0.id == id }), i + 1 < out.count else { continue }

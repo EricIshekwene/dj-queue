@@ -50,7 +50,12 @@ final class FakeRenderer: RenderService, @unchecked Sendable {
     return r
   }
 
-  func deleteRenders(except keep: Set<String>) throws {}
+  private(set) var lastKeep: Set<String>?
+
+  func deleteRenders(except keep: Set<String>) throws {
+    lastKeep = keep
+    for r in try store.renders() where !keep.contains(r.id) { try store.markRenderDeleted(id: r.id) }
+  }
 }
 
 extension Fixture {
@@ -125,4 +130,27 @@ extension Fixture {
 
 extension LogNotifier {
   func titles(containing s: String) -> [String] { delivered.map(\.title).filter { $0.contains(s) } }
+}
+
+extension Fixture {
+  /// "Never double-post": no platform has two live (un-finished or posted) regular posts on the same day + position.
+  func doublePosts() throws -> [String] {
+    let positions = Dictionary(uniqueKeysWithValues: try store.planSlots().map { ($0.id, $0.position) })
+    var seen: [String: String] = [:]
+    var bad: [String] = []
+    for p in try store.posts(where: "kind='regular'") where p.state == .posted || !p.state.isTerminal {
+      let k = "\(p.platform.rawValue) \(dm.key(p.scheduledAt)) #\(positions[p.planSlotId ?? ""] ?? 0)"
+      if let other = seen[k] { bad.append("\(k): \(other) + \(p.videoId)") } else { seen[k] = p.videoId }
+    }
+    return bad
+  }
+
+  /// Marks every post scheduled on `day` posted (clock set to that evening).
+  func postAll(on day: String) throws {
+    setTime(day, "20:00")
+    let a = PostActions(store: store)
+    for p in try posts().filter({ dm.key($0.scheduledAt) == day && !$0.state.isTerminal }) {
+      try a.markPosted(postId: p.id, url: Fixture.postURLs[p.platform]!)
+    }
+  }
 }

@@ -4,8 +4,7 @@ import Foundation
 // djq — command-line access to the DJ Queue database (same SQLite file as the app; posts ChangeSignal after writes).
 // Env: DJQ_ROOT (the "DJ Video" folder), DJQ_HOME (app support + logs) for dev copies and tests.
 
-// The real renderer registers itself here once the Render module is linked:
-// RenderServices.factory = { Renderer(store: $0) }
+RenderServices.factory = { Renderer(store: $0) }
 
 let usage = """
 usage: djq <command> [args]
@@ -27,7 +26,7 @@ usage: djq <command> [args]
   intake | tick | doctor [--json] | health [--days N]
   prefill "<tag>" [--kind talking]
   render <video> [--version N] [--platform P]
-  agent install [--app PATH] [--load] | agent uninstall [--unload] | agent status
+  agent install [--app PATH] [--load] [--force] | agent uninstall [--unload] | agent status
 
 Ids can be shortened to a unique prefix. Platforms: \(Platform.allCases.map(\.rawValue).joined(separator: " "))
 """
@@ -55,6 +54,27 @@ func option(_ name: String) -> String? {
 func arg(_ i: Int, _ what: String) throws -> String {
   guard i < args.count else { throw CLIError("missing \(what)\n\n\(usage)") }
   return args[i]
+}
+
+/// Strict YYYY-MM-DD (a real calendar day), else a readable error.
+func dateArg(_ i: Int, _ what: String = "date (YYYY-MM-DD)") throws -> String {
+  let raw = try arg(i, what)
+  return try validDate(raw)
+}
+func validDate(_ raw: String) throws -> String {
+  let bad = CLIError("\(raw) isn't a date — use YYYY-MM-DD, e.g. 2026-11-02")
+  guard raw.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil else { throw bad }
+  let p = raw.split(separator: "-").compactMap { Int($0) }
+  var c = Calendar(identifier: .gregorian)
+  c.timeZone = TimeZone(identifier: "UTC")!
+  guard (1...12).contains(p[1]), (1...31).contains(p[2]),
+        let d = c.date(from: DateComponents(year: p[0], month: p[1], day: p[2])),
+        c.component(.day, from: d) == p[2] else { throw bad }
+  return raw
+}
+func intArg(_ raw: String, _ what: String, _ range: ClosedRange<Int>) throws -> Int {
+  guard let n = Int(raw), range.contains(n) else { throw CLIError("\(what) must be a whole number \(range.lowerBound)–\(range.upperBound) (got \(raw))") }
+  return n
 }
 
 func pad(_ s: String, _ n: Int) -> String { s.count >= n ? s : s + String(repeating: " ", count: n - s.count) }
@@ -138,7 +158,9 @@ func run() throws -> Int32 {
   let paths = Paths.standard
   Log.shared.configure(paths)
   if cmd == "prefill" {
-    let kind: Kind = option("--kind").flatMap { Kind(rawValue: $0) } ?? .djVid
+    let kindRaw = option("--kind")
+    guard kindRaw == nil || Kind(rawValue: kindRaw!) != nil else { throw CLIError("--kind must be \"dj vid\" or talking") }
+    let kind: Kind = kindRaw.flatMap { Kind(rawValue: $0) } ?? .djVid
     let tag = try arg(0, "tag")
     let rules = PrefillRules.load(paths)
     print(Prefill.text(tag: tag, kind: kind, rules: rules))
@@ -151,7 +173,10 @@ func run() throws -> Int32 {
   let actions = PostActions(store: store)
   let planner = Planner(store: store)
   let queue = Queue(store: store)
-  var wrote = false
+  let writes: Set<String> = ["week", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem",
+                             "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted",
+                             "score", "exclude", "include", "pause", "resume", "intake", "tick", "render"]
+  var wrote = writes.contains(cmd) && (cmd != "week" || args.contains { $0.hasPrefix("--") })
   defer { if wrote { ChangeSignal.post() } }
 
   switch cmd {
@@ -198,7 +223,7 @@ func run() throws -> Int32 {
 
   case "week":
     let propose = flag("--propose"), approve = flag("--approve"), rebuild = flag("--rebuild")
-    let week = args.first.map { dm.weekStart(of: dm.date($0)) } ?? dm.weekStart(of: store.clock.now)
+    let week = try args.first.map { dm.weekStart(of: dm.date(try validDate($0))) } ?? dm.weekStart(of: store.clock.now)
     if propose { try planner.proposeWeek(week); wrote = true }
     if rebuild { try planner.rebuildWeek(week); wrote = true }
     if approve { try planner.approveWeek(week); wrote = true }
@@ -206,7 +231,7 @@ func run() throws -> Int32 {
 
   case "pin":
     let v = try resolveVideo(store, try arg(0, "video id"))
-    try planner.pin(videoId: v.id, date: try arg(1, "date"))
+    try planner.pin(videoId: v.id, date: try dateArg(1))
     wrote = true
     print("pinned \(v.tag) to \(args[1])")
   case "post-today":
@@ -220,8 +245,8 @@ func run() throws -> Int32 {
     wrote = true
     print("skipped \(v.tag) once")
   case "push":
-    let date = try arg(0, "date")
-    guard let n = Int(try arg(1, "days")) else { throw CLIError("days must be a number") }
+    let date = try dateArg(0)
+    let n = try intArg(try arg(1, "days"), "days", 1...60)
     try planner.pushPlan(from: date, days: n)
     wrote = true
     print("pushed the plan from \(date) by \(n) day(s)")
@@ -234,7 +259,7 @@ func run() throws -> Int32 {
     wrote = true
     print("swapped")
   case "move":
-    try planner.move(slotId: try resolveSlot(store, try arg(0, "slot id")).id, to: try arg(1, "date"))
+    try planner.move(slotId: try resolveSlot(store, try arg(0, "slot id")).id, to: try dateArg(1))
     wrote = true
     print("moved")
 
@@ -279,7 +304,7 @@ func run() throws -> Int32 {
     let p = try resolvePost(store, try arg(0, "post id"))
     let r: CopyrightResolution
     switch try arg(1, "reupload|skip|accept") {
-    case "reupload": r = .reuploadAnyway(versionNo: args.count > 2 ? Int(args[2]) : nil)
+    case "reupload": r = .reuploadAnyway(versionNo: args.count > 2 ? try intArg(args[2], "version", 1...99) : nil)
     case "skip": r = .skipPlatform
     case "accept": r = .accept
     default: throw CLIError("copyright <post> reupload [N]|skip|accept")
@@ -301,8 +326,7 @@ func run() throws -> Int32 {
   case "score":
     let v = try resolveVideo(store, try arg(0, "video id"))
     let raw = try arg(1, "score")
-    let score: Int? = raw == "clear" ? nil : Int(raw)
-    if raw != "clear", score == nil { throw CLIError("score must be 0-100 or clear") }
+    let score: Int? = raw == "clear" ? nil : try intArg(raw, "score", 0...100)
     try store.setScore(v.id, score)
     try store.refreshState(videoId: v.id)
     wrote = true
@@ -355,7 +379,7 @@ func run() throws -> Int32 {
     return r.findings.contains { $0.severity == .error } ? 2 : 0
 
   case "health":
-    let days = option("--days").flatMap(Int.init) ?? 7
+    let days = try option("--days").map { try intArg($0, "--days", 1...365) } ?? 7
     let since = store.clock.now.addingTimeInterval(-Double(days) * 86400)
     let periods = try Health.awakePeriods(store: store, since: since)
     print("Mac awake (last \(days) days)")
@@ -367,7 +391,7 @@ func run() throws -> Int32 {
 
   case "render":
     let v = try resolveVideo(store, try arg(0, "video id"))
-    let version = option("--version").flatMap(Int.init) ?? 1
+    let version = try option("--version").map { try intArg($0, "--version", 1...99) } ?? 1
     let p = try option("--platform").map(platform)
     guard let renderer = RenderServices.make(store) else {
       throw CLIError("the renderer isn't linked into this build yet (RenderServices.factory is unset)")
@@ -381,6 +405,9 @@ func run() throws -> Int32 {
     case "install":
       let app = option("--app") ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/DJ Queue.app").path
       let load = flag("--load")
+      if !flag("--force"), !FileManager.default.fileExists(atPath: app) {
+        throw CLIError("\(app) doesn't exist — build/install the app first (or pass --force)")
+      }
       try LaunchAgent.install(appPath: app, paths: paths, load: load)
       print("wrote \(paths.agentPlist.path)\(load ? " and loaded it" : " (not loaded — add --load)")")
     case "uninstall":
