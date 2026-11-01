@@ -125,8 +125,7 @@ public final class Intake: @unchecked Sendable {
       var v = v
       v.inManifest = false
       v.missing = true
-      v.updatedAt = store.now
-      try store.save(v)
+      try store.saveIdentity(v)
       try store.refreshState(videoId: v.id)
       report.removedFromManifest.append(v.name)
       try store.logEvent("intake", "Removed from videos.json: \(v.name)", videoId: v.id)
@@ -160,7 +159,7 @@ public final class Intake: @unchecked Sendable {
     let type: VideoType = e.type == VideoType.long.rawValue ? .long : .short
     var v = old ?? Video(
       id: id, sessionId: session.id, name: e.name, tags: e.tags ?? [], type: type,
-      contentType: e.contentType ?? "dj vid", kind: .djVid, file: e.file, fingerprint: nil, fileSize: nil,
+      contentType: e.contentType ?? "dj vid", kind: e.contentType?.lowercased() == "talking" ? .talking : .djVid, file: e.file, fingerprint: nil, fileSize: nil,
       duration: e.duration ?? 0, markedStart: e.markedStart, markedEnd: e.markedEnd, start: e.start, end: e.end,
       grace: e.grace, audio: e.audio, part: e.part, score: nil, state: .needsEdit, excluded: false, missing: false,
       inManifest: true, notes: "", alreadyPostedOn: [], longformURL: nil, createdAt: now, updatedAt: now)
@@ -186,7 +185,7 @@ public final class Intake: @unchecked Sendable {
     }
 
     let base = URL(fileURLWithPath: session.folder)
-    let url = base.appendingPathComponent(v.file)
+    let url = v.file.hasPrefix("/") ? URL(fileURLWithPath: v.file) : base.appendingPathComponent(v.file)
     if fm.fileExists(atPath: url.path) {
       let size = Self.size(url)
       if v.fingerprint == nil || v.fileSize != size {
@@ -214,15 +213,16 @@ public final class Intake: @unchecked Sendable {
     } else if old != v {
       report.updated += 1
     }
-    if old != v {
-      v.updatedAt = now
+    if old == nil {
       try store.save(v)
+    } else if old != v {
+      try store.saveIdentity(v)  // app-owned fields (score, kind, notes, excluded…) are never written by intake
     }
     try store.refreshState(videoId: v.id)
   }
 
   private func fileExists(_ s: Session, _ rel: String) -> Bool {
-    fm.fileExists(atPath: URL(fileURLWithPath: s.folder).appendingPathComponent(rel).path)
+    fm.fileExists(atPath: rel.hasPrefix("/") ? rel : URL(fileURLWithPath: s.folder).appendingPathComponent(rel).path)
   }
 
   /// Same fingerprint in this session, then in all sessions (spec §4).
@@ -243,8 +243,10 @@ public final class Intake: @unchecked Sendable {
 
   // MARK: Helpers
 
+  /// Size of the file, following symlinks (the dev root links to the real clips).
   public static func size(_ url: URL) -> Int64 {
-    ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value ?? -1
+    let p = url.resolvingSymlinksInPath().path
+    return ((try? FileManager.default.attributesOfItem(atPath: p))?[.size] as? NSNumber)?.int64Value ?? -1
   }
 
   /// size + duration + sha256 of the first 4 MB (spec §3).

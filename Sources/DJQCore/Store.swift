@@ -104,7 +104,15 @@ public final class Store: @unchecked Sendable {
                [key, JSONCoding.string(value)])
   }
 
-  public func settings() throws -> Settings { try kv("settings") ?? Settings() }
+  /// Settings with any keys missing from older stored JSON filled from defaults. A corrupt row is
+  /// logged and defaults are used in memory; the row is only replaced when Settings are saved.
+  public func settings() throws -> Settings {
+    guard let s = try db.one("SELECT json FROM kv WHERE key='settings'")?.string("json") else { return Settings() }
+    do { return try JSONCoding.decodeLenient(Data(s.utf8), defaults: Settings()) } catch {
+      Log.shared.error("settings unreadable, using defaults in memory: \(error)")
+      return Settings()
+    }
+  }
   public func save(_ s: Settings) throws { try setKV("settings", s) }
 
   // MARK: Sessions
@@ -158,6 +166,26 @@ public final class Store: @unchecked Sendable {
             JSONCoding.string(v.alreadyPostedOn), v.longformURL, v.createdAt, v.updatedAt])
   }
 
+  /// Updates only the fields that come from videos.json / the file (spec §4: never overwrite app-owned fields).
+  public func saveIdentity(_ v: Video) throws {
+    try db.run("""
+      UPDATE videos SET session_id=?, name=?, tags=?, type=?, content_type=?, file=?, fingerprint=?, file_size=?,
+        duration=?, marked_start=?, marked_end=?, start=?, "end"=?, grace=?, audio=?, part=?, missing=?, in_manifest=?,
+        updated_at=? WHERE id=?
+      """, [v.sessionId, v.name, JSONCoding.string(v.tags), v.type.rawValue, v.contentType, v.file, v.fingerprint,
+            v.fileSize, v.duration, v.markedStart, v.markedEnd, v.start, v.end, v.grace, v.audio, v.part, v.missing,
+            v.inManifest, now, v.id])
+  }
+
+  public func setLongformURL(_ id: String, _ url: String?) throws {
+    try db.run("UPDATE videos SET longform_url=?, updated_at=? WHERE id=?", [url, now, id])
+    try refreshState(videoId: id)
+  }
+
+  public func setAlreadyPostedOn(_ id: String, _ platforms: [Platform]) throws {
+    try db.run("UPDATE videos SET already_posted_on=?, updated_at=? WHERE id=?", [JSONCoding.string(platforms), now, id])
+  }
+
   public func setScore(_ id: String, _ score: Int?) throws {
     try db.run("UPDATE videos SET score=?, updated_at=? WHERE id=?", [score.map { min(100, max(0, $0)) }, now, id])
     try logEvent("score", "Score \(score.map(String.init) ?? "cleared")", videoId: id)
@@ -190,14 +218,18 @@ public final class Store: @unchecked Sendable {
   }
 
   public func fileURL(for v: Video) throws -> URL? {
+    if v.file.hasPrefix("/") { return URL(fileURLWithPath: v.file) }  // relinked into another session's folder
     guard let s = try session(id: v.sessionId) else { return nil }
     return URL(fileURLWithPath: s.folder).appendingPathComponent(v.file)
   }
 
   // MARK: Edits and versions
 
+  /// The video's edit (default `Edit()` when none saved). Keys missing from older JSON keep their defaults;
+  /// unreadable JSON throws rather than silently dropping the crop.
   public func edit(videoId: String) throws -> Edit {
-    try db.one("SELECT json FROM edits WHERE video_id=?", [videoId])?.json("json") ?? Edit()
+    guard let s = try db.one("SELECT json FROM edits WHERE video_id=?", [videoId])?.string("json") else { return Edit() }
+    return try JSONCoding.decodeLenient(Data(s.utf8), defaults: Edit())
   }
 
   public func hasEdit(videoId: String) throws -> Bool {
@@ -418,19 +450,18 @@ public final class Store: @unchecked Sendable {
 
   /// Recomputes a video's state from its flags, edit, versions and posts (spec §3 States).
   public func refreshState(videoId: String) throws {
-    guard var v = try video(id: videoId) else { return }
+    guard let v = try video(id: videoId) else { return }
     let s = try computeState(v)
     if s != v.state {
-      v.state = s
-      v.updatedAt = now
-      try save(v)
+      try db.run("UPDATE videos SET state=?, updated_at=? WHERE id=?", [s.rawValue, now, videoId])
     }
   }
 
   public func computeState(_ v: Video) throws -> VideoState {
     if v.missing { return .missingFile }
     if v.excluded { return .excluded }
-    let posts = try self.posts(where: "video_id=? AND kind='regular'", [v.id])
+    // Latest attempt per platform; a retry (fix) supersedes the failed regular post. Reposts don't change state.
+    let posts = try self.posts(where: "video_id=? AND kind IN ('regular','retry')", [v.id])
     if !posts.isEmpty {
       let st = try settings()
       let active = Set(st.activePlatforms)
@@ -443,7 +474,11 @@ public final class Store: @unchecked Sendable {
       return .planned
     }
     if v.type == .long { return v.longformURL == nil ? .ready : .posted }
-    if try !planSlots(where: "video_id=?", [v.id]).isEmpty { return .planned }
+    // Planned = in an APPROVED week (spec §3); draft proposals don't count.
+    let inApproved = try db.one(
+      "SELECT 1 AS x FROM plan_slots s JOIN weeks w ON w.week_start=s.week_start AND w.state='approved' WHERE s.video_id=?",
+      [v.id]) != nil
+    if inApproved { return .planned }
     return try Validation.isReady(video: v, store: self) ? .ready : .needsEdit
   }
 }
@@ -455,17 +490,30 @@ public enum VersionResolver {
     func pick<T>(_ key: String, _ kp: KeyPath<Version, T?>) -> T? {
       for v in chain.reversed() {
         if let x = v[keyPath: kp] {
-          if let s = x as? String, s.isEmpty { continue }
+          if let s = x as? String, s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
           if v.number != number { inherited.insert(key) }
           return x
         }
       }
       return nil
     }
+    // Text and "No text" resolve as one field: the latest version that sets either decides both.
+    var text = "", noText = false
+    for v in chain.reversed() {
+      let t = v.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      if v.noText == true || !t.isEmpty {
+        text = v.text ?? ""
+        noText = v.noText == true
+        if v.number != number { inherited.insert("text"); inherited.insert("noText") }
+        break
+      }
+      if v.noText == false, v.number == number { break }  // explicitly cleared "No text" with no text yet
+    }
+    let setIds = pick("hashtagSetIds", \.hashtagSetIds)
     return ResolvedVersion(
       number: number,
-      text: pick("text", \.text) ?? "",
-      noText: pick("noText", \.noText) ?? false,
+      text: text,
+      noText: noText,
       style: pick("style", \.style) ?? settings.defaultStyle,
       size: pick("size", \.size) ?? settings.defaultTextSize,
       posX: pick("posX", \.posX) ?? 0.5,
@@ -475,11 +523,12 @@ public enum VersionResolver {
       textEnd: pick("textEnd", \.textEnd),
       caption: pick("caption", \.caption) ?? "",
       captionTemplateId: pick("captionTemplateId", \.captionTemplateId),
-      hashtagSetIds: pick("hashtagSetIds", \.hashtagSetIds) ?? settings.defaultHashtagSetIds,
+      hashtagSetIds: setIds ?? settings.defaultHashtagSetIds,
       extraHashtags: pick("extraHashtags", \.extraHashtags) ?? [],
       youtubeTitle: pick("youtubeTitle", \.youtubeTitle) ?? "",
       platformCaptions: pick("platformCaptions", \.platformCaptions) ?? [:],
-      inherited: inherited)
+      inherited: inherited,
+      autoHashtags: setIds == nil)
   }
 }
 
