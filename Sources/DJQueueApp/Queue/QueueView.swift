@@ -66,7 +66,9 @@ struct QueueView: View {
 
   @ViewBuilder private var content: some View {
     let isEmpty = model.queueTab == .ready ? (plannedRows.isEmpty && backlogRows.isEmpty) : tabRows.isEmpty
-    if model.videos.isEmpty {
+    if !model.loaded {
+      SkeletonRows()
+    } else if model.videos.isEmpty {
       EmptyState(symbol: "film.stack", title: "No videos yet", subtitle: "Export clips from CapCut into a session's videos.json.",
                  buttonTitle: "Open Library") { model.screen = .library }
     } else if isEmpty {

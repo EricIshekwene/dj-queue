@@ -190,7 +190,7 @@ struct ErrorCard: View {
   @ViewBuilder private var actions: some View {
     HStack(spacing: 6) {
       if post.state.isCopyright {
-        Button("Re-upload anyway") { model.resolve(post, .reuploadAnyway(versionNo: nil)) }
+        ReuploadMenu(model: model, post: post)
         Button("Skip") { model.resolve(post, .skipPlatform) }
         Button("Accept") { model.resolve(post, .accept) }
       } else if post.state == .overdue {

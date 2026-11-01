@@ -118,6 +118,7 @@ final class AppModel {
   var relinked: Set<String> = []
   var keptRemoved: Set<String> = []
   var renderQueue = 0
+  var activeRenders: [Render] = []
   var now = Date()
   var loadError: String?
   var doctorReport: DoctorReport?
@@ -131,6 +132,10 @@ final class AppModel {
   var weekSlots: [PlanSlot] = []
   var weekAwake: [DateInterval] = []
   var popoverVisible = false
+  /// False until the first background load lands (skeleton rows).
+  var loaded = false
+  /// renderId → 0…1 from Renderer.onProgress (this process's engine only).
+  var renderProgress: [String: Double] = [:]
   /// Week drop that would replace a planned video (confirm first).
   var pendingReplace: (videoId: String, day: String, replaced: String)?
   var markPostedPrefill: String?
@@ -175,7 +180,53 @@ final class AppModel {
     if let d = UserDefaults.standard.dictionary(forKey: "djq.dismissedWarnings") as? [String: Date] { dismissedWarnings = d }
     recentCommands = UserDefaults.standard.stringArray(forKey: "djq.recentCommands") ?? []
     weekStart = planner.weekStart(for: store.clock.now)
-    refreshNow()
+    renderer.onProgress = { [weak self] id, f in
+      Task { @MainActor in self?.renderProgress[id] = f < 1 ? f : nil }
+    }
+    refresh()  // first load off-main; views show skeleton rows until it lands
+  }
+
+  /// Progress of the render a post is waiting for (nil when not rendering here).
+  func renderFraction(_ p: PlatformPost) -> Double? {
+    guard p.state == .rendering else { return nil }
+    let r: Render? = activeRenders.first { $0.videoId == p.videoId && $0.versionNo == p.versionNo }
+    guard let r else { return nil }
+    return renderProgress[r.id]
+  }
+
+  /// "Rendering 42% · 3 queued" for the menu bar and Health.
+  var renderLine: String? {
+    guard renderQueue > 0 else { return nil }
+    if let f = renderProgress.values.max() { return "rendering \(Int(f * 100))%\(renderQueue > 1 ? " · \(renderQueue - 1) queued" : "")" }
+    return "\(renderQueue) rendering"
+  }
+
+  /// W.S1: an approved week is Locked once its first day has started (past days fixed, future days editable).
+  func weekLabel(_ ws: String) -> (text: String, tint: Color, icon: String)? {
+    guard let st = weekStates[ws] else { return nil }
+    if st == .approved && ws <= todayKey { return ("Locked", .secondary, "lock.fill") }
+    return st == .approved ? ("Approved", .green, "checkmark.seal.fill") : ("Draft", .orange, "pencil")
+  }
+
+  /// T.S4: Re-upload anyway on the same version, an existing later version, or a new one (opens the editor).
+  func reupload(_ post: PlatformPost, version: Int?, newVersion: Bool = false) {
+    if newVersion {
+      var made = 0
+      guard perform(nil, {
+        let vs = try store.versions(videoId: post.videoId)
+        var v = vs.last ?? Version(number: 1)
+        v.number = (vs.map(\.number).max() ?? 0) + 1
+        made = v.number
+        try store.save(v, videoId: post.videoId)
+        try postActions.resolveCopyright(postId: post.id, .reuploadAnyway(versionNo: made))
+      }) else { return }
+      show("Re-uploading as v\(made) — edit it now")
+      openEditor(post.videoId)
+    } else {
+      perform("Re-upload queued\(version.map { " (v\($0))" } ?? "")") {
+        try postActions.resolveCopyright(postId: post.id, .reuploadAnyway(versionNo: version))
+      }
+    }
   }
 
   var dm: DayMath { DayMath(settings: settings) }
@@ -203,6 +254,7 @@ final class AppModel {
     var relinked: Set<String> = []
     var keptRemoved: Set<String> = []
     var renderQueue = 0
+    var activeRenders: [Render] = []
     var prefillRules = PrefillRules()
     var editStamps: [String: Double] = [:]
     var weekSlots: [PlanSlot] = []
@@ -236,6 +288,7 @@ final class AppModel {
         .compactMap { $0.string("video_id") })
       l.keptRemoved = Set((try store.kv("ui.keptRemoved", as: [String].self)) ?? [])
       l.renderQueue = try store.renders(where: "status IN ('pending','rendering') AND deleted_at IS NULL").count
+      l.activeRenders = try store.renders(where: "status='rendering' AND deleted_at IS NULL")
       l.prefillRules = PrefillRules.load(store.paths)
       l.editStamps = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT video_id, updated_at FROM edits").compactMap { r in
         r.string("video_id").map { ($0, r.double("updated_at") ?? 0) }
@@ -283,6 +336,9 @@ final class AppModel {
     relinked = l.relinked
     keptRemoved = l.keptRemoved
     renderQueue = l.renderQueue
+    activeRenders = l.activeRenders
+    renderProgress = renderProgress.filter { id, _ in l.activeRenders.contains { $0.id == id } }
+    loaded = true
     prefillRules = l.prefillRules
     weekSlots = l.weekSlots
     weekAwake = l.weekAwake

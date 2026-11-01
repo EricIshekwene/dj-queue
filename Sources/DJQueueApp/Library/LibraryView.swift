@@ -52,7 +52,9 @@ struct LibraryView: View {
           toolbar
         }
         Divider()
-        if model.sessions.isEmpty {
+        if !model.loaded {
+          SkeletonRows()
+        } else if model.sessions.isEmpty {
           EmptyState(symbol: "folder.badge.questionmark", title: "No sessions found",
                      subtitle: "Add a session folder with a videos.json under \(model.store.paths.sessions.path).")
         } else if rows.isEmpty {
@@ -124,38 +126,37 @@ struct LibraryView: View {
                 Image(systemName: "link").font(.system(size: 9)).foregroundStyle(.blue).help("Relinked after a rename")
               }
             }
-            Text(model.setName(r.video)).font(DS.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
+            HStack(spacing: 4) {
+              if r.video.type == .long { StatusPill(text: "Long-form", tint: .indigo) }
+              Text(model.setName(r.video)).font(DS.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
+            }
           }
         }
         .foregroundStyle(r.video.missing ? Color.red : Color.primary)
         .contextMenu { VideoContextMenu(model: model, video: r.video, ids: Array(model.librarySelection)) }
       }
-      .width(min: 160, ideal: 190)
-      TableColumn("Type", value: \.typeLabel) { r in
-        if r.video.type == .long { StatusPill(text: "Long-form", tint: .indigo) } else { Text("Short").foregroundStyle(.secondary) }
-      }
-      .width(76)
+      .width(min: 150, ideal: 180)
       TableColumn("Kind", value: \.kindLabel) { r in Text(r.kindLabel).foregroundStyle(.secondary) }.width(58)
       TableColumn("Length", value: \.duration) { r in Text(Fmt.duration(r.duration)).font(DS.Font.mono) }.width(54)
-      TableColumn("Audio", value: \.audio) { r in Text(r.audio).foregroundStyle(.secondary) }.width(66)
+      TableColumn("Audio", value: \.audio) { r in Text(r.audio).foregroundStyle(.secondary).lineLimit(1) }.width(58)
       TableColumn("Score", value: \.scoreSort) { r in
         if r.video.type == .short {
           ScoreField(score: r.video.score, width: 34) { model.setScore([r.id], $0) }
         }
       }
       .width(52)
-      TableColumn("State", value: \.stateLabel) { r in stateCell(r.video) }.width(min: 80, ideal: 96)
+      TableColumn("State", value: \.stateLabel) { r in stateCell(r.video) }.width(min: 76, ideal: 86)
       TableColumn("Posted on", value: \.postedOn) { r in
-        HStack(spacing: 2) {
+        HStack(spacing: 1) {
           if r.video.type == .long {
             if r.video.longformURL != nil { PlatformGlyph(platform: .youtube, tint: .green, size: 16) }
             else { Button("Mark posted") { model.longformTarget = r.video }.controlSize(.small) }
           } else {
-            ForEach(r.postedPlatforms) { p in PlatformGlyph(platform: p, tint: .green, size: 16) }
+            ForEach(r.postedPlatforms) { p in PlatformGlyph(platform: p, tint: .green, size: 12) }
           }
         }
       }
-      .width(min: 80, ideal: 96)
+      .width(min: 76, ideal: 86)
     }
     .onKeyPress(.space) {
       if let id = model.librarySelection.first, let v = model.video(id) { model.previewVideo = v }

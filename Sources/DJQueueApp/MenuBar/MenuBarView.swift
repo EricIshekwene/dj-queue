@@ -220,7 +220,7 @@ struct MenuBarView: View {
     HStack(spacing: 6) {
       StateDot(tint: model.engineRunning ? .green : .red, size: 7)
       Text(model.engineRunning ? "Engine running" : "Engine stopped").font(DS.Font.secondary).fixedSize()
-      Text("ticked \(model.lastHeartbeat.map { Fmt.relative($0.at, now: model.now) } ?? "never")\(model.renderQueue > 0 ? " · \(model.renderQueue) rendering" : "")")
+      Text("ticked \(model.lastHeartbeat.map { Fmt.relative($0.at, now: model.now) } ?? "never")\(model.renderLine.map { " · \($0)" } ?? "")")
         .font(DS.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
       Spacer()
       Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.buttonStyle(.borderless)
