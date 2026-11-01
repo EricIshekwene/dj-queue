@@ -1,0 +1,326 @@
+<title>DJ Queue Decisions</title>
+<style>
+/* Layout: single reading column of question cards, grouped by topic, sticky answer bar at the bottom. */
+:root {
+  --bg: #f4f3f7; --card: #ffffff; --fg: #18171d; --muted: #63606e; --line: #e2e0ea;
+  --accent: #5a3fd6; --accent-soft: #efeafe; --rec: #17703f; --rec-soft: #e6f5ec; --warn: #b4232c;
+  --shot: #0d0c11;
+  --display: "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111015; --card: #1b1a21; --fg: #ecebf2; --muted: #a29fae; --line: #2d2b36;
+  --accent: #9d8bff; --accent-soft: #241f3d; --rec: #5fd38f; --rec-soft: #14281d; --warn: #ff7a80; --shot: #000; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111015; --card: #1b1a21; --fg: #ecebf2; --muted: #a29fae; --line: #2d2b36;
+  --accent: #9d8bff; --accent-soft: #241f3d; --rec: #5fd38f; --rec-soft: #14281d; --warn: #ff7a80; --shot: #000; color-scheme: dark }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.55 var(--body); }
+main { max-width: 1060px; margin: 0 auto; padding-inline: 16px; padding-block: 40px 180px; display: grid; gap: 20px; }
+header.top { display: grid; gap: 10px; margin-bottom: 8px; }
+.eyebrow { font: 600 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 700 40px/1.05 var(--display); margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+.intro { color: var(--muted); max-width: 68ch; margin: 0; }
+.intro b { color: var(--fg); }
+h2.group { font: 700 24px/1.2 var(--display); margin: 28px 0 0; text-wrap: balance; }
+.group-sub { color: var(--muted); margin: -12px 0 0; max-width: 68ch; }
+section.q { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: grid; gap: 14px; min-width: 0; }
+section.q h3 { font: 650 19px/1.3 var(--body); margin: 0; text-wrap: balance; display: flex; gap: 10px; }
+section.q h3 .num { font: 600 15px/1.5 var(--mono); color: var(--muted); flex: none; }
+.context { color: var(--muted); margin: 0; max-width: 72ch; }
+.options { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+label.opt { position: relative; display: flex; flex-direction: column; gap: 10px; border: 2px solid var(--line); border-radius: 12px;
+  padding: 12px; cursor: pointer; background: var(--card); transition: border-color .15s, background .15s; min-width: 0; }
+label.opt:hover { border-color: var(--muted); }
+label.opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+label.opt input { position: absolute; opacity: 0; pointer-events: none; }
+label.opt:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 2px; }
+.opt-head { display: flex; gap: 10px; align-items: flex-start; }
+.letter { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center;
+  font: 700 13px/1 var(--mono); }
+label.opt:has(input:checked) .letter { background: var(--accent); border-color: var(--accent); color: var(--card); }
+.opt-title { font-weight: 600; line-height: 1.35; }
+.opt-desc { color: var(--muted); font-size: 14.5px; margin-top: 2px; }
+.badge { display: inline-block; font: 700 11px/1 var(--body); color: var(--rec); background: var(--rec-soft); border-radius: 999px;
+  padding: 4px 8px; margin-left: 6px; vertical-align: 2px; white-space: nowrap; }
+.shots { display: grid; gap: 6px; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); }
+.shots a { display: block; border-radius: 8px; overflow: hidden; background: var(--shot); border: 1px solid var(--line); }
+.shots img { display: block; width: 100%; height: 190px; object-fit: contain; }
+.shots.tall img { height: 300px; object-fit: cover; }
+.cap { font-size: 12px; color: var(--muted); margin-top: -4px; }
+pre.sample { margin: 0; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px; color: var(--fg); overflow-wrap: anywhere; }
+.rec { margin: 0; padding: 10px 14px; border-radius: 10px; background: var(--rec-soft); font-size: 15px; }
+.rec b { color: var(--rec); }
+textarea.note { width: 100%; font: 14px/1.4 var(--body); color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; resize: vertical; min-height: 38px; }
+textarea.note:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+table.mini { border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; width: 100%; }
+table.mini td, table.mini th { padding: 3px 6px; border-bottom: 1px solid var(--line); text-align: left; }
+table.mini th { color: var(--muted); font-weight: 600; }
+.safe { position: relative; border-radius: 8px; overflow: hidden; background: var(--shot); aspect-ratio: 9/16; max-width: 100%; max-height: 300px; margin: 0 auto; }
+.safe img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.safe .z { position: absolute; background: rgba(255, 60, 90, .32); border: 1px dashed rgba(255,255,255,.75); }
+.decided { background: var(--card); border: 1px dashed var(--line); border-radius: 14px; padding: 18px 22px; color: var(--muted); font-size: 14.5px; }
+.decided summary { cursor: pointer; color: var(--fg); font-weight: 600; }
+.decided ol { margin: 10px 0 0; padding-left: 20px; columns: 2 320px; column-gap: 32px; }
+.bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); box-shadow: 0 -6px 20px rgba(0,0,0,.08); z-index: 5; }
+.bar-inner { max-width: 1060px; margin: 0 auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.bar code { flex: 1 1 300px; min-width: 0; font: 13px/1.4 var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; overflow-wrap: anywhere; max-height: 76px; overflow-y: auto; }
+button { font: 600 14.5px/1 var(--body); border-radius: 8px; padding: 10px 14px; cursor: pointer; border: 1px solid var(--line);
+  background: var(--card); color: var(--fg); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--card); }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.progress { color: var(--muted); font: 13px/1 var(--mono); font-variant-numeric: tabular-nums; }
+@media (max-width: 520px) { h1 { font-size: 30px; } section.q { padding: 16px; } .shots img { height: 150px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=JetBrains+Mono:wght@400;600;700&display=swap">
+
+<main>
+  <header class="top">
+    <span class="eyebrow">DJ Queue · milestone 1 · round 1</span>
+    <h1>Decisions before the build</h1>
+    <p class="intro">Everything the spec leaves open, on one page. Pick an option for each question (recommended ones are marked; pictures open full size), add a note if you want, then press <b>Copy answers</b> and paste the line back to me. Your picks are remembered in this browser. Text pictures are real frames from Afroween, rendered with the same text engine the app will use, so what you see is what will post.</p>
+  </header>
+  <div id="qs"></div>
+  <details class="decided">
+    <summary>Already decided in the spec (not asked again)</summary>
+    <ol>
+      <li>Native Mac app, always running (background engine + menu bar)</li>
+      <li>Manual posting first; Postiz later as an adapter</li>
+      <li>Long-form is tracked only, uploaded by you in YouTube Studio</li>
+      <li>Score 0–100, set only by you; no AI</li>
+      <li>Launch sort worst → best, switchable; only unplanned items move</li>
+      <li>1 post a day, same video everywhere, staggered times</li>
+      <li>No automatic spacing; overlap avoidance optional and off</li>
+      <li>Weekly approval; runway always visible; low-runway alerts</li>
+      <li>Editor: aspect, fixed crop, trim, text versions with timing, cover, captions</li>
+      <li>Preview equals export; source files never touched</li>
+      <li>Loudness −14 LUFS / −1 dBTP</li>
+      <li>Too big → auto-compress; too long → trim for that platform</li>
+      <li>Copyright: show loudly, no auto-retry, manual re-upload allowed</li>
+      <li>Failed posts re-queue the next day after the fix</li>
+      <li>Old TikTok library later</li>
+      <li>Disk fine for now</li>
+      <li>Doctor screen + CLI + Claude skill</li>
+    </ol>
+  </details>
+</main>
+
+<div class="bar"><div class="bar-inner">
+  <button id="fill" type="button">Fill recommended</button>
+  <code id="out" aria-live="polite">No answers yet</code>
+  <span class="progress" id="prog"></span>
+  <button id="copy" class="primary" type="button">Copy answers</button>
+</div></div>
+
+<script>
+const R = 'refs/', M = 'design/mock/';
+// Each question: id, group, title, context, options [{t, d, img:[...], rec, html}], why
+const G = [
+ {name: 'Launch and posting', sub: 'What goes live, when, and how the manual posting days feel.', qs: [
+  {title: 'Which platforms are on at launch?', context: 'You once said five places; the list has six. Every platform can be paused in one click later. Today, 3 poosh clips are over Facebook’s 90 s limit and 2 are over X’s 2:20, so those get a “Trim for…” step.',
+   opts: [
+    {t: 'All six', d: 'TikTok, Instagram, Facebook, YouTube Shorts, Threads, X.', rec: 1},
+    {t: 'Five, without X', d: 'Skips the strictest length limit.'},
+    {t: 'Five, without Threads', d: 'Threads mirrors Instagram’s audience.'},
+    {t: 'Five, without Facebook', d: 'Skips the 90 s Reels limit.'}],
+   why: 'Same file, a few extra minutes a day, and every account is new so more surfaces means more chances.'},
+  {title: 'Daily post times', context: 'One video a day, staggered so each platform gets its own slot (New York time). These become settings.',
+   opts: [
+    {t: 'Spread across the afternoon', html: tbl([['Facebook','12:30 pm'],['Threads','1:30 pm'],['YouTube','3:00 pm'],['X','5:00 pm'],['Instagram','6:00 pm'],['TikTok','7:00 pm']]), rec: 1},
+    {t: 'Tight evening block', html: tbl([['Facebook','5:00 pm'],['Threads','5:30 pm'],['YouTube','6:00 pm'],['X','6:30 pm'],['Instagram','7:00 pm'],['TikTok','7:30 pm']])},
+    {t: 'Two waves', html: tbl([['Facebook','12:00 pm'],['Threads','12:30 pm'],['YouTube','1:00 pm'],['X','6:00 pm'],['Instagram','6:30 pm'],['TikTok','7:00 pm']])}],
+   why: 'Keeps the strongest evening slots for TikTok and Instagram, at least 1 h apart, as the spec proposed.'},
+  {title: 'While you post by hand, can a post go out before its slot?', context: 'Six manual posts spread over 6.5 hours is a lot of interruptions.',
+   opts: [
+    {t: 'Yes, any time that day', d: 'Post all six in one sitting if you like; the app records the real time.', rec: 1},
+    {t: 'Only at or after the slot time', d: 'Strict stagger; Mark posted unlocks at the slot.'}],
+   why: 'The stagger stays the plan, but you choose when to sit down and do it.'},
+  {title: 'Where will you usually post from?', context: 'Changes which button is biggest on each Today row.',
+   opts: [
+    {t: 'Mac browser', d: 'Drag the file into the upload page; caption already copied.', rec: 1},
+    {t: 'Phone', d: '“Send to phone” (AirDrop) and caption copy are the main buttons.'},
+    {t: 'Both, varies', d: 'Both buttons equal size.'}],
+   why: 'Every platform takes uploads on the web, and the files are already on the Mac.'},
+  {title: 'Week start and approval reminder', opts: [
+    {t: 'Mon–Sun weeks, reminder Sunday 6 pm', rec: 1}, {t: 'Sun–Sat weeks, reminder Saturday 6 pm'}, {t: 'Mon–Sun weeks, reminder Friday 6 pm', d: 'More warning before the week starts.'}],
+   why: 'Approve on Sunday evening for the week ahead.'},
+  {title: 'Low-runway alerts', context: 'Afroween gives you 62 clips, about two months at one a day.',
+   opts: [
+    {t: 'Approve-week alert under 3 days, record-a-set alert under 14 days', rec: 1},
+    {t: '2 days / 7 days', d: 'Fewer alerts, less buffer.'},
+    {t: '5 days / 21 days', d: 'More buffer to book and record a set.'}],
+   why: 'Two weeks is enough to play, sync and mark a new set.'},
+  {title: 'Notifications for due posts', opts: [
+    {t: 'One at each slot time', d: 'Silent for anything already posted.', rec: 1},
+    {t: 'One morning summary, plus late reminders', d: '“6 posts today” at 10 am; then only if something is late.'}],
+   why: 'If you post everything early, the later ones never fire, so it stays quiet.'},
+  {title: 'What happens to final files after they’re posted?', context: 'Each final file is about 55 MB (average clip 37 s), so all 62 come to ~3.5 GB.',
+   opts: [
+    {t: 'Keep 30 days in Posted, then delete', d: 'Raw clips stay forever; finals can be re-rendered.', rec: 1},
+    {t: 'Keep forever'},
+    {t: 'Delete after 7 days'}],
+   why: 'Finals are cheap to rebuild from the raw clip and edit.'}]},
+ {name: 'Scoring and kinds', sub: 'Getting the first 62 clips into the queue.', qs: [
+  {title: 'Kind for the clips you already have', context: 'Kind decides the text template (transition / talking / medley / other).',
+   opts: [
+    {t: 'Guess from the tag, you fix', d: '“poosh” → medley, “a x b” → transition, others → other.', rec: 1},
+    {t: 'Everything starts as transition', d: 'The spec’s plain default.'}],
+   why: 'Most tags are already “a x b”, so the guess is right for ~55 of 62.'},
+  {title: 'How do you score 62 clips?', opts: [
+    {t: 'A Score mode', d: 'Big player, type a number, Enter jumps to the next unscored clip.', rec: 1},
+    {t: 'In the list only', d: 'Score field on each row and in the inspector.'}],
+   why: 'You need to watch each clip to score it; a dedicated mode makes that a 20-minute job.'}]},
+ {name: 'Text and captions', sub: 'Pictures are 9:16 crops of real Afroween clips with the app’s text renderer.', qs: [
+  {title: 'Default text style', context: 'You can switch per video; this is what new videos start with.',
+   opts: [
+    {t: 'Bold white with outline', img: [M + 'style-outline.jpg'], tall: 1},
+    {t: 'White box, black text', d: 'The TikTok look; readable on any background.', img: [M + 'style-box.jpg'], tall: 1, rec: 1},
+    {t: 'Plain white with shadow', img: [M + 'style-shadow.jpg'], tall: 1}],
+   why: 'Club footage is busy and dark with bright lights; the box is the only one that stays readable everywhere.'},
+  {title: 'Default text position', opts: [
+    {t: 'Near the top', img: [M + 'pos-top.jpg'], tall: 1},
+    {t: 'Upper third', img: [M + 'pos-upper.jpg'], tall: 1, rec: 1},
+    {t: 'Centre', img: [M + 'pos-center.jpg'], tall: 1}],
+   why: 'Clear of the top bar and the bottom caption area on every platform, without covering your face.'},
+  {title: 'Default text size', opts: [
+    {t: 'Small', img: [M + 'size-s.jpg'], tall: 1}, {t: 'Medium', img: [M + 'size-m.jpg'], tall: 1, rec: 1}, {t: 'Large', img: [M + 'size-l.jpg'], tall: 1}],
+   why: 'Readable on a phone without taking over the frame.'},
+  {title: 'Prefill the first text from the marker tag?', context: 'You always edit or accept. Example tag: “yayo x johnny”.',
+   opts: [
+    {t: 'Yes, tidied', html: pre('transition  Yayo ➜ Johnny 🔥\nmedley      Yayo ➜ Johnny ➜ Jago 🔥\ntalking     (empty)'), rec: 1},
+    {t: 'Yes, exactly as tagged', html: pre('yayo x johnny')},
+    {t: 'No prefill', d: 'Always start empty.'}],
+   why: 'Most text is the two song names; tidying saves typing and you still check it.'},
+  {title: 'Caption template', opts: [
+    {t: 'Text + set + link', html: pre('Yayo ➜ Johnny 🔥\n\n🎧 Afroween Jazz Piano — full set on YouTube (link in bio)\n#amapiano #afrobeats #djlovd'), rec: 1},
+    {t: 'Short', html: pre('Yayo ➜ Johnny 🔥 #amapiano #djlovd')},
+    {t: 'Text + track names', html: pre('Yayo ➜ Johnny 🔥\n\n🎶 yayo x johnny\n#amapiano #afrobeats #djlovd')}],
+   why: 'Points people at the long-form set, which feeds the YouTube channel.'},
+  {title: 'Starter hashtag sets', opts: [
+    {t: 'Three starter sets', html: pre('Amapiano   #amapiano #amapianomix #afrohouse #djlovd\nAfrobeats  #afrobeats #afrobeatsmix #naija #djlovd\nDJ         #dj #djlife #djmix #transition #djlovd'), rec: 1},
+    {t: 'Start empty', d: 'You make your own in Settings.'}],
+   why: 'Something to pick from on day one; all editable.'},
+  {title: 'YouTube Shorts title', context: 'Shorts needs a title (100 characters max).',
+   opts: [
+    {t: 'Text + name', html: pre('Yayo ➜ Johnny 🔥 | DJ Lovd'), rec: 1},
+    {t: 'First line of the caption'},
+    {t: 'Tag + set', html: pre('yayo x johnny – Afroween Jazz Piano')}],
+   why: 'Same hook as the video, plus your name for search.'},
+  {title: 'Put the text on the cover image?', opts: [
+    {t: 'Yes', d: 'Grid views on Instagram/TikTok show what the clip is.', rec: 1}, {t: 'No', d: 'Clean frame.'}],
+   why: 'Profile grids are where new followers decide what to watch.'},
+  {title: 'Safe-zone overlay (where platform buttons cover the video)', context: 'Red areas: TikTok/Reels right-hand buttons and bottom caption.',
+   opts: [
+    {t: 'On while editing text', html: safe(), rec: 1},
+    {t: 'Always on in the editor'},
+    {t: 'Off, toggle when needed'}],
+   why: 'You see it exactly when placing text, and a clean preview otherwise.'}]},
+ {name: 'Layout', sub: 'How the app is arranged. References are real apps from Mobbin.', qs: [
+  {key: 'nav', title: 'Main navigation', opts: [
+    {t: 'Sidebar', d: 'Queue, Week, Today, Library, Posts, Health, Settings down the left (like Finder, Mail, Linear).', img: [R + 'APP.L--linear-sidebar-issue-list.webp'], rec: 1},
+    {t: 'Tabs along the top', d: 'More width for the content, fewer sections visible at once.', img: [R + 'APP.L-alt--unify-top-tabs.webp']}],
+   why: 'Seven sections fit a sidebar, and it’s the native Mac pattern.'},
+  {key: 'queue', title: 'Queue shape', opts: [
+    {t: 'Ordered list + inspector', d: 'Rows in posting order; select one to see details on the right.', img: [R + 'Q.S3--linear-issue-list.webp', R + 'Q.S4--linear-inspector-panel.webp'], rec: 1},
+    {t: 'Board by state', d: 'Columns: To score · Needs edit · Ready · Planned.', img: [R + 'Q.S3-alt--linear-board.webp']}],
+   why: 'The queue is an order. A list shows position, a board hides it.'},
+  {key: 'week', title: 'Week view', opts: [
+    {t: 'Calendar grid', d: '7 day columns; each day shows its video and six platform time chips.', img: [R + 'W.S2--hootsuite-week-cards.webp'], rec: 1},
+    {t: 'Agenda list', d: 'One row per day, top to bottom.', img: [R + 'W.S2-alt--buffer-queue-list.webp']}],
+   why: 'Dragging a video between days is easiest on a grid.'},
+  {key: 'editor', title: 'Editor', opts: [
+    {t: 'Full window', d: 'Takes over the window; ← → steps to the next video; Done returns.', img: [R + 'E.L--synthesia-editor-inspector-right.webp'], rec: 1},
+    {t: 'Sheet over the app', d: 'Slides over the Queue; smaller preview.', img: [R + 'E.L-alt--tiktok-studio-sheet.webp']}],
+   why: 'A vertical preview, timeline and inspector need the room.'},
+  {key: 'insp', title: 'Inspector side (editor and Queue)', opts: [
+    {t: 'Right', d: 'Like Final Cut, Keynote, Figma.', img: [R + 'E.L--synthesia-editor-inspector-right.webp'], rec: 1}, {t: 'Left', img: [R + 'E.L-alt--elevenlabs-inspector-left.webp']}],
+   why: 'Every Mac editor you know puts it on the right.'},
+  {title: 'Menu-bar number', context: 'The small number next to the menu-bar icon.',
+   opts: [
+    {t: 'Approved days left', d: 'e.g. “5d”.', rec: 1}, {t: 'Total runway days', d: 'e.g. “58d”.'}, {t: 'Next post time', d: 'e.g. “6:00”.'}],
+   why: 'It’s the number you act on every week.'},
+  {title: 'Colour', opts: [
+    {t: 'Follow your Mac accent colour', d: 'Feels like part of macOS.', rec: 1},
+    {t: 'A DJ Lovd brand colour', d: 'Tell me which in the note.'}],
+   why: 'Calm and native; red and amber stay reserved for problems.'}]},
+ {name: 'Setup', sub: 'Things on your Mac.', qs: [
+  {title: 'Install Xcode?', context: 'Not installed now. The app can be built without it.',
+   opts: [
+    {t: 'No, build with the command-line tools', d: 'Nothing to install; I package the .app by hand.', rec: 1},
+    {t: 'Yes, install Xcode from the App Store', d: '~15 GB; only you can do this (needs your Apple ID).'}],
+   why: 'The command-line tools already build SwiftUI apps; Xcode adds nothing we need yet.'},
+  {title: 'Start the menu-bar item at login?', context: 'The background engine always starts at login either way.',
+   opts: [
+    {t: 'Yes', d: 'Runway and due posts always one click away.', rec: 1}, {t: 'No, only when I open the app'}],
+   why: 'The menu bar is where late posts and errors show up.'}]}
+];
+
+function tbl(rows) { return '<table class="mini"><tr><th>Platform</th><th>Time</th></tr>' + rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('') + '</table>'; }
+function pre(t) { return `<pre class="sample">${t}</pre>`; }
+function safe() { return `<div class="safe"><img src="${M}style-box.jpg" alt="Safe zones over a 9:16 frame">
+  <div class="z" style="right:0;top:38%;width:16%;height:44%"></div><div class="z" style="left:0;bottom:0;width:84%;height:18%"></div>
+  <div class="z" style="left:0;top:0;width:100%;height:7%"></div></div>`; }
+
+const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+                set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
+let picks = store.get('djq-picks') || {}, notes = store.get('djq-notes') || {};
+const all = [];
+let n = 0, html = '';
+for (const g of G) {
+  html += `<h2 class="group">${g.name}</h2><p class="group-sub">${g.sub}</p>`;
+  for (const q of g.qs) {
+    n++; q.n = n; all.push(q);
+    html += `<section class="q" id="q${n}"><h3><span class="num">${n}.</span>${q.title}</h3>`;
+    if (q.context) html += `<p class="context">${q.context}</p>`;
+    html += '<div class="options">';
+    q.opts.forEach((o, i) => {
+      const L = 'ABCD'[i];
+      html += `<label class="opt"><input type="radio" name="q${n}" value="${L}" id="q${n}${L}"><div class="opt-head"><span class="letter">${L}</span><div>
+        <div class="opt-title">${o.t}${o.rec ? '<span class="badge">Recommended</span>' : ''}</div>${o.d ? `<div class="opt-desc">${o.d}</div>` : ''}</div></div>`;
+      if (o.img && o.img.length) html += `<div class="shots${o.tall ? ' tall' : ''}">` + o.img.map(s => `<a href="${s}" target="_blank" rel="noopener"><img src="${s}" alt="${o.t}" loading="lazy"></a>`).join('') + '</div>';
+      if (o.caption) html += `<div class="cap">${o.caption}</div>`;
+      if (o.html) html += o.html;
+      html += '</label>';
+    });
+    html += `</div><p class="rec"><b>Why ${'ABCD'[q.opts.findIndex(o => o.rec)]}:</b> ${q.why}</p>
+      <textarea class="note" id="n${n}" rows="1" placeholder="Note (optional)"></textarea></section>`;
+  }
+}
+document.getElementById('qs').outerHTML = html;
+
+function render() {
+  const parts = [], np = [];
+  let done = 0;
+  for (const q of all) {
+    if (picks[q.n]) { parts.push(q.n + picks[q.n]); done++; }
+    if (notes[q.n]) np.push(`${q.n}: ${notes[q.n].trim()}`);
+  }
+  document.getElementById('out').textContent = parts.length ? parts.join(' ') + (np.length ? '  |  notes — ' + np.join(' · ') : '') : 'No answers yet';
+  document.getElementById('prog').textContent = `${done}/${all.length}`;
+}
+for (const q of all) {
+  if (picks[q.n]) { const el = document.getElementById(`q${q.n}${picks[q.n]}`); if (el) el.checked = true; }
+  const t = document.getElementById('n' + q.n); t.value = notes[q.n] || '';
+  t.addEventListener('input', () => { notes[q.n] = t.value; store.set('djq-notes', notes); render(); });
+}
+document.addEventListener('change', e => {
+  if (e.target.type !== 'radio') return;
+  picks[e.target.name.slice(1)] = e.target.value; store.set('djq-picks', picks); render();
+});
+document.getElementById('fill').addEventListener('click', () => {
+  for (const q of all) { const L = 'ABCD'[q.opts.findIndex(o => o.rec)]; if (!picks[q.n]) { picks[q.n] = L; document.getElementById(`q${q.n}${L}`).checked = true; } }
+  store.set('djq-picks', picks); render();
+});
+document.getElementById('copy').addEventListener('click', () => {
+  const text = document.getElementById('out').textContent, b = document.getElementById('copy');
+  navigator.clipboard.writeText(text).then(() => { b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy answers', 1500); })
+    .catch(() => { const r = document.createRange(); r.selectNodeContents(document.getElementById('out')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = 'Press ⌘C'; });
+});
+render();
+</script>
