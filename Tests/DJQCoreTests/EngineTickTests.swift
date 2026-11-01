@@ -241,3 +241,18 @@ import Testing
     #expect(kinds.contains(.sleep) && kinds.contains(.wake))
   }
 }
+
+@Suite struct EngineDayMathTests {
+  @Test func slotTimesAreWallClockOnDSTDays() {
+    let dm = DayMath(settings: Settings())
+    var c = Calendar(identifier: .gregorian)
+    c.timeZone = TimeZone(identifier: "America/New_York")!
+    for day in ["2026-11-01", "2026-03-08", "2026-11-02"] {  // fall back, spring forward, normal
+      let d = dm.at(day, minutes: 12 * 60 + 30)
+      let comps = c.dateComponents([.hour, .minute], from: d)
+      #expect(comps.hour == 12 && comps.minute == 30, "\(day)")
+      #expect(dm.key(d) == day)
+    }
+    #expect(dm.key(dm.at("2026-11-02", minutes: 25 * 60)) == "2026-11-03")
+  }
+}

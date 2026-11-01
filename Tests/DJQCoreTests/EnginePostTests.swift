@@ -219,3 +219,19 @@ import Testing
     #expect(list.first?.lastPathComponent == "queue-2026-11-17.sqlite")
   }
 }
+
+@Suite struct EngineSkillTests {
+  /// Milestone 6 acceptance: every Doctor finding id has a fix in the skill.
+  @Test func everyDoctorIdHasAFixInTheSkill() throws {
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let doctor = try String(contentsOf: repo.appendingPathComponent("Sources/DJQCore/Engine/Doctor.swift"), encoding: .utf8)
+    let skill = try String(contentsOf: repo.appendingPathComponent("skills/dj-queue-doctor/SKILL.md"), encoding: .utf8)
+    let re = try NSRegularExpression(pattern: #"id: "([A-Za-z.]+)""#)
+    let ids = Set(re.matches(in: doctor, range: NSRange(doctor.startIndex..., in: doctor)).map {
+      String(doctor[Range($0.range(at: 1), in: doctor)!])
+    })
+    #expect(ids.count >= 25)
+    for id in ids { #expect(skill.contains("`\(id)`"), "\(id) missing from SKILL.md") }
+    #expect(skill.hasPrefix("---\nname: dj-queue-doctor\ndescription: "))
+  }
+}
