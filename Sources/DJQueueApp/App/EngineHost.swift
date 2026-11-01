@@ -8,7 +8,7 @@ final class EngineHost {
   let engine: Engine
   let renderer: Renderer
   let publisher: ManualPublisher
-  private var lockFD: Int32 = -1
+  private var lock: EngineLock?
   private var started = false
   private let store: Store
 
@@ -22,15 +22,11 @@ final class EngineHost {
   /// Returns false when another process already holds the engine lock (its heartbeats still drive the UI).
   @discardableResult
   func start() -> Bool {
-    let path = store.paths.appSupport.appendingPathComponent("engine.lock").path
-    let fd = open(path, O_CREAT | O_RDWR, 0o644)
-    guard fd >= 0 else { return false }
-    guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
-      close(fd)
+    guard let l = EngineLock.acquire(store.paths) else {
       Log.shared.warn("engine lock held by another process; this process only shows the UI")
       return false
     }
-    lockFD = fd
+    lock = l
     engine.start()
     started = true
     return true
@@ -38,12 +34,11 @@ final class EngineHost {
 
   /// Stops only an engine this process started (a UI-only process must never write a stop heartbeat).
   func stop() {
-    guard started, lockFD >= 0 else { return }
+    guard started, let l = lock else { return }
     engine.stop()
     started = false
-    flock(lockFD, LOCK_UN)
-    close(lockFD)
-    lockFD = -1
+    l.release()
+    lock = nil
   }
 }
 
@@ -56,7 +51,7 @@ final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate, 
   /// `DJQ_NOTIFY=0` turns delivery off for dev runs (no permission prompt).
   private let enabled = Bundle.main.bundleIdentifier != nil && Bundle.main.bundleURL.pathExtension == "app"
     && ProcessInfo.processInfo.environment["DJQ_NOTIFY"] != "0"
-  private var registered = Set<String>()
+  private var categories: [String: UNNotificationCategory] = [:]
   private let lock = NSLock()
 
   func setUp() {
@@ -95,8 +90,7 @@ final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate, 
   @discardableResult
   private func register(_ actions: [NotificationAction]) -> String {
     let id = actions.isEmpty ? "djq.none" : "djq." + actions.map(\.rawValue).joined(separator: "+")
-    let isNew: Bool = lock.withLock { registered.insert(id).inserted }
-    guard enabled, isNew else { return id }
+    guard enabled, lock.withLock({ categories[id] == nil }) else { return id }
     let un: [UNNotificationAction] = actions.map { a in
       switch a {
       case .postNow: UNNotificationAction(identifier: a.rawValue, title: "Post now", options: [.foreground])
@@ -109,10 +103,12 @@ final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate, 
       }
     }
     let cat = UNNotificationCategory(identifier: id, actions: un, intentIdentifiers: [], options: [])
-    let c = UNUserNotificationCenter.current()
-    c.getNotificationCategories { existing in
-      c.setNotificationCategories(existing.filter { $0.identifier != id }.union([cat]))
+    // setNotificationCategories replaces the whole set, so always pass every category we know (one call).
+    let all: Set<UNNotificationCategory> = lock.withLock {
+      categories[id] = cat
+      return Set(categories.values)
     }
+    UNUserNotificationCenter.current().setNotificationCategories(all)
     return id
   }
 

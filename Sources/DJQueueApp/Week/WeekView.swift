@@ -339,6 +339,8 @@ struct SlotChip: View {
     .frame(height: 18)
     .background(tint.opacity(post == nil ? 0.05 : 0.12), in: RoundedRectangle(cornerRadius: 4))
     .help("\(platform.displayName) · \(post?.state.displayName ?? (approved ? "Planned" : "Draft"))\(paused ? " · platform paused" : "")")
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("\(platform.displayName): \(post?.state.displayName.lowercased() ?? (approved ? "planned" : "draft")), \(time)")
     .contextMenu { if let post { PostContextMenu(model: model, post: post) } }
   }
 }
