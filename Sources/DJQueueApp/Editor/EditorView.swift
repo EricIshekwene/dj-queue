@@ -31,9 +31,10 @@ struct EditorView: View {
           EditorValidationStrip(model: model)
           Divider()
           EditorPreview(model: model, playback: model.playback)
+            .allowsHitTesting(!model.readOnly)
           Divider()
           EditorTimeline(model: model, playback: model.playback)
-            .disabled(model.fileMissing || model.video == nil)
+            .disabled(model.fileMissing || model.video == nil || model.readOnly)
         }
         Divider()
         EditorInspector(model: model)
@@ -99,7 +100,7 @@ struct EditorHeader: View {
   var body: some View {
     HStack(spacing: 10) {
       Button(action: done) { Image(systemName: "chevron.left").font(.system(size: 13, weight: .semibold)) }
-        .buttonStyle(.borderless).help("Back")
+        .buttonStyle(.borderless).help("Back").accessibilityLabel("Back")
       VStack(alignment: .leading, spacing: 0) {
         Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
         Text(Captions.setName(model.sessionName)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
@@ -107,8 +108,10 @@ struct EditorHeader: View {
       HStack(spacing: 2) {
         Button { go(-1) } label: { Image(systemName: "chevron.left") }
           .keyboardShortcut("[", modifiers: .command).disabled((index ?? 0) <= 0).help("Previous video (⌘[)")
+          .accessibilityLabel("Previous video")
         Button { go(1) } label: { Image(systemName: "chevron.right") }
           .keyboardShortcut("]", modifiers: .command).disabled((index ?? videoIds.count) >= videoIds.count - 1).help("Next video (⌘])")
+          .accessibilityLabel("Next video")
         if let i = index {
           Text("\(i + 1) of \(videoIds.count)").font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).padding(.leading, 4)
         }
@@ -143,7 +146,9 @@ struct EditorHeader: View {
 
   @ViewBuilder private var statusPill: some View {
     let issues = EditorValidationStrip.liveIssues(model)
-    if model.video?.missing == true || model.fileMissing {
+    if model.readOnly || model.loadError != nil {
+      EmptyView()  // the Read only pill and the strip say why
+    } else if model.video?.missing == true || model.fileMissing {
       EditorPill(text: "File missing", color: .red, systemImage: "exclamationmark.triangle.fill")
     } else if issues.isEmpty {
       EditorPill(text: "Ready", color: .green, systemImage: "checkmark")
@@ -173,7 +178,8 @@ struct EditorValidationStrip: View {
         } else if model.fileMissing && !issues.contains(where: { $0.kind == .missingFile }) {
           EditorPill(text: "File missing", color: .red, systemImage: "exclamationmark.triangle.fill")
         } else if issues.isEmpty {
-          EditorPill(text: "Ready to post", color: .green, systemImage: "checkmark.circle.fill")
+          Text("Posts to " + model.postingPlatforms.map(\.shortName).joined(separator: " · "))
+            .font(.system(size: 11)).foregroundStyle(.secondary)
         }
         ForEach(issues) { i in item(i) }
         ForEach(Array(model.edit.skippedPlatforms).sorted()) { p in
@@ -198,7 +204,7 @@ struct EditorValidationStrip: View {
           Button("Skip") { model.updateEdit { $0.skippedPlatforms.insert(p) } }.controlSize(.small).help("Skip this platform")
         }
       }
-    case .missingFile:
+    case .missingFile, .corrupt:
       EditorPill(text: i.message, color: .red, systemImage: "exclamationmark.triangle.fill")
     default:
       Button { model.tab = tab(for: i.kind) } label: {

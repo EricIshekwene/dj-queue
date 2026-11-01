@@ -129,8 +129,9 @@ struct EditorCroppedImage: View {
   private var cropped: CGImage? {
     guard let image else { return nil }
     guard let c = crop, source.width > 0 else { return image }
-    let k = CGFloat(image.width) / source.width
-    let r = CGRect(x: c.x * k, y: c.y * k, width: c.w * k, height: c.h * k).integral
+    // Same even-pixel rect as the export (Media.pixelCrop), scaled to this still's size.
+    let r = EditorGeometry.imageRect(EditorGeometry.even(c, source: source), source: source,
+                                     imageSize: CGSize(width: image.width, height: image.height))
     return image.cropping(to: r) ?? image
   }
 }
@@ -140,18 +141,27 @@ struct EditorCroppedImage: View {
 final class EditorFrameStrip: ObservableObject {
   @Published private(set) var frames: [(time: Double, image: CGImage)] = []
   @Published private(set) var loading = false
-  private static var cache: [String: [(Double, CGImage)]] = [:]
+  /// Bounded cache (~160 MB of decoded frames); older strips are evicted.
+  private final class Entry { let frames: [(Double, CGImage)]; init(_ f: [(Double, CGImage)]) { frames = f } }
+  private static let cache: NSCache<NSString, Entry> = {
+    let c = NSCache<NSString, Entry>()
+    c.totalCostLimit = 160 * 1024 * 1024
+    return c
+  }()
+  private static func store(_ out: [(Double, CGImage)], key: String) {
+    cache.setObject(Entry(out), forKey: key as NSString, cost: out.reduce(0) { $0 + $1.1.bytesPerRow * $1.1.height })
+  }
   private var task: Task<Void, Never>?
 
   func load(url: URL?, from a: Double, to b: Double, count: Int, sync: Bool = false) {
     task?.cancel()
     guard let url, b > a, count > 0 else { frames = []; return }
     let key = "\(url.path)|\(Int(a * 10))|\(Int(b * 10))|\(count)"
-    if let c = Self.cache[key] { frames = c.map { (time: $0.0, image: $0.1) }; return }
+    if let c = Self.cache.object(forKey: key as NSString) { frames = c.frames.map { (time: $0.0, image: $0.1) }; return }
     let times = (0..<count).map { a + (b - a) * (Double($0) + 0.5) / Double(count) }
     if sync {
       let out = Self.generate(url: url, times: times)
-      Self.cache[key] = out
+      Self.store(out, key: key)
       frames = out.map { (time: $0.0, image: $0.1) }
       return
     }
@@ -165,7 +175,7 @@ final class EditorFrameStrip: ObservableObject {
   }
 
   private func finish(_ out: [(Double, CGImage)], key: String) {
-    Self.cache[key] = out
+    Self.store(out, key: key)
     frames = out.map { (time: $0.0, image: $0.1) }
     loading = false
   }

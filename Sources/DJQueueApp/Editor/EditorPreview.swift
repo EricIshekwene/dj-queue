@@ -44,12 +44,10 @@ struct EditorPlayerSurface: NSViewRepresentable {
     override func layout() {
       super.layout()
       guard visible.width > 0 else { return }
-      let s = bounds.width / visible.width
       CATransaction.begin()
       CATransaction.setDisableActions(true)
       // Layer coordinates are bottom-left; `visible` is top-left.
-      playerLayer.frame = CGRect(x: -visible.minX * s, y: -(source.height - visible.maxY) * s,
-                                 width: source.width * s, height: source.height * s)
+      playerLayer.frame = EditorGeometry.pictureFrame(visible: visible, source: source, bounds: bounds.size)
       CATransaction.commit()
     }
   }
@@ -72,7 +70,9 @@ struct EditorPreview: View {
   @ObservedObject var playback: EditorPlayback
   @State private var cropDragStart: CropRect?
   @State private var textDrag: CGSize = .zero
-  @State private var textDragStart: (x: Double, y: Double)?
+  /// Block centre and normalised size at drag start (from TextOverlay.textBounds), and the live result.
+  @State private var textDragStart: (x: Double, y: Double, ex: Double, ey: Double)?
+  @State private var textDragValue: (x: Double, y: Double)?
   @State private var snapX = false
   @State private var snapY = false
   @State private var pinchStart: Double?
@@ -108,7 +108,7 @@ struct EditorPreview: View {
           textLayer(in: textRect)
 
           if !frameMode && model.safeZonesVisible {
-            EditorSafeZones(zone: model.safeZone)
+            EditorSafeZones(zone: model.safeZone, aspect: model.edit.aspect)
               .frame(width: out.width, height: out.height)
               .offset(x: out.minX, y: out.minY)
               .allowsHitTesting(false)
@@ -122,7 +122,9 @@ struct EditorPreview: View {
     }
     .background(Color(nsColor: .underPageBackgroundColor))
     .overlay(alignment: .topTrailing) { if !frameMode { safeZoneControl.padding(12) } }
-    .overlay(alignment: .topLeading) { if frameMode && !model.fileMissing && model.video != nil { framingBadges.padding(12) } }
+    .overlay(alignment: .topLeading) {
+      if frameMode && !model.fileMissing && model.video != nil && !model.readOnly { framingBadges.padding(12) }
+    }
     .clipped()
   }
 
@@ -203,7 +205,6 @@ struct EditorPreview: View {
         EditorPill(text: String(format: "Upscaled %.1f×", model.upscale), color: .orange, systemImage: "exclamationmark.triangle.fill")
       }
       if !model.cropIsSet {
-        EditorPill(text: "Crop not set", color: .orange)
         Button("Use this crop") { model.confirmCrop() }.controlSize(.small).buttonStyle(.borderedProminent)
       }
     }
@@ -237,19 +238,20 @@ struct EditorPreview: View {
   private func textDragGesture(size: CGSize) -> some Gesture {
     DragGesture(minimumDistance: 1)
       .onChanged { v in
-        if textDragStart == nil { textDragStart = (model.resolved.posX, model.resolved.posY) }
+        if textDragStart == nil, let b = model.textBoundsUnit {
+          // Start from where the block really is (TextOverlay keeps it inside the frame).
+          textDragStart = (Double(b.midX), Double(b.midY), Double(b.width), Double(b.height))
+        }
         guard let st = textDragStart else { return }
-        let (nx, sx) = EditorGeometry.snapCentre(st.x + v.translation.width / size.width)
-        let (ny, sy) = EditorGeometry.snapCentre(st.y + v.translation.height / size.height)
+        let (nx, sx) = EditorGeometry.textCentre(st.x + v.translation.width / size.width, extent: st.ex)
+        let (ny, sy) = EditorGeometry.textCentre(st.y + v.translation.height / size.height, extent: st.ey)
         snapX = sx; snapY = sy
+        textDragValue = (nx, ny)
         textDrag = CGSize(width: (nx - st.x) * size.width, height: (ny - st.y) * size.height)
       }
       .onEnded { _ in
-        guard let st = textDragStart else { return }
-        let nx = min(max(st.x + textDrag.width / size.width, 0.05), 0.95)
-        let ny = min(max(st.y + textDrag.height / size.height, 0.05), 0.95)
-        model.updateVersion { $0.posX = nx; $0.posY = ny }
-        textDrag = .zero; textDragStart = nil; snapX = false; snapY = false
+        if let v = textDragValue { model.updateVersion { $0.posX = v.x; $0.posY = v.y } }
+        textDrag = .zero; textDragStart = nil; textDragValue = nil; snapX = false; snapY = false
       }
   }
 
@@ -309,6 +311,7 @@ struct EditorPreview: View {
 /// Translucent platform-UI overlay for a 9:16 frame (normalised to the preview box).
 struct EditorSafeZones: View {
   var zone: EditorSafeZone
+  var aspect: Aspect
   var body: some View {
     GeometryReader { g in
       let W = g.size.width, H = g.size.height
@@ -320,14 +323,19 @@ struct EditorSafeZones: View {
             .frame(width: r.width * W, height: r.height * H)
             .offset(x: r.minX * W, y: r.minY * H)
         }
-        Text("\(zone.rawValue) UI").font(.system(size: 9, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+        Text(aspect == .r16x9 ? "16:9 isn't shown in the vertical feed"
+             : rects.isEmpty ? "No \(zone.rawValue) UI over this frame" : "\(zone.rawValue) UI")
+          .font(.system(size: 9, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
           .padding(.horizontal, 5).padding(.vertical, 2).background(Color.red.opacity(0.55), in: Capsule())
           .offset(x: 6, y: rects.last.map { $0.minY * H + 6 } ?? 6)
       }
     }
   }
   /// Top bar, right rail, bottom caption area (normalised, top-left origin).
-  private var rects: [CGRect] {
+  private var rects: [CGRect] { EditorGeometry.safeZones(phoneRects, aspect: aspect) }
+
+  /// Platform UI on a 9:16 phone screen.
+  private var phoneRects: [CGRect] {
     switch zone {
     case .tiktok: [CGRect(x: 0, y: 0, width: 1, height: 0.085), CGRect(x: 0.855, y: 0.40, width: 0.145, height: 0.44),
                    CGRect(x: 0, y: 0.80, width: 1, height: 0.20)]

@@ -68,6 +68,7 @@ final class EditorModel: ObservableObject {
 
   func load(_ id: String) {
     flush()
+    Self.saveQueue.sync {}  // the previous video's last write lands before anything is re-read
     videoId = id
     versionNo = 1
     loadError = nil
@@ -143,7 +144,10 @@ final class EditorModel: ObservableObject {
   var duration: Double { video?.duration ?? 0 }
   var trim: TrimRange { edit.trim(duration: duration) }
   var cropIsSet: Bool { edit.crop != nil }
-  var crop: CropRect { edit.crop ?? EditorGeometry.defaultCrop(source: sourceSize, aspect: edit.aspect) }
+  /// The crop exactly as the export uses it (even pixels, `Media.pixelCrop`).
+  var crop: CropRect {
+    edit.crop.map { EditorGeometry.even($0, source: sourceSize) } ?? EditorGeometry.defaultCrop(source: sourceSize, aspect: edit.aspect)
+  }
   var zoom: Double { EditorGeometry.zoom(of: crop, source: sourceSize, aspect: edit.aspect) }
   var upscale: Double { EditorGeometry.upscale(crop, aspect: edit.aspect) }
   var safeZonesVisible: Bool { tab == .text || safeZonesWanted }
@@ -217,10 +221,28 @@ final class EditorModel: ObservableObject {
     var e = edit
     f(&e)
     guard e != edit else { return }
+    let oldTrim = trim
     edit = e
     pendingEdit = true
+    if trim != oldTrim { keepInsideTrim() }
     scheduleSave()
     refreshOverlay()
+  }
+
+  /// After a trim change: cover time stays inside the trim, and every version's text timing (relative to
+  /// the trim start) stays inside the new trim length.
+  private func keepInsideTrim() {
+    let t = trim
+    let cover = EditorGeometry.clampCover(edit.coverTime, trim: t)
+    if cover != edit.coverTime { edit.coverTime = cover }
+    for i in versions.indices where versions[i].textStart != nil || versions[i].textEnd != nil {
+      let (s, e) = EditorGeometry.clampTextTiming(start: versions[i].textStart, end: versions[i].textEnd, trimDuration: t.duration)
+      if s != versions[i].textStart || e != versions[i].textEnd {
+        versions[i].textStart = s
+        versions[i].textEnd = e
+        pendingVersions.insert(versions[i].number)
+      }
+    }
   }
 
   func updateVersion(_ f: (inout Version) -> Void) {

@@ -50,7 +50,7 @@ struct EditorTimeline: View {
   private var transport: some View {
     HStack(spacing: 10) {
       Button { playback.toggle() } label: { EditorPlayIcon(playback: playback) }
-        .buttonStyle(.borderless).help("Play / pause (space)")
+        .buttonStyle(.borderless).help("Play / pause (space)").accessibilityLabel("Play or pause")
       EditorTimeLabel(playback: playback, duration: model.duration)
       Divider().frame(height: 14)
       let t = model.trim
@@ -83,6 +83,7 @@ struct EditorTimeline: View {
           EditorPlatformBadge(platform: p)
           Button { model.updateEdit { $0.platformTrims[p] = nil } } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
             .buttonStyle(.borderless).foregroundStyle(.secondary).help("Remove the \(p.displayName) trim")
+            .accessibilityLabel("Remove the \(p.displayName) trim")
         }
         .frame(height: laneH).padding(.bottom, 4)
       }
@@ -95,11 +96,12 @@ struct EditorTimeline: View {
   private func x(_ t: Double, _ w: CGFloat) -> CGFloat { model.duration > 0 ? CGFloat(t / model.duration) * w : 0 }
   private func t(_ x: CGFloat, _ w: CGFloat) -> Double { min(max(Double(x / w) * model.duration, 0), model.duration) }
 
-  private func snapped(_ x: CGFloat, _ w: CGFloat, extra: [Double] = []) -> Double {
-    var c = extra + [0, model.duration, playback.time]
-    if let a = model.video?.markerIn { c.append(a) }
-    if let b = model.video?.markerOut { c.append(b) }
-    return EditorGeometry.snap(t(x, w), to: c, tolerance: Double(8 / w) * model.duration).0
+  /// Snap to markers and clip ends (plus `extra`). The playhead is a target only when the drag doesn't move it
+  /// (trim drags seek, so including it would pin the handle to its own last position).
+  private func snapped(_ x: CGFloat, _ w: CGFloat, extra: [Double] = [], playhead: Bool = false) -> Double {
+    let c = extra + EditorGeometry.trimSnapTargets(duration: model.duration, markers: [model.video?.markerIn, model.video?.markerOut])
+      + (playhead ? [playback.time] : [])
+    return EditorGeometry.snap(t(x, w), to: c, tolerance: Double(8 / w) * model.duration).value
   }
 
   // MARK: Filmstrip + trim (yellow handles, marker ticks)
@@ -186,12 +188,12 @@ struct EditorTimeline: View {
       if on {
         barGrip().offset(x: a)
           .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
-            let t = min(max(snapped(v.location.x, w, extra: [tr.start]), tr.start), e - 0.3)
+            let t = min(max(snapped(v.location.x, w, extra: [tr.start], playhead: true), tr.start), e - 0.3)
             model.updateVersion { $0.textStart = t - tr.start < 0.02 ? 0 : t - tr.start }
           })
         barGrip().offset(x: b - 6)
           .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
-            let t = max(min(snapped(v.location.x, w, extra: [tr.end]), tr.end), s + 0.3)
+            let t = max(min(snapped(v.location.x, w, extra: [tr.end], playhead: true), tr.end), s + 0.3)
             model.updateVersion { $0.textEnd = t - tr.start }
           })
       }

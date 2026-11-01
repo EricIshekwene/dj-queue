@@ -23,6 +23,7 @@ struct EditorInspector: View {
         }
         .buttonStyle(.plain)
         .help("Versions")
+        .accessibilityLabel("Version \(model.versionNo), choose version")
         .popover(isPresented: $showVersions, arrowEdge: .bottom) { EditorVersionList(model: model) }
       }
       .padding(.horizontal, 12).frame(height: 44)
@@ -88,6 +89,7 @@ struct EditorVersionList: View {
         if n > 1 { Button("Delete", role: .destructive) { model.deleteVersion(n) } }
       } label: { Image(systemName: "ellipsis") }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .accessibilityLabel("Actions for v\(n)")
     }
     .padding(.horizontal, 12).padding(.vertical, 6)
     .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accentColor.opacity(0.1) : .clear).padding(.horizontal, 6))
@@ -121,8 +123,10 @@ struct EditorFrameTab: View {
       }) {
         HStack(spacing: 8) {
           Button { model.setZoom(model.zoom / 1.1) } label: { Image(systemName: "minus.magnifyingglass") }.buttonStyle(.borderless)
+            .accessibilityLabel("Zoom out")
           Slider(value: Binding(get: { model.zoom }, set: { model.setZoom($0) }), in: 1...EditorGeometry.maxZoom)
           Button { model.setZoom(model.zoom * 1.1) } label: { Image(systemName: "plus.magnifyingglass") }.buttonStyle(.borderless)
+            .accessibilityLabel("Zoom in")
         }
         if model.upscale > 1.01 {
           EditorPill(text: String(format: "Upscaled %.1f×", model.upscale), color: .orange, systemImage: "exclamationmark.triangle.fill")
@@ -139,15 +143,11 @@ struct EditorFrameTab: View {
       }) {
         HStack(spacing: 8) {
           if model.cropIsSet {
-            EditorPill(text: "Set", color: .green, systemImage: "checkmark")
-          } else {
-            EditorPill(text: "Not set", color: .orange)
+            Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(.green)
+              .accessibilityLabel("Crop set")
           }
           Text("\(Int(model.crop.w)) × \(Int(model.crop.h)) px").font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
           Spacer()
-          if !model.cropIsSet {
-            Button("Use this crop") { model.confirmCrop() }.buttonStyle(.borderedProminent).controlSize(.small)
-          }
         }
         Text("Drag the frame to move · scroll or pinch to zoom").font(.system(size: 11)).foregroundStyle(.secondary)
       }

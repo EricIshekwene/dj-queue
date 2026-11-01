@@ -175,9 +175,27 @@ enum EditorSnapshots {
       shootView(EditorVersionList(model: m), size: NSSize(width: 300, height: 220), dark: dark,
                 to: out.appendingPathComponent("E-versions-\(theme).png"))
 
+      // 4:5 output: text block + safe zones mapped to the aspect.
+      m.setAspect(.r4x5)
+      m.flushAndWait(); settle()
+      m.tab = .text
+      shoot(m, ids: ids, dark: dark, to: out.appendingPathComponent("E-text-4x5-\(theme).png"))
+
+      // Unreadable version row → read-only (never overwritten).
+      if let bad = ids.last(where: { $0 != main && $0 != long }) {
+        _ = try? store.db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,1,'{broken',0)", [bad])
+        let x = EditorModel(store: store, videoId: bad, snapshotMode: true)
+        print("corrupt: readOnly=\(x.readOnly)")
+        x.updateVersion { $0.text = "should not save" }
+        x.flushAndWait()
+        let raw = try? store.db.one("SELECT json FROM versions WHERE video_id=? AND number=1", [bad])?.string("json")
+        print("corrupt row untouched: \(raw == "{broken")")
+        shoot(x, ids: ids, dark: dark, to: out.appendingPathComponent("E-corrupt-\(theme).png"))
+      }
+
       // Missing file (E.states Er).
       if let other = ids.first(where: { $0 != main && $0 != long }) {
-        try? store.db.run("UPDATE videos SET file='Clips/__missing__.mp4' WHERE id=?", [other])
+        _ = try? store.db.run("UPDATE videos SET file='Clips/__missing__.mp4' WHERE id=?", [other])
         let x = EditorModel(store: store, videoId: other, snapshotMode: true)
         shoot(x, ids: ids, dark: dark, to: out.appendingPathComponent("E-missing-\(theme).png"))
       }
