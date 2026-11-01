@@ -38,10 +38,11 @@ extension Store {
       """, [outputPath, coverPath, loudness.map { JSONCoding.string($0) }, duration, size, id])
   }
 
-  /// The oldest live row for a render key (all writers converge on it).
+  /// The oldest live, unfinished row for a render key (all writers converge on it).
   func renderRow(videoId: String, versionNo: Int, hash: String, scope: String) throws -> Render? {
     try db.one("""
       SELECT * FROM renders WHERE video_id=? AND version_no=? AND edit_hash=? AND scope=? AND deleted_at IS NULL
+        AND status<>'done'
       ORDER BY created_at, id LIMIT 1
       """, [videoId, versionNo, hash, scope]).map(Store.render)
   }

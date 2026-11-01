@@ -63,30 +63,52 @@ public final class Renderer: RenderService, @unchecked Sendable {
     guard p.edit.crop != nil else {
       throw RenderError("Can't render \(p.video.name): no crop set. Set the crop in the editor first.")
     }
-    let deadline = Date().addingTimeInterval(Self.waitForOtherProcess)
+    // A good render exists but is over this platform's (lowered) size limit: make a smaller copy for
+    // this platform as its own render (scope = platform), leaving the shared one untouched.
+    var target = p
+    var startKbps = p.settings.videoBitrateKbps
+    if let requested = p.requested, let base = try liveDone(p, scope: p.scope).first, let size = base.size,
+       let limit = p.useLimit, size > limit {
+      target.scope = requested.rawValue
+      target.namePlatform = requested
+      target.maxBytes = limit
+      startKbps = Swift.max(500, Int(Double(startKbps) * Double(limit) * 0.9 / Double(size)))
+      try? store.logEvent("render", "\(p.video.name) v\(p.version.number) is \(size) B, over \(requested.displayName)'s "
+                          + "\(limit)-byte limit: rendering a smaller copy at \(startKbps) kb/s", videoId: p.video.id)
+    }
+    let deadline = Date().addingTimeInterval(waitForOtherProcess)
     while true {
-      let row = try candidateRow(p)
+      let row = try candidateRow(target)
       if try acquireLock(row.id) {
         defer { releaseLock(row.id) }
         if let r = try current(p) { return r }  // another process finished it meanwhile
-        try store.resetStaleRender(id: row.id)  // we hold the lock, so a "rendering" row is orphaned
+        try store.resetStaleRender(id: row.id)  // we hold the kernel lock, so a "rendering" row is orphaned
         guard try store.claimRender(id: row.id) else {
           throw RenderError("Render \(row.id) is being rendered elsewhere")
         }
-        return try render(p, row: row)
+        return try render(target, row: row, startKbps: startKbps)
       }
-      // Another process (CLI or app) is rendering this exact key: wait for it.
+      // Another process (CLI or app) is rendering this exact row: wait for it.
       if Date() > deadline { throw RenderError("Timed out waiting for another process to render \(p.video.name)") }
-      Thread.sleep(forTimeInterval: 0.5)
+      Thread.sleep(forTimeInterval: 0.25)
       if let r = try current(p) { return r }
     }
   }
 
   /// How long `ensureRender` waits for another process that holds the same render.
-  static let waitForOtherProcess: TimeInterval = 30 * 60
+  var waitForOtherProcess: TimeInterval = 30 * 60
 
-  /// The live row for this render key, inserting a pending one if there is none. Concurrent
-  /// inserts converge on the oldest row.
+  /// Finished, live renders for (hash, scope) whose file exists, newest first.
+  func liveDone(_ p: Plan, scope: String) throws -> [Render] {
+    try store.renders(where: "video_id=? AND version_no=? AND edit_hash=? AND scope=? AND status='done' AND deleted_at IS NULL",
+                      [p.video.id, p.version.number, p.hash, scope])
+      .filter { r in r.outputPath.map { FileManager.default.fileExists(atPath: $0) } ?? false }
+      .reversed()
+  }
+
+  /// A live, unfinished row for this key, inserting a pending one if there is none (finished rows are
+  /// never re-rendered in place, so a failed re-render can't lose a good file). Concurrent inserts
+  /// converge on the oldest row.
   private func candidateRow(_ p: Plan) throws -> Render {
     if let r = try store.renderRow(videoId: p.video.id, versionNo: p.version.number, hash: p.hash, scope: p.scope) {
       return r
@@ -100,23 +122,18 @@ public final class Renderer: RenderService, @unchecked Sendable {
     return winner
   }
 
-  /// Renders a claimed row (status already `rendering`) and records the result.
-  private func render(_ p: Plan, row: Render) throws -> Render {
-    // A finished render that is over the platform's size limit is re-encoded in place at a lower bitrate.
-    var startKbps = p.settings.videoBitrateKbps
-    if row.status == .done, let size = row.size, let max = p.maxBytes, size > max {
-      startKbps = Swift.max(500, Int(Double(startKbps) * Double(max) * 0.9 / Double(size)))
-      try? store.logEvent("render", "\(p.video.name) v\(p.version.number) is \(size) B, over the \(max)-byte limit: "
-                          + "re-encoding at \(startKbps) kb/s", videoId: p.video.id)
-    }
+  /// Renders a claimed row (status already `rendering`) and records the result. Older rows are
+  /// retired only after success.
+  private func render(_ p: Plan, row: Render, startKbps: Int) throws -> Render {
     do {
       let started = Date()
       let out = try perform(p, renderId: row.id, startKbps: startKbps)
       try store.finishRender(id: row.id, outputPath: out.file.path, coverPath: out.cover?.path, loudness: out.loudness,
                              duration: out.probe.duration, size: out.probe.size)
-      // A re-render for the same video/version/scope writes the same file name: older rows now point
-      // at a replaced file, so retire them.
-      for old in try store.renders(where: "deleted_at IS NULL AND id<>? AND output_path=?", [row.id, out.file.path]) {
+      // Rows whose file was just replaced (same name) or that this render supersedes (same key) are retired.
+      for old in try store.renders(where: """
+        deleted_at IS NULL AND id<>? AND (output_path=? OR (video_id=? AND version_no=? AND edit_hash=? AND scope=?))
+        """, [row.id, out.file.path, p.video.id, p.version.number, p.hash, p.scope]) {
         try store.markRenderDeleted(id: old.id)
       }
       let secs = String(format: "%.1f", Date().timeIntervalSince(started))
@@ -134,30 +151,44 @@ public final class Renderer: RenderService, @unchecked Sendable {
     }
   }
 
-  // MARK: Cross-process lock (one lock file per render id in paths.work)
+  // MARK: Cross-process lock: flock on <work>/<renderId>.lock (the kernel releases it if the process dies)
+
+  private var lockFDs: [String: Int32] = [:]  // guarded by renderLock
 
   private func lockURL(_ id: String) -> URL { store.paths.work.appendingPathComponent("\(id).lock") }
 
-  /// True when this process now holds the render's lock file; false when a live process holds it.
+  /// True when this process now holds the render's lock; false when another process holds it.
   private func acquireLock(_ id: String) throws -> Bool {
     try FileManager.default.createDirectory(at: store.paths.work, withIntermediateDirectories: true)
-    let path = lockURL(id).path
-    for _ in 0..<2 {
-      let fd = open(path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
-      if fd >= 0 {
-        let pid = "\(getpid())"
-        _ = pid.withCString { write(fd, $0, strlen($0)) }
-        close(fd)
-        return true
-      }
-      let owner = (try? String(contentsOfFile: path, encoding: .utf8)).flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-      if let owner, owner != getpid(), kill(owner, 0) == 0 || errno == EPERM { return false }
-      try? FileManager.default.removeItem(atPath: path)  // stale: owner gone
+    let fd = open(lockURL(id).path, O_CREAT | O_RDWR, 0o644)
+    guard fd >= 0 else { throw RenderError("Can't open render lock \(id).lock (errno \(errno))") }
+    if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+      lockFDs[id] = fd
+      return true
     }
-    return false
+    let e = errno
+    close(fd)
+    if e == EWOULDBLOCK { return false }
+    throw RenderError("Can't lock render \(id) (errno \(e))")
   }
 
-  private func releaseLock(_ id: String) { try? FileManager.default.removeItem(at: lockURL(id)) }
+  /// Unlocks; the file stays (unlinking a lock file others may have open would split the lock).
+  private func releaseLock(_ id: String) {
+    guard let fd = lockFDs.removeValue(forKey: id) else { return }
+    flock(fd, LOCK_UN)
+    close(fd)
+  }
+
+  /// Removes a deleted render's lock file if nobody holds it (deleted rows are never claimed again).
+  private func removeLockFile(_ id: String) {
+    let fd = open(lockURL(id).path, O_RDWR)
+    guard fd >= 0 else { return }
+    if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+      unlink(lockURL(id).path)
+      flock(fd, LOCK_UN)
+    }
+    close(fd)
+  }
 
   public func deleteRenders(except keep: Set<String>) throws {
     renderLock.lock()
@@ -171,6 +202,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
         if isAppOutput(url) { try? FileManager.default.removeItem(at: url) }
       }
       try store.markRenderDeleted(id: r.id)
+      removeLockFile(r.id)
     }
   }
 
@@ -220,8 +252,15 @@ public final class Renderer: RenderService, @unchecked Sendable {
     var settings: Settings
     var scope: String
     var scopePlatform: Platform?
+    /// The platform the caller asked for (size limits are checked against it at use time).
+    var requested: Platform?
+    /// Platform suffix of the output file name.
+    var namePlatform: Platform?
     var trim: TrimRange
+    /// Size limit for a new encode (scope platform, or the smallest among active platforms for "all").
     var maxBytes: Int64?
+    /// Size limit an existing render must meet to be used for `requested` (nil = no check).
+    var useLimit: Int64?
     var hash: String
   }
 
@@ -270,19 +309,20 @@ public final class Renderer: RenderService, @unchecked Sendable {
     let data = try JSONCoding.encoder.encode(input)
     let hash = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
     return Plan(video: video, edit: edit, version: version, settings: settings, scope: scope,
-                scopePlatform: scopePlatform, trim: trim, maxBytes: maxBytes, hash: hash)
+                scopePlatform: scopePlatform, requested: platform, namePlatform: scopePlatform, trim: trim,
+                maxBytes: maxBytes,
+                useLimit: platform.flatMap { (settings.limits[$0] ?? PlatformLimits.defaults[$0])?.maxBytes }, hash: hash)
   }
 
+  /// The render to use: the shared/scope render, or — when that is over the requested platform's size
+  /// limit — that platform's smaller copy. Files that already left Ready to Post are never size-checked.
   func current(_ p: Plan) throws -> Render? {
-    try store.renders(where: "video_id=? AND version_no=? AND edit_hash=? AND scope=? AND status='done' AND deleted_at IS NULL",
-                      [p.video.id, p.version.number, p.hash, p.scope])
-      .last { r in
-        guard let path = r.outputPath, FileManager.default.fileExists(atPath: path) else { return false }
-        // Over the current size limit (e.g. a platform's limit was lowered): needs a smaller re-encode,
-        // unless the file has already left Ready to Post (posted renders are never redone).
-        if let max = p.maxBytes, let size = r.size, size > max, isAppOutput(URL(fileURLWithPath: path)) { return false }
-        return true
-      }
+    var rows = try liveDone(p, scope: p.scope)
+    if let r = p.requested, r.rawValue != p.scope { rows += try liveDone(p, scope: r.rawValue) }
+    return rows.first { r in
+      guard let limit = p.useLimit, let size = r.size, size > limit else { return true }
+      return !isAppOutput(URL(fileURLWithPath: r.outputPath!))
+    }
   }
 
   func destinationDir(_ p: Plan) throws -> URL {
@@ -457,7 +497,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
     // Move into place atomically.
     let dir = try destinationDir(p)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let name = Self.outputName(video: p.video, versionNo: p.version.number, platform: p.scopePlatform)
+    let name = Self.outputName(video: p.video, versionNo: p.version.number, platform: p.namePlatform)
     let dest = dir.appendingPathComponent(name)
     try place(tmpVideo, at: dest)
     var coverDest: URL?

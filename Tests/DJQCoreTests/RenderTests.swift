@@ -200,7 +200,8 @@ func meanAbsDiff(_ a: CGImage, _ b: CGImage, in rect: CGRect? = nil) -> Double {
     #expect(coverImg.width == 1080 && coverImg.height == 1920)
     #expect(progress.values.last == 1 && progress.values.count > 2)
     // Work files cleaned up.
-    #expect(try FileManager.default.contentsOfDirectory(atPath: rf.store.paths.work.path).isEmpty)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: rf.store.paths.work.path)
+      .filter { !$0.hasSuffix(".lock") }.isEmpty)
 
     // Loudness: −14 LUFS target, source was quieter.
     let l = try #require(r.loudness)
@@ -265,23 +266,64 @@ func meanAbsDiff(_ a: CGImage, _ b: CGImage, in rect: CGRect? = nil) -> Double {
     #expect(abs(try Media.probe(URL(fileURLWithPath: r.outputPath!)).duration - 3.0) <= 0.1)
   }
 
-  /// A limit lowered after rendering: same hash, the render is no longer current, ensureRender
-  /// re-encodes the same row smaller.
-  @Test func lowerLimitAfterRenderReEncodesInPlace() throws {
+  /// X's limit lowered after rendering: same hash, the shared render stays for everyone else, and X
+  /// gets its own smaller copy.
+  @Test func lowerXLimitMakesASmallerXCopy() throws {
     let rf = try RenderFixture()
-    let r = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
-    let big = try #require(r.size)
-    #expect(big > 2_000_000)
+    let base = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
+    #expect(try #require(base.size) > 2_000_000)
     let hash = try rf.hash()
     var s = try rf.store.settings()
     s.limits[.x]?.maxBytes = 2_000_000
     try rf.store.save(s)
-    #expect(try rf.hash() == hash)
-    #expect(try rf.renderer.currentRender(videoId: rf.id, versionNo: 1, platform: nil) == nil)
-    let r2 = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
-    #expect(r2.id == r.id && r2.editHash == hash && r2.status == .done)
-    #expect(try #require(r2.size) <= 2_000_000)
-    #expect(try rf.renderer.currentRender(videoId: rf.id, versionNo: 1, platform: nil)?.id == r.id)
+    #expect(try rf.hash() == hash && rf.hash(.x) == hash)
+    #expect(try rf.renderer.currentRender(videoId: rf.id, versionNo: 1, platform: .tiktok)?.id == base.id)
+    #expect(try rf.renderer.currentRender(videoId: rf.id, versionNo: 1, platform: nil)?.id == base.id)
+    #expect(try rf.renderer.currentRender(videoId: rf.id, versionNo: 1, platform: .x) == nil)
+    let small = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: .x)
+    #expect(small.id != base.id && small.scope == "x" && small.editHash == hash && small.status == .done)
+    #expect(try #require(small.size) <= 2_000_000)
+    #expect(small.outputPath?.hasSuffix(" – v1 – X.mp4") == true)
+    #expect(try rf.renderer.currentRender(videoId: rf.id, versionNo: 1, platform: .x)?.id == small.id)
+    let b = try #require(try rf.store.render(id: base.id))
+    #expect(b.status == .done && b.deletedAt == nil && FileManager.default.fileExists(atPath: b.outputPath!))
+  }
+
+  /// A failed size re-encode never loses the good render.
+  @Test func failedSizeReEncodeKeepsTheGoodRender() throws {
+    let rf = try RenderFixture()
+    let base = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
+    var s = try rf.store.settings()
+    s.limits[.x]?.maxBytes = 2_000_000
+    try rf.store.save(s)
+    let video = try #require(try rf.store.video(id: rf.id))
+    let clip = try #require(try rf.store.fileURL(for: video))
+    try FileManager.default.moveItem(at: clip, to: rf.f.dir.appendingPathComponent("away.mp4"))  // source unavailable
+    #expect(throws: (any Error).self) { try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: .x) }
+    let b = try #require(try rf.store.render(id: base.id))
+    #expect(b.status == .done && b.deletedAt == nil && FileManager.default.fileExists(atPath: b.outputPath!))
+    #expect(try rf.renderer.currentRender(videoId: rf.id, versionNo: 1, platform: .tiktok)?.id == base.id)
+    #expect(try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: .instagram).id == base.id)
+  }
+
+  /// A render whose lock another process holds is waited for, never taken over.
+  @Test func heldLockIsWaitedForNotStolen() throws {
+    let rf = try RenderFixture()
+    let p = try rf.renderer.plan(videoId: rf.id, versionNo: 1, platform: nil)
+    let busy = Render(id: "busy-row", videoId: rf.id, versionNo: 1, editHash: p.hash, scope: "all", outputPath: nil,
+                      coverPath: nil, loudness: nil, duration: nil, size: nil, status: .rendering, error: nil,
+                      createdAt: rf.store.clock.now.addingTimeInterval(-60), deletedAt: nil)
+    try rf.store.save(busy)
+    try FileManager.default.createDirectory(at: rf.store.paths.work, withIntermediateDirectories: true)
+    let fd = open(rf.store.paths.work.appendingPathComponent("busy-row.lock").path, O_CREAT | O_RDWR, 0o644)
+    #expect(fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0)  // held by "another process" (separate open file)
+    rf.renderer.waitForOtherProcess = 0.6
+    #expect(throws: RenderError.self) { try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil) }
+    #expect(try rf.store.render(id: "busy-row")?.status == .rendering)  // not reset, not stolen
+    flock(fd, LOCK_UN)
+    close(fd)  // holder "dies"
+    let r = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
+    #expect(r.id == "busy-row" && r.status == .done)
   }
 
   /// The engine moves a posted render to Posted/ and records the new path: it stays reusable.
@@ -340,7 +382,8 @@ func meanAbsDiff(_ a: CGImage, _ b: CGImage, in rect: CGRect? = nil) -> Double {
     try "999999".write(to: rf.store.paths.work.appendingPathComponent("stale-row.lock"), atomically: true, encoding: .utf8)
     let r = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
     #expect(r.id == "stale-row" && r.status == .done)
-    #expect(try FileManager.default.contentsOfDirectory(atPath: rf.store.paths.work.path).isEmpty)  // lock released
+    #expect(try FileManager.default.contentsOfDirectory(atPath: rf.store.paths.work.path)
+      .filter { !$0.hasSuffix(".lock") }.isEmpty)  // temp files cleaned
   }
 
   @Test func deleteRendersNeverTouchesSources() throws {
