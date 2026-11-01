@@ -81,6 +81,7 @@ struct TodayRow: View {
   private var video: Video? { model.video(post.videoId) }
   private var isCopyright: Bool { post.state.isCopyright && post.resolution == nil }
   private var isFailed: Bool { post.state == .failed && post.resolution == nil }
+  private var isResolved: Bool { post.resolution != nil }
 
   var body: some View {
     HStack(spacing: 12) {
@@ -107,7 +108,8 @@ struct TodayRow: View {
     .frame(height: DS.Row.today)
     .background(rowBackground, in: RoundedRectangle(cornerRadius: 8))
     .contextMenu { PostContextMenu(model: model, post: post) }
-    .task(id: post.id) { _ = await model.prepare(post) }
+    // Only rows whose render already exists get a file; nothing renders on display.
+    .task(id: AppModel.prepStamp(post)) { await model.prepareIfRendered(post) }
   }
 
   private var rowBackground: Color {
@@ -117,7 +119,13 @@ struct TodayRow: View {
   }
 
   @ViewBuilder private var actions: some View {
-    if isCopyright {
+    if isResolved {
+      // Handled problem (accepted / skipped / re-uploaded / retried): no live posting actions on this attempt.
+      HStack(spacing: 6) {
+        StatusPill(text: resolutionLabel, tint: .secondary, icon: "checkmark.circle")
+        moreMenu
+      }
+    } else if isCopyright {
       HStack(spacing: 6) {
         Button("Re-upload anyway") { model.resolve(post, .reuploadAnyway(versionNo: nil)) }
         Button("Skip platform") { model.resolve(post, .skipPlatform) }
@@ -128,8 +136,7 @@ struct TodayRow: View {
     } else if isFailed {
       HStack(spacing: 6) {
         Button("Fix…") { model.openEditor(post.videoId, fixPostId: post.id) }
-        Button("Reset") { model.reset(post) }
-        Button("Skip") { model.skip(post) }
+        Button("Re-queue") { model.fixed(post.id) }.help("The cause is fixed: try again on the next day's slot")
         moreMenu
       }
       .controlSize(.small)
@@ -156,10 +163,10 @@ struct TodayRow: View {
           .buttonStyle(.bordered)
         if post.platform == .youtube {
           Button { model.copyTitle(post) } label: { Image(systemName: "textformat") }
-            .buttonStyle(.bordered).help("Copy title")
+            .buttonStyle(.bordered).help("Copy title").accessibilityLabel("Copy title")
         }
         Button { model.openUploadPage(post) } label: { Image(systemName: "safari") }
-          .buttonStyle(.bordered).help("Open upload page")
+          .buttonStyle(.bordered).help("Open upload page").accessibilityLabel("Open upload page")
         if primary {
           Button("Mark posted") { model.markPostedTarget = post }.buttonStyle(.borderedProminent)
         } else {
@@ -171,15 +178,33 @@ struct TodayRow: View {
     }
   }
 
+  private var resolutionLabel: String {
+    switch post.resolution ?? "" {
+    case "accepted": "Accepted"
+    case "skipped": "Skipped"
+    case "reuploaded": "Re-uploading"
+    case "retried": "Re-queued"
+    default: (post.resolution ?? "").capitalized
+    }
+  }
+
   private var moreMenu: some View {
     Menu {
-      Button("Report problem…", systemImage: "exclamationmark.bubble") { model.reportTarget = post }
-      Button("Reveal in Finder", systemImage: "folder") { model.revealFile(post) }
-      Button("Copy file", systemImage: "doc.on.doc") { model.copyFile(post) }
-      Divider()
-      Button("Reset", systemImage: "arrow.counterclockwise") { model.reset(post) }
-      Button("Skip this platform", systemImage: "forward") { model.skip(post) }
+      if !post.state.isTerminal {
+        Button("Report problem…", systemImage: "exclamationmark.bubble") { model.reportTarget = post }
+        Button("Reveal in Finder", systemImage: "folder") { model.revealFile(post) }
+        Button("Copy file", systemImage: "doc.on.doc") { model.copyFile(post) }
+      }
+      if post.state == .posted { Button("Report problem…", systemImage: "exclamationmark.bubble") { model.reportTarget = post } }
+      if model.canReset(post) || model.canSkip(post) { Divider() }
+      if model.canReset(post) { Button("Reset", systemImage: "arrow.counterclockwise") { model.reset(post) } }
+      if model.canSkip(post) { Button("Skip this platform", systemImage: "forward") { model.skip(post) } }
+      if let v = model.video(post.videoId) {
+        Divider()
+        Button("Edit video", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(v.id) }
+      }
     } label: { Image(systemName: "ellipsis") }
+      .accessibilityLabel("More actions")
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
       .fixedSize()
@@ -196,7 +221,7 @@ struct FileDragChip: View {
     let ready = model.preparedPost(post.id)
     HStack(spacing: 5) {
       Image(systemName: ready == nil ? "hourglass" : "film").font(.system(size: 11, weight: .semibold))
-      Text(ready == nil ? "Preparing" : "Drag file").font(DS.Font.body)
+      Text(ready != nil ? "Drag file" : (model.isRenderable(post) ? "Preparing" : "Rendering")).font(DS.Font.body)
       Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(.secondary)
     }
     .padding(.horizontal, 9)
@@ -206,7 +231,7 @@ struct FileDragChip: View {
     .foregroundStyle(ready == nil ? Color.secondary : Color.accentColor)
     .onDrag {
       guard let url = model.preparedPost(post.id)?.fileURL else { return NSItemProvider() }
-      return NSItemProvider(contentsOf: url) ?? NSItemProvider(object: url as NSURL)
+      return NSItemProvider(object: url as NSURL)
     }
     .help(ready.map { "Drag \($0.fileURL.lastPathComponent) into the browser upload page" } ?? "Waiting for the render")
   }
@@ -254,10 +279,11 @@ struct MarkPostedSheet: View {
   @State private var postedAt = Date()
   @Environment(\.dismiss) private var dismiss
 
-  private var host: String? { URL(string: url.trimmingCharacters(in: .whitespaces))?.host?.lowercased() }
-  private var valid: Bool {
-    guard let h = host else { return false }
-    return post.platform.urlHosts.contains { h == $0 || h.hasSuffix("." + $0) }
+  private var valid: Bool { (try? PostActions.validate(url: url.trimmingCharacters(in: .whitespaces), for: post.platform)) != nil }
+  private var validationError: String? {
+    do { try PostActions.validate(url: url.trimmingCharacters(in: .whitespaces), for: post.platform); return nil } catch {
+      return error.localizedDescription
+    }
   }
 
   var body: some View {
@@ -274,9 +300,8 @@ struct MarkPostedSheet: View {
         .textFieldStyle(.roundedBorder)
         .font(.system(size: 14))
         .controlSize(.large)
-      if !url.isEmpty && !valid {
-        Label("Must be a \(post.platform.urlHosts.joined(separator: " or ")) link", systemImage: "exclamationmark.circle.fill")
-          .font(DS.Font.secondary).foregroundStyle(.red)
+      if !url.isEmpty, let e = validationError {
+        Label(e, systemImage: "exclamationmark.circle.fill").font(DS.Font.secondary).foregroundStyle(.red)
       }
       DatePicker("Posted", selection: $postedAt, in: ...Date().addingTimeInterval(3600)).font(DS.Font.body)
       HStack {
@@ -296,8 +321,12 @@ struct MarkPostedSheet: View {
     .frame(width: 480)
     .onAppear {
       postedAt = model.frozen ? model.now : Date()
-      if let s = NSPasteboard.general.string(forType: .string), let h = URL(string: s)?.host?.lowercased(),
-         post.platform.urlHosts.contains(where: { h.hasSuffix($0) }) { url = s }
+      if let pre = model.markPostedPrefill {
+        url = pre
+        model.markPostedPrefill = nil
+      } else if let s = NSPasteboard.general.string(forType: .string), (try? PostActions.validate(url: s, for: post.platform)) != nil {
+        url = s
+      }
     }
   }
 }

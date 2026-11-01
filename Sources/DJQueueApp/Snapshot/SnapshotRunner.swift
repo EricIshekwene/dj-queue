@@ -40,11 +40,12 @@ enum SnapshotRunner {
       let model = AppModel(store: store)
       model.frozen = true
       model.now = now
-      model.refresh()
+      model.refreshNow()
       model.weekStart = model.planner.weekStart(for: now)
       print("snapshot: \(model.videos.count) videos, \(model.posts.count) posts, \(model.problems.count) problems")
       let vids = model.videos
-      await Task.detached { ThumbCache.shared.warm(vids) }.value
+      let keys = Dictionary(uniqueKeysWithValues: vids.map { ($0.id, "\(ThumbStamps.shared.key($0.id))|g0") })
+      await Task.detached { ThumbCache.shared.warm(vids, keys: keys) }.value
 
       // 2. Empty-state model: fresh DB over an empty root.
       let emptyRoot = tmp.appendingPathComponent("EmptyRoot")
@@ -55,7 +56,7 @@ enum SnapshotRunner {
       let empty = AppModel(store: eStore)
       empty.frozen = true
       empty.now = now
-      empty.refresh()
+      empty.refreshNow()
 
       var shots: [Shot] = []
       func main(_ name: String, _ m: AppModel = model, _ setup: @escaping (AppModel) -> Void) {
@@ -82,6 +83,12 @@ enum SnapshotRunner {
         m.update { $0.paused = true }
         m.screen = .today
       }
+      let editId = model.ordered.first?.id ?? model.videos.first { $0.type == .short }?.id
+      main("14-editor") { m in
+        m.update { $0.paused = false }
+        if let editId { m.openEditor(editId, in: m.ordered.map(\.id)) }
+      }
+      main("15-queue-after-editor") { m in m.editor = nil; m.screen = .queue }
       main("20-empty-queue", empty) { m in m.screen = .queue }
       main("21-empty-week", empty) { m in m.screen = .week }
       main("22-empty-today", empty) { m in m.screen = .today }

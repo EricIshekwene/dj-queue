@@ -7,7 +7,8 @@ struct WeekView: View {
 
   private var ws: String { model.weekStart.isEmpty ? model.planner.weekStart(for: model.now) : model.weekStart }
   private var days: [String] { model.dm.weekDays(ws) }
-  private var slots: [PlanSlot] { (try? model.planner.slots(week: ws)) ?? [] }
+  /// Loaded off-main by the model's refresh for `model.weekStart` (no DB work in body).
+  private var slots: [PlanSlot] { model.weekSlots.filter { $0.weekStart == ws } }
   private var state: WeekState? { model.weekStates[ws] }
 
   var body: some View {
@@ -22,6 +23,16 @@ struct WeekView: View {
         grid(slots)
       }
       BacklogDrawer(model: model, expanded: $model.weekBacklogExpanded, weekDays: days)
+    }
+    .confirmationDialog("Replace the planned video?", isPresented: Binding(get: { model.pendingReplace != nil },
+                                                                          set: { if !$0 { model.pendingReplace = nil } })) {
+      Button("Replace") {
+        if let r = model.pendingReplace { model.pin(r.videoId, dayKey: r.day) }
+        model.pendingReplace = nil
+      }
+      Button("Cancel", role: .cancel) { model.pendingReplace = nil }
+    } message: {
+      Text("“\(model.pendingReplace.map { r in model.video(r.replaced).map(model.title) ?? "" } ?? "")” goes back to the backlog.")
     }
   }
 
@@ -51,6 +62,7 @@ struct WeekView: View {
       Spacer()
       Menu {
         Button("Propose open days", systemImage: "wand.and.stars") { model.proposeWeek(ws) }
+          .disabled(state == .approved || ws < thisWeek)
         Button("Rebuild week", systemImage: "arrow.clockwise") { model.rebuildWeek(ws) }
         Button("Push plan by a day", systemImage: "calendar.badge.clock") { model.pushPlan(days: 1) }
       } label: { Image(systemName: "ellipsis.circle") }
@@ -76,7 +88,7 @@ struct WeekView: View {
 
   private func grid(_ slots: [PlanSlot]) -> some View {
     let bySlotDate = Dictionary(grouping: slots, by: \.date)
-    let awake = (try? Health.awakePeriods(store: model.store, since: model.dm.date(ws))) ?? []
+    let awake = model.weekAwake
     return GeometryReader { g in
       let colW = (g.size.width - 6) / 7
       ScrollView {
@@ -130,9 +142,8 @@ struct DayColumn: View {
     .overlay(alignment: .top) { if isToday { Rectangle().fill(Color.accentColor).frame(height: 2) } }
     .dropDestination(for: String.self) { items, _ in
       guard let item = items.first else { return false }
-      drop(item)
-      return true
-    } isTargeted: { targeted = $0 }
+      return drop(item)
+    } isTargeted: { targeted = $0 && !isPast }
   }
 
   /// Reposts and re-queued failures that land on this day (W.S5).
@@ -156,13 +167,24 @@ struct DayColumn: View {
     }
   }
 
-  private func drop(_ item: String) {
+  /// Same-day and past-day drops are refused; a backlog video dropped on a planned day asks before replacing.
+  private func drop(_ item: String) -> Bool {
+    guard !isPast else { model.show("Past days can't be changed", error: true); return false }
     if item.hasPrefix("slot:") {
       let id = String(item.dropFirst(5))
+      guard let src = otherSlots.first(where: { $0.id == id }), src.date != day else { return false }
+      guard src.date >= model.todayKey else { model.show("That video already went out", error: true); return false }
       if let target = slots.first { model.swap(id, target.id) } else { model.move(id, to: day) }
     } else if item.hasPrefix("video:") {
-      model.pin(String(item.dropFirst(6)), dayKey: day)
+      let vid = String(item.dropFirst(6))
+      if let occupied = slots.first(where: { !$0.pinned }) ?? slots.first {
+        guard occupied.videoId != vid else { return false }
+        model.pendingReplace = (vid, day, occupied.videoId)
+      } else {
+        model.pin(vid, dayKey: day)
+      }
     }
+    return true
   }
 }
 

@@ -9,6 +9,7 @@ final class EngineHost {
   let renderer: Renderer
   let publisher: ManualPublisher
   private var lockFD: Int32 = -1
+  private var started = false
   private let store: Store
 
   init(model: AppModel) {
@@ -22,18 +23,24 @@ final class EngineHost {
   @discardableResult
   func start() -> Bool {
     let path = store.paths.appSupport.appendingPathComponent("engine.lock").path
-    lockFD = open(path, O_CREAT | O_RDWR, 0o644)
-    guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else {
+    let fd = open(path, O_CREAT | O_RDWR, 0o644)
+    guard fd >= 0 else { return false }
+    guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+      close(fd)
       Log.shared.warn("engine lock held by another process; this process only shows the UI")
       return false
     }
+    lockFD = fd
     engine.start()
+    started = true
     return true
   }
 
+  /// Stops only an engine this process started (a UI-only process must never write a stop heartbeat).
   func stop() {
-    guard lockFD >= 0 else { return }
+    guard started, lockFD >= 0 else { return }
     engine.stop()
+    started = false
     flock(lockFD, LOCK_UN)
     close(lockFD)
     lockFD = -1
@@ -59,8 +66,9 @@ final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate, 
     c.requestAuthorization(options: [.alert, .sound, .badge]) { ok, err in
       if let err { Log.shared.warn("notifications not authorised: \(err)") } else if !ok { Log.shared.warn("notifications declined") }
     }
+    // Every action set the engine sends (Engine.swift): missed, due, everything else.
     register([.postNow, .shiftPlan, .skip])
-    register([.markPosted, .skip])
+    register([.markPosted, .open])
     register([.open])
   }
 
@@ -144,8 +152,9 @@ final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate, 
     let action = response.actionIdentifier == UNNotificationDefaultActionIdentifier ? NotificationAction.open.rawValue : response.actionIdentifier
     let text = (response as? UNTextInputNotificationResponse)?.userText
     let postId = info["postId"] as? String, videoId = info["videoId"] as? String
+    let key = response.notification.request.identifier
     DispatchQueue.main.async {
-      AppHost.shared.handleNotification(action: action, postId: postId, videoId: videoId, text: text)
+      AppHost.shared.handleNotification(action: action, key: key, postId: postId, videoId: videoId, text: text)
       completionHandler()
     }
   }

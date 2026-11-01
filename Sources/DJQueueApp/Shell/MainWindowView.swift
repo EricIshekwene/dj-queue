@@ -27,6 +27,7 @@ struct MainWindowView: View {
     .sheet(item: $model.longformTarget) { v in LongformPostedSheet(model: model, video: v) }
     .sheet(item: $model.previewVideo) { v in PreviewSheet(model: model, video: v) }
     .sheet(isPresented: $model.showShortcuts) { ShortcutSheet(model: model) }
+    .sheet(isPresented: $model.offerLaunchAgent) { LaunchAgentOffer(model: model) }
     .confirmationDialog("Pause all posting?", isPresented: $model.confirmPause) {
       Button("Pause all posting", role: .destructive) { model.setPaused(true) }
       Button("Cancel", role: .cancel) {}
@@ -59,6 +60,35 @@ struct MainWindowView: View {
       .toolbar { MainToolbar(model: model) }
       .background(WindowTitle(title: model.screen.title))
     }
+  }
+}
+
+/// First run of the installed app (decision Q28): run in the background at login? Default Yes.
+struct LaunchAgentOffer: View {
+  @Bindable var model: AppModel
+  @Environment(\.dismiss) private var dismiss
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      Label("Run DJ Queue in the background at login?", systemImage: "menubar.rectangle").font(DS.Font.title)
+      Text("The menu-bar item and the engine keep running when the window is closed, so posts are prepared and reminders arrive on time.")
+        .font(DS.Font.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack {
+        Spacer()
+        Button("Not now") {
+          UserDefaults.standard.set(true, forKey: "djq.askedLaunchAgent")
+          dismiss()
+        }
+        .keyboardShortcut(.cancelAction)
+        Button("Run at login") {
+          dismiss()
+          AppHost.shared.installLaunchAgent()
+        }
+        .buttonStyle(.borderedProminent)
+        .keyboardShortcut(.defaultAction)
+      }
+    }
+    .padding(22)
+    .frame(width: 440)
   }
 }
 
@@ -140,6 +170,7 @@ struct MainToolbar: ToolbarContent {
         }
       }
       .help("Command palette (⌘K)")
+      .accessibilityLabel("Command palette")
     }
   }
 }
@@ -163,6 +194,7 @@ struct RunwayTrio: View {
     }
     .buttonStyle(.plain)
     .help("Runway: approved · ready · total")
+    .accessibilityLabel("Runway: \(model.runway.approvedDays) days approved, \(model.runway.readyDays) ready, \(model.runway.totalDays) total")
     .popover(isPresented: $showInfo, arrowEdge: .bottom) { RunwayPopover(model: model) }
   }
 

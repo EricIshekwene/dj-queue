@@ -44,10 +44,13 @@ extension AppModel {
         self?.duplicateVersion(v.id)
       })
       c.append(.init(id: "video.rerender", title: "Re-render", symbol: "arrow.triangle.2.circlepath") { [weak self] in self?.reRender(v.id) })
-      for p in settings.activePlatforms {
+      for p in settings.activePlatforms where repostBlocker(v.id, p) == nil {
         c.append(.init(id: "video.repost.\(p.rawValue)", title: "Repost on \(p.displayName)", symbol: "arrow.uturn.forward") { [weak self] in
           self?.repost(v.id, p)
         })
+      }
+      for k in Kind.allCases where k != v.kind {
+        c.append(.init(id: "video.kind.\(k.rawValue)", title: "Set kind: \(k.displayName)", symbol: "tag") { [weak self] in self?.setKind([v.id], k) })
       }
       if v.type == .long {
         c.append(.init(id: "video.longform", title: "Mark long-form posted…", symbol: "checkmark.circle") { [weak self] in self?.longformTarget = v })
@@ -58,7 +61,9 @@ extension AppModel {
     let thisWeek = planner.weekStart(for: now)
     let nextWeek = dm.addDays(thisWeek, 7)
     c.append(.init(id: "week.approveNext", title: "Approve next week", symbol: "checkmark.seal", hint: "⌘↩") { [weak self] in self?.approveWeek(nextWeek) })
-    c.append(.init(id: "week.proposeNext", title: "Propose next week", symbol: "wand.and.stars") { [weak self] in self?.proposeWeek(nextWeek) })
+    if weekStates[nextWeek] != .approved {
+      c.append(.init(id: "week.proposeNext", title: "Propose next week", symbol: "wand.and.stars") { [weak self] in self?.proposeWeek(nextWeek) })
+    }
     c.append(.init(id: "week.rebuild", title: "Rebuild next week", symbol: "arrow.clockwise") { [weak self] in self?.rebuildWeek(nextWeek) })
     c.append(.init(id: "week.push", title: "Push plan by a day", symbol: "calendar.badge.clock") { [weak self] in self?.pushPlan(days: 1) })
 
@@ -76,12 +81,24 @@ extension AppModel {
     let post = postsSelection.flatMap { id in posts.first { $0.id == id } } ?? highlightPostId.flatMap { id in posts.first { $0.id == id } }
     if let post {
       let n = "\(post.platform.shortName) · \(video(post.videoId).map(title) ?? "")"
-      c.append(.init(id: "post.markPosted", title: "Mark posted… (\(n))", symbol: "checkmark.circle") { [weak self] in self?.markPostedTarget = post })
-      c.append(.init(id: "post.report", title: "Mark failed / report problem… (\(n))", symbol: "exclamationmark.bubble") { [weak self] in
-        self?.reportTarget = post
-      })
-      c.append(.init(id: "post.reset", title: "Reset post (\(n))", symbol: "arrow.counterclockwise") { [weak self] in self?.reset(post) })
-      c.append(.init(id: "post.skip", title: "Skip post (\(n))", symbol: "forward") { [weak self] in self?.skip(post) })
+      if !post.state.isTerminal {
+        c.append(.init(id: "post.markPosted", title: "Mark posted… (\(n))", symbol: "checkmark.circle") { [weak self] in self?.markPostedTarget = post })
+      }
+      if !post.state.isTerminal || post.state == .posted {
+        c.append(.init(id: "post.report", title: "Mark failed / report problem… (\(n))", symbol: "exclamationmark.bubble") { [weak self] in
+          self?.reportTarget = post
+        })
+      }
+      if canReset(post) {
+        c.append(.init(id: "post.reset", title: "Reset post (\(n))", symbol: "arrow.counterclockwise") { [weak self] in self?.reset(post) })
+      }
+      if canSkip(post) {
+        c.append(.init(id: "post.skip", title: "Skip post (\(n))", symbol: "forward") { [weak self] in self?.skip(post) })
+      }
+      if post.state == .overdue {
+        c.append(.init(id: "post.postNow", title: "Post now (\(n))", symbol: "bolt") { [weak self] in self?.postNow(post) })
+        c.append(.init(id: "post.shiftPlan", title: "Shift plan (\(n))", symbol: "calendar.badge.clock") { [weak self] in self?.shiftPlan(post) })
+      }
     }
     c.append(.init(id: "post.review", title: "Review problems", symbol: "exclamationmark.octagon") { [weak self] in self?.reviewProblems() })
 
@@ -248,9 +265,7 @@ struct VideoContextMenu: View {
       Button("Post today", systemImage: "bolt") { model.postToday(video.id) }
       Button("Pin to tomorrow", systemImage: "pin") { model.pin(video.id, dayKey: model.dm.addDays(model.todayKey, 1)) }
       Button("Skip next slot", systemImage: "forward.end") { model.skipNext(video.id) }
-      Menu("Repost on") {
-        ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { model.repost(video.id, p) } }
-      }
+      RepostMenu(model: model, videoId: video.id)
       Divider()
       Button("Duplicate version", systemImage: "plus.square.on.square") { model.duplicateVersion(video.id) }
       Button("Re-render", systemImage: "arrow.triangle.2.circlepath") { model.reRender(video.id) }
@@ -276,19 +291,44 @@ struct PostContextMenu: View {
   let post: PlatformPost
 
   var body: some View {
-    Button("Mark posted…", systemImage: "checkmark.circle") { model.markPostedTarget = post }
-    Button("Copy caption", systemImage: "text.quote") { model.copyCaption(post) }
-    if post.platform == .youtube { Button("Copy title", systemImage: "textformat") { model.copyTitle(post) } }
-    Button("Open upload page", systemImage: "safari") { model.openUploadPage(post) }
-    Button("Reveal in Finder", systemImage: "folder") { model.revealFile(post) }
-    Button("Copy file", systemImage: "doc.on.doc") { model.copyFile(post) }
-    Divider()
-    Button("Report problem…", systemImage: "exclamationmark.bubble") { model.reportTarget = post }
-    Button("Reset post", systemImage: "arrow.counterclockwise") { model.reset(post) }
-    Button("Skip this platform", systemImage: "forward") { model.skip(post) }
+    if !post.state.isTerminal {
+      Button("Mark posted…", systemImage: "checkmark.circle") { model.markPostedTarget = post }
+      Button("Copy caption", systemImage: "text.quote") { model.copyCaption(post) }
+      if post.platform == .youtube { Button("Copy title", systemImage: "textformat") { model.copyTitle(post) } }
+      Button("Open upload page", systemImage: "safari") { model.openUploadPage(post) }
+      Button("Reveal in Finder", systemImage: "folder") { model.revealFile(post) }
+      Button("Copy file", systemImage: "doc.on.doc") { model.copyFile(post) }
+      Divider()
+    }
+    if !post.state.isTerminal || post.state == .posted {
+      Button("Report problem…", systemImage: "exclamationmark.bubble") { model.reportTarget = post }
+    }
+    if post.state == .overdue {
+      Button("Post now", systemImage: "bolt") { model.postNow(post) }
+      Button("Shift plan", systemImage: "calendar.badge.clock") { model.shiftPlan(post) }
+    }
+    if model.canReset(post) { Button("Reset post", systemImage: "arrow.counterclockwise") { model.reset(post) } }
+    if model.canSkip(post) { Button("Skip this platform", systemImage: "forward") { model.skip(post) } }
     if let v = model.video(post.videoId) {
       Divider()
       Button("Edit video", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(v.id) }
+    }
+  }
+}
+
+/// Repost needs the next version to exist (PostActions.repost); blocked platforms show why.
+struct RepostMenu: View {
+  @Bindable var model: AppModel
+  let videoId: String
+  var body: some View {
+    Menu("Repost on") {
+      ForEach(model.settings.activePlatforms) { p in
+        if let why = model.repostBlocker(videoId, p) {
+          Button("\(p.displayName) — \(why)") {}.disabled(true)
+        } else {
+          Button(p.displayName) { model.repost(videoId, p) }
+        }
+      }
     }
   }
 }

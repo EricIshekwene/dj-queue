@@ -8,8 +8,6 @@ struct QueueView: View {
   @State private var kindFilter: Kind?
   @State private var scoreFilter: ClosedRange<Int>?
   @State private var search = ""
-  @State private var typedScore = ""
-  @State private var typedAt = Date.distantPast
 
   var body: some View {
     VStack(spacing: 0) {
@@ -128,7 +126,7 @@ struct QueueView: View {
     .listStyle(.inset)
     .alternatingRowBackgrounds(.disabled)
     .onKeyPress(characters: .decimalDigits, phases: .down) { press in
-      typeScore(press.characters)
+      model.typeDigit(press.characters, ids: model.queueSelection)
       return .handled
     }
     .onKeyPress(.space) {
@@ -139,19 +137,6 @@ struct QueueView: View {
       if let v = model.focusedVideo { model.openEditor(v.id, in: model.selectedVideoIds) }
       return .handled
     }
-  }
-
-  /// Digits typed on a selected row set its score (two digits within 0.8 s → one number, "100" allowed).
-  private func typeScore(_ c: String) {
-    guard !model.queueSelection.isEmpty else { return }
-    let now = Date()
-    typedScore = now.timeIntervalSince(typedAt) < 0.8 ? typedScore + c : c
-    typedAt = now
-    if let n = Int(typedScore), n <= 100 {
-      model.setScore(model.queueSelection, n)
-      model.show("Score \(n)")
-    }
-    if typedScore.count >= 3 { typedScore = "" }
   }
 
   /// Planned rows map to Planner ops: dropping a row onto another planned row swaps their days.
@@ -266,9 +251,10 @@ struct QueueHeader: View {
       } label: {
         Label(model.toScore.isEmpty ? "Score mode" : "Score \(model.toScore.count)", systemImage: "number")
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.bordered)
       .controlSize(.large)
       .keyboardShortcut("s", modifiers: [.command, .shift])
+      .help("Score mode (⇧⌘S) — the selected video's Edit is this screen's primary action")
       .disabled(model.toScore.isEmpty && model.queueTab != .ready)
       .padding(.trailing, DS.Space.l)
     }
@@ -338,6 +324,8 @@ struct PlatformDots: View {
       }
     }
     .frame(width: 60)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(Platform.allCases.sorted().map { "\($0.displayName) \(model.dot(videoId, $0).label)" }.joined(separator: ", "))
   }
 }
 

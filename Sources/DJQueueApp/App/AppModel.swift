@@ -124,6 +124,17 @@ final class AppModel {
   var doctorRunning = false
   var prefillRules = PrefillRules()
   private var prepared: [String: PreparedPost] = [:]
+  private var preparedStamp: [String: String] = [:]
+  private var refreshing = false
+  private var refreshAgain = false
+  var lastRefresh = Date.distantPast
+  var weekSlots: [PlanSlot] = []
+  var weekAwake: [DateInterval] = []
+  var popoverVisible = false
+  /// Week drop that would replace a planned video (confirm first).
+  var pendingReplace: (videoId: String, day: String, replaced: String)?
+  var markPostedPrefill: String?
+  var offerLaunchAgent = false
 
   // MARK: UI state
   var screen: Screen = .queue
@@ -133,7 +144,7 @@ final class AppModel {
   var librarySession: String? = nil
   var postsSelection: String? = nil
   var postsFilter: PostsFilter = .all
-  var weekStart: String = ""
+  var weekStart: String = "" { didSet { if oldValue != weekStart && !oldValue.isEmpty { refresh() } } }
   var editor: EditorRequest?
   var scoreMode = false
   var showPalette = false
@@ -163,8 +174,8 @@ final class AppModel {
     ThumbCache.shared.store = store
     if let d = UserDefaults.standard.dictionary(forKey: "djq.dismissedWarnings") as? [String: Date] { dismissedWarnings = d }
     recentCommands = UserDefaults.standard.stringArray(forKey: "djq.recentCommands") ?? []
-    refresh()
-    weekStart = planner.weekStart(for: now)
+    weekStart = planner.weekStart(for: store.clock.now)
+    refreshNow()
   }
 
   var dm: DayMath { DayMath(settings: settings) }
@@ -173,43 +184,143 @@ final class AppModel {
 
   // MARK: Refresh
 
-  func refresh() {
-    if !frozen { now = store.clock.now }
+  /// Everything the UI reads from the database, loaded off the main thread.
+  struct Loaded: @unchecked Sendable {
+    var settings = AppSettings()
+    var sessions: [Session] = []
+    var videos: [Video] = []
+    var ordered: [Video] = []
+    var toScore: [Video] = []
+    var needsEdit: [Video] = []
+    var upcomingSlots: [PlanSlot] = []
+    var weekStates: [String: WeekState] = [:]
+    var posts: [PlatformPost] = []
+    var problems: [PlatformPost] = []
+    var dueToday: [PlatformPost] = []
+    var runway = Runway(approvedDays: 0, readyDays: 0, totalDays: 0)
+    var lastHeartbeat: Heartbeat?
+    var versionCounts: [String: Int] = [:]
+    var relinked: Set<String> = []
+    var keptRemoved: Set<String> = []
+    var renderQueue = 0
+    var prefillRules = PrefillRules()
+    var editStamps: [String: Double] = [:]
+    var weekSlots: [PlanSlot] = []
+    var weekAwake: [DateInterval] = []
+    var error: String?
+  }
+
+  nonisolated static func load(store: Store, queue: Queue, postActions: PostActions, now: Date, weekStart: String) -> Loaded {
+    var l = Loaded()
     do {
-      settings = try store.settings()
-      sessions = try store.sessions()
-      sessionById = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
-      videos = try store.videos()
-      videoById = Dictionary(uniqueKeysWithValues: videos.map { ($0.id, $0) })
-      ordered = try queue.ordered()
-      toScore = try queue.toScore()
-      needsEdit = try queue.needsEdit()
-      excluded = videos.filter { $0.excluded && $0.type == .short }
-      upcomingSlots = try store.planSlots(where: "date>=?", [todayKey])
-      var next: [String: PlanSlot] = [:]
-      for s in upcomingSlots where next[s.videoId] == nil { next[s.videoId] = s }
-      nextSlotByVideo = next
-      weekStates = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT week_start, state FROM weeks").compactMap { r in
+      l.settings = try store.settings()
+      let dm = DayMath(settings: l.settings)
+      l.sessions = try store.sessions()
+      l.videos = try store.videos()
+      l.ordered = try queue.ordered()
+      l.toScore = try queue.toScore()
+      l.needsEdit = try queue.needsEdit()
+      l.upcomingSlots = try store.planSlots(where: "date>=?", [dm.key(now)])
+      l.weekStates = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT week_start, state FROM weeks").compactMap { r in
         r.string("week_start").map { ($0, WeekState(rawValue: r.string("state") ?? "") ?? .draft) }
       })
-      posts = try store.posts()
-      postsByVideo = Dictionary(grouping: posts, by: \.videoId)
-      postsBySlot = Dictionary(grouping: posts.filter { $0.planSlotId != nil }, by: { $0.planSlotId! })
-      problems = try postActions.problems()
-      dueToday = try postActions.dueToday(now: now)
-      runway = try queue.runway()
-      lastHeartbeat = try store.lastHeartbeat()
-      versionCounts = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT video_id, COUNT(*) AS n FROM versions GROUP BY video_id")
+      l.posts = try store.posts()
+      // Newest problem first (the API orders by scheduled time).
+      l.problems = try postActions.problems().sorted { $0.updatedAt > $1.updatedAt }
+      l.dueToday = try postActions.dueToday(now: now)
+      l.runway = try queue.runway()
+      l.lastHeartbeat = try store.lastHeartbeat()
+      l.versionCounts = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT video_id, COUNT(*) AS n FROM versions GROUP BY video_id")
         .compactMap { r in r.string("video_id").map { ($0, r.int("n") ?? 0) } })
-      relinked = Set(try store.db.query("SELECT DISTINCT video_id FROM events WHERE kind='relink' AND video_id IS NOT NULL")
+      l.relinked = Set(try store.db.query("SELECT DISTINCT video_id FROM events WHERE kind='relink' AND video_id IS NOT NULL")
         .compactMap { $0.string("video_id") })
-      keptRemoved = Set((try store.kv("ui.keptRemoved", as: [String].self)) ?? [])
-      renderQueue = try store.renders(where: "status IN ('pending','rendering') AND deleted_at IS NULL").count
-      prefillRules = PrefillRules.load(store.paths)
-      loadError = nil
+      l.keptRemoved = Set((try store.kv("ui.keptRemoved", as: [String].self)) ?? [])
+      l.renderQueue = try store.renders(where: "status IN ('pending','rendering') AND deleted_at IS NULL").count
+      l.prefillRules = PrefillRules.load(store.paths)
+      l.editStamps = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT video_id, updated_at FROM edits").compactMap { r in
+        r.string("video_id").map { ($0, r.double("updated_at") ?? 0) }
+      })
+      if !weekStart.isEmpty {
+        l.weekSlots = try store.planSlots(where: "week_start=?", [weekStart])
+        l.weekAwake = try Health.awakePeriods(store: store, since: dm.date(weekStart))
+      }
     } catch {
-      loadError = "\(error)"
+      l.error = "\(error)"
     }
+    return l
+  }
+
+  private func apply(_ l: Loaded) {
+    if let e = l.error { loadError = e; return }
+    settings = l.settings
+    sessions = l.sessions
+    sessionById = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+    videos = l.videos
+    videoById = Dictionary(uniqueKeysWithValues: videos.map { ($0.id, $0) })
+    ordered = l.ordered
+    toScore = l.toScore
+    needsEdit = l.needsEdit
+    excluded = videos.filter { $0.excluded && $0.type == .short }
+    upcomingSlots = l.upcomingSlots
+    var next: [String: PlanSlot] = [:]
+    for s in upcomingSlots where next[s.videoId] == nil { next[s.videoId] = s }
+    nextSlotByVideo = next
+    weekStates = l.weekStates
+    // Drop prepared files/captions whose post changed (new render, version, state, fix, edit).
+    let byId = Dictionary(uniqueKeysWithValues: l.posts.map { ($0.id, $0) })
+    for (id, stamp) in preparedStamp where byId[id].map(Self.prepStamp) != stamp {
+      prepared[id] = nil
+      preparedStamp[id] = nil
+    }
+    posts = l.posts
+    postsByVideo = Dictionary(grouping: posts, by: \.videoId)
+    postsBySlot = Dictionary(grouping: posts.filter { $0.planSlotId != nil }, by: { $0.planSlotId! })
+    problems = l.problems
+    dueToday = l.dueToday
+    runway = l.runway
+    lastHeartbeat = l.lastHeartbeat
+    versionCounts = l.versionCounts
+    relinked = l.relinked
+    keptRemoved = l.keptRemoved
+    renderQueue = l.renderQueue
+    prefillRules = l.prefillRules
+    weekSlots = l.weekSlots
+    weekAwake = l.weekAwake
+    ThumbStamps.shared.update(l.editStamps)
+    lastRefresh = Date()
+    loadError = nil
+  }
+
+  /// Synchronous reload (launch, snapshot mode).
+  func refreshNow() {
+    if !frozen { now = store.clock.now }
+    apply(Self.load(store: store, queue: queue, postActions: postActions, now: now, weekStart: weekStart))
+  }
+
+  /// Coalesced background reload; the result is applied on the main actor.
+  func refresh() {
+    if frozen { refreshNow(); return }
+    if refreshing { refreshAgain = true; return }
+    refreshing = true
+    now = store.clock.now
+    let (s, q, pa, n, ws) = (store, queue, postActions, now, weekStart)
+    Task.detached(priority: .userInitiated) {
+      let l = AppModel.load(store: s, queue: q, postActions: pa, now: n, weekStart: ws)
+      await MainActor.run {
+        self.apply(l)
+        self.refreshing = false
+        if self.refreshAgain { self.refreshAgain = false; self.refresh() }
+      }
+    }
+  }
+
+  /// Timer entry: every 5 s while a window or the menu-bar popover is visible, otherwise every 30 s (menu-bar badge).
+  func timerRefresh(visible: Bool) {
+    if visible || Date().timeIntervalSince(lastRefresh) >= 30 { refresh() }
+  }
+
+  nonisolated static func prepStamp(_ p: PlatformPost) -> String {
+    "\(p.renderId ?? "-")|\(p.versionNo)|\(p.state.rawValue)|\(p.updatedAt.timeIntervalSince1970)"
   }
 
   // MARK: Derived
@@ -302,15 +413,20 @@ final class AppModel {
 
   // MARK: Action plumbing
 
-  func perform(_ label: String? = nil, _ body: () throws -> Void) {
+  /// Runs a write, signals other processes, reloads. Errors (e.g. the engine refusing "Post now" because the
+  /// platform already posted or a pinned video holds today's slot) show as a readable red toast.
+  @discardableResult
+  func perform(_ label: String? = nil, _ body: () throws -> Void) -> Bool {
     do {
       try body()
       ChangeSignal.post()
       refresh()
       if let label { show(label) }
+      return true
     } catch {
       refresh()
       show(error.localizedDescription, error: true)
+      return false
     }
   }
 
@@ -328,6 +444,32 @@ final class AppModel {
     recentCommands.insert(id, at: 0)
     recentCommands = Array(recentCommands.prefix(5))
     UserDefaults.standard.set(recentCommands, forKey: "djq.recentCommands")
+  }
+
+  // MARK: Digit scoring (Queue + Library)
+
+  private var digitBuffer = ""
+  private var digitTargets: [String] = []
+  private var digitCommit: DispatchWorkItem?
+
+  /// Digits typed on selected rows set the score once: "7" waits briefly for a second digit, "72" commits at once,
+  /// "10" waits for a possible "100". One write per typed number.
+  func typeDigit(_ c: String, ids: Set<String>) {
+    guard !ids.isEmpty, c.count == 1, c.first!.isNumber else { return }
+    digitCommit?.cancel()
+    if Array(ids) != digitTargets { digitBuffer = "" }
+    digitTargets = Array(ids)
+    digitBuffer += c
+    let done = digitBuffer.count >= 3 || (digitBuffer.count == 2 && digitBuffer != "10")
+    show("Score \(digitBuffer)\(done ? "" : "…")")
+    let commit = DispatchWorkItem { [weak self] in
+      guard let self, let n = Int(self.digitBuffer), n <= 100 else { self?.digitBuffer = ""; return }
+      self.digitBuffer = ""
+      self.setScore(self.digitTargets, n)
+      self.show("Score \(n)")
+    }
+    digitCommit = commit
+    if done { commit.perform() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: commit) }
   }
 
   // MARK: Video actions
@@ -361,7 +503,7 @@ final class AppModel {
 
   func pin(_ videoId: String, dayKey: String) { perform("Pinned") { try planner.pin(videoId: videoId, date: dayKey) } }
   func postToday(_ videoId: String) { perform("Posting today") { try planner.postToday(videoId: videoId) } }
-  func skipNext(_ videoId: String) { perform("Skipped next slot") { try planner.skipNext(videoId: videoId) } }
+  func skipNext(_ videoId: String) { perform("Swapped with the next open slot") { try planner.skipNext(videoId: videoId) } }
   func removeSlot(_ slotId: String) { perform("Removed from week") { try planner.remove(slotId: slotId) } }
   func swap(_ a: String, _ b: String) { perform("Swapped") { try planner.swap(a, b) } }
   func move(_ slotId: String, to day: String) { perform("Moved") { try planner.move(slotId: slotId, to: day) } }
@@ -381,7 +523,16 @@ final class AppModel {
     }
   }
 
-  func repost(_ videoId: String, _ p: Platform) { perform("Repost queued on \(p.displayName)") { try postActions.repost(videoId: videoId, platform: p) } }
+  func repost(_ videoId: String, _ p: Platform) {
+    perform("Repost queued on \(p.displayName)") { _ = try postActions.repost(videoId: videoId, platform: p) }
+  }
+
+  /// nil when a repost is possible; otherwise why not (the API needs the next version to exist).
+  func repostBlocker(_ videoId: String, _ p: Platform) -> String? {
+    let used = (postsByVideo[videoId] ?? []).filter { $0.platform == p }
+    guard let maxUsed = used.map(\.versionNo).max() else { return "Not posted on \(p.displayName) yet" }
+    return (versionCounts[videoId] ?? 1) > maxUsed ? nil : "Add v\(maxUsed + 1) first (Duplicate version)"
+  }
 
   func duplicateVersion(_ videoId: String) {
     perform("Version duplicated") {
@@ -413,9 +564,27 @@ final class AppModel {
   }
 
   func resolve(_ post: PlatformPost, _ r: CopyrightResolution) { perform("Resolved") { try postActions.resolveCopyright(postId: post.id, r) } }
-  func fixed(_ postId: String) { perform("Re-queued for the next day") { try postActions.fixed(postId: postId) } }
+  func fixed(_ postId: String) { perform("Re-queued for the next day") { _ = try postActions.fixed(postId: postId) } }
   func reset(_ post: PlatformPost) { perform("Post reset") { try postActions.reset(postId: post.id) } }
-  func skip(_ post: PlatformPost) { perform("\(post.platform.displayName) skipped") { try postActions.skip(postId: post.id) } }
+  func skip(_ post: PlatformPost) {
+    if post.state.isCopyright { resolve(post, .skipPlatform); return }
+    perform("\(post.platform.displayName) skipped") { try postActions.skip(postId: post.id) }
+  }
+  func postNow(_ post: PlatformPost) {
+    let ok = perform("\(post.platform.displayName) is due now") { try postActions.postNow(postId: post.id) }
+    guard ok else { return }
+    highlightPostId = post.id
+    screen = .today
+  }
+
+  func shiftPlan(_ post: PlatformPost) {
+    perform("Moved to the next free \(post.platform.displayName) slot") { try postActions.shiftPlan(postId: post.id) }
+  }
+
+  /// What the real PostActions allow (skip refuses terminal posts; reset of a past post would make it miss again).
+  func canSkip(_ p: PlatformPost) -> Bool { !p.state.isTerminal || (p.state.isCopyright && p.resolution == nil) }
+  func canReset(_ p: PlatformPost) -> Bool { p.scheduledAt > now && p.state != .planned && p.state != .rendering }
+  func isResolved(_ p: PlatformPost) -> Bool { p.resolution != nil }
   func setMetrics(_ post: PlatformPost, views: Int?, likes: Int?) {
     perform("Metrics saved") { try postActions.setMetrics(postId: post.id, PostMetrics(views: views, likes: likes, at: now)) }
   }
@@ -439,27 +608,70 @@ final class AppModel {
 
   // MARK: Manual publisher (Today)
 
+  /// A post whose render exists: the file can be dragged out without rendering on display.
+  func isRenderable(_ p: PlatformPost) -> Bool {
+    p.renderId != nil && !p.state.isTerminal && (p.state == .rendered || p.state == .due || p.state == .overdue)
+  }
+
   func preparedPost(_ id: String) -> PreparedPost? { prepared[id] }
 
-  func prepare(_ post: PlatformPost) async -> PreparedPost? {
+  /// Only for posts whose render already exists (no ffmpeg on display).
+  func prepareIfRendered(_ post: PlatformPost) async {
+    guard isRenderable(post), prepared[post.id] == nil else { return }
+    _ = await prepare(post, quiet: true)
+  }
+
+  /// On demand (copy/reveal file): may render, always off the main thread.
+  func prepare(_ post: PlatformPost, quiet: Bool = false) async -> PreparedPost? {
     if let p = prepared[post.id] { return p }
+    if !quiet && !isRenderable(post) { show("Rendering \(post.platform.shortName)…") }
     let pub = publisher
     let id = post.id
     let result = await Task.detached { () -> Result<PreparedPost, Error> in
       do { return .success(try pub.prepare(postId: id)) } catch { return .failure(error) }
     }.value
     switch result {
-    case .success(let p): prepared[id] = p; return p
+    case .success(let p):
+      prepared[id] = p
+      preparedStamp[id] = Self.prepStamp(post)
+      return p
+    case .failure(let e):
+      if !quiet { show(e.localizedDescription, error: true) }
+      return nil
+    }
+  }
+
+  /// Caption and title don't need a render.
+  func captionAndTitle(_ post: PlatformPost) async -> (String, String?)? {
+    if let p = prepared[post.id] { return (p.caption, p.title) }
+    let s = store
+    let r = await Task.detached { () -> Result<(String, String?), Error> in
+      do {
+        guard let v = try s.video(id: post.videoId) else { throw EditorlessError("Video not found") }
+        let st = try s.settings()
+        guard let rv = try s.resolvedVersion(videoId: v.id, number: post.versionNo, settings: st) else {
+          throw EditorlessError("\(v.tag) has no v\(post.versionNo)")
+        }
+        let rules = PrefillRules.load(s.paths)
+        let c = Captions.caption(for: post.platform, version: rv, video: v, sessionName: try s.session(id: v.sessionId)?.name ?? "",
+                                 sets: try s.hashtagSets(), templates: try s.captionTemplates(), settings: st, rules: rules)
+        let t = post.platform == .youtube
+          ? Captions.youtubeTitle(rv, video: v, limit: st.limits[.youtube]?.titleLimit ?? 100, rules: rules) : nil
+        return .success((c, t))
+      } catch { return .failure(error) }
+    }.value
+    switch r {
+    case .success(let x): return x
     case .failure(let e): show(e.localizedDescription, error: true); return nil
     }
   }
 
   func copyCaption(_ post: PlatformPost) {
-    Task { if let p = await prepare(post) { copy(p.caption); show("\(post.platform.shortName) caption copied") } }
+    Task { if let (c, _) = await captionAndTitle(post) { copy(c); show("\(post.platform.shortName) caption copied") } }
   }
 
   func copyTitle(_ post: PlatformPost) {
-    Task { if let p = await prepare(post), let t = p.title { copy(t); show("Title copied") } }
+    Task { if let (_, t) = await captionAndTitle(post), let t { copy(t); show("Title copied") } }
   }
 
   func openUploadPage(_ post: PlatformPost) { NSWorkspace.shared.open(post.platform.uploadURL) }
@@ -491,6 +703,9 @@ final class AppModel {
 
   func closeEditor() {
     let fix = editor?.fixPostId
+    for id in editor?.videoIds ?? [] { ThumbCache.shared.invalidate(id) }
+    prepared = [:]
+    preparedStamp = [:]
     editor = nil
     if let fix { fixed(fix) } else { refresh() }
   }
@@ -511,10 +726,15 @@ final class AppModel {
 
   // MARK: Engine + health
 
+  /// Ticks the in-process engine; otherwise asks the owning process (its engine ticks on ChangeSignal).
   func runTick() {
-    guard let engine else { show("Engine runs in another process", error: true); return }
+    guard let engine, engineInProcess else {
+      ChangeSignal.post()
+      show("Asked the background engine to tick")
+      return
+    }
     show("Running engine tick…")
-    nonisolated(unsafe) let e = engine
+    let e = engine
     DispatchQueue.global().async {
       let r = e.tick(reason: "manual")
       DispatchQueue.main.async {
@@ -541,4 +761,10 @@ final class AppModel {
   }
 
   func openLog() { NSWorkspace.shared.open(store.paths.engineLog) }
+}
+
+struct EditorlessError: LocalizedError {
+  let message: String
+  init(_ m: String) { message = m }
+  var errorDescription: String? { message }
 }

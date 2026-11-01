@@ -375,6 +375,7 @@ struct EngineSettings: View {
   @Bindable var model: AppModel
   @State private var loaded: Bool?
   @State private var confirmReinstall = false
+  @State private var confirmStop = false
 
   var body: some View {
     Form {
@@ -382,14 +383,15 @@ struct EngineSettings: View {
         SettingRow(title: "LaunchAgent", subtitle: "Starts DJ Queue at login and keeps the engine running") {
           HStack {
             if let loaded { StatusPill(text: loaded ? "Loaded" : "Not loaded", tint: loaded ? .green : .red) } else { ProgressView().controlSize(.small) }
-            Button("Reinstall…") { confirmReinstall = true }
+            Button("Reinstall…") { confirmReinstall = true }.disabled(!installable)
+            Button("Stop…") { confirmStop = true }.disabled(loaded != true)
           }
         }
         SettingRow(title: "Engine", subtitle: model.engineInProcess ? "Running in this app" : "Running in another process") {
           HStack {
             StateDot(tint: model.engineRunning ? .green : .red)
             Text(model.lastHeartbeat.map { "Last tick \(Fmt.relative($0.at, now: model.now))" } ?? "No heartbeat").foregroundStyle(.secondary)
-            Button("Tick now") { model.runTick() }.disabled(model.engine == nil)
+            Button("Tick now") { model.runTick() }
           }
         }
         SettingRow(title: "Wake before first slot", subtitle: "Schedules a Mac wake with pmset (needs admin). Off by default.") {
@@ -405,7 +407,10 @@ struct EngineSettings: View {
       Section("Backups") {
         SettingRow(title: "Daily backup", subtitle: "Keeps 14 copies of the database") {
           Button("Back up now") {
-            model.perform("Backup done") { _ = try Backup.runIfDue(store: model.store) }
+            var made: URL?
+            if model.perform(nil, { made = try Backup.runIfDue(store: model.store) }) {
+              model.show(made == nil ? "Today's backup already exists" : "Backup saved")
+            }
           }
         }
       }
@@ -415,12 +420,24 @@ struct EngineSettings: View {
       loaded = await Task.detached { frozen ? true : LaunchAgent.isLoaded() }.value
     }
     .confirmationDialog("Reinstall the LaunchAgent?", isPresented: $confirmReinstall) {
-      Button("Reinstall") {
-        model.perform("LaunchAgent installed") { try LaunchAgent.install(appPath: Bundle.main.bundlePath, paths: model.store.paths) }
+      Button("Reinstall and load") { AppHost.shared.installLaunchAgent() }
+    } message: {
+      Text("Writes ~/Library/LaunchAgents/com.djlovd.queue.engine.plist for \(Bundle.main.bundlePath) and loads it with launchctl. "
+        + "The background copy takes over the engine and this window reopens there.")
+    }
+    .confirmationDialog("Stop the background engine?", isPresented: $confirmStop) {
+      Button("Stop and remove from login", role: .destructive) {
+        model.perform("Background engine stopped") { try LaunchAgent.uninstall(paths: model.store.paths, unload: true) }
+        loaded = false
       }
     } message: {
-      Text("Points ~/Library/LaunchAgents/com.djlovd.queue.engine.plist at \(Bundle.main.bundlePath).")
+      Text("Posts won't be prepared and reminders won't arrive until DJ Queue is opened again or Reinstall is used.")
     }
+  }
+
+  /// Only the installed bundle may become the LaunchAgent (never a dev build or `swift run`).
+  private var installable: Bool {
+    Bundle.main.bundlePath.hasSuffix(".app") && ProcessInfo.processInfo.environment["DJQ_HOME"] == nil
   }
 
   private func folder(_ title: String, _ url: URL) -> some View {

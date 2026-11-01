@@ -56,7 +56,7 @@ struct PostsView: View {
     .inspector(isPresented: $model.showInspector) {
       Group {
         if let id = model.postsSelection, let p = model.posts.first(where: { $0.id == id }) {
-          PostDetail(model: model, post: p)
+          PostDetail(model: model, post: p).id(p.id)  // fresh metric fields per post
         } else {
           EmptyState(symbol: "sidebar.right", title: "No post selected")
         }
@@ -194,17 +194,16 @@ struct ErrorCard: View {
         Button("Skip") { model.resolve(post, .skipPlatform) }
         Button("Accept") { model.resolve(post, .accept) }
       } else if post.state == .overdue {
-        Button("Post now") { model.highlightPostId = post.id; model.screen = .today }.buttonStyle(.borderedProminent)
-        Button("Mark posted…") { model.markPostedTarget = post }
+        Button("Post now") { model.postNow(post) }
+        Button("Shift plan") { model.shiftPlan(post) }
         Button("Skip") { model.skip(post) }
       } else {
         Button("Fix in editor") { model.openEditor(post.videoId, fixPostId: post.id) }.buttonStyle(.borderedProminent)
-        Button("Re-queue") { model.fixed(post.id) }
-        Button("Skip") { model.skip(post) }
+        Button("Re-queue") { model.fixed(post.id) }.help("The cause is fixed: try again on the next day's slot")
       }
       Menu {
-        Button("Reset post") { model.reset(post) }
-        Button("Mark posted…") { model.markPostedTarget = post }
+        if model.canReset(post) { Button("Reset post") { model.reset(post) } }
+        if post.state == .overdue { Button("Mark posted…") { model.markPostedTarget = post } }
         Button("Copy details") {
           model.copy("\(post.platform.displayName) · \(post.errorType?.displayName ?? post.state.displayName)\n\(post.errorMessage ?? "")\n\(post.rawResponse ?? "")")
         }
@@ -288,9 +287,10 @@ struct PostDetail: View {
           }
         }
         HStack {
-          Button("Mark posted…") { model.markPostedTarget = post }
-          Button("Report…") { model.reportTarget = post }
-          Button("Reset") { model.reset(post) }
+          if !post.state.isTerminal { Button("Mark posted…") { model.markPostedTarget = post } }
+          if !post.state.isTerminal || post.state == .posted { Button("Report…") { model.reportTarget = post } }
+          if model.canReset(post) { Button("Reset") { model.reset(post) } }
+          if model.canSkip(post) { Button("Skip") { model.skip(post) } }
         }
         .controlSize(.small)
       }

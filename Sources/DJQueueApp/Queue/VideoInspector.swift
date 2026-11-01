@@ -166,7 +166,7 @@ struct VideoInspector: View {
     DisclosureGroup(isExpanded: $showMore) {
       VStack(alignment: .leading, spacing: 8) {
         if video.type == .short {
-          Text("Sort override per platform").font(DS.Font.secondary).foregroundStyle(.secondary)
+          Text("Sort per platform — applies to all videos").font(DS.Font.secondary).foregroundStyle(.secondary)
           ForEach(model.settings.activePlatforms) { p in
             PropertyRow(p.displayName) {
               Picker(p.displayName, selection: Binding<SortDirection?>(
@@ -179,10 +179,7 @@ struct VideoInspector: View {
             }
           }
           Divider()
-          Menu("Repost on…") {
-            ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { model.repost(video.id, p) } }
-          }
-          .fixedSize()
+          RepostMenu(model: model, videoId: video.id).fixedSize()
           HStack {
             Button("Duplicate version") { model.duplicateVersion(video.id) }
             Button("Re-render") { model.reRender(video.id) }

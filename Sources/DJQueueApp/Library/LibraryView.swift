@@ -161,6 +161,10 @@ struct LibraryView: View {
       if let id = model.librarySelection.first, let v = model.video(id) { model.previewVideo = v }
       return .handled
     }
+    .onKeyPress(characters: .decimalDigits, phases: .down) { press in
+      model.typeDigit(press.characters, ids: model.librarySelection)
+      return .handled
+    }
   }
 
   @ViewBuilder private func stateCell(_ v: Video) -> some View {

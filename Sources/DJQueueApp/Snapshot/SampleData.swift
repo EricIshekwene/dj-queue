@@ -52,7 +52,7 @@ enum SampleData {
     let thisWeek = dm.weekStart(of: now)
     let approvedAt = dm.at(dm.addDays(thisWeek, -1), minutes: 18 * 60 + 5)
     clock.set(approvedAt)
-    try store.save(Records.week(weekStart: thisWeek, state: .approved, approvedAt: approvedAt))
+    try store.save(Week(weekStart: thisWeek, state: .approved, approvedAt: approvedAt))
     let ready = try store.videos(where: "type='short-form' AND state='ready'")
       .sorted { ($0.score ?? 0, $0.part ?? 0, $0.start ?? 0) < ($1.score ?? 0, $1.part ?? 0, $1.start ?? 0) }
     var pool = ready
@@ -60,7 +60,7 @@ enum SampleData {
     var weekSlots: [(String, PlanSlot)] = []
     for day in days where !pool.isEmpty {
       let v = pool.removeFirst()
-      let s = Records.planSlot(id: newId(), date: day, position: 0, videoId: v.id, pinned: day == days[2], weekStart: thisWeek)
+      let s = PlanSlot(id: newId(), date: day, position: 0, videoId: v.id, pinned: day == days[2], weekStart: thisWeek)
       try store.save(s)
       weekSlots.append((day, s))
     }
@@ -69,7 +69,7 @@ enum SampleData {
               url: Bool = true, metrics: PostMetrics? = nil) throws {
       let at = dm.at(s.date, minutes: st.slot(for: p))
       clock.set(approvedAt)
-      var post = Records.platformPost(id: newId(), videoId: s.videoId, platform: p, versionNo: version, attemptNo: 1, kind: .regular,
+      var post = PlatformPost(id: newId(), videoId: s.videoId, platform: p, versionNo: version, attemptNo: 1, kind: .regular,
                               planSlotId: s.id, scheduledAt: at, renderId: nil, state: .planned, publisher: "manual", externalId: nil,
                               url: nil, postedAt: nil, errorType: nil, errorMessage: nil, rawResponse: nil, resolution: nil,
                               metrics: nil, createdAt: approvedAt, updatedAt: approvedAt)
@@ -139,24 +139,24 @@ enum SampleData {
     // Next week: draft proposal from the rest of the backlog + a retry and a repost (W.S5).
     let nextWeek = dm.addDays(thisWeek, 7)
     clock.set(now.addingTimeInterval(-600))
-    try store.save(Records.week(weekStart: nextWeek, state: .draft, approvedAt: nil))
+    try store.save(Week(weekStart: nextWeek, state: .draft, approvedAt: nil))
     for day in dm.weekDays(nextWeek) where !pool.isEmpty {
       let v = pool.removeFirst()
-      try store.save(Records.planSlot(id: newId(), date: day, position: 0, videoId: v.id, pinned: false, weekStart: nextWeek))
+      try store.save(PlanSlot(id: newId(), date: day, position: 0, videoId: v.id, pinned: false, weekStart: nextWeek))
     }
     if let (_, s) = weekSlots.first {
       let tomorrow = dm.addDays(today, 1)
       let retryAt = dm.at(tomorrow, minutes: st.slot(for: .x) + 180)
-      try store.save(Records.platformPost(id: newId(), videoId: weekSlots[4].1.videoId, platform: .x, versionNo: 1, attemptNo: 2, kind: .retry,
+      try store.save(PlatformPost(id: newId(), videoId: weekSlots[4].1.videoId, platform: .x, versionNo: 1, attemptNo: 2, kind: .retry,
                                   planSlotId: nil, scheduledAt: retryAt, renderId: nil, state: .planned, publisher: "manual",
                                   externalId: nil, url: nil, postedAt: nil, errorType: nil, errorMessage: nil, rawResponse: nil,
                                   resolution: nil, metrics: nil, createdAt: now, updatedAt: now))
-      try store.save(Records.platformPost(id: newId(), videoId: s.videoId, platform: .instagram, versionNo: 2, attemptNo: 2, kind: .repost,
+      try store.save(PlatformPost(id: newId(), videoId: s.videoId, platform: .instagram, versionNo: 2, attemptNo: 2, kind: .repost,
                                   planSlotId: nil, scheduledAt: dm.at(dm.addDays(today, 3), minutes: st.slot(for: .instagram) + 180),
                                   renderId: nil, state: .planned, publisher: "manual", externalId: nil, url: nil, postedAt: nil,
                                   errorType: nil, errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now))
     }
-    try store.save(Records.render(id: newId(), videoId: weekSlots.last?.1.videoId ?? shorts[0].id, versionNo: 1, editHash: "pending", scope: "all",
+    try store.save(Render(id: newId(), videoId: weekSlots.last?.1.videoId ?? shorts[0].id, versionNo: 1, editHash: "pending", scope: "all",
                           outputPath: nil, coverPath: nil, loudness: nil, duration: nil, size: nil, status: .pending, error: nil,
                           createdAt: now, deletedAt: nil))
 

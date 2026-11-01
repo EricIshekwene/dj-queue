@@ -79,6 +79,7 @@ struct MenuBarView: View {
   @Bindable var model: AppModel
   @State private var urlFor: String?
   @State private var url = ""
+  @State private var urlError: String?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -92,6 +93,8 @@ struct MenuBarView: View {
     }
     .padding(14)
     .frame(width: 320)
+    .onAppear { model.popoverVisible = true; model.refresh() }
+    .onDisappear { model.popoverVisible = false }
   }
 
   private var runway: some View {
@@ -162,14 +165,21 @@ struct MenuBarView: View {
               }
               Spacer()
               Button { model.copyCaption(p) } label: { Image(systemName: "text.quote") }.help("Copy caption")
-              Button { urlFor = urlFor == p.id ? nil : p.id; url = "" } label: { Image(systemName: "checkmark.circle") }.help("Mark posted")
+                .accessibilityLabel("Copy caption")
+              Button { urlFor = urlFor == p.id ? nil : p.id; url = ""; urlError = nil } label: { Image(systemName: "checkmark.circle") }
+                .help("Mark posted").accessibilityLabel("Mark posted")
             }
             .buttonStyle(.borderless)
             if urlFor == p.id {
               HStack {
                 TextField("Paste \(p.platform.shortName) URL", text: $url).textFieldStyle(.roundedBorder)
                   .onSubmit { save(p) }
+                  .onChange(of: url) { urlError = nil }
                 Button("Save") { save(p) }.disabled(url.isEmpty)
+              }
+              if let urlError {
+                Label(urlError, systemImage: "exclamationmark.circle.fill").font(DS.Font.secondary).foregroundStyle(.red)
+                  .frame(maxWidth: .infinity, alignment: .leading)
               }
             }
           }
@@ -178,9 +188,18 @@ struct MenuBarView: View {
     }
   }
 
+  /// Validated inline: on a bad URL the field stays open with the reason (the main window may be closed).
   private func save(_ p: PlatformPost) {
-    model.markPosted(p, url: url.trimmingCharacters(in: .whitespaces), at: Date())
-    urlFor = nil
+    let u = url.trimmingCharacters(in: .whitespaces)
+    do {
+      try model.postActions.markPosted(postId: p.id, url: u, at: Date())
+      ChangeSignal.post()
+      model.refresh()
+      urlFor = nil
+      urlError = nil
+    } catch {
+      urlError = error.localizedDescription
+    }
   }
 
   private var footer: some View {
@@ -204,7 +223,9 @@ struct MenuBarView: View {
       Text("ticked \(model.lastHeartbeat.map { Fmt.relative($0.at, now: model.now) } ?? "never")\(model.renderQueue > 0 ? " · \(model.renderQueue) rendering" : "")")
         .font(DS.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
       Spacer()
-      Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.buttonStyle(.borderless).help("Quit (stops the engine until next login)")
+      Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.buttonStyle(.borderless)
+        .help("Quit — the background engine restarts it automatically. To stop it, use Settings → Engine.")
+        .accessibilityLabel("Quit")
     }
   }
 
