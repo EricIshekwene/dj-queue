@@ -23,7 +23,7 @@ usage: djq <command> [args]
   repost <video> <platform> | longform-posted <video> <url>
   score <video> <0-100|clear> | exclude <video> | include <video>
   pause [platform] | resume [platform]
-  intake | tick | doctor [--json] | health [--days N]
+  intake | tick [--force] | doctor [--json] | health [--days N]
   prefill "<tag>" [--kind talking]
   render <video> [--version N] [--platform P]
   agent install [--app PATH] [--load] [--force] | agent uninstall [--unload] | agent status
@@ -359,6 +359,16 @@ func run() throws -> Int32 {
     print("videos: \(vids.filter { $0.type == .short }.count) short-form · \(vids.filter { $0.type == .long }.count) long-form")
 
   case "tick":
+    // One engine per database: if DJ Queue (or another djq) holds the engine lock, ask it to tick instead.
+    let force = flag("--force")
+    let lock = EngineLock.acquire(paths)
+    if lock == nil && !force {
+      ChangeSignal.post()
+      wrote = false
+      print("Engine is running in DJ Queue; asked it to tick")
+      return 0
+    }
+    defer { lock?.release() }
     let engine = Engine(store: store, renderer: RenderServices.make(store), publisher: nil, notifier: PrintNotifier())
     let r = engine.tick(reason: "cli")
     wrote = true
@@ -404,6 +414,7 @@ func run() throws -> Int32 {
     switch try arg(0, "install|uninstall|status") {
     case "install":
       let app = option("--app") ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/DJ Queue.app").path
+      // LaunchAgent.install refuses dev environments (DJQ_HOME/DJQ_ROOT) and apps outside ~/Applications.
       let load = flag("--load")
       if !flag("--force"), !FileManager.default.fileExists(atPath: app) {
         throw CLIError("\(app) doesn't exist — build/install the app first (or pass --force)")
