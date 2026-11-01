@@ -200,6 +200,13 @@ import Testing
     #expect(Captions.hashtags(rc, sets: Defaults.hashtagSets, videoId: "x") == ["#afrobeats", "#afrobeatsmix", "#naija", "#djlovd"])
   }
 
+  @Test func corruptVersionRowThrows() throws {
+    let f = try Fixture()
+    try f.intake()
+    try f.store.db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?)", ["clip-0", 1, "{ nope", 0.0])
+    #expect(throws: StoreError.self) { try f.store.versions(videoId: "clip-0") }
+  }
+
   @Test func talkingContentTypeMapsToKind() throws {
     let f = try Fixture()
     f.entries[1]["content-type"] = "talking"
