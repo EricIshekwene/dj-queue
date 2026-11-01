@@ -198,13 +198,48 @@ import Testing
 
   @Test func launchAgentPlistWithoutLaunchctl() throws {
     let f = try Fixture.engine(1)
-    try LaunchAgent.install(appPath: "/Applications/Fake.app", paths: f.paths)
+    let home = f.dir.appendingPathComponent("home")
+    let app = home.appendingPathComponent("Applications/Fake.app")
+    try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+    try LaunchAgent.install(appPath: app.path, paths: f.paths, load: false, environment: [:], home: home.path)
     let d = try #require(NSDictionary(contentsOf: f.paths.agentPlist))
     #expect(d["Label"] as? String == "com.djlovd.queue.engine")
-    #expect((d["ProgramArguments"] as? [String]) == ["/Applications/Fake.app/Contents/MacOS/Fake", "--agent"])
+    let args = try #require(d["ProgramArguments"] as? [String])
+    #expect(args.last == "--agent" && args.first?.hasSuffix("Fake.app/Contents/MacOS/Fake") == true)
     #expect(d["RunAtLoad"] as? Bool == true && d["KeepAlive"] as? Bool == true)
     try LaunchAgent.uninstall(paths: f.paths)
     #expect(!LaunchAgent.isInstalled(paths: f.paths))
+  }
+
+  @Test func launchAgentRefusesDevEnvironmentAndForeignApps() throws {
+    let f = try Fixture.engine(1)
+    let home = f.dir.appendingPathComponent("home")
+    let app = home.appendingPathComponent("Applications/DJ Queue.app")
+    try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+    for env in [["DJQ_HOME": "/tmp/x"], ["DJQ_ROOT": "/tmp/y"]] {
+      #expect(throws: EngineError.self) {
+        try LaunchAgent.install(appPath: app.path, paths: f.paths, load: false, environment: env, home: home.path)
+      }
+    }
+    for bad in ["/Applications/DJ Queue.app", f.dir.appendingPathComponent("build/DJ Queue.app").path,
+                home.appendingPathComponent("Applications/../Desktop/DJ Queue.app").path] {
+      #expect(throws: EngineError.self) {
+        try LaunchAgent.install(appPath: bad, paths: f.paths, load: false, environment: [:], home: home.path)
+      }
+    }
+    #expect(!LaunchAgent.isInstalled(paths: f.paths))
+  }
+
+  @Test func engineLockIsExclusive() throws {
+    let f = try Fixture.engine(1)
+    let a = try #require(EngineLock.acquire(f.paths))
+    #expect(EngineLock.acquire(f.paths) == nil)
+    #expect(EngineLock.isHeld(f.paths))
+    a.release()
+    #expect(!EngineLock.isHeld(f.paths))
+    let b = EngineLock.acquire(f.paths)
+    #expect(b != nil)
+    #expect(EngineLock.url(f.paths).lastPathComponent == "engine.lock")
   }
 
   @Test func backupDailyKeeps14() throws {
