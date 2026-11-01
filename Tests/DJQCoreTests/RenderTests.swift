@@ -120,6 +120,12 @@ func meanAbsDiff(_ a: CGImage, _ b: CGImage, in rect: CGRect? = nil) -> Double {
     let h5 = try rf.hash()
     #expect(h5 != h4)
 
+    // Platform toggles and size limits don't change the output, so they don't change the hash.
+    s.enabledPlatforms.remove(.x)
+    s.limits[.threads]?.maxBytes = 10_000_000
+    try rf.store.save(s)
+    #expect(try rf.hash() == h5)
+
     // Per-platform trim: X gets its own scope and hash; the shared render is unchanged.
     try rf.edit { $0.platformTrims[.x] = TrimRange(start: 1, end: 2.5) }
     #expect(try rf.renderer.scope(videoId: rf.id, platform: .x) == "x")
@@ -257,6 +263,103 @@ func meanAbsDiff(_ a: CGImage, _ b: CGImage, in rect: CGRect? = nil) -> Double {
     #expect(r.outputPath?.hasPrefix(root.path) == true)
     #expect(try #require(r.size) <= 1_500_000)
     #expect(abs(try Media.probe(URL(fileURLWithPath: r.outputPath!)).duration - 3.0) <= 0.1)
+  }
+
+  /// A limit lowered after rendering: same hash, the render is no longer current, ensureRender
+  /// re-encodes the same row smaller.
+  @Test func lowerLimitAfterRenderReEncodesInPlace() throws {
+    let rf = try RenderFixture()
+    let r = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
+    let big = try #require(r.size)
+    #expect(big > 2_000_000)
+    let hash = try rf.hash()
+    var s = try rf.store.settings()
+    s.limits[.x]?.maxBytes = 2_000_000
+    try rf.store.save(s)
+    #expect(try rf.hash() == hash)
+    #expect(try rf.renderer.currentRender(videoId: rf.id, versionNo: 1, platform: nil) == nil)
+    let r2 = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
+    #expect(r2.id == r.id && r2.editHash == hash && r2.status == .done)
+    #expect(try #require(r2.size) <= 2_000_000)
+    #expect(try rf.renderer.currentRender(videoId: rf.id, versionNo: 1, platform: nil)?.id == r.id)
+  }
+
+  /// The engine moves a posted render to Posted/ and records the new path: it stays reusable.
+  @Test func movedRenderIsReused() throws {
+    let rf = try RenderFixture()
+    let r = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
+    let posted = rf.f.sessionDir.appendingPathComponent("Posted/Shortform")
+    let out = URL(fileURLWithPath: r.outputPath!), cover = URL(fileURLWithPath: r.coverPath!)
+    let newOut = posted.appendingPathComponent(out.lastPathComponent)
+    let newCover = posted.appendingPathComponent(cover.lastPathComponent)
+    try FileManager.default.moveItem(at: out, to: newOut)
+    try FileManager.default.moveItem(at: cover, to: newCover)
+    try rf.store.setRenderOutput(id: r.id, outputPath: newOut.path, coverPath: newCover.path)
+    let again = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
+    #expect(again.id == r.id && again.outputPath == newOut.path && again.status == .done)
+    #expect(!FileManager.default.fileExists(atPath: out.path))  // not re-rendered into Ready to Post
+    // Deleting it never touches files outside Ready to Post.
+    try rf.renderer.deleteRenders(except: [])
+    #expect(FileManager.default.fileExists(atPath: newOut.path))
+    #expect(try rf.store.render(id: r.id)?.deletedAt != nil)
+  }
+
+  @Test func invertedTextWindowShowsTextForTheWholeClip() throws {
+    let rf = try RenderFixture()
+    try rf.version { $0.textStart = 2.5; $0.textEnd = 1.0 }
+    let r = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
+    let rv = try #require(try rf.store.resolvedVersion(videoId: rf.id, number: 1))
+    let box = try #require(TextOverlay.textBounds(for: rv, aspect: .r9x16))
+    let px = Pixels(try #require(Media.frame(URL(fileURLWithPath: r.outputPath!), at: 0.5, maxSize: .zero)))
+      .at(Int(box.minX) + 6, Int(box.midY))
+    #expect(px.0 > 235 && px.1 > 235 && px.2 > 235)
+  }
+
+  @Test func mismatchedCropIsRefused() throws {
+    let rf = try RenderFixture()
+    try rf.edit { $0.crop = CropRect(x: 0, y: 0, w: 1920, h: 1080) }  // 16:9 crop on a 9:16 edit
+    #expect(throws: RenderError.self) { try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil) }
+    let row = try #require(try rf.store.renders().first)
+    #expect(row.status == .failed && (row.error ?? "").contains("doesn't match 9:16"))
+    #expect(Media.cropProblem(CropRect(x: 1500, y: 0, w: 607.5, h: 1080), aspect: .r9x16, sourceWidth: 1920,
+                              sourceHeight: 1080)?.contains("outside") == true)
+    #expect(Media.cropProblem(CropRect(x: 657, y: 0, w: 607.5, h: 1080), aspect: .r9x16, sourceWidth: 1920,
+                              sourceHeight: 1080) == nil)
+  }
+
+  /// A row left in `rendering` by a dead process is taken over; claiming is atomic.
+  @Test func staleRenderingRowIsTakenOver() throws {
+    let rf = try RenderFixture()
+    let p = try rf.renderer.plan(videoId: rf.id, versionNo: 1, platform: nil)
+    let stale = Render(id: "stale-row", videoId: rf.id, versionNo: 1, editHash: p.hash, scope: "all", outputPath: nil,
+                       coverPath: nil, loudness: nil, duration: nil, size: nil, status: .rendering, error: nil,
+                       createdAt: rf.store.clock.now.addingTimeInterval(-60), deletedAt: nil)
+    try rf.store.save(stale)
+    #expect(try rf.store.claimRender(id: "stale-row") == false)  // someone is "rendering" it
+    try FileManager.default.createDirectory(at: rf.store.paths.work, withIntermediateDirectories: true)
+    try "999999".write(to: rf.store.paths.work.appendingPathComponent("stale-row.lock"), atomically: true, encoding: .utf8)
+    let r = try rf.renderer.ensureRender(videoId: rf.id, versionNo: 1, platform: nil)
+    #expect(r.id == "stale-row" && r.status == .done)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: rf.store.paths.work.path).isEmpty)  // lock released
+  }
+
+  @Test func deleteRendersNeverTouchesSources() throws {
+    let rf = try RenderFixture()
+    let video = try #require(try rf.store.video(id: rf.id))
+    let clip = try #require(try rf.store.fileURL(for: video))
+    let bogus = Render(id: "bogus", videoId: rf.id, versionNo: 1, editHash: "x", scope: "all", outputPath: clip.path,
+                       coverPath: nil, loudness: nil, duration: nil, size: nil, status: .done, error: nil,
+                       createdAt: rf.store.clock.now, deletedAt: nil)
+    try rf.store.save(bogus)
+    try rf.renderer.deleteRenders(except: [])
+    #expect(FileManager.default.fileExists(atPath: clip.path))
+    #expect(try rf.store.render(id: "bogus")?.deletedAt != nil)
+  }
+
+  @Test func procTimeoutStopsTheProcess() throws {
+    let t0 = Date()
+    #expect(throws: MediaError.self) { try Proc.run("/bin/sleep", ["30"], timeout: 0.5) }
+    #expect(Date().timeIntervalSince(t0) < 10)
   }
 
   @Test func textTimingOnlyShowsTextInsideTheWindow() throws {

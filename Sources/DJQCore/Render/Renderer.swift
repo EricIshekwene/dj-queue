@@ -20,7 +20,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
   public var onProgress: (@Sendable (String, Double) -> Void)?
 
   /// Bump when the pipeline changes in a way that changes output files (invalidates every editHash).
-  public static let pipelineVersion = "render-2"
+  public static let pipelineVersion = "render-3"
 
   private let renderLock = NSLock()
 
@@ -63,61 +63,114 @@ public final class Renderer: RenderService, @unchecked Sendable {
     guard p.edit.crop != nil else {
       throw RenderError("Can't render \(p.video.name): no crop set. Set the crop in the editor first.")
     }
-    let now = store.clock.now
-    let existing = try store.renders(
-      where: "video_id=? AND version_no=? AND edit_hash=? AND scope=? AND deleted_at IS NULL",
-      [p.video.id, versionNo, p.hash, p.scope]).last
-    var r = existing ?? Render(id: newId(), videoId: p.video.id, versionNo: versionNo, editHash: p.hash, scope: p.scope,
-                               outputPath: nil, coverPath: nil, loudness: nil, duration: nil, size: nil,
-                               status: .pending, error: nil, createdAt: now, deletedAt: nil)
-    r.status = .pending; r.error = nil
-    try store.save(r)
+    let deadline = Date().addingTimeInterval(Self.waitForOtherProcess)
+    while true {
+      let row = try candidateRow(p)
+      if try acquireLock(row.id) {
+        defer { releaseLock(row.id) }
+        if let r = try current(p) { return r }  // another process finished it meanwhile
+        try store.resetStaleRender(id: row.id)  // we hold the lock, so a "rendering" row is orphaned
+        guard try store.claimRender(id: row.id) else {
+          throw RenderError("Render \(row.id) is being rendered elsewhere")
+        }
+        return try render(p, row: row)
+      }
+      // Another process (CLI or app) is rendering this exact key: wait for it.
+      if Date() > deadline { throw RenderError("Timed out waiting for another process to render \(p.video.name)") }
+      Thread.sleep(forTimeInterval: 0.5)
+      if let r = try current(p) { return r }
+    }
+  }
+
+  /// How long `ensureRender` waits for another process that holds the same render.
+  static let waitForOtherProcess: TimeInterval = 30 * 60
+
+  /// The live row for this render key, inserting a pending one if there is none. Concurrent
+  /// inserts converge on the oldest row.
+  private func candidateRow(_ p: Plan) throws -> Render {
+    if let r = try store.renderRow(videoId: p.video.id, versionNo: p.version.number, hash: p.hash, scope: p.scope) {
+      return r
+    }
+    let mine = Render(id: newId(), videoId: p.video.id, versionNo: p.version.number, editHash: p.hash, scope: p.scope,
+                      outputPath: nil, coverPath: nil, loudness: nil, duration: nil, size: nil, status: .pending,
+                      error: nil, createdAt: store.clock.now, deletedAt: nil)
+    try store.save(mine)  // insert
+    let winner = try store.renderRow(videoId: p.video.id, versionNo: p.version.number, hash: p.hash, scope: p.scope) ?? mine
+    if winner.id != mine.id { try store.markRenderDeleted(id: mine.id) }
+    return winner
+  }
+
+  /// Renders a claimed row (status already `rendering`) and records the result.
+  private func render(_ p: Plan, row: Render) throws -> Render {
+    // A finished render that is over the platform's size limit is re-encoded in place at a lower bitrate.
+    var startKbps = p.settings.videoBitrateKbps
+    if row.status == .done, let size = row.size, let max = p.maxBytes, size > max {
+      startKbps = Swift.max(500, Int(Double(startKbps) * Double(max) * 0.9 / Double(size)))
+      try? store.logEvent("render", "\(p.video.name) v\(p.version.number) is \(size) B, over the \(max)-byte limit: "
+                          + "re-encoding at \(startKbps) kb/s", videoId: p.video.id)
+    }
     do {
-      r.status = .rendering
-      try store.save(r)
       let started = Date()
-      let out = try perform(p, renderId: r.id)
-      r.outputPath = out.file.path
-      r.coverPath = out.cover?.path
-      r.loudness = out.loudness
-      r.duration = out.probe.duration
-      r.size = out.probe.size
-      r.status = .done
-      r.error = nil
-      try store.save(r)
+      let out = try perform(p, renderId: row.id, startKbps: startKbps)
+      try store.finishRender(id: row.id, outputPath: out.file.path, coverPath: out.cover?.path, loudness: out.loudness,
+                             duration: out.probe.duration, size: out.probe.size)
       // A re-render for the same video/version/scope writes the same file name: older rows now point
       // at a replaced file, so retire them.
-      for old in try store.renders(where: "deleted_at IS NULL AND id<>? AND output_path=?", [r.id, out.file.path]) {
-        var o = old
-        o.deletedAt = store.clock.now
-        try store.save(o)
+      for old in try store.renders(where: "deleted_at IS NULL AND id<>? AND output_path=?", [row.id, out.file.path]) {
+        try store.markRenderDeleted(id: old.id)
       }
       let secs = String(format: "%.1f", Date().timeIntervalSince(started))
       try? store.logEvent("render", "Rendered \(out.file.lastPathComponent) in \(secs) s"
                           + (out.loudness.map { String(format: " (%.1f → %.1f LUFS)", $0.inputI, $0.outputI ?? .nan) } ?? ""),
                           videoId: p.video.id)
-      onProgress?(r.id, 1)
+      onProgress?(row.id, 1)
+      guard let r = try store.render(id: row.id) else { throw RenderError("Render \(row.id) vanished") }
       return r
     } catch {
-      r.status = .failed
-      r.error = "\(error)"
-      try? store.save(r)
-      try? store.logEvent("render_failed", "Render failed for \(p.video.name) v\(versionNo): \(error)", videoId: p.video.id)
+      try? store.setRenderStatus(id: row.id, status: .failed, error: "\(error)")
+      try? store.logEvent("render_failed", "Render failed for \(p.video.name) v\(p.version.number): \(error)",
+                          videoId: p.video.id)
       throw error
     }
   }
 
+  // MARK: Cross-process lock (one lock file per render id in paths.work)
+
+  private func lockURL(_ id: String) -> URL { store.paths.work.appendingPathComponent("\(id).lock") }
+
+  /// True when this process now holds the render's lock file; false when a live process holds it.
+  private func acquireLock(_ id: String) throws -> Bool {
+    try FileManager.default.createDirectory(at: store.paths.work, withIntermediateDirectories: true)
+    let path = lockURL(id).path
+    for _ in 0..<2 {
+      let fd = open(path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
+      if fd >= 0 {
+        let pid = "\(getpid())"
+        _ = pid.withCString { write(fd, $0, strlen($0)) }
+        close(fd)
+        return true
+      }
+      let owner = (try? String(contentsOfFile: path, encoding: .utf8)).flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+      if let owner, owner != getpid(), kill(owner, 0) == 0 || errno == EPERM { return false }
+      try? FileManager.default.removeItem(atPath: path)  // stale: owner gone
+    }
+    return false
+  }
+
+  private func releaseLock(_ id: String) { try? FileManager.default.removeItem(at: lockURL(id)) }
+
   public func deleteRenders(except keep: Set<String>) throws {
+    renderLock.lock()
+    defer { renderLock.unlock() }
     let all = try store.renders()
-    let keptPaths = Set(all.filter { keep.contains($0.id) }.flatMap { [$0.outputPath, $0.coverPath].compactMap { $0 } })
+    let keptPaths = Set(all.filter { keep.contains($0.id) || $0.status == .rendering }
+      .flatMap { [$0.outputPath, $0.coverPath].compactMap { $0 } })
     for r in all where !keep.contains(r.id) && r.status != .rendering {
       for path in [r.outputPath, r.coverPath].compactMap({ $0 }) where !keptPaths.contains(path) {
         let url = URL(fileURLWithPath: path)
         if isAppOutput(url) { try? FileManager.default.removeItem(at: url) }
       }
-      var d = r
-      d.deletedAt = store.clock.now
-      try store.save(d)
+      try store.markRenderDeleted(id: r.id)
     }
   }
 
@@ -141,7 +194,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
   public static func measureLoudness(_ url: URL) throws -> LoudnessInfo {
     let ffmpeg = try tool(Tools.ffmpeg, "ffmpeg")
     let r = try Proc.run(ffmpeg, ["-hide_banner", "-nostats", "-i", url.path, "-map", "0:a:0",
-                                  "-af", "ebur128=peak=true", "-f", "null", "-"])
+                                  "-af", "ebur128=peak=true", "-f", "null", "-"], timeout: 900)
     guard r.status == 0 else { throw RenderError("loudness measurement failed: \(r.stderrTail)") }
     guard let summary = r.stderr.range(of: "Summary:") else { throw RenderError("no ebur128 summary") }
     let s = String(r.stderr[summary.upperBound...])
@@ -188,7 +241,6 @@ public final class Renderer: RenderService, @unchecked Sendable {
     var text: Text?
     var loudnessTarget: Double, truePeak: Double, lra: Double
     var videoBitrateKbps: Int
-    var maxBytes: Int64?
   }
 
   func plan(videoId: String, versionNo: Int, platform: Platform?) throws -> Plan {
@@ -214,7 +266,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
                           aspect: edit.aspect.rawValue, crop: edit.crop, trimStart: trim.start, trimEnd: trim.end,
                           coverTime: edit.coverTime, coverIncludesText: edit.coverIncludesText && text != nil,
                           text: text, loudnessTarget: settings.loudnessTarget, truePeak: settings.truePeak,
-                          lra: settings.lra, videoBitrateKbps: settings.videoBitrateKbps, maxBytes: maxBytes)
+                          lra: settings.lra, videoBitrateKbps: settings.videoBitrateKbps)
     let data = try JSONCoding.encoder.encode(input)
     let hash = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
     return Plan(video: video, edit: edit, version: version, settings: settings, scope: scope,
@@ -224,7 +276,13 @@ public final class Renderer: RenderService, @unchecked Sendable {
   func current(_ p: Plan) throws -> Render? {
     try store.renders(where: "video_id=? AND version_no=? AND edit_hash=? AND scope=? AND status='done' AND deleted_at IS NULL",
                       [p.video.id, p.version.number, p.hash, p.scope])
-      .last { r in r.outputPath.map { FileManager.default.fileExists(atPath: $0) } ?? false }
+      .last { r in
+        guard let path = r.outputPath, FileManager.default.fileExists(atPath: path) else { return false }
+        // Over the current size limit (e.g. a platform's limit was lowered): needs a smaller re-encode,
+        // unless the file has already left Ready to Post (posted renders are never redone).
+        if let max = p.maxBytes, let size = r.size, size > max, isAppOutput(URL(fileURLWithPath: path)) { return false }
+        return true
+      }
   }
 
   func destinationDir(_ p: Plan) throws -> URL {
@@ -249,7 +307,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
 
   private static func f(_ d: Double) -> String { String(format: "%.3f", d) }
 
-  func perform(_ p: Plan, renderId: String) throws -> Output {
+  func perform(_ p: Plan, renderId: String, startKbps: Int? = nil) throws -> Output {
     let ffmpeg = try Self.tool(Tools.ffmpeg, "ffmpeg")
     guard let src = try store.fileURL(for: p.video), FileManager.default.fileExists(atPath: src.path) else {
       throw RenderError("Source file missing for \(p.video.name)")
@@ -261,13 +319,18 @@ public final class Renderer: RenderService, @unchecked Sendable {
     let dur = end - start
     guard dur > 0.2 else { throw RenderError("Trim is empty (\(Self.f(start))–\(Self.f(end)) s)") }
     let (ow, oh) = p.edit.aspect.outputSize
+    if let problem = Media.cropProblem(crop, aspect: p.edit.aspect, sourceWidth: info.width, sourceHeight: info.height) {
+      throw RenderError("Can't render \(p.video.name): \(problem)")
+    }
     let rect = Media.pixelCrop(crop, sourceWidth: info.width, sourceHeight: info.height)
+    let timeout = max(120, 10 * dur)
 
     let work = store.paths.work
     try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-    let overlayURL = work.appendingPathComponent("\(renderId).overlay.png")
-    let tmpVideo = work.appendingPathComponent("\(renderId).mp4")
-    let tmpCover = work.appendingPathComponent("\(renderId).jpg")
+    let tmpBase = "\(renderId)-\(getpid())"  // unique per render and process
+    let overlayURL = work.appendingPathComponent("\(tmpBase).overlay.png")
+    let tmpVideo = work.appendingPathComponent("\(tmpBase).mp4")
+    let tmpCover = work.appendingPathComponent("\(tmpBase).jpg")
     defer {
       for u in [overlayURL, tmpVideo, tmpCover] { try? FileManager.default.removeItem(at: u) }
     }
@@ -279,7 +342,8 @@ public final class Renderer: RenderService, @unchecked Sendable {
     var measured: [String: Double]?
     if info.hasAudio {
       let r = try Proc.run(ffmpeg, ["-hide_banner", "-nostats", "-ss", Self.f(start), "-to", Self.f(end), "-i", src.path,
-                                    "-map", "0:a:0", "-af", loudnormFilter(p.settings, measured: nil), "-f", "null", "-"])
+                                    "-map", "0:a:0", "-af", loudnormFilter(p.settings, measured: nil), "-f", "null", "-"],
+                           timeout: timeout)
       guard r.status == 0 else { throw RenderError("Loudness analysis failed: \(r.stderrTail)") }
       guard let m = Self.parseLoudnormJSON(r.stderr) else { throw RenderError("Loudness analysis returned no data") }
       // Digital silence measures -inf: keep the audio as is rather than normalising.
@@ -292,8 +356,9 @@ public final class Renderer: RenderService, @unchecked Sendable {
     let scaleF = "scale=\(ow):\(oh):flags=lanczos+accurate_rnd+full_chroma_int:out_color_matrix=bt709:out_range=tv"
     var videoGraph = "[0:v]\(cropF),\(scaleF),format=yuv420p,setsar=1"
     if hasText {
-      let ts = max(0, p.version.textStart ?? 0)
-      let te = min(dur + 1, p.version.textEnd ?? (dur + 1))
+      var ts = max(0, p.version.textStart ?? 0)
+      var te = min(dur + 1, p.version.textEnd ?? (dur + 1))
+      if te <= ts || ts >= dur { ts = 0; te = dur + 1 }  // empty/inverted window → whole clip
       videoGraph += "[bg];[1:v]format=rgba,scale=out_color_matrix=bt709:out_range=tv,format=yuva420p[ov];"
         + "[bg][ov]overlay=0:0:format=yuv420:eof_action=repeat:enable='between(t,\(Self.f(ts)),\(Self.f(te)))'"
     }
@@ -304,7 +369,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
       return videoGraph + ";[0:a:0]\(norm)aresample=48000[a]"
     }
 
-    var kbps = p.settings.videoBitrateKbps
+    var kbps = startKbps ?? p.settings.videoBitrateKbps
     var headroom = Self.truePeakHeadroom
     var probe: ProbeInfo
     var loudness: LoudnessInfo?
@@ -326,7 +391,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
       args += ["-map_metadata", "-1", "-map_chapters", "-1", "-movflags", "+faststart",
                "-progress", "pipe:1", tmpVideo.path]
       let lo = 0.05 + 0.85 * Double(attempt - 1) / Double(attempt), hi = 0.9
-      let r = try Proc.run(ffmpeg, args) { line in
+      let r = try Proc.run(ffmpeg, args, timeout: timeout) { line in
         guard let progress, line.hasPrefix("out_time_us=") || line.hasPrefix("out_time_ms="),
               let us = Double(line.split(separator: "=").last ?? "") else { return }
         progress(renderId, lo + (hi - lo) * min(1, max(0, us / 1_000_000 / dur)))
@@ -384,7 +449,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
       }
       cGraph += ",format=yuvj420p[v]"
       cArgs += ["-filter_complex", cGraph, "-map", "[v]", "-frames:v", "1", "-q:v", "2", "-update", "1", tmpCover.path]
-      let cr = try Proc.run(ffmpeg, cArgs)
+      let cr = try Proc.run(ffmpeg, cArgs, timeout: 120)
       haveCover = cr.status == 0 && FileManager.default.fileExists(atPath: tmpCover.path)
       if !haveCover { Log.shared.warn("cover failed for render \(renderId): \(cr.stderrTail)") }
     }

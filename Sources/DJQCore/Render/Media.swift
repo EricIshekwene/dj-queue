@@ -34,7 +34,8 @@ public enum Media {
 
   public static func probe(_ url: URL) throws -> ProbeInfo {
     guard let ffprobe = Tools.ffprobe else { throw MediaError("ffprobe not found (install with Homebrew)") }
-    let r = try Proc.run(ffprobe, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", url.path])
+    let r = try Proc.run(ffprobe, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", url.path],
+                         timeout: 60)
     guard r.status == 0 else { throw MediaError("ffprobe failed for \(url.lastPathComponent): \(r.stderrTail)") }
     guard let obj = try JSONSerialization.jsonObject(with: Data(r.stdout.utf8)) as? [String: Any] else {
       throw MediaError("ffprobe returned no JSON for \(url.lastPathComponent)")
@@ -96,9 +97,28 @@ public enum Media {
     var w = max(2, min(even(c.w), sourceWidth - sourceWidth % 2))
     var h = max(2, min(even(c.h), sourceHeight - sourceHeight % 2))
     w = min(w, sourceWidth); h = min(h, sourceHeight)
-    let x = min(max(0, even(c.x)), sourceWidth - w)
-    let y = min(max(0, even(c.y)), sourceHeight - h)
+    let x = min(max(0, even(c.x)), (sourceWidth - w) / 2 * 2)
+    let y = min(max(0, even(c.y)), (sourceHeight - h) / 2 * 2)
     return CGRect(x: x, y: y, width: w, height: h)
+  }
+
+  /// Why a crop can't be rendered as-is, or nil when it is fine: its aspect must be within 1 % of
+  /// the output aspect, and it must lie inside the source (even-pixel rounding may move it ≤ 2 px).
+  public static func cropProblem(_ c: CropRect, aspect: Aspect, sourceWidth: Int, sourceHeight: Int) -> String? {
+    guard c.w > 0, c.h > 0 else { return "the crop is empty" }
+    let r = pixelCrop(c, sourceWidth: sourceWidth, sourceHeight: sourceHeight)
+    let ratio = Double(r.width / r.height)
+    if abs(ratio - aspect.ratio) / aspect.ratio > 0.01 {
+      return String(format: "the crop is %.0f×%.0f (%.3f), which doesn't match %@ (%.3f)", r.width, r.height, ratio,
+                    aspect.rawValue, aspect.ratio)
+    }
+    let moved = [abs(Double(r.minX) - c.x), abs(Double(r.minY) - c.y), abs(Double(r.width) - c.w),
+                 abs(Double(r.height) - c.h)].max() ?? 0
+    if moved > 2 {
+      return String(format: "the crop (x %.0f y %.0f %.0f×%.0f) goes outside the %d×%d source", c.x, c.y, c.w, c.h,
+                    sourceWidth, sourceHeight)
+    }
+    return nil
   }
 
   /// A centred crop of the given aspect (used for thumbnails before Eric sets a crop).
@@ -111,9 +131,15 @@ public enum Media {
 
   /// Crops `image` with `pixelCrop` and scales it into a `size` canvas (high-quality interpolation),
   /// optionally compositing `overlay` (already at `size`) on top. This is the editor-preview composite.
+  /// `crop` is in source pixels; pass `sourceSize` when `image` is a downscaled frame (`maxSize ≠ .zero`)
+  /// and the crop is scaled to the image.
   public static func compose(_ image: CGImage, crop: CropRect?, aspect: Aspect, size: CGSize,
-                             overlay: CGImage? = nil) -> CGImage? {
-    let c = crop ?? centredCrop(aspect: aspect, sourceWidth: image.width, sourceHeight: image.height)
+                             overlay: CGImage? = nil, sourceSize: CGSize? = nil) -> CGImage? {
+    var c = crop ?? centredCrop(aspect: aspect, sourceWidth: image.width, sourceHeight: image.height)
+    if crop != nil, let src = sourceSize, src.width > 0, Double(src.width) != Double(image.width) {
+      let k = Double(image.width) / Double(src.width)
+      c = CropRect(x: c.x * k, y: c.y * k, w: c.w * k, h: c.h * k)
+    }
     let r = pixelCrop(c, sourceWidth: image.width, sourceHeight: image.height)
     guard let cropped = image.cropping(to: r) else { return nil }
     let w = Int(size.width), h = Int(size.height)
@@ -176,7 +202,8 @@ public enum Media {
 
 // MARK: - Process helper
 
-/// Runs a tool with full path; collects stdout/stderr without pipe deadlocks.
+/// Runs a tool with full path; collects stdout/stderr on dedicated reader threads (no pipe
+/// deadlocks) and terminates the process if it runs longer than `timeout`.
 struct Proc {
   struct Result {
     var status: Int32
@@ -189,7 +216,8 @@ struct Proc {
   }
 
   /// `onLine` receives stdout lines as they arrive (used for `-progress pipe:1`).
-  static func run(_ path: String, _ args: [String], onLine: ((String) -> Void)? = nil) throws -> Result {
+  static func run(_ path: String, _ args: [String], timeout: TimeInterval = 600,
+                  onLine: ((String) -> Void)? = nil) throws -> Result {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: path)
     p.arguments = args
@@ -198,24 +226,42 @@ struct Proc {
     p.standardOutput = out
     p.standardError = err
     let acc = Accum()
-    out.fileHandleForReading.readabilityHandler = { h in
-      let d = h.availableData
-      if d.isEmpty { return }
-      acc.addOut(d, onLine)
-    }
-    err.fileHandleForReading.readabilityHandler = { h in
-      let d = h.availableData
-      if d.isEmpty { return }
-      acc.addErr(d)
-    }
+    let exited = DispatchSemaphore(value: 0)
+    p.terminationHandler = { _ in exited.signal() }
     try p.run()
-    p.waitUntilExit()
-    out.fileHandleForReading.readabilityHandler = nil
-    err.fileHandleForReading.readabilityHandler = nil
-    acc.addOut(out.fileHandleForReading.readDataToEndOfFile(), onLine)
-    acc.addErr(err.fileHandleForReading.readDataToEndOfFile())
-    acc.flush(onLine)
+    let readers = DispatchGroup()
+    let lineHandler = onLine.map { h in UncheckedBox(h) }
+    for (handle, isOut) in [(out.fileHandleForReading, true), (err.fileHandleForReading, false)] {
+      readers.enter()
+      Thread.detachNewThread {
+        while true {
+          let d = handle.availableData  // blocks; empty = EOF
+          if d.isEmpty { break }
+          if isOut { acc.addOut(d, lineHandler?.value) } else { acc.addErr(d) }
+        }
+        readers.leave()
+      }
+    }
+    var timedOut = false
+    if exited.wait(timeout: .now() + timeout) == .timedOut {
+      timedOut = true
+      p.terminate()
+      if exited.wait(timeout: .now() + 5) == .timedOut {
+        kill(p.processIdentifier, SIGKILL)
+        _ = exited.wait(timeout: .now() + 5)
+      }
+    }
+    _ = readers.wait(timeout: .now() + 10)
+    acc.flush(lineHandler?.value)
+    if timedOut {
+      throw MediaError("\(URL(fileURLWithPath: path).lastPathComponent) timed out after \(Int(timeout)) s and was stopped")
+    }
     return acc.result(p.terminationStatus)
+  }
+
+  private final class UncheckedBox<T>: @unchecked Sendable {
+    let value: T
+    init(_ v: T) { value = v }
   }
 
   private final class Accum: @unchecked Sendable {
