@@ -2,6 +2,8 @@
 
 Local macOS app that runs DJ Lovd's short-form posting queue: score clips, make vertical edits (crop, trim, text, cover, captions), approve a week, let the background engine render final files ahead of time, post by hand from **Today**, and track every platform post. Phase 1 (manual publisher). Spec: `~/Movies/DJ Video/_spec/DJ Queue – App Spec.md`; decisions: `DECISIONS.md`.
 
+**Docs in Notion** (Eric Ishekwene's Space → DJ Social Publishing plan → *DJ Queue — the app*): (private notes) — user guide with screenshots, **agent context pack** (start here for questions about the build), decisions log, build record & review findings, operations & troubleshooting, roadmap.
+
 ## Install (real use)
 
 ```sh
