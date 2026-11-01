@@ -171,12 +171,18 @@ public final class Engine: @unchecked Sendable {
     return done.isEmpty ? "ok" : "proposed \(done.joined(separator: ", "))"
   }
 
-  /// Approved posts within the horizon get their render; a changed edit/version re-renders.
+  /// A render that failed is retried only after this long, unless its edit/version (hash) changed.
+  public static let renderRetryAfter: TimeInterval = 3600
+
+  struct RenderFailure: Codable { var hash: String; var at: Date; var error: String }
+
+  /// Approved posts within the horizon get their render; a changed edit/version re-renders. A failure is recorded
+  /// (render row failed, notification once a day) and never stops the loop; that render backs off for an hour.
   func renderAhead(_ ctx: inout TickContext) throws -> String {
     guard let renderer else { return "no renderer" }
     let settings = try store.settings()
     let horizon = store.clock.now.addingTimeInterval(Double(settings.renderHorizonDays) * 86400)
-    var attached = 0, rendered = 0, waiting = 0, failed = 0
+    var attached = 0, rendered = 0, waiting = 0, failed = 0, backedOff = 0
     for var p in try store.posts(where: "state IN ('planned','rendering','rendered','due') AND scheduled_at<=?", [horizon]) {
       guard let v = try store.video(id: p.videoId) else { continue }
       if let msg = try invalidReason(v, &ctx) {
@@ -199,20 +205,37 @@ public final class Engine: @unchecked Sendable {
         p.renderId = nil
         try store.save(p, note: "edit changed — re-render")
       }
+      // Back off: this exact render (same edit/version hash) failed < 1 h ago → skip without using the budget.
+      let scope = try renderer.scope(videoId: p.videoId, platform: p.platform)
+      let hash = try renderer.editHash(videoId: p.videoId, versionNo: p.versionNo, platform: p.platform)
+      let failKey = "renderFail.\(p.videoId)#\(p.versionNo)#\(scope)"
+      if let last: RenderFailure = try store.kv(failKey), last.hash == hash,
+         store.clock.now.timeIntervalSince(last.at) < Self.renderRetryAfter {
+        backedOff += 1
+        continue
+      }
       guard ctx.renderBudget > 0 else { waiting += 1; continue }
       ctx.renderBudget -= 1
       do {
         try renderPost(&p, renderer)
         rendered += 1
       } catch {
+        // Record, notify once a day, and carry on with the next post (a failure doesn't use up the budget).
+        ctx.renderBudget += 1
         failed += 1
+        try store.setKV(failKey, RenderFailure(hash: hash, at: store.clock.now, error: "\(error)"))
+        for r in try store.renders(where: "deleted_at IS NULL AND status<>'done' AND video_id=? AND version_no=? AND edit_hash=? AND scope=?",
+                                   [p.videoId, p.versionNo, hash, scope]) {
+          try store.setRenderStatus(id: r.id, status: .failed, error: "\(error)")
+        }
+        try store.logEvent("render", "Render failed: \(v.tag) v\(p.versionNo) (\(scope)): \(error)", videoId: v.id, postId: p.id)
         notify(AppNotification(key: "renderfail:\(v.id):\(p.versionNo):\(try store.today(store.dayMath()))",
                                title: "Render failed · \(v.tag)", body: "\(error)", critical: true, actions: [.open],
                                postId: p.id, videoId: v.id))
-        throw error
       }
     }
     return "rendered \(rendered) · attached \(attached) · waiting \(waiting)\(failed > 0 ? " · failed \(failed)" : "")"
+      + (backedOff > 0 ? " · backing off \(backedOff)" : "")
   }
 
   /// A whole local day passed (and ≥ lateGraceHours late) → overdue; that platform's remaining regular posts at the

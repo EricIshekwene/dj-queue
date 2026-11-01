@@ -8,6 +8,8 @@ final class FakeRenderer: RenderService, @unchecked Sendable {
   private let lock = NSLock()
   private(set) var renderCount = 0
   var failNext = false
+  var failVideos: Set<String> = []
+  private(set) var attempts: [String] = []
 
   init(store: Store) { self.store = store }
 
@@ -32,7 +34,9 @@ final class FakeRenderer: RenderService, @unchecked Sendable {
 
   func ensureRender(videoId: String, versionNo: Int, platform: Platform?) throws -> Render {
     if let r = try currentRender(videoId: videoId, versionNo: versionNo, platform: platform) { return r }
+    attempts.append(videoId)
     if failNext { failNext = false; throw EngineError("fake ffmpeg failure") }
+    if failVideos.contains(videoId) { throw EngineError("fake ffmpeg failure for \(videoId)") }
     let v = try store.video(id: videoId)!
     let folder = URL(fileURLWithPath: try store.session(id: v.sessionId)!.folder).appendingPathComponent("Ready to Post/Shortform")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

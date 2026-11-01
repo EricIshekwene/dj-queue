@@ -163,18 +163,50 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: f.sessionDir.appendingPathComponent("Ready to Post/Shortform/\(URL(fileURLWithPath: moved.outputPath!).lastPathComponent)").path))
   }
 
-  @Test func renderFailureIsReportedAndRetried() throws {
+  @Test func renderFailureIsReportedAndDoesNotBlockOtherVideos() throws {
     let f = try Fixture.engine(8)
     try Planner(store: f.store).approveWeek(f.week)
     let fake = FakeRenderer(store: f.store)
-    fake.failNext = true
+    fake.failVideos = ["clip-0"]
     let (e, n) = engine(f, renderer: fake)
     let r = e.tick(reason: "t")
-    #expect(r.errors.first?.hasPrefix("render") == true)
+    #expect(r.errors.isEmpty, "\(r.errors)")  // a render failure is recorded, not thrown
+    #expect(r.steps["render"]?.contains("failed 1") == true)
     #expect(n.titles(containing: "Render failed").count == 1)
     #expect(try f.post(.facebook, day: "2026-11-02")?.state == .planned)
+    #expect(try f.post(.facebook, day: "2026-11-03")?.state == .rendered)  // clip-1 rendered in the same tick
+    #expect(fake.attempts.filter { $0 == "clip-0" }.count == 1)  // the other Monday platforms backed off
+    // Next ticks within the hour: no retry of clip-0; other videos keep rendering.
+    f.clock.advance(60)
+    e.tick(reason: "t")
+    f.clock.advance(60)
+    e.tick(reason: "t")
+    #expect(fake.attempts.filter { $0 == "clip-0" }.count == 1)
+    #expect(try f.post(.facebook, day: "2026-11-05")?.state == .rendered)
+    #expect(n.titles(containing: "Render failed").count == 1)
+    // After an hour it retries (and succeeds once the cause is gone).
+    fake.failVideos = []
+    f.clock.advance(3600)
     e.tick(reason: "t")
     #expect(try f.post(.facebook, day: "2026-11-02")?.state == .rendered)
+  }
+
+  @Test func editChangeRetriesFailedRenderImmediately() throws {
+    let f = try Fixture.engine(8)
+    try Planner(store: f.store).approveWeek(f.week)
+    let fake = FakeRenderer(store: f.store)
+    fake.failVideos = ["clip-0"]
+    let (e, _) = engine(f, renderer: fake)
+    e.tick(reason: "t")
+    #expect(fake.attempts.filter { $0 == "clip-0" }.count == 1)
+    fake.failVideos = []
+    var v = try f.store.versions(videoId: "clip-0")[0]
+    v.text = "Fixed text"
+    try f.store.save(v, videoId: "clip-0")  // new hash → no back-off
+    f.clock.advance(60)
+    e.tick(reason: "t")
+    #expect(fake.attempts.filter { $0 == "clip-0" }.count == 2)
+    #expect(try f.post(.tiktok, day: "2026-11-02")?.state == .rendered)
   }
 
   @Test func tooLongForXFailsThenPerPlatformTrimRequeuesNextDay() throws {
