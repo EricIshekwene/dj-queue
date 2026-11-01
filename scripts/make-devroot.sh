@@ -13,7 +13,7 @@ for s in "$SRC"/*/; do
   d="$DST/$name"
   mkdir -p "$d/Clips" "$d/Ready to Post/Longform" "$d/Ready to Post/Shortform" "$d/Posted/Longform" "$d/Posted/Shortform" "$d/Video" "$d/Audio" "$d/Other"
   cp "$s/videos.json" "$d/videos.json"
-  for f in "$s/Clips/"*.mp4; do ln -sf "$f" "$d/Clips/$(basename "$f")"; done
+  for f in "$s/Clips/"*.mp4(N); do ln -sf "$f" "$d/Clips/$(basename "$f")"; done
   for f in "$s/Ready to Post/Longform/"*.mp4(N); do ln -sf "$f" "$d/Ready to Post/Longform/$(basename "$f")"; done
 done
 mkdir -p "$DST/_Template – copy me"

@@ -66,7 +66,8 @@ import Testing
   @Test func defaultTemplateWithAutoHashtags() {
     let c = Captions.caption(for: .tiktok, version: resolved(), video: video(), sessionName: "2026-10-23 – Afroween Jazz Piano",
                              sets: Defaults.hashtagSets, templates: Defaults.captionTemplates, settings: Settings())
-    #expect(c == "Yayo x Johnny\n\n🎧 Afroween Jazz Piano — full set on YouTube (link in bio)\n#amapiano #amapianomix #afrohouse #djlovd #dj #djlife #djmix #transition")
+    #expect(c.hasPrefix("Yayo x Johnny\n\n🎧 Afroween Jazz Piano — full set on YouTube (link in bio)\n#amapiano #amapianomix #afrohouse #djlovd #dj #djlife #djmix #transition"))
+    #expect(!c.contains("➜"))
   }
 
   @Test func xCaptionDropsHashtagsToFit() {

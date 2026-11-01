@@ -19,12 +19,23 @@ public enum Captions {
     return core.isEmpty ? "" : "#" + core
   }
 
-  /// Auto-generated hashtags for a version: chosen sets (default from Settings) + extras, de-duplicated, in order.
-  public static func hashtags(_ v: ResolvedVersion, sets: [HashtagSet]) -> [String] {
+  /// Auto-generated hashtags for a version (Q15): the chosen sets — or, when none were chosen, the default sets
+  /// plus one sub-set from the same primary categories picked per video (stable, so it varies across videos) —
+  /// then extras, de-duplicated, in order.
+  public static func hashtags(_ v: ResolvedVersion, sets: [HashtagSet], videoId: String? = nil) -> [String] {
     var out: [String] = []
     var seen = Set<String>()
     let byId = Dictionary(uniqueKeysWithValues: sets.map { ($0.id, $0) })
-    for id in v.hashtagSetIds {
+    var ids = v.hashtagSetIds
+    if v.autoHashtags, let vid = videoId {
+      let cats = Set(ids.compactMap { byId[$0]?.category })
+      let pool = sets.filter { cats.contains($0.category) && !ids.contains($0.id) }.sorted { $0.id < $1.id }
+      if !pool.isEmpty {
+        let h = vid.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0x7fffffff }
+        ids.append(pool[h % pool.count].id)
+      }
+    }
+    for id in ids {
       for t in byId[id]?.tags ?? [] {
         let n = normalizeTag(t)
         if !n.isEmpty, seen.insert(n).inserted { out.append(n) }
@@ -49,11 +60,13 @@ public enum Captions {
 
   /// Final caption for one platform. Order: per-platform override → explicit caption → template.
   /// If it is over the platform limit, hashtags are dropped from the end until it fits.
+  /// If it is still over the limit (long text or override), it is returned as is and Validation reports it.
   public static func caption(for platform: Platform, version v: ResolvedVersion, video: Video, sessionName: String,
-                             sets: [HashtagSet], templates: [CaptionTemplate], settings: Settings) -> String {
+                             sets: [HashtagSet], templates: [CaptionTemplate], settings: Settings,
+                             rules: PrefillRules = PrefillRules()) -> String {
     if let o = v.platformCaptions[platform], !o.isEmpty { return o }
     let limit = settings.limits[platform]?.captionLimit ?? 2200
-    var tags = hashtags(v, sets: sets)
+    var tags = hashtags(v, sets: sets, videoId: video.id)
     let set = setName(sessionName)
     func build() -> String {
       if !v.caption.isEmpty {
@@ -63,7 +76,7 @@ public enum Captions {
       }
       let tid = v.captionTemplateId ?? settings.defaultCaptionTemplateId
       let tpl = templates.first { $0.id == tid }?.template ?? Defaults.captionTemplates[0].template
-      return fill(tpl, text: v.hasText ? v.text : Prefill.text(tag: video.tag, kind: .djVid, rules: PrefillRules()),
+      return fill(tpl, text: v.hasText ? v.text : Prefill.text(tag: video.tag, kind: .djVid, rules: rules),
                   tag: video.tag, set: set, hashtags: tags)
     }
     var c = build()
@@ -75,10 +88,16 @@ public enum Captions {
   }
 
   /// YouTube Shorts title (Q17): "{text} | DJ Lovd", capped at the title limit.
-  public static func youtubeTitle(_ v: ResolvedVersion, video: Video, limit: Int = 100) -> String {
-    if !v.youtubeTitle.isEmpty { return String(v.youtubeTitle.prefix(limit)) }
-    let base = v.hasText ? oneLine(v.text) : Prefill.text(tag: video.tag, kind: .djVid, rules: PrefillRules())
-    let t = base.isEmpty ? "DJ Lovd" : "\(oneLine(base)) | DJ Lovd"
-    return String(t.prefix(limit))
+  /// An explicit title is returned as written (Validation flags it if over the limit); the default keeps the
+  /// " | DJ Lovd" suffix and shortens the text part.
+  public static func youtubeTitle(_ v: ResolvedVersion, video: Video, limit: Int = 100,
+                                  rules: PrefillRules = PrefillRules()) -> String {
+    if !v.youtubeTitle.isEmpty { return v.youtubeTitle }
+    let suffix = " | DJ Lovd"
+    let base = oneLine(v.hasText ? v.text : Prefill.text(tag: video.tag, kind: .djVid, rules: rules))
+    if base.isEmpty { return "DJ Lovd" }
+    let room = limit - suffix.count
+    let text = base.count <= room ? base : String(base.prefix(room - 1)).trimmingCharacters(in: .whitespaces) + "…"
+    return text + suffix
   }
 }
