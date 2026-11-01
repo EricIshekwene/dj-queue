@@ -101,8 +101,12 @@ public struct DayMath: Sendable {
     return calendar.date(from: DateComponents(year: p[0], month: p[1], day: p[2]))!
   }
 
+  /// Wall-clock time on a local day (DST-safe: 19:00 is 19:00 even on the day the clocks change).
   public func at(_ key: String, minutes: Int) -> Date {
-    calendar.date(byAdding: .minute, value: minutes, to: date(key))!
+    let day = minutes >= 0 ? addDays(key, minutes / 1440) : key
+    let m = minutes >= 0 ? minutes % 1440 : 0
+    let p = day.split(separator: "-").compactMap { Int($0) }
+    return calendar.date(from: DateComponents(year: p[0], month: p[1], day: p[2], hour: m / 60, minute: m % 60))!
   }
 
   public func addDays(_ key: String, _ n: Int) -> String {
