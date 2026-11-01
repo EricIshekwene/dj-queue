@@ -216,7 +216,8 @@ public final class Engine: @unchecked Sendable {
   }
 
   /// A whole local day passed (and ≥ lateGraceHours late) → overdue; that platform's remaining regular posts at the
-  /// same position move later by the days missed, so nothing double-posts. Notifies with Post now / Shift plan / Skip.
+  /// same position move later by the days missed, flowing around pinned days (a pinned video never moves), so
+  /// nothing double-posts. Notifies with Post now / Shift plan / Skip.
   /// Each post is re-read inside its own BEGIN IMMEDIATE transaction, so two processes ticking can't shift twice.
   /// A post that was overdue before (reset, or shifted and missed again) goes overdue without shifting anything.
   func missed() throws -> String {
@@ -237,16 +238,9 @@ public final class Engine: @unchecked Sendable {
         try store.save(p, note: again ? "missed again (no shift)" : "missed (\(days) d)")
         var shifted = 0
         if !again && p.kind == .regular {
-          let pos = try store.position(of: p)
-          for var o in try store.posts(where: "platform=? AND kind='regular' AND id<>? AND scheduled_at>?",
-                                       [p.platform.rawValue, p.id, p.scheduledAt])
-          where !o.state.isTerminal && o.state != .overdue {
-            guard try store.position(of: o) == pos else { continue }
-            o.scheduledAt = Sched.shift(o.scheduledAt, days: days, dm)
-            if o.state == .due { o.state = o.renderId == nil ? .planned : .rendered }
-            try store.save(o, note: "plan shifted +\(days) d (missed \(p.platform.displayName) post)")
-            shifted += 1
-          }
+          let movable = try store.movablePosts(platform: p.platform, position: try store.position(of: p), after: p.scheduledAt,
+                                               excluding: p.id)
+          shifted = try store.reflow(movable, days: days, dm: dm, note: "plan shifted +\(days) d (missed \(p.platform.displayName) post)")
         }
         outcome = (p, shifted > 0 ? days : 0)
       }
@@ -281,6 +275,9 @@ public final class Engine: @unchecked Sendable {
       guard let v = try store.video(id: p.videoId) else { continue }
       p.state = .due
       try store.save(p, note: "due")
+      // TODO(phase 2, Postiz): a post that turns due before its render exists never reaches the publisher here
+      // (render-ahead attaches the render later in this tick or the next). PostizPublisher must be submitted from
+      // render-ahead too — or better, as soon as an approved post has its render — not only at due time.
       if let publisher, p.renderId != nil {
         if let prepared = try? publisher.prepare(postId: p.id) { _ = try? publisher.submit(prepared) }
       }
@@ -429,8 +426,8 @@ public final class Engine: @unchecked Sendable {
     return "moved \(moved)\(deleted > 0 ? " · deleted \(deleted)" : "")\(unneeded > 0 ? " · unneeded \(unneeded)" : "")"
   }
 
-  /// Renders referenced by any live or posted post, current renders for approved posts within the horizon, and
-  /// anything made in the last 24 h (editor/CLI previews get a day before they're cleaned up).
+  /// Renders referenced by any live or posted post, current renders for approved posts within the horizon, renders
+  /// of unresolved failed/skipped posts (≤ 7 days), failed renders not yet superseded, and anything made in the last 24 h (editor/CLI previews get a day before they're cleaned up).
   func rendersToKeep(_ renderer: RenderService, settings: Settings) throws -> Set<String> {
     var keep = Set<String>()
     for p in try store.posts(where: "render_id IS NOT NULL") where p.state == .posted || !p.state.isTerminal {
@@ -441,6 +438,18 @@ public final class Engine: @unchecked Sendable {
       if let cur = try renderer.currentRender(videoId: p.videoId, versionNo: p.versionNo, platform: p.platform) {
         keep.insert(cur.id)
       }
+    }
+    // Failed/skipped/copyright posts keep their render until resolved or 7 days old (so a retry or re-upload can
+    // reuse it and Eric can inspect it).
+    let week = store.clock.now.addingTimeInterval(-7 * 86400)
+    for p in try store.posts(where: "render_id IS NOT NULL AND resolution IS NULL AND updated_at>=?", [week])
+    where p.state.isTerminal && p.state != .posted {
+      keep.insert(p.renderId!)
+    }
+    // Failed renders stay visible to Doctor until a good render exists for the same video/version/scope.
+    let done = Set(try store.renders(where: "deleted_at IS NULL AND status='done'").map { "\($0.videoId)#\($0.versionNo)#\($0.scope)" })
+    for r in try store.renders(where: "deleted_at IS NULL AND status='failed'") where !done.contains("\(r.videoId)#\(r.versionNo)#\(r.scope)") {
+      keep.insert(r.id)
     }
     let recent = store.clock.now.addingTimeInterval(-86400)
     for r in try store.renders() where r.createdAt >= recent { keep.insert(r.id) }
