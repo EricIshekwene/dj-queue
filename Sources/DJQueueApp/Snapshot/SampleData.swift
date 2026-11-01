@@ -65,6 +65,19 @@ enum SampleData {
       weekSlots.append((day, s))
     }
 
+    // Sample renders point at the source clip so Today can offer a draggable file (throwaway DB only).
+    var renderFor: [String: String] = [:]
+    func sampleRender(_ videoId: String) throws -> String {
+      if let r = renderFor[videoId] { return r }
+      guard let v = try store.video(id: videoId), let url = try store.fileURL(for: v) else { return "" }
+      let r = Render(id: newId(), videoId: videoId, versionNo: 1, editHash: "sample", scope: "all", outputPath: url.path,
+                     coverPath: nil, loudness: nil, duration: v.duration, size: v.fileSize, status: .done, error: nil,
+                     createdAt: now, deletedAt: nil)
+      try store.save(r)
+      renderFor[videoId] = r.id
+      return r.id
+    }
+
     func post(_ s: PlanSlot, _ p: Platform, _ final: PostState, version: Int = 1, error: (ErrorType, String, String?)? = nil,
               url: Bool = true, metrics: PostMetrics? = nil) throws {
       let at = dm.at(s.date, minutes: st.slot(for: p))
@@ -74,6 +87,7 @@ enum SampleData {
                               url: nil, postedAt: nil, errorType: nil, errorMessage: nil, rawResponse: nil, resolution: nil,
                               metrics: nil, createdAt: approvedAt, updatedAt: approvedAt)
       try store.save(post)
+      if ![.planned, .rendering].contains(final) { post.renderId = try sampleRender(s.videoId) }
       let steps: [(PostState, TimeInterval)] = [(.rendering, -86400 * 2), (.rendered, -86400 * 2 + 140), (.due, 0)]
       for (state, off) in steps {
         if state == final { break }

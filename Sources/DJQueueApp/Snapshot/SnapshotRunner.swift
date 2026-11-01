@@ -57,6 +57,9 @@ enum SnapshotRunner {
       empty.frozen = true
       empty.now = now
       empty.refreshNow()
+      // The covers belong to the main sample model (the empty one must not take over the shared cache).
+      ThumbCache.shared.store = store
+      model.refreshNow()
 
       var shots: [Shot] = []
       func main(_ name: String, _ m: AppModel = model, _ setup: @escaping (AppModel) -> Void) {
