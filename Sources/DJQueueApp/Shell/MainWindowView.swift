@@ -28,6 +28,8 @@ struct MainWindowView: View {
     .sheet(item: $model.previewVideo) { v in PreviewSheet(model: model, video: v) }
     .sheet(isPresented: $model.showShortcuts) { ShortcutSheet(model: model) }
     .sheet(isPresented: $model.offerLaunchAgent) { LaunchAgentOffer(model: model) }
+    .sheet(item: $model.scorePrompt) { v in ScorePromptSheet(model: model, video: v) }
+    .sheet(item: $model.pinPrompt) { v in PinPromptSheet(model: model, video: v) }
     .confirmationDialog("Pause all posting?", isPresented: $model.confirmPause) {
       Button("Pause all posting", role: .destructive) { model.setPaused(true) }
       Button("Cancel", role: .cancel) {}

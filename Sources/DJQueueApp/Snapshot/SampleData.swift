@@ -15,6 +15,11 @@ enum SampleData {
     let today = dm.key(now)
     let rules = PrefillRules.load(store.paths)
 
+    // Throwaway copy only: start from an empty plan so seeding never collides with an existing one.
+    for t in ["plan_slots", "weeks", "platform_posts", "post_history", "renders", "sent_notifications"] {
+      try store.db.run("DELETE FROM \(t)")
+    }
+
     let shorts = try store.videos(where: "type='short-form'").sorted { ($0.part ?? 0, $0.start ?? 0) < ($1.part ?? 0, $1.start ?? 0) }
     guard shorts.count >= 30 else { return }
 

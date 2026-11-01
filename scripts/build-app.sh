@@ -1,5 +1,7 @@
 #!/bin/zsh
-# Builds "build/DJ Queue.app" (release, ad-hoc signed). `--install` copies it to ~/Applications.
+# Builds "build/DJ Queue.app" (release, ad-hoc signed) with the djq CLI inside (Contents/MacOS/djq).
+# `--install` copies it to ~/Applications and points ~/bin/djq at the bundled CLI.
+# djq finds ffmpeg by absolute path (/opt/homebrew/bin, /usr/local/bin) and uses the same Paths.standard as the app.
 # Does not install or load the LaunchAgent — do that from Settings → Engine or `djq agent install`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -8,13 +10,16 @@ if [[ -z "${DEVELOPER_DIR:-}" ]] && ! xcodebuild -license check >/dev/null 2>&1;
 fi
 
 swift build -c release --product DJQueueApp
-BIN="$(swift build -c release --show-bin-path)/DJQueueApp"
+swift build -c release --product djq
+BINDIR="$(swift build -c release --show-bin-path)"
+BIN="$BINDIR/DJQueueApp"
 
 APP="build/DJ Queue.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 print "*" > build/.gitignore   # keep build output out of git
 cp "$BIN" "$APP/Contents/MacOS/DJQueue"
+cp "$BINDIR/djq" "$APP/Contents/MacOS/djq"
 
 VERSION="0.1.0"
 BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
@@ -28,6 +33,7 @@ if [[ ! -f Resources/AppIcon.icns ]]; then
 fi
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
+codesign --force --sign - --timestamp=none "$APP/Contents/MacOS/djq"
 codesign --force --sign - --timestamp=none "$APP"
 codesign --verify --strict "$APP"
 echo "built: $APP"
@@ -37,4 +43,13 @@ if [[ "${1:-}" == "--install" ]]; then
   rm -rf "$HOME/Applications/DJ Queue.app"
   cp -R "$APP" "$HOME/Applications/"
   echo "installed: $HOME/Applications/DJ Queue.app"
+  CLI="$HOME/Applications/DJ Queue.app/Contents/MacOS/djq"
+  LINK="$HOME/bin/djq"
+  mkdir -p "$HOME/bin"
+  if [[ -e "$LINK" && ! -L "$LINK" ]]; then
+    echo "warning: $LINK exists and is not a symlink — left alone (point it at $CLI yourself)" >&2
+  else
+    ln -sfn "$CLI" "$LINK"
+    echo "linked: $LINK -> $CLI"
+  fi
 fi

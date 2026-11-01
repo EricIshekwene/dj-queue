@@ -119,6 +119,8 @@ struct VideoInspector: View {
               StatusPill(post: post, now: model.now)
             }
             .contentShape(Rectangle())
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(p.displayName): \(post.state.displayName.lowercased())")
             .onTapGesture { model.postsSelection = post.id; model.screen = .posts }
             .contextMenu { PostContextMenu(model: model, post: post) }
           }

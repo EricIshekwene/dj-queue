@@ -7,6 +7,8 @@ struct PaletteCommand: Identifiable {
   let symbol: String
   var hint: String? = nil
   var group = "Actions"
+  /// Shown greyed with this reason; not runnable.
+  var disabled: String? = nil
   let run: () -> Void
 }
 
@@ -35,6 +37,15 @@ extension AppModel {
       c.append(.init(id: "video.pinTomorrow", title: "Pin “\(name)” to tomorrow", symbol: "pin") { [weak self] in
         guard let self else { return }
         self.pin(v.id, dayKey: self.dm.addDays(self.todayKey, 1))
+      })
+      c.append(.init(id: "video.setScore", title: "Set score of “\(name)”…", symbol: "number") { [weak self] in self?.scorePrompt = v })
+      c.append(.init(id: "video.pinDate", title: "Pin “\(name)” to date…", symbol: "calendar") { [weak self] in self?.pinPrompt = v })
+      let notPlanned = nextSlotByVideo[v.id] == nil ? "Not planned — order follows score; change the score to move it" : nil
+      c.append(.init(id: "video.moveUp", title: "Move up", symbol: "arrow.up", disabled: notPlanned ?? (neighbourSlot(v.id, -1) == nil ? "Already first" : nil)) {
+        [weak self] in self?.moveVideo(v.id, by: -1)
+      })
+      c.append(.init(id: "video.moveDown", title: "Move down", symbol: "arrow.down", disabled: notPlanned ?? (neighbourSlot(v.id, 1) == nil ? "Already last" : nil)) {
+        [weak self] in self?.moveVideo(v.id, by: 1)
       })
       c.append(.init(id: "video.skipNext", title: "Skip next slot of “\(name)”", symbol: "forward.end") { [weak self] in self?.skipNext(v.id) })
       c.append(.init(id: "video.exclude", title: v.excluded ? "Include “\(name)”" : "Exclude “\(name)”", symbol: v.excluded ? "plus.circle" : "minus.circle") { [weak self] in
@@ -214,7 +225,8 @@ struct CommandPalette: View {
         .font(.system(size: 12, weight: .medium))
         .frame(width: 26, height: 26)
         .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-      Text(c.title).font(.system(size: 14)).lineLimit(1)
+      Text(c.title).font(.system(size: 14)).lineLimit(1).foregroundStyle(c.disabled == nil ? .primary : .tertiary)
+      if let why = c.disabled { Text(why).font(DS.Font.secondary).foregroundStyle(.tertiary).lineLimit(1) }
       Spacer()
       if let h = c.hint { KeyHint(h) }
       if selected { Image(systemName: "return").font(.system(size: 11)).foregroundStyle(.secondary) }
@@ -238,6 +250,7 @@ struct CommandPalette: View {
   }
 
   private func run(_ c: PaletteCommand) {
+    if let why = c.disabled { model.show(why, error: true); return }
     model.noteCommand(c.id)
     close()
     c.run()
@@ -330,5 +343,56 @@ struct RepostMenu: View {
         }
       }
     }
+  }
+}
+
+/// ⌘K "Set score…": one big number field.
+struct ScorePromptSheet: View {
+  @Bindable var model: AppModel
+  let video: Video
+  @State private var text = ""
+  @Environment(\.dismiss) private var dismiss
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Score “\(model.title(video))”").font(DS.Font.title)
+      TextField("0–100", text: $text)
+        .font(.system(size: 34, weight: .semibold, design: .rounded).monospacedDigit())
+        .textFieldStyle(.roundedBorder)
+        .onSubmit(save)
+      HStack {
+        Spacer()
+        Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+        Button("Save", action: save).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+          .disabled(Int(text).map { !(0...100).contains($0) } ?? true)
+      }
+    }
+    .padding(22)
+    .frame(width: 360)
+    .onAppear { text = video.score.map(String.init) ?? "" }
+  }
+  private func save() {
+    guard let n = Int(text), (0...100).contains(n) else { return }
+    model.setScore([video.id], n)
+    dismiss()
+  }
+}
+
+/// ⌘K "Pin to date…".
+struct PinPromptSheet: View {
+  @Bindable var model: AppModel
+  let video: Video
+  @State private var date = Date()
+  @Environment(\.dismiss) private var dismiss
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Pin “\(model.title(video))”").font(DS.Font.title)
+      DatePicker("Date", selection: $date, in: model.now..., displayedComponents: .date).datePickerStyle(.graphical).labelsHidden()
+      HStack {
+        Spacer()
+        Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+        Button("Pin") { model.pin(video.id, date: date); dismiss() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+      }
+    }
+    .padding(22)
   }
 }

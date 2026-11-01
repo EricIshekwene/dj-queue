@@ -56,7 +56,7 @@ final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate, 
   /// `DJQ_NOTIFY=0` turns delivery off for dev runs (no permission prompt).
   private let enabled = Bundle.main.bundleIdentifier != nil && Bundle.main.bundleURL.pathExtension == "app"
     && ProcessInfo.processInfo.environment["DJQ_NOTIFY"] != "0"
-  private var registered = Set<String>()
+  private var categories: [String: UNNotificationCategory] = [:]
   private let lock = NSLock()
 
   func setUp() {
@@ -95,8 +95,7 @@ final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate, 
   @discardableResult
   private func register(_ actions: [NotificationAction]) -> String {
     let id = actions.isEmpty ? "djq.none" : "djq." + actions.map(\.rawValue).joined(separator: "+")
-    let isNew: Bool = lock.withLock { registered.insert(id).inserted }
-    guard enabled, isNew else { return id }
+    guard enabled, lock.withLock({ categories[id] == nil }) else { return id }
     let un: [UNNotificationAction] = actions.map { a in
       switch a {
       case .postNow: UNNotificationAction(identifier: a.rawValue, title: "Post now", options: [.foreground])
@@ -109,10 +108,12 @@ final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate, 
       }
     }
     let cat = UNNotificationCategory(identifier: id, actions: un, intentIdentifiers: [], options: [])
-    let c = UNUserNotificationCenter.current()
-    c.getNotificationCategories { existing in
-      c.setNotificationCategories(existing.filter { $0.identifier != id }.union([cat]))
+    // setNotificationCategories replaces the whole set, so always pass every category we know (one call).
+    let all: Set<UNNotificationCategory> = lock.withLock {
+      categories[id] = cat
+      return Set(categories.values)
     }
+    UNUserNotificationCenter.current().setNotificationCategories(all)
     return id
   }
 

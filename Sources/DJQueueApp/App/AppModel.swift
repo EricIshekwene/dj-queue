@@ -140,6 +140,8 @@ final class AppModel {
   var pendingReplace: (videoId: String, day: String, replaced: String)?
   var markPostedPrefill: String?
   var offerLaunchAgent = false
+  var scorePrompt: Video?
+  var pinPrompt: Video?
 
   // MARK: UI state
   var screen: Screen = .queue
@@ -197,9 +199,13 @@ final class AppModel {
   /// "Rendering 42% · 3 queued" for the menu bar and Health.
   var renderLine: String? {
     guard renderQueue > 0 else { return nil }
-    if let f = renderProgress.values.max() { return "rendering \(Int(f * 100))%\(renderQueue > 1 ? " · \(renderQueue - 1) queued" : "")" }
-    return "\(renderQueue) rendering"
+    let total = max(renderBatchTotal, renderQueue)
+    let n = total - renderQueue + 1
+    return "rendering \(n)/\(total)\(renderProgress.values.max().map { " · \(Int($0 * 100))%" } ?? "")"
   }
+
+  /// Size of the current render batch (resets when the queue empties), for "rendering 2/7".
+  private var renderBatchTotal = 0
 
   /// W.S1: an approved week is Locked once its first day has started (past days fixed, future days editable).
   func weekLabel(_ ws: String) -> (text: String, tint: Color, icon: String)? {
@@ -335,6 +341,7 @@ final class AppModel {
     versionCounts = l.versionCounts
     relinked = l.relinked
     keptRemoved = l.keptRemoved
+    renderBatchTotal = l.renderQueue == 0 ? 0 : max(renderBatchTotal, l.renderQueue)
     renderQueue = l.renderQueue
     activeRenders = l.activeRenders
     renderProgress = renderProgress.filter { id, _ in l.activeRenders.contains { $0.id == id } }
@@ -567,6 +574,19 @@ final class AppModel {
   func rebuildWeek(_ ws: String) { perform("Week rebuilt") { try planner.rebuildWeek(ws) } }
   func proposeWeek(_ ws: String) { perform("Week proposed") { _ = try planner.proposeWeek(ws) } }
   func pushPlan(days: Int = 1) { perform("Plan pushed by \(days) day") { try planner.pushPlan(from: todayKey, days: days) } }
+
+  /// The upcoming planned slot before/after this video's next slot (Move up / down in ⌘K).
+  func neighbourSlot(_ videoId: String, _ d: Int) -> PlanSlot? {
+    guard let s = nextSlotByVideo[videoId], let i = upcomingSlots.firstIndex(where: { $0.id == s.id }) else { return nil }
+    let j = i + d
+    return upcomingSlots.indices.contains(j) ? upcomingSlots[j] : nil
+  }
+
+  /// Planned videos move by swapping days with the neighbouring slot (Planner.swap).
+  func moveVideo(_ videoId: String, by d: Int) {
+    guard let s = nextSlotByVideo[videoId], let n = neighbourSlot(videoId, d) else { return }
+    swap(s.id, n.id)
+  }
 
   /// Q.S5 "Add to week": each video goes to the next open day from today.
   func addToWeek(_ ids: [String]) {

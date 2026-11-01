@@ -266,7 +266,7 @@ struct QueueHeader: View {
 
   private func count(_ t: QueueTab) -> Int {
     switch t {
-    case .ready: model.ordered.count
+    case .ready: model.ordered.filter { v in model.nextSlotByVideo[v.id] == nil }.count + Set(model.upcomingSlots.map(\.videoId)).count
     case .toScore: model.toScore.count
     case .needsEdit: model.needsEdit.count
     case .excluded: model.excluded.count

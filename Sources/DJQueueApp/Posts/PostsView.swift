@@ -32,7 +32,7 @@ struct PostsView: View {
     VStack(spacing: 0) {
       if !model.problems.isEmpty {
         VStack(spacing: 8) {
-          ForEach(model.problems.prefix(3)) { p in ErrorCard(model: model, post: p) }
+          ForEach(model.problems.prefix(3)) { p in ErrorCard(model: model, post: p, primary: p.id == model.problems.first?.id) }
           if model.problems.count > 3 {
             Button("Show all \(model.problems.count) problems") { model.postsFilter = .problems }.buttonStyle(.link)
           }
@@ -149,6 +149,8 @@ struct PostRow: Identifiable {
 struct ErrorCard: View {
   @Bindable var model: AppModel
   let post: PlatformPost
+  /// Only the top card's Fix in editor is prominent (one primary per screen).
+  var primary = false
   @State private var showRaw = false
 
   var body: some View {
@@ -198,7 +200,11 @@ struct ErrorCard: View {
         Button("Shift plan") { model.shiftPlan(post) }
         Button("Skip") { model.skip(post) }
       } else {
-        Button("Fix in editor") { model.openEditor(post.videoId, fixPostId: post.id) }.buttonStyle(.borderedProminent)
+        if primary {
+          Button("Fix in editor") { model.openEditor(post.videoId, fixPostId: post.id) }.buttonStyle(.borderedProminent)
+        } else {
+          Button("Fix in editor") { model.openEditor(post.videoId, fixPostId: post.id) }
+        }
         Button("Re-queue") { model.fixed(post.id) }.help("The cause is fixed: try again on the next day's slot")
       }
       Menu {
