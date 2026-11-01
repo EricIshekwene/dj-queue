@@ -96,15 +96,23 @@ public enum EditorLogic {
 
   // MARK: Trim-dependent values
 
-  /// Text timing (relative to the trim start) kept inside a trim of `duration`; nil = edge of the clip.
+  /// Text timing (relative to the trim start) kept inside a trim of `duration`. Explicit values stay explicit
+  /// (an end past the trim becomes the trim length, never nil = "whole clip"); nil stays nil.
+  /// Apply once when a trim change is committed (drag end, I/O keys, trim buttons), not on every drag tick.
   public static func clampTextTiming(start: Double?, end: Double?, trimDuration d: Double) -> (start: Double?, end: Double?) {
-    guard d > 0 else { return (nil, nil) }
+    guard d > 0 else { return (start, end) }
     let minLen = min(0.3, d)
-    var s = start.map { min(max(0, $0), d - minLen) }
-    var e = end.map { min(max($0, (s ?? 0) + minLen), d) }
-    if let x = s, x <= 0.01 { s = nil }
-    if let x = e, x >= d - 0.01 { e = nil }
+    let s = start.map { min(max(0, $0), d - minLen) }
+    let e = end.map { min(max($0, (s ?? 0) + minLen), d) }
     return (s, e)
+  }
+
+  /// Text timing and cover after a committed trim change. A cover still inside the trim is kept as is.
+  public static func afterTrimCommit(textStart: Double?, textEnd: Double?, cover: Double?, trim: TrimRange)
+    -> (textStart: Double?, textEnd: Double?, cover: Double?) {
+    let (s, e) = clampTextTiming(start: textStart, end: textEnd, trimDuration: trim.duration)
+    let inside = cover.map { $0 >= trim.start && $0 <= trim.end } ?? true
+    return (s, e, inside ? cover : clampCover(cover, trim: trim))
   }
 
   /// Cover time (absolute) kept inside the trim; nil = first frame of the trim.

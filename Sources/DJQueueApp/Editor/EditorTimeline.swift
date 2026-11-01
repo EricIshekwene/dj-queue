@@ -126,15 +126,15 @@ struct EditorTimeline: View {
       trimHandle(at: a, leading: true)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
           let nt = min(snapped(v.location.x, w), model.trim.end - 0.5)
-          model.updateEdit { $0.trimIn = nt <= 0.01 ? nil : nt }
+          model.updateEdit(live: true) { $0.trimIn = nt <= 0.01 ? nil : nt }
           playback.pause(); playback.seek(nt)
-        })
+        }.onEnded { _ in model.commitTrim() })
       trimHandle(at: b, leading: false)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
           let nt = max(snapped(v.location.x, w), model.trim.start + 0.5)
-          model.updateEdit { $0.trimOut = nt >= model.duration - 0.01 ? nil : nt }
+          model.updateEdit(live: true) { $0.trimOut = nt >= model.duration - 0.01 ? nil : nt }
           playback.pause(); playback.seek(nt)
-        })
+        }.onEnded { _ in model.commitTrim() })
     }
     .frame(width: w, height: filmH, alignment: .topLeading)
   }

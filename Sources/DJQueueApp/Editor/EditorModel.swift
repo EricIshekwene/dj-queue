@@ -216,7 +216,8 @@ final class EditorModel: ObservableObject {
 
   // MARK: Mutations
 
-  func updateEdit(_ f: (inout Edit) -> Void) {
+  /// `live: true` while a trim handle is being dragged: trim-dependent values are only re-clamped on `commitTrim()`.
+  func updateEdit(live: Bool = false, _ f: (inout Edit) -> Void) {
     guard !readOnly, video != nil else { return }
     var e = edit
     f(&e)
@@ -224,17 +225,25 @@ final class EditorModel: ObservableObject {
     let oldTrim = trim
     edit = e
     pendingEdit = true
-    if trim != oldTrim { keepInsideTrim() }
+    if trim != oldTrim && !live { keepInsideTrim() }
     scheduleSave()
     refreshOverlay()
   }
 
   /// After a trim change: cover time stays inside the trim, and every version's text timing (relative to
   /// the trim start) stays inside the new trim length.
+  /// Call when a trim drag ends.
+  func commitTrim() {
+    guard !readOnly, video != nil else { return }
+    keepInsideTrim()
+    scheduleSave()
+    refreshOverlay()
+  }
+
   private func keepInsideTrim() {
     let t = trim
-    let cover = EditorGeometry.clampCover(edit.coverTime, trim: t)
-    if cover != edit.coverTime { edit.coverTime = cover }
+    let cover = EditorGeometry.afterTrimCommit(textStart: nil, textEnd: nil, cover: edit.coverTime, trim: t).cover
+    if cover != edit.coverTime { edit.coverTime = cover; pendingEdit = true }
     for i in versions.indices where versions[i].textStart != nil || versions[i].textEnd != nil {
       let (s, e) = EditorGeometry.clampTextTiming(start: versions[i].textStart, end: versions[i].textEnd, trimDuration: t.duration)
       if s != versions[i].textStart || e != versions[i].textEnd {

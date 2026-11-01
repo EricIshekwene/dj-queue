@@ -109,10 +109,26 @@ import Testing
 
   @Test func textTimingStaysInsideNewTrim() {
     #expect(EditorLogic.clampTextTiming(start: 2, end: 12, trimDuration: 30) == (2, 12))
-    #expect(EditorLogic.clampTextTiming(start: 2, end: 12, trimDuration: 8) == (2, nil))  // end → clip end
+    #expect(EditorLogic.clampTextTiming(start: 2, end: 12, trimDuration: 8) == (2, 8))  // explicit end stays explicit
     let r = EditorLogic.clampTextTiming(start: 25, end: nil, trimDuration: 10)
     #expect(r.start == 9.7 && r.end == nil)
-    #expect(EditorLogic.clampTextTiming(start: 0, end: 30, trimDuration: 30) == (nil, nil))
+    #expect(EditorLogic.clampTextTiming(start: 0, end: 30, trimDuration: 30) == (0, 30))
+    #expect(EditorLogic.clampTextTiming(start: nil, end: nil, trimDuration: 5) == (nil, nil))
+  }
+
+  @Test func trimDragInAndBackKeepsTextWindowAndCover() {
+    // Text 2–6 s, custom cover at 12 s; trim-out dragged to 5 s and back, trim-in dragged past the cover and back.
+    // Only the committed (drag-end) trim is applied, so nothing changes.
+    let full = TrimRange(start: 0, end: 30)
+    let r = EditorLogic.afterTrimCommit(textStart: 2, textEnd: 6, cover: 12, trim: full)
+    #expect(r.textStart == 2 && r.textEnd == 6 && r.cover == 12)
+    // Even if a short trim were committed on the way, the window shrinks but never becomes "whole clip".
+    let short = EditorLogic.afterTrimCommit(textStart: 2, textEnd: 6, cover: 12, trim: TrimRange(start: 0, end: 5))
+    #expect(short.textStart == 2 && short.textEnd == 5)
+    // A cover still inside the trim is never reset; one outside is pulled to the nearest edge.
+    #expect(EditorLogic.afterTrimCommit(textStart: nil, textEnd: nil, cover: 12, trim: TrimRange(start: 10, end: 20)).cover == 12)
+    #expect(EditorLogic.afterTrimCommit(textStart: nil, textEnd: nil, cover: 12, trim: TrimRange(start: 0, end: 8)).cover == 7.95)
+    #expect(EditorLogic.afterTrimCommit(textStart: nil, textEnd: nil, cover: 12, trim: TrimRange(start: 15, end: 25)).cover == nil)
   }
 
   @Test func coverStaysInsideTrim() {
