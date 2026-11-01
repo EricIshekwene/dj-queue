@@ -366,12 +366,27 @@ public struct PlanSlot: Codable, Sendable, Identifiable, Hashable {
   public var videoId: String
   public var pinned: Bool
   public var weekStart: String
+
+  public init(id: String, date: String, position: Int, videoId: String, pinned: Bool, weekStart: String) {
+    self.id = id
+    self.date = date
+    self.position = position
+    self.videoId = videoId
+    self.pinned = pinned
+    self.weekStart = weekStart
+  }
 }
 
 public struct Week: Codable, Sendable, Hashable {
   public var weekStart: String
   public var state: WeekState
   public var approvedAt: Date?
+
+  public init(weekStart: String, state: WeekState, approvedAt: Date?) {
+    self.weekStart = weekStart
+    self.state = state
+    self.approvedAt = approvedAt
+  }
 }
 
 public struct PostMetrics: Codable, Sendable, Hashable {
@@ -405,6 +420,30 @@ public struct PlatformPost: Codable, Sendable, Identifiable, Hashable {
   public var metrics: PostMetrics?
   public var createdAt: Date
   public var updatedAt: Date
+
+  public init(id: String, videoId: String, platform: Platform, versionNo: Int, attemptNo: Int, kind: PostKind, planSlotId: String?, scheduledAt: Date, renderId: String?, state: PostState, publisher: String, externalId: String?, url: String?, postedAt: Date?, errorType: ErrorType?, errorMessage: String?, rawResponse: String?, resolution: String?, metrics: PostMetrics?, createdAt: Date, updatedAt: Date) {
+    self.id = id
+    self.videoId = videoId
+    self.platform = platform
+    self.versionNo = versionNo
+    self.attemptNo = attemptNo
+    self.kind = kind
+    self.planSlotId = planSlotId
+    self.scheduledAt = scheduledAt
+    self.renderId = renderId
+    self.state = state
+    self.publisher = publisher
+    self.externalId = externalId
+    self.url = url
+    self.postedAt = postedAt
+    self.errorType = errorType
+    self.errorMessage = errorMessage
+    self.rawResponse = rawResponse
+    self.resolution = resolution
+    self.metrics = metrics
+    self.createdAt = createdAt
+    self.updatedAt = updatedAt
+  }
 }
 
 public struct PostHistoryEntry: Codable, Sendable, Hashable, Identifiable {
@@ -442,6 +481,23 @@ public struct Render: Codable, Sendable, Identifiable, Hashable {
   public var error: String?
   public var createdAt: Date
   public var deletedAt: Date?
+
+  public init(id: String, videoId: String, versionNo: Int, editHash: String, scope: String, outputPath: String?, coverPath: String?, loudness: LoudnessInfo?, duration: Double?, size: Int64?, status: RenderStatus, error: String?, createdAt: Date, deletedAt: Date?) {
+    self.id = id
+    self.videoId = videoId
+    self.versionNo = versionNo
+    self.editHash = editHash
+    self.scope = scope
+    self.outputPath = outputPath
+    self.coverPath = coverPath
+    self.loudness = loudness
+    self.duration = duration
+    self.size = size
+    self.status = status
+    self.error = error
+    self.createdAt = createdAt
+    self.deletedAt = deletedAt
+  }
 }
 
 public struct EventRecord: Codable, Sendable, Hashable, Identifiable {
