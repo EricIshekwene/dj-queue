@@ -2,7 +2,7 @@ import Foundation
 
 /// Why a video isn't `ready` yet, and per-platform limit problems (spec §6 Validation, §7 platform checks).
 public struct ValidationIssue: Sendable, Hashable, Identifiable {
-  public enum Kind: String, Sendable { case noCrop, noText, noCaption, tooLong, tooLarge, missingFile, noTitle, captionTooLong, titleTooLong }
+  public enum Kind: String, Sendable { case noCrop, noText, noCaption, tooLong, tooLarge, missingFile, noTitle, captionTooLong, titleTooLong, corrupt }
   public var kind: Kind
   public var platform: Platform?
   public var message: String
@@ -14,11 +14,16 @@ public enum Validation {
     var out: [ValidationIssue] = []
     if v.missing { out.append(.init(kind: .missingFile, platform: nil, message: "File missing")) }
     guard v.type == .short else { return out }
-    let edit = try store.edit(videoId: v.id)
     let settings = try store.settings()
+    // Unreadable edit/version rows make the video not ready (reported here and by the Doctor);
+    // they must not abort intake or the engine tick.
+    guard let edit = try? store.edit(videoId: v.id), let versions = try? store.versions(videoId: v.id) else {
+      out.append(.init(kind: .corrupt, platform: nil, message: "Saved edit can't be read — see Doctor"))
+      return out
+    }
     if edit.crop == nil { out.append(.init(kind: .noCrop, platform: nil, message: "Set the crop")) }
     let r = try store.resolvedVersion(videoId: v.id, number: 1, settings: settings)
-    let hasVersion = try !store.versions(videoId: v.id).isEmpty
+    let hasVersion = !versions.isEmpty
     if !hasVersion || !(r?.hasText ?? false) && !(r?.noText ?? false) {
       out.append(.init(kind: .noText, platform: nil, message: "Add text or choose No text"))
     }

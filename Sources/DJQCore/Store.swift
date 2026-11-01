@@ -242,8 +242,15 @@ public final class Store: @unchecked Sendable {
     try refreshState(videoId: videoId)
   }
 
+  /// All versions in order. An unreadable row throws (so the editor goes read-only) instead of being skipped
+  /// and later overwritten.
   public func versions(videoId: String) throws -> [Version] {
-    try db.query("SELECT json FROM versions WHERE video_id=? ORDER BY number", [videoId]).compactMap { $0.json("json") }
+    try db.query("SELECT number, json FROM versions WHERE video_id=? ORDER BY number", [videoId]).map { r in
+      guard let s = r.string("json"), let v = try? JSONCoding.decoder.decode(Version.self, from: Data(s.utf8)) else {
+        throw StoreError.corruptRow("versions", "\(videoId) v\(r.int("number") ?? 0)")
+      }
+      return v
+    }
   }
 
   public func save(_ v: Version, videoId: String) throws {
@@ -533,3 +540,12 @@ public enum VersionResolver {
 }
 
 public func newId() -> String { UUID().uuidString.lowercased() }
+
+public enum StoreError: Error, CustomStringConvertible {
+  case corruptRow(String, String)
+  public var description: String {
+    switch self {
+    case .corruptRow(let table, let key): "Unreadable \(table) row \(key) — left untouched; see Doctor"
+    }
+  }
+}

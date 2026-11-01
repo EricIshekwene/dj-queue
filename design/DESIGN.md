@@ -1,6 +1,6 @@
 # DJ Queue — DESIGN.md
 
-**Status:** DRAFT — references locked, waiting for Eric's answers on `DECISIONS.html` (round 1). Sections marked ⟨Qn⟩ depend on that answer. No app code until answers are recorded in `DECISIONS.md`.
+**Status:** LOCKED — Eric answered round 1 on 2026-11-01 (`DECISIONS.md`); ⟨Qn⟩ markers point at those answers, which win over any default written here.
 
 Process: inventory → locked references → one decision page. Slot IDs from `INVENTORY.md`. Every image in `refs/` was looked at before it was locked.
 
@@ -93,6 +93,12 @@ Process: inventory → locked references → one decision page. Slot IDs from `I
 ## Settings (S)
 
 - Locked: `S.L--linear-preferences.webp`; slots `S.S2--buffer-posting-slots.webp`. SwiftUI `Settings` scene with sidebar sections; grouped `Form` rows.
+
+## Deviations (recorded)
+
+- **Engine process:** the spec asks for a headless engine run by the LaunchAgent with the GUI talking to it. macOS only delivers notifications from an app bundle, so the LaunchAgent launches `DJ Queue.app --agent`: the engine loop and the menu-bar item run in that process, and the main window opens in it on demand. Closing the window never stops the engine; KeepAlive restarts the process if it quits. The `djq` CLI shares the same SQLite file.
+- **Text defaults per Eric:** white box style, centred, medium, draggable; prefill uses "x" and no emoji (DECISIONS.md Q11–Q14).
+- **Kinds:** `DJ vid` / `Talking` only (Q9).
 
 ## Interaction and motion
 
