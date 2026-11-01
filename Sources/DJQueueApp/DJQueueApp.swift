@@ -118,6 +118,7 @@ final class AppHost {
   func installLaunchAgent() {
     guard let model else { return }
     UserDefaults.standard.set(true, forKey: "djq.askedLaunchAgent")
+    model.agentError = nil
     do {
       if let o = openObserver { DistributedNotificationCenter.default().removeObserver(o) }
       engineHost?.stop()
@@ -128,8 +129,11 @@ final class AppHost {
         NSApp.terminate(nil)
       }
     } catch {
-      model.show(error.localizedDescription, error: true)
+      // LaunchAgent.install refuses dev environments and copies outside ~/Applications: say why, in place.
+      model.agentError = "Couldn't install the background engine: \(error.localizedDescription)"
+      model.show(model.agentError!, error: true)
       model.engineInProcess = engineHost?.start() ?? false
+      if model.engineInProcess, let e = engineHost?.engine { model.engine = e }
     }
   }
 

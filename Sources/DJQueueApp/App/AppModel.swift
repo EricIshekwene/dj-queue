@@ -141,6 +141,8 @@ final class AppModel {
   var markPostedPrefill: String?
   var offerLaunchAgent = false
   var scorePrompt: Video?
+  /// Last LaunchAgent install failure, shown in Settings → Engine.
+  var agentError: String?
   var pinPrompt: Video?
 
   // MARK: UI state

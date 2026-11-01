@@ -383,9 +383,13 @@ struct EngineSettings: View {
         SettingRow(title: "LaunchAgent", subtitle: "Starts DJ Queue at login and keeps the engine running") {
           HStack {
             if let loaded { StatusPill(text: loaded ? "Loaded" : "Not loaded", tint: loaded ? .green : .red) } else { ProgressView().controlSize(.small) }
-            Button("Reinstall…") { confirmReinstall = true }.disabled(!installable)
+            Button("Reinstall…") { confirmReinstall = true }
             Button("Stop…") { confirmStop = true }.disabled(loaded != true)
           }
+        }
+        if let agentError = model.agentError {
+          Label(agentError, systemImage: "exclamationmark.triangle.fill")
+            .font(DS.Font.secondary).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
         }
         SettingRow(title: "Engine", subtitle: model.engineInProcess ? "Running in this app" : "Running in another process") {
           HStack {
@@ -433,11 +437,6 @@ struct EngineSettings: View {
     } message: {
       Text("Posts won't be prepared and reminders won't arrive until DJ Queue is opened again or Reinstall is used.")
     }
-  }
-
-  /// Only the installed bundle may become the LaunchAgent (never a dev build or `swift run`).
-  private var installable: Bool {
-    Bundle.main.bundlePath.hasSuffix(".app") && ProcessInfo.processInfo.environment["DJQ_HOME"] == nil
   }
 
   private func folder(_ title: String, _ url: URL) -> some View {

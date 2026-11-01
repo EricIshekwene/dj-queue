@@ -8,7 +8,7 @@ final class EngineHost {
   let engine: Engine
   let renderer: Renderer
   let publisher: ManualPublisher
-  private var lockFD: Int32 = -1
+  private var lock: EngineLock?
   private var started = false
   private let store: Store
 
@@ -22,15 +22,11 @@ final class EngineHost {
   /// Returns false when another process already holds the engine lock (its heartbeats still drive the UI).
   @discardableResult
   func start() -> Bool {
-    let path = store.paths.appSupport.appendingPathComponent("engine.lock").path
-    let fd = open(path, O_CREAT | O_RDWR, 0o644)
-    guard fd >= 0 else { return false }
-    guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
-      close(fd)
+    guard let l = EngineLock.acquire(store.paths) else {
       Log.shared.warn("engine lock held by another process; this process only shows the UI")
       return false
     }
-    lockFD = fd
+    lock = l
     engine.start()
     started = true
     return true
@@ -38,12 +34,11 @@ final class EngineHost {
 
   /// Stops only an engine this process started (a UI-only process must never write a stop heartbeat).
   func stop() {
-    guard started, lockFD >= 0 else { return }
+    guard started, let l = lock else { return }
     engine.stop()
     started = false
-    flock(lockFD, LOCK_UN)
-    close(lockFD)
-    lockFD = -1
+    l.release()
+    lock = nil
   }
 }
 
