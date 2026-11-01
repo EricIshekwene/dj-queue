@@ -40,4 +40,7 @@ Raw answer line: `1A 2A 3A 4A 5A 6A 7A 8B 9A 10A 11B 12C 13B 14B 15A 16A 17A 18A
 ## Next
 
 Milestone 2: data model, intake of Afroween (62 short + 1 long), Library, scoring.
-Open item for milestone 6: Doctor skill location (`~/.claude/skills` per spec vs `~/.claude-technical/skills`) — ask Eric.
+## Later decisions
+
+- 2026-11-01 — **Doctor skill location** (Eric: "put it wherever you think it should go"): source of truth `skills/dj-queue-doctor/SKILL.md` in this repo, symlinked into `~/.claude-technical/skills/dj-queue-doctor`. Not written into `~/.claude` (personal profile; this profile never writes there). The spec's "add a dj-queue section to capcut-use" becomes a paste-ready snippet at `skills/capcut-use-dj-queue-section.md`, because capcut-use lives only in `~/.claude/skills/`.
+- 2026-11-01 — Build moved under Eric's `/daddy` process (session `~/.agent-sessions/daddy/dj-queue-2026-11-01/`).
