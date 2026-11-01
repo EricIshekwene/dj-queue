@@ -46,7 +46,9 @@ final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate, 
   static let shared = UserNotifier()
 
   /// UNUserNotificationCenter needs an app bundle; a bare `swift run` binary only logs.
+  /// `DJQ_NOTIFY=0` turns delivery off for dev runs (no permission prompt).
   private let enabled = Bundle.main.bundleIdentifier != nil && Bundle.main.bundleURL.pathExtension == "app"
+    && ProcessInfo.processInfo.environment["DJQ_NOTIFY"] != "0"
   private var registered = Set<String>()
   private let lock = NSLock()
 

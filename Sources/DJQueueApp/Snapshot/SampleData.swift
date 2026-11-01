@@ -162,6 +162,7 @@ enum SampleData {
 
     // 7 days of heartbeats: awake 8:30–23:45, Mac off Sat 17:30–21:00 (missed TikTok), asleep overnight.
     clock.set(now)
+    try store.db.run("DELETE FROM heartbeats WHERE at>?", [now])  // real runs of the dev DB after the frozen clock
     try store.db.transaction {
       for d in -6...0 {
         let day = dm.addDays(today, d)
