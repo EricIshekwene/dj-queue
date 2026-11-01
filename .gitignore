@@ -3,3 +3,4 @@ design/tools/textpng
 .build/
 .build/
 .swiftpm/
+build/
