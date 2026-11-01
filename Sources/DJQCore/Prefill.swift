@@ -23,13 +23,18 @@ public struct PrefillRules: Codable, Sendable, Hashable {
 
   public init() {}
 
+  /// Loads the rules file. Missing keys keep their defaults; an unreadable file is logged and left untouched
+  /// (defaults are used in memory). The file is only created when it doesn't exist.
   public static func load(_ paths: Paths) -> PrefillRules {
-    if let d = try? Data(contentsOf: paths.prefillRules), let r = try? JSONDecoder().decode(PrefillRules.self, from: d) {
+    guard let d = try? Data(contentsOf: paths.prefillRules) else {
+      let r = PrefillRules()
+      r.write(paths)
       return r
     }
-    let r = PrefillRules()
-    r.write(paths)
-    return r
+    do { return try JSONCoding.decodeLenient(d, defaults: PrefillRules()) } catch {
+      Log.shared.error("prefill-rules.json unreadable, using defaults: \(error)")
+      return PrefillRules()
+    }
   }
 
   public func write(_ paths: Paths) {
@@ -53,7 +58,9 @@ public enum Prefill {
   public static func tidy(_ name: String, rules: PrefillRules) -> String {
     var s = name.trimmingCharacters(in: .whitespaces)
     if let r = rules.replacements[s.lowercased()] { return r }
-    for (k, v) in rules.replacements where s.lowercased().contains(k.lowercased()) {
+    // Longest keys first so overlapping replacements give the same result every run.
+    for (k, v) in rules.replacements.sorted(by: { ($0.key.count, $0.key) > ($1.key.count, $1.key) })
+    where s.lowercased().contains(k.lowercased()) {
       s = s.replacingOccurrences(of: k, with: v, options: .caseInsensitive)
     }
     let keep = Dictionary(uniqueKeysWithValues: rules.keepWords.map { ($0.lowercased(), $0) })

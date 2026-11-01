@@ -2,7 +2,7 @@ import Foundation
 
 /// Why a video isn't `ready` yet, and per-platform limit problems (spec §6 Validation, §7 platform checks).
 public struct ValidationIssue: Sendable, Hashable, Identifiable {
-  public enum Kind: String, Sendable { case noCrop, noText, noCaption, tooLong, tooLarge, missingFile, noTitle }
+  public enum Kind: String, Sendable { case noCrop, noText, noCaption, tooLong, tooLarge, missingFile, noTitle, captionTooLong, titleTooLong }
   public var kind: Kind
   public var platform: Platform?
   public var message: String
@@ -27,6 +27,26 @@ public enum Validation {
       out.append(.init(kind: .noCaption, platform: nil, message: "Add a caption"))
     }
     out += platformIssues(video: v, edit: edit, settings: settings)
+    if let r, hasVersion {
+      let session = try store.session(id: v.sessionId)?.name ?? ""
+      let sets = try store.hashtagSets(), templates = try store.captionTemplates()
+      let rules = PrefillRules.load(store.paths)
+      for p in settings.activePlatforms where !edit.skippedPlatforms.contains(p) {
+        let lim = settings.limits[p]?.captionLimit ?? 2200
+        let c = Captions.caption(for: p, version: r, video: v, sessionName: session, sets: sets, templates: templates,
+                                 settings: settings, rules: rules)
+        if c.count > lim {
+          out.append(.init(kind: .captionTooLong, platform: p, message: "Caption too long for \(p.displayName) (\(c.count)/\(lim))"))
+        }
+      }
+      if settings.activePlatforms.contains(.youtube), !edit.skippedPlatforms.contains(.youtube) {
+        let lim = settings.limits[.youtube]?.titleLimit ?? 100
+        let t = Captions.youtubeTitle(r, video: v, limit: lim, rules: rules)
+        if t.count > lim {
+          out.append(.init(kind: .titleTooLong, platform: .youtube, message: "YouTube title too long (\(t.count)/\(lim))"))
+        }
+      }
+    }
     return out
   }
 

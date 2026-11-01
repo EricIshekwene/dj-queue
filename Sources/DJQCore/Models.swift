@@ -330,6 +330,8 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
   public var platformCaptions: [Platform: String]
   /// Field names that came from an earlier version (shown faded in the editor).
   public var inherited: Set<String>
+  /// True when no version chose hashtag sets: the default sets plus one rotating sub-set per video are used (Q15).
+  public var autoHashtags: Bool = false
 
   public var hasText: Bool { !noText && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 }
@@ -512,7 +514,8 @@ public struct Settings: Codable, Sendable, Hashable {
     return sort
   }
 
-  /// Platforms that receive regular posts (enabled and not paused).
+  /// Platforms that receive regular posts (enabled). Paused platforms still get planned posts; the engine
+  /// just doesn't advance them while paused.
   public var activePlatforms: [Platform] {
     Platform.allCases.filter { enabledPlatforms.contains($0) }.sorted { slot(for: $0) < slot(for: $1) }
   }

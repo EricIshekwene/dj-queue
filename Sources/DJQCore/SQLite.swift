@@ -71,6 +71,17 @@ public enum JSONCoding {
     d.dateDecodingStrategy = .secondsSince1970
     return d
   }()
+  /// Decodes `data` over the encoded `defaults`, so keys missing from older stored JSON keep their defaults
+  /// instead of failing the whole decode (top-level keys; nested values are replaced whole).
+  public static func decodeLenient<T: Codable>(_ data: Data, defaults: T) throws -> T {
+    let defObj = (try JSONSerialization.jsonObject(with: encoder.encode(defaults))) as? [String: Any] ?? [:]
+    guard let stored = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Stored JSON is not an object"))
+    }
+    let merged = defObj.merging(stored) { _, s in s }
+    return try decoder.decode(T.self, from: JSONSerialization.data(withJSONObject: merged))
+  }
+
   public static func string<T: Encodable>(_ v: T) -> String {
     String(data: (try? encoder.encode(v)) ?? Data("null".utf8), encoding: .utf8)!
   }
@@ -82,6 +93,7 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 public final class SQLite: @unchecked Sendable {
   private var db: OpaquePointer?
   private let lock = NSRecursiveLock()
+  private var txDepth = 0
   public let path: String
 
   public init(path: String) throws {
@@ -149,15 +161,20 @@ public final class SQLite: @unchecked Sendable {
 
   public var lastInsertId: Int64 { lock.withLock { sqlite3_last_insert_rowid(db) } }
 
+  /// Atomic block. Nested calls use savepoints, so helpers can wrap their own work safely.
   public func transaction<T>(_ body: () throws -> T) throws -> T {
     try lock.withLock {
-      try exec("BEGIN IMMEDIATE")
+      let depth = txDepth
+      let sp = "sp\(depth)"
+      try exec(depth == 0 ? "BEGIN IMMEDIATE" : "SAVEPOINT \(sp)")
+      txDepth += 1
+      defer { txDepth -= 1 }
       do {
         let r = try body()
-        try exec("COMMIT")
+        try exec(depth == 0 ? "COMMIT" : "RELEASE \(sp)")
         return r
       } catch {
-        try? exec("ROLLBACK")
+        try? exec(depth == 0 ? "ROLLBACK" : "ROLLBACK TO \(sp); RELEASE \(sp)")
         throw error
       }
     }
@@ -172,8 +189,11 @@ public final class SQLite: @unchecked Sendable {
       guard let b = sqlite3_backup_init(out, "main", db, "main") else {
         throw SQLiteError(code: -1, message: String(cString: sqlite3_errmsg(out)), sql: nil)
       }
-      sqlite3_backup_step(b, -1)
-      sqlite3_backup_finish(b)
+      let step = sqlite3_backup_step(b, -1)
+      let fin = sqlite3_backup_finish(b)
+      guard step == SQLITE_DONE, fin == SQLITE_OK else {
+        throw SQLiteError(code: step == SQLITE_DONE ? fin : step, message: String(cString: sqlite3_errmsg(out)), sql: "backup")
+      }
     }
   }
 
