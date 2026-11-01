@@ -122,7 +122,7 @@ struct EditorPreview: View {
     }
     .background(Color(nsColor: .underPageBackgroundColor))
     .overlay(alignment: .topTrailing) { if !frameMode { safeZoneControl.padding(12) } }
-    .overlay(alignment: .topLeading) { if frameMode { framingBadges.padding(12) } }
+    .overlay(alignment: .topLeading) { if frameMode && !model.fileMissing && model.video != nil { framingBadges.padding(12) } }
     .clipped()
   }
 

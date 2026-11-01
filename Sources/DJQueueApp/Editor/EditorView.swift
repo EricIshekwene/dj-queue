@@ -170,6 +170,8 @@ struct EditorValidationStrip: View {
       HStack(spacing: 8) {
         if let e = model.loadError {
           EditorPill(text: e, color: .red, systemImage: "exclamationmark.octagon.fill")
+        } else if model.fileMissing && !issues.contains(where: { $0.kind == .missingFile }) {
+          EditorPill(text: "File missing", color: .red, systemImage: "exclamationmark.triangle.fill")
         } else if issues.isEmpty {
           EditorPill(text: "Ready to post", color: .green, systemImage: "checkmark.circle.fill")
         }
