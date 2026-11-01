@@ -43,4 +43,5 @@ Milestone 2: data model, intake of Afroween (62 short + 1 long), Library, scorin
 ## Later decisions
 
 - 2026-11-01 — **Doctor skill location** (Eric: "put it wherever you think it should go"): source of truth `skills/dj-queue-doctor/SKILL.md` in this repo, symlinked into `~/.claude-technical/skills/dj-queue-doctor`. Not written into `~/.claude` (personal profile; this profile never writes there). The spec's "add a dj-queue section to capcut-use" becomes a paste-ready snippet at `skills/capcut-use-dj-queue-section.md`, because capcut-use lives only in `~/.claude/skills/`.
+- 2026-11-01 — **Pinned dates vs missed-day shift** (engine review risk 1; Eric chose the recommended option): a pinned video NEVER moves. When a missed day shifts a platform's plan, the shifted posts flow around pinned days (a post that would land on a pinned date goes to the next free unpinned day after it).
 - 2026-11-01 — Build moved under Eric's `/daddy` process (session `~/.agent-sessions/daddy/dj-queue-2026-11-01/`).
