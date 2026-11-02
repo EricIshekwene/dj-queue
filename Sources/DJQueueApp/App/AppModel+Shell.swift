@@ -15,7 +15,7 @@ struct AttentionItem: Identifiable {
 
 /// Shell state: attention cards, sidebar counts, engine line, health dot.
 extension AppModel {
-  /// Cards shown on every screen (ScreenScaffold), loudest first.
+  /// Cards shown under a screen's toolbar (ScreenScaffold), loudest first. "paused" is shown on Posts only.
   var attentionItems: [AttentionItem] {
     var out: [AttentionItem] = []
     if let e = loadError {
@@ -91,10 +91,16 @@ extension AppModel {
     return .success
   }
 
-  /// Sidebar footer engine line: tone + text ("Running · next 7:00 PM TikTok", "Paused", "Engine stopped").
+  /// Sidebar footer engine line: tone + text ("Running · next 7:00 PM TikTok", "Posting paused",
+  /// "Running · TikTok paused", "Engine stopped").
   var engineLine: (tone: DSTone, text: String) {
     if !engineRunning { return (.danger, loaded ? "Engine stopped" : "Starting…") }
-    if settings.paused { return (.warning, "Paused") }
+    if settings.paused { return (.warning, "Posting paused") }
+    let pausedOnes = settings.activePlatforms.filter { settings.pausedPlatforms.contains($0) }
+    if !pausedOnes.isEmpty {
+      let names = pausedOnes.count <= 2 ? pausedOnes.map(\.displayName).joined(separator: ", ") : "\(pausedOnes.count) platforms"
+      return (.warning, "Running · \(names) paused")
+    }
     guard let p = nextPost else { return (.success, "Running") }
     let day = dm.key(p.scheduledAt) == todayKey ? "" : Fmt.day(p.scheduledAt, tz: tz, style: "EEE") + " "
     return (.success, "Running · next \(day)\(Self.clockText(p.scheduledAt, tz: tz)) \(p.platform.displayName)")

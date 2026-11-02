@@ -55,10 +55,11 @@ extension AppModel {
   /// Asks for preview proxies of the clips now on screen (most important first). Cached proxies land in
   /// `proxyURLs` at once; missing ones are generated in the background by `proxies` (visible first) and land when
   /// done. Snapshot mode only looks up cached files and never generates. Cheap to call repeatedly.
-  func requestProxies(_ visibleIds: [String]) {
+  func requestProxies(_ visibleIds: [String], prefetch: [String] = []) {
     let range = playback.loop
-    let eligible = visibleIds.filter { id in videoById[id].map { $0.type == .short && !$0.missing } ?? false }
-    let wanted = eligible.filter { proxyURLs[$0] == nil }
+    func eligible(_ ids: [String]) -> [String] { ids.filter { id in videoById[id].map { $0.type == .short && !$0.missing } ?? false } }
+    let now = eligible(visibleIds), later = eligible(prefetch).filter { !now.contains($0) }
+    let wanted = (now + later).filter { proxyURLs[$0] == nil }
     if frozen {
       for id in wanted { if let u = proxies.cachedProxy(videoId: id, range: range) { proxyURLs[id] = u } }
       return
@@ -66,11 +67,12 @@ extension AppModel {
     let fresh = wanted.filter { !proxyPending.contains($0) }
     proxyPending.formUnion(fresh)
     let svc = proxies
-    let all = eligible
+    let all = now + later
+    let background = Set(later)
     Task.detached(priority: .utility) {
       svc.setVisible(all, range: range)
       for id in fresh {
-        svc.request(id, priority: .visible, range: range) { result in
+        svc.request(id, priority: background.contains(id) ? .background : .visible, range: range) { result in
           Task { @MainActor in
             self.proxyPending.remove(id)
             if case .success(let url) = result, self.playback.loop == range { self.proxyURLs[id] = url }
@@ -79,4 +81,5 @@ extension AppModel {
       }
     }
   }
+
 }

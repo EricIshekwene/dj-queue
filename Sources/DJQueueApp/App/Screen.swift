@@ -59,15 +59,3 @@ struct EditorRequest: Equatable {
   var fixPostId: String?
 }
 
-/// Autoplay preferences (decision #12), persisted in UserDefaults `djq.playback`. Settings → Playback & autoplay
-/// edits them through `AppModel.setPlayback`.
-struct PlaybackPrefs: Codable, Equatable, Sendable {
-  /// Muted autoplay of visible clips from their 540×960 proxies.
-  var autoplay = true
-  /// Unmute the clip under the pointer (never auto-unmutes otherwise).
-  var unmuteOnHover = false
-  /// Only the hovered / keyboard-focused clip plays (instead of every visible clip, ≤ 4 players).
-  var focusOnly = false
-  /// What the proxies loop: the resolved trim (what will post) or the whole clip file.
-  var loop: ProxyRange = .trim
-}

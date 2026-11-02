@@ -149,7 +149,8 @@ struct ReuploadMenu: View {
 
   var body: some View {
     let versions = max(1, model.versionCounts[post.videoId] ?? 1)
-    DSXMenuLabelButton(title: "Re-upload anyway", variant: .ghost, size: .sm, tooltip: "Upload again despite the copyright claim") {
+    let held = model.heldReason(post.videoId)
+    DSXMenuLabelButton(title: "Re-upload anyway", variant: .ghost, size: .sm, tooltip: held ?? "Upload again despite the copyright claim") {
       Button("Same version (v\(post.versionNo))") { model.reupload(post, version: post.versionNo) }
       ForEach(Array(stride(from: post.versionNo + 1, through: versions, by: 1)), id: \.self) { n in
         Button("v\(n)") { model.reupload(post, version: n) }
@@ -157,6 +158,7 @@ struct ReuploadMenu: View {
       Divider()
       Button("New version (v\(versions + 1))…") { model.reupload(post, version: nil, newVersion: true) }
     }
+    .disabled(held != nil)
   }
 }
 

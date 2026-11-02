@@ -4,6 +4,8 @@ import Foundation
 public struct ValidationIssue: Sendable, Hashable, Identifiable, Codable {
   public enum Kind: String, Sendable, Codable {
     case noCrop, noText, noCaption, tooLong, tooLarge, missingFile, noTitle, captionTooLong, titleTooLong, corrupt
+    /// Sent back to Edit from the Queue (`Video.heldInEdit`); "Send to queue" clears it.
+    case heldInEdit
   }
   public var kind: Kind
   public var platform: Platform?
@@ -31,6 +33,9 @@ public enum Validation {
     var out: [ValidationIssue] = []
     if v.missing { out.append(.init(kind: .missingFile, platform: nil, message: "File missing")) }
     guard v.type == .short else { return out }
+    if try store.isHeld(v) {
+      out.append(.init(kind: .heldInEdit, platform: nil, message: "Sent back from Queue — Send to queue when it's ready"))
+    }
     let settings = try store.settings()
     // Unreadable edit/version rows make the video not ready (reported here and by the Doctor);
     // they must not abort intake or the engine tick.

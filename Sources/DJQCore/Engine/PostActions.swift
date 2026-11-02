@@ -68,12 +68,21 @@ public final class PostActions: @unchecked Sendable {
     try store.refreshState(videoId: p.videoId)
   }
 
+  /// A clip sent back to Edit ("Remove from queue") never posts: every action that would make one of its posts
+  /// live again (fix/retry, re-upload, post now, shift plan, reset, repost) is refused with this reason.
+  public static let heldReason = "Sent back to Edit — send it to the queue first"
+
+  func ensureNotHeld(_ videoId: String) throws {
+    if try store.video(id: videoId)?.heldInEdit == true { throw EngineError(Self.heldReason) }
+  }
+
   /// Copyright is never retried automatically. Re-upload → new attempt next day; skip → skipped; accept → recorded.
   public func resolveCopyright(postId: String, _ r: CopyrightResolution) throws {
     var p = try post(postId)
     guard p.state.isCopyright else { throw EngineError("This post has no copyright problem") }
     switch r {
     case .reuploadAnyway(let versionNo):
+      try ensureNotHeld(p.videoId)
       let v = versionNo ?? p.versionNo
       if try store.resolvedVersion(videoId: p.videoId, number: v) == nil { throw EngineError("Add v\(v) first") }
       let n = try newAttempt(from: p, kind: .retry, versionNo: v, note: "re-upload after \(p.state.rawValue)")
@@ -95,6 +104,7 @@ public final class PostActions: @unchecked Sendable {
   @discardableResult
   public func fixed(postId: String) throws -> PlatformPost {
     var p = try post(postId)
+    try ensureNotHeld(p.videoId)
     guard !p.state.isCopyright else {
       throw EngineError("Copyright problems are never retried automatically — choose Re-upload anyway, Skip platform or Accept")
     }
@@ -110,6 +120,7 @@ public final class PostActions: @unchecked Sendable {
   /// Back to planned with the error/URL cleared (the engine makes it due again at its time).
   public func reset(postId: String) throws {
     var p = try post(postId)
+    try ensureNotHeld(p.videoId)
     p.state = p.renderId == nil ? .planned : .rendered
     p.url = nil
     p.postedAt = nil
@@ -138,6 +149,7 @@ public final class PostActions: @unchecked Sendable {
     let dm = DayMath(settings: settings)
     var p = try post(postId)
     guard !p.state.isTerminal else { throw EngineError("Already \(p.state.displayName)") }
+    try ensureNotHeld(p.videoId)
     let today = store.today(dm)
     try store.db.transaction {
       if p.kind == .regular {
@@ -160,6 +172,7 @@ public final class PostActions: @unchecked Sendable {
     let dm = DayMath(settings: settings)
     var p = try post(postId)
     guard !p.state.isTerminal else { throw EngineError("Already \(p.state.displayName)") }
+    try ensureNotHeld(p.videoId)
     let position = try store.position(of: p)
     var day = store.today(dm)
     try store.db.transaction {
@@ -208,6 +221,7 @@ public final class PostActions: @unchecked Sendable {
     let dm = DayMath(settings: settings)
     guard let v = try store.video(id: videoId) else { throw EngineError("No video \(videoId)") }
     guard v.type == .short else { throw EngineError("Long-form is never reposted") }
+    if v.heldInEdit { throw EngineError(Self.heldReason) }
     let prior = try store.posts(where: "video_id=? AND platform=?", [videoId, platform.rawValue])
     guard let last = prior.max(by: { ($0.postedAt ?? $0.scheduledAt) < ($1.postedAt ?? $1.scheduledAt) }) else {
       throw EngineError("\(v.tag) hasn't been on \(platform.displayName) yet — plan it instead")

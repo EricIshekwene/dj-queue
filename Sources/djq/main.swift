@@ -28,9 +28,12 @@ usage: djq <command> [args]
        | score-adjust <±n> | kind <k> | exclude | include | caption-template <id|default> | hashtags <a,b|default>
        | extra-hashtags "<#a #b>"|default | drop-hashtags <P> | skip-platform <P> | unskip-platform <P>
        | accept-title | title-raw-tag | title "<t>"|--clear | add-to-week <YYYY-MM-DD> | pin-consecutive <YYYY-MM-DD>
-       | post-today | re-render
+       | post-today | re-render | unqueue | requeue
   bulk undo <batch> [--force] | bulk batches [--json]
   agent-prompt titles [--ids a,b | --needs-title] [--out FILE]
+  stage <video…> [back|forward] [--dry-run] [--json]   a clip's stage (Score→Edit→Queue→Scheduled→Posted), or move it one stage
+  unqueue <video…> [--dry-run] [--json]   remove from queue: back to Edit; its unposted slots/posts are removed
+  requeue <video…> [--dry-run] [--json]   send to queue again (ready if its edit is valid, else stays in Edit)
   pin <video> <YYYY-MM-DD> | post-today <video> | skip-next <video> | push <YYYY-MM-DD> <days>
   remove-slot <slot> | swap <slot> <slot> | move <slot> <YYYY-MM-DD>
   posted <post> <url>                 mark posted (URL host must match the platform)
@@ -186,9 +189,11 @@ func run() throws -> Int32 {
   let writes: Set<String> = ["week", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem",
                              "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted",
                              "score", "exclude", "include", "pause", "resume", "intake", "tick", "render",
-                             "title", "suggest", "text", "caption", "kind", "bulk"]
+                             "title", "suggest", "text", "caption", "kind", "bulk", "unqueue", "requeue", "stage"]
   var wrote = writes.contains(cmd) && (cmd != "week" || args.contains { $0.hasPrefix("--") && $0 != "--json" })
     && !(cmd == "bulk" && (args.contains("--dry-run") || args.first == "batches"))
+    && !((cmd == "unqueue" || cmd == "requeue" || cmd == "stage") && args.contains("--dry-run"))
+    && !(cmd == "stage" && !args.contains("back") && !args.contains("forward"))
   defer { if wrote { ChangeSignal.post() } }
 
   switch cmd {
@@ -362,6 +367,52 @@ func run() throws -> Int32 {
       print("wrote \(out) (\(ids.count) clip(s))")
     } else {
       print(md)
+    }
+
+  case "stage":
+    let json = flag("--json"), dry = flag("--dry-run")
+    var dir: StageDirection?
+    if let last = args.last, let d = StageDirection(rawValue: last) { dir = d; args.removeLast() }
+    guard !args.isEmpty else { throw CLIError("stage <video…> [back|forward] [--dry-run] [--json]") }
+    let ids = try args.flatMap { $0.split(separator: ",") }.map { try resolveVideo(store, String($0).trimmingCharacters(in: .whitespaces)).id }
+    let bulk = BulkActions(store: store)
+    guard let dir else {
+      struct StageOut: Encodable { var id: String; var display_name: String; var stage: String?; var back: String?; var forward: String? }
+      let rows = try ids.compactMap { try store.video(id: $0) }.map { v -> StageOut in
+        let st = ClipStage.of(v)
+        return StageOut(id: v.id, display_name: v.displayName, stage: st?.rawValue,
+                        back: try bulk.blocker(v, .back) ?? st?.previous.map { "→ \($0.displayName)" },
+                        forward: try bulk.blocker(v, .forward) ?? st?.next.map { "→ \($0.displayName)" })
+      }
+      if json { try printJSON(rows); return 0 }
+      for o in rows {
+        print("  \(short(o.id))  \(pad(o.display_name, 30)) \(pad(o.stage.flatMap(ClipStage.init(rawValue:))?.displayName ?? "—", 10))  back: \(o.back ?? "—")  ·  forward: \(o.forward ?? "—")")
+      }
+      return 0
+    }
+    let r = dir == .back ? try bulk.back(ids, dryRun: dry) : try bulk.forward(ids, dryRun: dry)
+    wrote = !dry && !r.changed.isEmpty
+    if json { try printJSON(r); return 0 }
+    printBulk(r)
+    for (id, m) in (r.moves ?? [:]).sorted(by: { $0.key < $1.key }) {
+      print("  \(short(id))  \(tagOf(store, id)): \(m.from.displayName) → \(m.to.displayName) · \(m.note)")
+    }
+
+  case "unqueue", "requeue":
+    let json = flag("--json"), dry = flag("--dry-run")
+    guard !args.isEmpty else { throw CLIError("\(cmd) <video…> [--dry-run] [--json]") }
+    let ids = try args.flatMap { $0.split(separator: ",") }.map { try resolveVideo(store, String($0).trimmingCharacters(in: .whitespaces)).id }
+    let bulk = BulkActions(store: store)
+    let r = cmd == "unqueue" ? try bulk.removeFromQueue(ids, dryRun: dry) : try bulk.sendToQueue(ids, dryRun: dry)
+    wrote = !dry && !r.changed.isEmpty
+    if json { try printJSON(r); return 0 }
+    printBulk(r)
+    for (id, items) in (r.unplanned ?? [:]).sorted(by: { $0.key < $1.key }) {
+      let days = items.map { i in
+        fmt(dm.date(i.date), settings, "EEE d MMM") + (i.platforms.isEmpty ? " · proposed" : " · \(i.platforms.count) platform\(i.platforms.count == 1 ? "" : "s")")
+          + (i.pinned ? " · pinned" : "")
+      }
+      print("  \(short(id))  \(tagOf(store, id)): \(r.dryRun ? "would remove" : "removed") \(days.joined(separator: ", "))")
     }
 
   case "pin":
@@ -645,6 +696,8 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   case "pin-consecutive": r = try bulk.pinConsecutive(ids, from: try dateArg(0), dryRun: dry)
   case "post-today": r = try bulk.postToday(ids, dryRun: dry)
   case "re-render": r = try bulk.reRender(ids, dryRun: dry)
+  case "unqueue": r = try bulk.removeFromQueue(ids, dryRun: dry)
+  case "requeue": r = try bulk.sendToQueue(ids, dryRun: dry)
   default: throw CLIError("unknown bulk action \(action)\n\n\(usage)")
   }
   wrote = !dry && !r.changed.isEmpty

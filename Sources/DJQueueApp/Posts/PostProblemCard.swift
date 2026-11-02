@@ -12,19 +12,26 @@ struct PostFixes {
 
   static func canRetry(_ p: PlatformPost) -> Bool { p.state == .failed && p.resolution == nil }
 
+  /// Sent back to Edit: nothing of the clip may post until it's sent to the queue again.
+  var heldReason: String? { model.heldReason(post.videoId) }
+
   var fixReason: String? {
+    if let h = heldReason, Self.canRetry(post) { return h }
     if Self.canRetry(post) { return nil }
     if post.state.isCopyright { return "Copyright can't be fixed by editing — re-upload anyway, skip the platform or accept" }
     if post.state == .overdue { return "Nothing to fix — the slot was missed. Use Post now or Shift plan (⋯)" }
     return post.resolution.map { "Already handled (\($0))" } ?? "Only failed posts can be fixed"
   }
 
-  var reuploadReason: String? { copyrightOpen ? nil : post.state.isCopyright ? "Already handled" : "Only for copyright problems" }
+  var reuploadReason: String? {
+    copyrightOpen ? heldReason : post.state.isCopyright ? "Already handled" : "Only for copyright problems"
+  }
   var acceptReason: String? { copyrightOpen ? nil : post.state.isCopyright ? "Already handled" : "Only for copyright problems" }
   var skipReason: String? { model.canSkip(post) ? nil : "Already \(post.state.displayName.lowercased())" }
 
   var resetReason: String? {
     if model.canReset(post) { return nil }
+    if let h = heldReason { return h }
     if post.scheduledAt <= model.now { return "Its time has passed — a reset would make it miss again" }
     return "Already planned"
   }
@@ -38,6 +45,8 @@ struct PostProblemCard: View {
   @Bindable var model: AppModel
   let post: PlatformPost
   var isPrimary = false
+  /// Inside a Posts group card (which already shows the clip): no clip name, tighter padding.
+  var embedded = false
   @State private var showRaw = false
 
   var body: some View {
@@ -50,14 +59,18 @@ struct PostProblemCard: View {
         VStack(alignment: .leading, spacing: 4) {
           HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(post.platform.displayName).font(DS.type.headline).foregroundStyle(DS.color.text)
-            Text(v.map(model.displayName) ?? post.videoId).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+            if !embedded {
+              Text(v.map(model.displayName) ?? post.videoId).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+            }
             Spacer(minLength: DS.space.xs)
             Text(Fmt.relative(post.updatedAt, now: model.now)).font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
               .dsTooltip(Fmt.day(post.updatedAt, tz: model.tz, style: "EEE d MMM, h:mm a"))
           }
           HStack(spacing: 6) {
             DSBadge(PostText.problemType(post), style: .soft(tone), icon: post.state.isCopyright ? "c.circle" : nil)
-            Text("v\(post.versionNo) · \(PostText.attempt(post))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+            if post.versionNo != 1 || post.attemptNo != 1 || post.kind != .regular {
+              Text("v\(post.versionNo) · \(PostText.attempt(post))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+            }
           }
           Text(message).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(3)
             .fixedSize(horizontal: false, vertical: true).padding(.top, 2)
@@ -88,9 +101,9 @@ struct PostProblemCard: View {
       HStack(spacing: DS.space.xs) {
         if post.state == .overdue {
           // A missed slot has nothing to edit: its two real fixes take the first places.
-          DSButton("Post now", icon: "bolt", variant: .outline, size: .sm,
+          DSButton("Post now", icon: "bolt", variant: .outline, size: .sm, disabledReason: fixes.heldReason,
                    tooltip: "Make it due now on today's \(post.platform.displayName) slot") { model.postNow(post) }
-          DSButton("Shift plan", icon: "calendar.badge.clock", variant: .ghost, size: .sm,
+          DSButton("Shift plan", icon: "calendar.badge.clock", variant: .ghost, size: .sm, disabledReason: fixes.heldReason,
                    tooltip: "Move it to the next free \(post.platform.displayName) slot") { model.shiftPlan(post) }
         } else {
           DSButton("Fix in editor", icon: "slider.horizontal.below.rectangle", variant: isPrimary ? .primary : .outline, size: .sm,
@@ -110,11 +123,11 @@ struct PostProblemCard: View {
       }
       .padding(.leading, 44)
     }
-    .padding(DS.space.md)
-    .background(DS.color.tint(tone), in: RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous))
+    .padding(embedded ? DS.space.sm : DS.space.md)
+    .background(DS.color.tint(tone), in: RoundedRectangle(cornerRadius: embedded ? DS.radius.md : DS.radius.lg, style: .continuous))
     .overlay {
       if model.postsSelection == post.id {
-        RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous).strokeBorder(DS.color.text, lineWidth: 2)
+        RoundedRectangle(cornerRadius: embedded ? DS.radius.md : DS.radius.lg, style: .continuous).strokeBorder(DS.color.text, lineWidth: 2)
       }
     }
   }
@@ -163,6 +176,8 @@ struct PostMoreMenu: View {
     Menu {
       if PostFixes.canRetry(post) {
         Button("Try again on the next slot", systemImage: "arrow.clockwise") { model.fixed(post.id) }
+          .disabled(model.heldReason(post.videoId) != nil)
+          .help(model.heldReason(post.videoId) ?? "A new attempt on the platform's next slot")
       }
       if !post.state.isTerminal { Button("Mark posted…", systemImage: "checkmark.circle") { model.markPostedTarget = post } }
       if !post.state.isTerminal || post.state == .posted {
