@@ -156,7 +156,7 @@ enum DSTooltipProbe {
   // MARK: Helpers
 
   /// The real model on a throwaway copy of the dev DB (never the source DB), seeded like SnapshotRunner.
-  private static func makeModel() throws -> AppModel {
+  static func makeModel() throws -> AppModel {
     let src = Paths.standard
     let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("djq-tooltip-probe-\(UUID().uuidString)")
     let paths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("support"), logs: tmp.appendingPathComponent("logs"),
@@ -231,16 +231,23 @@ enum DSTooltipProbe {
   }()
 
   private static func capture(_ w: NSWindow, panel: NSWindow?) -> Data? {
-    var ids: [UnsafeRawPointer?] = [panel, w].compactMap { $0 }.map { UnsafeRawPointer(bitPattern: UInt($0.windowNumber)) }
-    guard let fromArray, let arr = CFArrayCreate(nil, &ids, ids.count, nil) else { return WindowCapture.png(w) }
-    // Frame the window plus a margin so a bubble that leaves the window would still show.
-    let primaryH = NSScreen.screens.first?.frame.height ?? 0
-    var r = w.frame.insetBy(dx: -24, dy: -24)
-    if let p = panel?.frame, panel?.isVisible == true { r = r.union(p.insetBy(dx: -8, dy: -8)) }
-    let cg = CGRect(x: r.minX, y: primaryH - r.maxY, width: r.width, height: r.height)
-    guard let img = fromArray(cg, arr, 1 << 4)?.takeRetainedValue(), img.width > 10 else { return WindowCapture.png(w) }
+    guard let img = captureImage(w, panel: panel) else { return WindowCapture.png(w) }
     return NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])
   }
+
+  /// The window server's image of `w` (plus `panel` when visible), framed by the window: own windows need no
+  /// Screen Recording permission.
+  static func captureImage(_ w: NSWindow, panel: NSWindow?) -> CGImage? {
+    let wins = [panel?.isVisible == true ? panel : nil, w].compactMap { $0 }
+    var ids: [UnsafeRawPointer?] = wins.map { UnsafeRawPointer(bitPattern: UInt($0.windowNumber)) }
+    guard let fromArray, let arr = CFArrayCreate(nil, &ids, ids.count, nil) else { return nil }
+    let primaryH = NSScreen.screens.first?.frame.height ?? 0
+    let r = w.frame
+    let cg = CGRect(x: r.minX, y: primaryH - r.maxY, width: r.width, height: r.height)
+    guard let img = fromArray(cg, arr, 1 << 4)?.takeRetainedValue(), img.width > 10 else { return nil }
+    return img
+  }
+
 }
 
 private extension JSONEncoder {

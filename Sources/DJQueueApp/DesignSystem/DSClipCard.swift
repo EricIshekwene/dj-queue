@@ -108,7 +108,7 @@ struct DSClipCard<Actions: View>: View {
     self.actions = actions()
   }
 
-  private var hot: Bool { forced == .hover || forced == .pressed || hovering }
+  private var hot: Bool { forced == .hover || forced == .pressed || hovering || DSClipCardDebug.hoverIds.contains(clip.id) }
   private var showCheck: Bool { onToggleSelect != nil && mode != .single && (config.selectionMode || isSelected || hot) }
   private var autoplay: Bool { config.autoplay && !clip.isMissing }
 
@@ -454,4 +454,10 @@ struct DSIconWithTitleTooltip: LabelStyle {
       .contentShape(Circle())
       .dsTooltip(view: configuration.title)
   }
+}
+
+/// Evidence runs only (DSTooltipProbe): clip ids drawn in their hover state, so a real window shows a tile's
+/// hover controls without a pointer.
+enum DSClipCardDebug {
+  nonisolated(unsafe) static var hoverIds: Set<String> = []
 }

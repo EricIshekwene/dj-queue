@@ -495,4 +495,7 @@ final class DSTooltipController {
   }
 
   func debugHandle(_ e: NSEvent) { handle(e) }
+
+  /// Shows `a`'s tooltip now, ignoring hover (evidence captures).
+  func debugShow(_ a: DSTooltipAnchorView) { present(a, animated: false) }
 }
