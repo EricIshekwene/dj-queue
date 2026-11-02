@@ -105,11 +105,10 @@ struct EditorCanvas: View {
   var body: some View {
     VStack(spacing: DS.space.sm) {
       DSSegmented(selection: $model.canvasMode, segments: [
-        DSSegment(value: EditorCanvasMode.frame, title: "Frame", icon: "crop"),
-        DSSegment(value: .zones, title: "Zones", icon: "rectangle.dashed"),
-        DSSegment(value: .preview, title: "Preview", icon: "iphone"),
+        DSSegment(value: EditorCanvasMode.frame, title: "Frame", icon: "crop", tooltip: "Crop the 9:16 frame on the 4K source"),
+        DSSegment(value: .zones, title: "Zones", icon: "rectangle.dashed", tooltip: "Check text against each platform's UI zones"),
+        DSSegment(value: .preview, title: "Preview", icon: "iphone", tooltip: "See it in a phone mock with the real caption"),
       ], size: .sm)
-      .dsTooltip("Switch view: crop, safe zones or phone preview")
       .padding(.top, DS.space.sm)
 
       Group {

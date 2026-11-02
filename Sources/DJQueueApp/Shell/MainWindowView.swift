@@ -150,7 +150,9 @@ struct ShortcutButtons: View {
       }
       Button("") { model.showPalette.toggle() }.keyboardShortcut("k", modifiers: .command)
       Button("") { model.showShortcuts.toggle() }.keyboardShortcut("/", modifiers: .command)
-      Button("") { if let v = model.focusedVideo { model.openEditor(v.id, in: model.selectedVideoIds) } }
+      Button("") {
+        if let v = model.focusedVideo { model.openEditor(v.id, in: model.selectedVideoIds) } else { model.show("Select one clip to open it in the editor") }
+      }
         .keyboardShortcut("e", modifiers: .command)
       Button("") { model.refresh() }.keyboardShortcut("r", modifiers: .command)
       Button("") {
@@ -203,7 +205,8 @@ struct ShortcutSheet: View {
                     ("⌘Z", "Undo the most recent change (again for the one before)")]),
     ("Selecting clips", [("Click circle", "Select a clip"), ("⇧ Click", "Select a range"), ("⌘ Click", "Add or remove one"),
                          ("⌘A", "Select every clip on the screen"), ("Esc", "Clear the selection")]),
-    ("Clips", [("⌘E", "Open the selected clip in the editor"), ("← / →", "Previous / next clip (Single view)")]),
+    ("Clips", [("⌘E", "Open the selected clip in the editor"), ("← / →", "Previous / next clip (Single view)"),
+               ("0–9", "Type a score for the selected clips (Queue, Library)"), ("⌘⌫", "Exclude the clip (Score)")]),
     ("Week", [("⌘↩", "Approve week"), ("Drag", "Move or swap days")]),
     ("Editor", [("⌘Z / ⇧⌘Z", "Undo / redo the last change to this clip"), ("⌘[ / ⌘]", "Previous / next clip"), ("⌘↩", "Done")]),
   ]
