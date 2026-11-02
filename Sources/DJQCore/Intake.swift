@@ -249,12 +249,17 @@ public final class Intake: @unchecked Sendable {
     } else if old != v {
       try store.saveIdentity(v)  // app-owned fields (score, kind, notes, excluded, title…) are never written by intake
     }
-    // Metadata: the manifest title only seeds an empty app title (never overwrites Eric's); suggestions sync.
-    if let t = e.title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty,
-       (try store.video(id: v.id))?.titleText == nil {
-      try store.setTitle(v.id, t, source: "manifest")
+    // Metadata: the manifest title only seeds a title that was never set (a title Eric set or cleared is never
+    // touched); otherwise a different manifest title is offered as a suggestion. Suggestions sync.
+    var suggestions = e.titleSuggestions ?? []
+    if let t = e.title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty, let cur = try store.video(id: v.id) {
+      if cur.titleText == nil && cur.titleSource != Store.clearedTitleSource {
+        try store.setTitle(v.id, t, source: "manifest")
+      } else if cur.titleText != t, !suggestions.contains(where: { $0.text.trimmingCharacters(in: .whitespaces) == t }) {
+        suggestions.append(SuggestionInput(text: t, source: "videos.json title"))
+      }
     }
-    try store.syncManifestSuggestions(videoId: v.id, e.titleSuggestions ?? [])
+    try store.syncManifestSuggestions(videoId: v.id, suggestions)
     try store.refreshState(videoId: v.id)
   }
 

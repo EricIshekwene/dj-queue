@@ -83,6 +83,9 @@ public final class Store: @unchecked Sendable {
       try seedDefaults()
     }
     if v < 2 { try migrateToV2(from: v) }
+    // Idempotent additions to v2 (dev databases created before they existed).
+    let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
+    if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
   }
 
   /// Round 2: titles + suggestions, batch journal, cached source size, override-only edits.
@@ -112,7 +115,7 @@ public final class Store: @unchecked Sendable {
         CREATE INDEX IF NOT EXISTS suggestions_video ON title_suggestions(video_id);
         CREATE TABLE IF NOT EXISTS batches(id TEXT PRIMARY KEY, action TEXT NOT NULL, params TEXT, video_ids TEXT NOT NULL,
           before TEXT NOT NULL, after TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL,
-          undone_at REAL);
+          undone_at REAL, restored TEXT NOT NULL DEFAULT '[]');
         """)
       for r in try db.query("SELECT video_id, json FROM edits") {
         guard let id = r.string("video_id"), let s = r.string("json"),

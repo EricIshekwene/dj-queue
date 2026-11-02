@@ -86,12 +86,18 @@ public enum SuggestionImport {
 extension Store {
   // MARK: Titles
 
-  /// Sets (or clears with nil/empty) Eric's title. `source`: "app" (default), "agent", "suggestion".
+  /// `title_source` of a title Eric (or an agent) cleared: intake's manifest `title` never re-seeds it.
+  public static let clearedTitleSource = "cleared"
+
+  /// Sets Eric's title, or clears it with nil/empty. `source`: "app" (default), "agent", "suggestion".
+  /// Clearing leaves a tombstone (`title_source = "cleared"`) so a videos.json `title` doesn't bring it back;
+  /// a manifest title then only appears as a suggestion.
   public func setTitle(_ videoId: String, _ title: String?, tracks: [Track]? = nil, source: String = "app") throws {
     let t = title?.trimmingCharacters(in: .whitespacesAndNewlines)
     let value = (t?.isEmpty ?? true) ? nil : t
     try db.run("UPDATE videos SET title=?, title_tracks=?, title_source=?, updated_at=? WHERE id=?",
-               [value, value == nil ? nil : tracks.map { JSONCoding.string($0) }, value == nil ? nil : source, now, videoId])
+               [value, value == nil ? nil : tracks.map { JSONCoding.string($0) },
+                value == nil ? Self.clearedTitleSource : source, now, videoId])
     try logEvent("title", value.map { "Title \"\($0)\" (\(source))" } ?? "Title cleared", videoId: videoId)
     try refreshState(videoId: videoId)
   }
@@ -124,12 +130,23 @@ extension Store {
   }
 
   /// Replaces the manifest-origin suggestions of a clip with videos.json's current list (agent ones stay).
-  func syncManifestSuggestions(videoId: String, _ list: [SuggestionInput]) throws {
+  func syncManifestSuggestions(videoId: String, _ raw: [SuggestionInput]) throws {
+    // Compare against what would actually be stored (non-empty text, one per text+source, last wins like the upsert).
+    var seen = Set<String>()
+    let list = raw.reversed().compactMap { s -> SuggestionInput? in
+      var s = s
+      s.text = s.text.trimmingCharacters(in: .whitespacesAndNewlines)
+      s.source = s.source ?? ""
+      guard !s.text.isEmpty, seen.insert("\(s.text)|\(s.source!)").inserted else { return nil }
+      return s
+    }.reversed().map { $0 }
     let current = try titleSuggestions(videoId: videoId).filter { $0.origin == "manifest" }
-    let same = current.count == list.count && Set(current.map { "\($0.text)|\($0.source)" })
-      == Set(list.map { "\($0.text.trimmingCharacters(in: .whitespacesAndNewlines))|\($0.source ?? "")" })
-      && zip(current.sorted { $0.text < $1.text }, list.sorted { $0.text < $1.text })
-      .allSatisfy { $0.confidence == $1.confidence && $0.tracks == $1.tracks }
+    func key(_ text: String, _ source: String, _ c: Double?, _ t: [Track]) -> String {
+      "\(text)|\(source)|\(c.map { String($0) } ?? "-")|\(JSONCoding.string(t))"
+    }
+    let same = current.count == list.count
+      && Set(current.map { key($0.text, $0.source, $0.confidence, $0.tracks) })
+      == Set(list.map { key($0.text, $0.source ?? "", $0.confidence, $0.tracks) })
     if same { return }
     try db.run("DELETE FROM title_suggestions WHERE video_id=? AND origin='manifest'", [videoId])
     try addSuggestions(videoId: videoId, list, origin: "manifest")

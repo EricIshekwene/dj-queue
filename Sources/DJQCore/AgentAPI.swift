@@ -99,7 +99,7 @@ public enum AgentAPI {
     let sugg = try store.titleSuggestions(videoId: v.id)
     let s = try sessions?[v.sessionId] ?? store.session(id: v.sessionId)
     return VideoSummary(
-      id: v.id, display_name: v.displayName, title: v.titleText, title_source: v.titleText == nil ? nil : v.titleSource,
+      id: v.id, display_name: v.displayName, title: v.titleText, title_source: v.titleSource,
       raw_tag: v.tag, name: v.name, session: s?.name ?? "", type: v.type.rawValue, kind: v.kind.rawValue,
       state: v.state.rawValue, score: v.score, excluded: v.excluded, missing: v.missing, part: v.part, duration: v.duration,
       marked_start: v.markedStart, marked_end: v.markedEnd, audio: v.audio, file: (try? store.fileURL(for: v))??.path,

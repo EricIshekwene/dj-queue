@@ -64,37 +64,94 @@ import Testing
     #expect(order.value.count == 4 && svc.pendingCount == 0)
   }
 
-  @Test func engineMakesProxiesOnlyWhenIdle() throws {
+  @Test func engineTickOnlyEnqueuesProxies() throws {
     let f = try Fixture.engine(5, ready: 2)
-    let made = Locked<[String]>([])
     let e = Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier())
-    #expect(e.proxyMaker == nil)  // off without the real renderer
-    #expect(e.tick(reason: "t").steps["proxies"] == "off")
-    e.proxyMaker = { _, v in
+    #expect(e.proxyService == nil && e.tick(reason: "t").steps["proxies"] == "off")  // off without the real renderer
+    let ps = ProxyService(store: f.store)
+    let made = Locked<[String]>([])
+    let gate = DispatchSemaphore(value: 0)
+    ps.make = { _, v, _ in
+      gate.wait()  // a "hung" encode must not hold up the tick
       made.mutate { $0.append(v.id) }
       if v.id == "clip-2" { throw MediaError("boom") }
-      let u = try Media.proxyURL(store: f.store, video: v)
-      try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try Data("p".utf8).write(to: u)
-      return u
+      return URL(fileURLWithPath: "/tmp/\(v.id).mp4")
     }
+    e.proxyService = ps
+    let t0 = Date()
     let r = e.tick(reason: "t")
-    #expect(r.steps["proxies"]?.hasPrefix("made") == true)
-    #expect(made.value == ["clip-2", "clip-3"])  // unscored first, 2 per tick
-    #expect(r.errors.isEmpty)
+    #expect(Date().timeIntervalSince(t0) < 5)
+    #expect(r.steps["proxies"]?.hasPrefix("queued 5") == true && r.errors.isEmpty)
+    for _ in 0..<5 { gate.signal() }
+    let deadline = Date().addingTimeInterval(5)
+    while ps.pendingCount > 0, Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+    #expect(made.value.first == "clip-2" && made.value.count == 5)  // clips to score first
+    #expect(try f.store.kv("proxyFail.clip-2", as: String.self) != nil)
+    // Next tick: the failed clip isn't retried in the background (nothing here caches, so the others are retried).
+    for _ in 0..<10 { gate.signal() }
     e.tick(reason: "t")
-    #expect(made.value == ["clip-2", "clip-3", "clip-4", "clip-0"])  // clip-2's failure isn't retried
-    e.tick(reason: "t")
-    #expect(made.value.count == 5 && made.value.last == "clip-1")
-    #expect(e.tick(reason: "t").steps["proxies"] == "up to date")
+    let d2 = Date().addingTimeInterval(5)
+    while ps.pendingCount > 0, Date() < d2 { Thread.sleep(forTimeInterval: 0.02) }
+    #expect(made.value.filter { $0 == "clip-2" }.count == 1 && made.value.count == 9)
+    // A visible request always tries.
+    let done = DispatchSemaphore(value: 0)
+    ps.request("clip-2", priority: .visible) { _ in done.signal() }
+    #expect(done.wait(timeout: .now() + 5) == .success)
+    #expect(made.value.filter { $0 == "clip-2" }.count == 2)
+  }
+
+  @Test func backgroundProxiesPauseWhileRendering() throws {
+    let f = try Fixture.engine(2, ready: 0)
+    let ps = ProxyService(store: f.store)
+    let paused = Locked(true)
+    ps.shouldPause = { paused.value }
+    let made = Locked<[String]>([])
+    ps.make = { _, v, _ in made.mutate { $0.append(v.id) }; return URL(fileURLWithPath: "/tmp/x.mp4") }
+    ps.request("clip-0", priority: .background)
+    let vis = DispatchSemaphore(value: 0)
+    ps.request("clip-1", priority: .visible) { _ in vis.signal() }
+    #expect(vis.wait(timeout: .now() + 5) == .success)
+    Thread.sleep(forTimeInterval: 0.3)
+    #expect(made.value == ["clip-1"])
+    paused.mutate { $0 = false }
+    let d = Date().addingTimeInterval(5)
+    while ps.pendingCount > 0, Date() < d { Thread.sleep(forTimeInterval: 0.05) }
+    #expect(made.value == ["clip-1", "clip-0"])
+    ps.stop()
+  }
+
+  @Test func proxyLockMakesASecondProcessWaitAndReuse() throws {
+    let f = try Fixture()
+    try f.intake()
+    try f.store.setSourceSize("clip-0", width: 1920, height: 1080)
+    let v = try #require(try f.store.video(id: "clip-0"))
+    let url = try Media.proxyURL(store: f.store, video: v)
+    try FileManager.default.createDirectory(at: f.paths.proxies, withIntermediateDirectories: true)
+    // "Another process" holds the clip's proxy lock (flock is per open file, so a second open in this process blocks too).
+    let fd = open(f.paths.proxies.appendingPathComponent(".clip-0-trim.lock").path, O_CREAT | O_RDWR, 0o644)
+    #expect(flock(fd, LOCK_EX | LOCK_NB) == 0)
+    let got = Locked<URL?>(nil)
+    let store = f.store
+    let t = Thread { let u = try? Media.ensureProxy(store: store, video: v, timeout: 5); got.mutate { $0 = u } }
+    t.start()
+    Thread.sleep(forTimeInterval: 0.4)
+    #expect(got.value == nil)  // waiting, not encoding
+    try Data("proxy".utf8).write(to: url)  // the other process finishes…
+    flock(fd, LOCK_UN); close(fd)  // …and releases
+    let d = Date().addingTimeInterval(5)
+    while got.value == nil, Date() < d { Thread.sleep(forTimeInterval: 0.05) }
+    #expect(got.value == url)  // reused the finished file (the fake source could never have been encoded)
   }
 
   @Test func engineSkipsProxiesWhileRendersWait() throws {
     let f = try Fixture.engine(8)
     try Planner(store: f.store).approveWeek(f.week)
     let e = Engine(store: f.store, renderer: FakeRenderer(store: f.store), publisher: nil, notifier: LogNotifier())
-    e.proxyMaker = { _, _ in throw MediaError("should not run") }
+    let ps = ProxyService(store: f.store)
+    ps.make = { _, _, _ in throw MediaError("should not run") }
+    e.proxyService = ps
     #expect(e.tick(reason: "t").steps["proxies"] == "waiting for renders")
+    #expect(ps.pendingCount == 0)
   }
 }
 
