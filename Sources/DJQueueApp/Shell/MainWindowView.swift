@@ -97,24 +97,7 @@ struct ModalHost<Content: View>: View {
   }
 }
 
-/// Settings as an in-window modal (DESIGN-v2 §6.9): 760×560, r.lg, e3. The Settings leaf replaces the body with
-/// the ChatGPT-style rows; this host keeps the frame, the close button and `model.settingsSection`.
-struct SettingsModal: View {
-  @Bindable var model: AppModel
-
-  var body: some View {
-    SettingsView(model: model, initial: model.settingsSection)
-      .id(model.settingsSection)
-      .frame(width: 760, height: 560)
-      .background(DS.color.background)
-      .clipShape(RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous))
-      .overlay(alignment: .topTrailing) {
-        DSIconButton("xmark", tooltip: "Close settings", size: .sm, shortcut: "esc") { model.showSettings = false }
-          .padding(DS.space.sm)
-      }
-      .dsFloatingSurface(radius: DS.radius.lg, elevation: DS.elevation.e3)
-  }
-}
+// SettingsModal lives in Settings/SettingsModal.swift (Settings leaf).
 
 /// First run of the installed app (decision Q28): run in the background at login? Default Yes.
 struct LaunchAgentOffer: View {

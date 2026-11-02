@@ -114,7 +114,7 @@ final class AppModel {
   /// In-window Settings modal (DESIGN-v2 §6.9), opened by the sidebar row, ⌘, and `WindowManager.showSettings`.
   var showSettings = false
   /// Section the Settings modal shows (the Settings leaf owns the `SettingsSection` enum).
-  var settingsSection: SettingsSection = .platforms
+  var settingsSection: SettingsSection = .general
   /// Sidebar collapsed to icons by the user (it also collapses automatically under 1200 pt).
   var sidebarCollapsed = false
   var showShortcuts = false
