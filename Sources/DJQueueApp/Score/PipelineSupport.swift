@@ -3,7 +3,8 @@ import Observation
 import SwiftUI
 
 /// UI state the pipeline screens (Score, Edit, Queue) keep outside their views, so it survives view rebuilds and
-/// snapshot setups can drive it: typed grid scores, Score's optimistic "saved" set, the Edit filter.
+/// snapshot setups can drive it: typed grid scores and Score's optimistic "saved" set. (List search, chips,
+/// filters and sort are in `ListPrefs`.)
 @MainActor
 @Observable
 final class PipelineUIState {
@@ -12,8 +13,6 @@ final class PipelineUIState {
   var typedScores: [String: String] = [:]
   /// Score: clips saved/skipped-away in this session that the list may still contain until the refresh lands.
   var scoreHidden: Set<String> = []
-  /// Edit: the active filter chip (nil = All).
-  var editFilter: EditFilter?
 
   /// A typed value that is a valid score, else nil.
   static func score(_ s: String?) -> Int? {
@@ -22,50 +21,23 @@ final class PipelineUIState {
   }
 }
 
-/// One Edit filter chip: what's missing or blocking ("No crop", "Too long for X", …), derived from
-/// `AppModel.issuesByVideo`.
+/// One Edit status chip: why clips are in Edit ("No crop", "Too long for X", "File missing", …), derived from
+/// `AppModel.issuesByVideo`. Labels, tooltips and order come from DJQCore (`ValidationIssue.chipText`,
+/// `Kind.chipHelp`, `Kind.chipOrder`), the same words `djq` prints.
 struct EditFilter: Hashable, Identifiable {
   var kind: ValidationIssue.Kind
   var platform: Platform?
   var id: String { "\(kind.rawValue)-\(platform?.rawValue ?? "all")" }
 
-  var title: String {
-    let p = platform?.displayName ?? ""
-    switch kind {
-    case .noCrop: return "No crop"
-    case .noText: return "No text"
-    case .noCaption: return "No caption"
-    case .noTitle: return "No title"
-    case .tooLong: return "Too long for \(p)"
-    case .tooLarge: return "Too large for \(p)"
-    case .captionTooLong: return "Caption too long for \(p)"
-    case .titleTooLong: return "YouTube title too long"
-    case .corrupt: return "Edit unreadable"
-    case .missingFile: return "File missing"
-    case .heldInEdit: return "Sent back from Queue"
-    }
-  }
+  var title: String { ValidationIssue(kind: kind, platform: platform, message: "").chipText }
+  var help: String { kind.chipHelp }
 
   func matches(_ issues: [ValidationIssue]) -> Bool {
     issues.contains { $0.kind == kind && $0.platform == platform }
   }
 
-  /// Chip order: missing pieces first, then hard blocks.
-  var order: Int {
-    switch kind {
-    case .noCrop: 0
-    case .noText: 1
-    case .noCaption: 2
-    case .noTitle: 3
-    case .tooLong: 4
-    case .captionTooLong: 5
-    case .tooLarge: 6
-    case .titleTooLong: 7
-    case .corrupt: 8
-    case .missingFile: 9
-    case .heldInEdit: -1
-    }
-  }
+  /// Chip order: sent back first, then missing pieces, then hard blocks.
+  var order: Int { kind.chipOrder }
 }
 
 extension AppModel {
@@ -150,7 +122,9 @@ struct PipelineClipFeed: ViewModifier {
       .onAppear { register(ids) }
       .onChange(of: ids) { _, new in register(new) }
       .task(id: playIds.joined(separator: ",") + "|\(model.playback.autoplay)|\(model.playback.loop.rawValue)"
-            + "|\(model.playback.gridHoverOnly)|\(hovered ?? "")") {
+            + "|\(model.playback.gridHoverOnly)|\(hovered ?? "")"
+            // Edits change preview stamps: visible clips re-ask for their new proxies (round 4 S6).
+            + "|" + playIds.map { model.previewStamp($0) }.joined(separator: ",")) {
         try? await Task.sleep(for: .milliseconds(model.frozen ? 0 : 250))
         guard !Task.isCancelled, model.playback.autoplay else { return }
         let t = PreviewPlayback.proxyTargets(model.playback, layout: layout, visible: playIds, hovered: hovered)

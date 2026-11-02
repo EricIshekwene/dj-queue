@@ -1,7 +1,7 @@
 import DJQCore
 import SwiftUI
 
-/// Quiet runway chip for Queue and Week toolbars (DESIGN-v2 §3): "Runway 5 d approved · 21 d ready", amber when
+/// Quiet runway chip for Queue and Week toolbars (DESIGN-v2 §3): "Runway 5 d approved · 21 d in Queue", amber when
 /// the approved runway is under its alert threshold. Click → popover with all three numbers explained.
 struct RunwayChip: View {
   @Bindable var model: AppModel
@@ -14,7 +14,7 @@ struct RunwayChip: View {
     Button { open.toggle() } label: {
       HStack(spacing: 6) {
         if low { DSStatusDot(tone: .warning, size: 6) }
-        Text("Runway \(model.runway.approvedDays) d approved · \(model.runway.readyDays) d ready")
+        Text("Runway \(model.runway.approvedDays) d approved · \(model.runway.readyDays) d in Queue")
           .font(DS.type.captionMedium.monospacedDigit())
       }
       .foregroundStyle(low ? DS.color.warning : DS.color.textSecondary)
@@ -27,7 +27,7 @@ struct RunwayChip: View {
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
     .dsTooltip("See how many days of posts are covered")
-    .accessibilityLabel("Runway: \(model.runway.approvedDays) days approved, \(model.runway.readyDays) ready, \(model.runway.totalDays) total")
+    .accessibilityLabel("Runway: \(model.runway.approvedDays) days approved, \(model.runway.readyDays) in the Queue, \(model.runway.totalDays) total")
     .dsPopover(isPresented: $open, width: 320) { RunwayDetail(model: model) }
   }
 }
@@ -41,8 +41,8 @@ struct RunwayDetail: View {
       DSEyebrow("Runway")
       row(model.runway.approvedDays, "Approved", "Days covered by approved weeks. Alert under \(s.approvedRunwayAlertDays) d.",
           model.runway.approvedDays < s.approvedRunwayAlertDays)
-      row(model.runway.readyDays, "Ready", "Ready clips not yet in an approved week, at \(s.postsPerDay) a day.", false)
-      row(model.runway.totalDays, "Total", "Approved + ready + scored clips still in Edit. Record a new set under \(s.totalRunwayAlertDays) d.",
+      row(model.runway.readyDays, "Queue", "Queue clips not yet in an approved week, at \(s.postsPerDay) a day.", false)
+      row(model.runway.totalDays, "Total", "Approved + Queue + scored clips still in Edit. Record a new set under \(s.totalRunwayAlertDays) d.",
           model.runway.totalDays < s.totalRunwayAlertDays)
     }
     .padding(DS.space.sm)

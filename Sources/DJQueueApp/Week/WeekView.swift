@@ -30,7 +30,7 @@ struct WeekView: View {
         if !model.loaded {
           WeekSkeleton()
         } else if slots.isEmpty && model.ordered.isEmpty && model.upcomingSlots.isEmpty {
-          DSEmptyState(icon: "calendar", title: "Nothing ready to plan", message: "Clips show up here once they're scored and edited.",
+          DSEmptyState(icon: "calendar", title: "Nothing to plan yet", message: "Clips show up here once they reach the Queue.",
                        actionTitle: "Go to Edit") { model.screen = .edit }
         } else {
           WeekGrid(model: model, days: days, slots: slots, approved: model.weekStates[ws] == .approved)
@@ -233,7 +233,7 @@ struct WeekDayColumn: View {
       Text(isPast ? "Nothing posted" : "Drop a clip").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
       if !isPast {
         DSButton("Add from queue", variant: .ghost, size: .sm,
-                 disabledReason: backlog.isEmpty ? "Nothing ready in the queue" : nil,
+                 disabledReason: backlog.isEmpty ? "Nothing in the Queue is waiting for a day" : nil,
                  tooltip: backlog.first.map { "Pin “\(model.displayName($0))” here (next in queue)" }) {
           if let v = backlog.first { model.pin(v.id, dayKey: day) }
         }
@@ -283,15 +283,26 @@ struct WeekDayCard: View {
   @State private var hovering = false
 
   private var posts: [Platform: PlatformPost] { model.slotPosts(slot.id) }
+  /// The slot's post decides the version shown (all platforms of a slot share it); no post yet → version 1.
+  private var firstPost: PlatformPost? { posts.values.min { $0.platform.rawValue < $1.platform.rawValue } }
+  private var preview: ClipPreview { firstPost.flatMap { model.clipPreview(post: $0) } ?? model.clipPreview(video) }
+  private func requestPreview() {
+    if let p = firstPost { model.requestPreview(post: p) } else { model.requestPreview(video) }
+  }
   private var hasProblem: Bool { posts.values.contains { model.postStatus($0).isProblem } }
   private var anyPosted: Bool { posts.values.contains { $0.state == .posted } }
 
   var body: some View {
     let p = model.playback
+    // The post's version as it will post (round 4 S6): its text, and the render's cover when the render is current.
+    let pv = preview
     VStack(alignment: .leading, spacing: 0) {
-      DSVideoPreview(url: video.missing ? nil : model.proxyURLs[video.id], poster: model.poster(video),
-                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), unmuteOnHover: p.hoverSound && !isPast,
-                     isHovered: hovering, muteAlignment: .bottomTrailing)
+      DSVideoPreview(url: pv.proxyURL, poster: pv.cover,
+                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), loopRange: pv.loopRange,
+                     unmuteOnHover: p.hoverSound && !isPast, isHovered: hovering, muteAlignment: .bottomTrailing,
+                     overlay: pv.overlay, textWindow: pv.textWindow, isUpdating: pv.isUpdating, updatingStyle: .label,
+                     needsOverlay: pv.overlayMissing, onNeedsOverlay: { model.reloadOverlay(video.id, version: pv.version) })
+        .task(id: pv.stamp) { requestPreview() }
         .frame(width: width, height: width * 16 / 9)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: DS.radius.md, topTrailingRadius: DS.radius.md, style: .continuous))
         .overlay(alignment: .topTrailing) {
@@ -430,7 +441,7 @@ struct WeekCardMenu: View {
     Divider()
     StageMenuItems(model: model, video: video, targets: [video.id])
     let removeBlocker = isPast ? "this day has passed" : model.removeFromQueueBlocker(video).map { _ in "already posted" }
-    Button(removeBlocker.map { "Remove from queue — \($0)" } ?? "Remove from queue (back to Edit)", systemImage: "arrow.uturn.backward") {
+    Button(removeBlocker.map { "Back to Edit — \($0)" } ?? "Back to Edit (out of the plan)", systemImage: "arrow.uturn.backward") {
       model.removeFromQueue([video.id])
     }
     .disabled(removeBlocker != nil)
@@ -468,7 +479,8 @@ struct ExtraPostChip: View {
 
 // MARK: - Backlog drawer
 
-/// Collapsed bar at the bottom ("Next up · 6"); expanded = the next ready clips (queue order), draggable onto a day.
+/// Collapsed bar at the bottom ("Next up 6"); expanded = the shared list header (compact: search ⌘F · Filters ·
+/// sort, applied filters as chips) over the Queue clips still waiting for a day, draggable onto a day.
 struct BacklogDrawer: View {
   @Bindable var model: AppModel
   @Binding var expanded: Bool
@@ -476,32 +488,46 @@ struct BacklogDrawer: View {
 
   var body: some View {
     let backlog = model.weekBacklog
+    let list = model.listSorted(.backlog, model.listScope(.backlog, backlog))
     VStack(spacing: 0) {
       DSSeparator()
-      Button { dsWithAnimation { expanded.toggle() } } label: {
-        HStack(spacing: DS.space.xs) {
-          Image(systemName: expanded ? "chevron.down" : "chevron.up")
-            .font(.system(size: 10, weight: .semibold)).foregroundStyle(DS.color.textSecondary).frame(width: 14)
-          Text("Next up").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
-          Text("\(backlog.count)").font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
-          Spacer()
-          if expanded { Text("Drag a clip onto a day").font(DS.type.caption).foregroundStyle(DS.color.textTertiary) }
+      HStack(spacing: DS.space.xs) {
+        DSIconButton(expanded ? "chevron.down" : "chevron.up", tooltip: expanded ? "Hide the backlog" : "Show the Queue clips waiting for a day",
+                     size: .sm) { toggle() }
+        ListHeader(page: .backlog, title: "Next up", count: backlog.isEmpty ? 0 : list.count, total: backlog.count,
+                   filters: expanded && !backlog.isEmpty ? model.listFilterSections(.backlog, backlog) : [], compact: true,
+                   showsSearch: expanded && !backlog.isEmpty) {
+          EmptyView()
+        } sort: {
+          if expanded && !backlog.isEmpty { ListSortMenu(page: .backlog, size: .sm) }
+        } trailing: {
+          if expanded && !backlog.isEmpty {
+            Text("Drag a clip onto a day").font(DS.type.caption).foregroundStyle(DS.color.textTertiary).padding(.leading, DS.space.xs)
+          }
         }
-        .padding(.horizontal, gutter)
-        .frame(height: 44)
-        .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
-      .dsTooltip(expanded ? "Hide the backlog" : "Show the next ready clips")
-      .accessibilityLabel("Next up, \(backlog.count) ready clips")
+      .padding(.horizontal, gutter - 4)
+      .padding(.vertical, 8)
+      .frame(minHeight: 44)
+      .contentShape(Rectangle())
+      .onTapGesture { if !expanded { toggle() } }
+      .accessibilityLabel("Next up, \(backlog.count) clips waiting for a day")
       if expanded {
         if backlog.isEmpty {
-          Text("Nothing ready in the queue").font(DS.type.callout).foregroundStyle(DS.color.textTertiary)
+          Text("Nothing in the Queue is waiting for a day").font(DS.type.callout).foregroundStyle(DS.color.textTertiary)
             .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, gutter).frame(height: 60)
+        } else if list.isEmpty {
+          HStack(spacing: DS.space.xs) {
+            Text("No clips match").font(DS.type.callout).foregroundStyle(DS.color.textTertiary)
+            DSButton("Clear filters", variant: .ghost, size: .sm, tooltip: "Remove every filter and the search") {
+              model.clearListFilters(.backlog)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, gutter).frame(height: 60)
         } else {
           ScrollView(.horizontal) {
             LazyHStack(alignment: .top, spacing: DS.space.md) {
-              ForEach(backlog.prefix(40)) { v in BacklogTile(model: model, video: v) }
+              ForEach(list.prefix(40)) { v in BacklogTile(model: model, video: v) }
             }
             .padding(.horizontal, gutter)
             .padding(.bottom, DS.space.md)
@@ -514,6 +540,8 @@ struct BacklogDrawer: View {
     }
     .background(DS.color.background)
   }
+
+  private func toggle() { dsWithAnimation { expanded.toggle() } }
 }
 
 struct BacklogTile: View {

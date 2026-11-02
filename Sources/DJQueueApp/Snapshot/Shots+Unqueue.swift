@@ -1,8 +1,8 @@
 import DJQCore
 import SwiftUI
 
-/// "Remove from queue" + stage moves (prefix 5x): the Queue card's hover stage control and ⋯ menu, the
-/// confirmation listing scheduled days, the toast, Edit's "Sent back from Queue" chip + "Send to queue", the Week
+/// "Back to Edit" (formerly Remove from queue) + stage moves (prefix 5x): the Queue card's hover stage control and ⋯ menu, the
+/// confirmation listing scheduled days, the toast, Edit's "Sent back from Queue" chip + "Send to Queue", the Week
 /// card's stage control, the bulk back confirmation, Library's pill and the editor header. Holds made here are
 /// undone by the last shot.
 extension SnapshotShots {
@@ -24,7 +24,7 @@ extension SnapshotShots {
     }
     /// The first planned clip with in-flight posts (the confirmation then lists its days).
     func scheduled(_ m: AppModel) -> String? {
-      m.queueList.first { m.hasScheduledDays([$0.id]) && m.stageBlocker($0, .back) == nil }?.id
+      m.queueClips.first { m.hasScheduledDays([$0.id]) && m.stageBlocker($0, .back) == nil }?.id
     }
     return [
       c.view("50-unqueue-queue-menu", width: 1180, height: 760) {
@@ -32,7 +32,7 @@ extension SnapshotShots {
         SnapshotContext.resetUI(m)
         SampleData.pipelineRevert(m)
         mode(m, .queue, .wide)
-        let v = m.queueList.first { ClipStage.of($0) == .scheduled && m.stageBlocker($0, .back) == nil } ?? m.queueList[0]
+        let v = m.queueClips.first { ClipStage.of($0) == .scheduled && m.stageBlocker($0, .back) == nil } ?? m.queueClips[0]
         SnapshotHover.id = v.id
         return AnyView(
           ZStack(alignment: .topTrailing) {
@@ -42,7 +42,6 @@ extension SnapshotShots {
               .init(icon: "pin", title: "Pin to date…"),
               .init(icon: "forward.end", title: "Skip next"),
               .divider,
-              .init(icon: "arrow.uturn.backward", title: "Remove from queue", help: AppModel.removeFromQueueHelp),
               .init(icon: "arrow.uturn.backward", title: m.stageBackTitle(v), help: m.stageBackHelp(v)),
               .init(icon: "arrow.forward", title: m.stageForwardTitle(v), help: m.stageForwardHelp(v)),
               .divider,
@@ -69,13 +68,11 @@ extension SnapshotShots {
       c.main("53-edit-sent-back") { m in
         SnapshotHover.id = nil
         _ = holdTwo(m)
-        PipelineUIState.shared.editFilter = nil
         mode(m, .edit, .wide)
         // Put the sent-back clips first so they're on screen.
-        PipelineUIState.shared.editFilter = EditFilter(kind: .heldInEdit, platform: nil)
+        ListPrefs.shared.setStatus(.edit, EditFilter(kind: .heldInEdit, platform: nil).id)
       },
       c.main("54-week-card-stage") { m in
-        PipelineUIState.shared.editFilter = nil
         m.screen = .week
         SnapshotHover.id = m.weekSlots.first { s in
           s.date >= m.todayKey && m.video(s.videoId).map { m.stageBlocker($0, .back) == nil } == true
@@ -84,8 +81,8 @@ extension SnapshotShots {
       c.main("55-queue-bulk-back") { m in
         SnapshotHover.id = nil
         mode(m, .queue, .wide)
-        let ids = Array(m.queueList.prefix(2).map(\.id) + m.queueList.suffix(1).map(\.id))
-        m.visibleIds[.queue] = m.queueList.map(\.id)
+        let ids = Array(m.queueClips.prefix(2).map(\.id) + m.queueClips.suffix(1).map(\.id))
+        m.visibleIds[.queue] = m.queueClips.map(\.id)
         m.setSelection(ids, screen: .queue)
         m.stageBack(ids)
         m.pendingBulk?.preview = try? m.bulk.back(ids, dryRun: true)
@@ -105,7 +102,6 @@ extension SnapshotShots {
         if let b = unqueueBatch { _ = try? c.model.bulk.undo(b, force: true) }
         unqueueBatch = nil
         SnapshotHover.id = nil
-        PipelineUIState.shared.editFilter = nil
         for s in [Screen.edit, .queue, .library] { c.model.viewModes[s] = nil }
         c.model.refreshNow()
         return AnyView(Color.clear)
@@ -142,7 +138,7 @@ struct SnapshotMenuMock: View {
           }
           .padding(.horizontal, 8).padding(.vertical, 3)
           .frame(maxWidth: .infinity, alignment: .leading)
-          .background(i.title == "Remove from queue" ? DS.color.hover : .clear, in: RoundedRectangle(cornerRadius: 6))
+          .background(i.title == "Back to Edit" ? DS.color.hover : .clear, in: RoundedRectangle(cornerRadius: 6))
         }
       }
     }

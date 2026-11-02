@@ -1,54 +1,64 @@
 import DJQCore
 import SwiftUI
 
-/// Edit (DESIGN-v2 §6.2, ref R2.EDIT issue cards) — job: turn scored clips into ready clips.
+/// Edit (DESIGN-v2 §6.2, ref R2.EDIT issue cards) — job: finish scored clips so they can go to the Queue.
 ///
-/// Toolbar "Edit · 9 need work" · filter chips under it (`All 9 · No crop 4 · No text 6 · …`, from
-/// `issuesByVideo`) · view toggle (Cards · Grid · Single · List) · primary **Make ready with defaults** (the
-/// selection, else every clip the filter shows; > 1 clip asks first). Cards show missing chips (warning), hard
-/// blocks (danger) with explicit fixes ("Trim for X", "Drop hashtags for X", "Write an X caption"), up to three
-/// title suggestions (click = set Title, undoable), an "Add title" field when there are none, "Ask an agent" when
-/// the title is ambiguous, a "Cover" badge, Open editor and ⋯. Hidden: dates, platform post state, queue order.
+/// Shared list header (round 4 S3): "Edit 9" · search (⌘F) · view toggle (Cards · Grid · Single · List) · primary
+/// **Send to Queue with defaults** (the selection, else every clip shown; > 1 clip asks first) · status chips = what's
+/// missing (`All 9 · No crop 4 · No text 6 · …`, from `issuesByVideo`) · Filters (Session · Kind · Score) · sort.
+/// Cards show missing chips (warning), hard blocks (danger) with explicit fixes ("Trim for X", "Drop hashtags for
+/// X", "Write an X caption"), up to three title suggestions (click = set Title, undoable), an "Add title" field when
+/// there are none, "Ask an agent" when the title is ambiguous, a "Cover" badge, Open editor and ⋯. Hidden: dates,
+/// platform post state, queue order.
 struct EditView: View {
   @Bindable var model: AppModel
-  private var ui: PipelineUIState { .shared }
+  private var prefs: ListPrefs { .shared }
 
   var body: some View {
     let all = model.editList
-    let filters = Self.filters(all, issues: model.issuesByVideo)
-    let active = ui.editFilter.flatMap { f in filters.contains { $0.filter == f } ? f : nil }
-    let list = active.map { f in all.filter { f.matches(model.issuesByVideo[$0.id] ?? []) } } ?? all
+    let scope = model.listScope(.edit, all)
+    let filters = Self.filters(scope, issues: model.issuesByVideo)
+    let active = prefs[.edit].status.flatMap { id in filters.first { $0.filter.id == id }?.filter }
+    let list = model.listSorted(.edit, active.map { f in scope.filter { f.matches(model.issuesByVideo[$0.id] ?? []) } } ?? scope)
     let ids = list.map(\.id)
     let mode = model.viewMode(.edit)
     let sel = model.selectedIds(.edit)
     let templates = model.captionTemplates
-    ScreenScaffold(model: model, screen: .edit, subtitle: all.isEmpty ? nil : "\(all.count) need work",
-                   readingColumn: mode == .wide || mode == .list) {
-      PipelineViewModeSwitcher(mode: model.viewModeBinding(.edit))
-      DSButton("Make ready with defaults", variant: sel.isEmpty ? .primary : .outline,
-               disabledReason: list.isEmpty ? "Nothing to edit" : nil,
-               tooltip: sel.isEmpty ? "Confirm default crop for \(AppModel.pipelineClips(ids.count)) shown"
-                 : "Confirm default crop for \(AppModel.pipelineClips(sel.count)) selected") {
-        makeReady(sel.isEmpty ? ids : sel)
-      }
-    } subToolbar: {
-      if !all.isEmpty {
-        DSChip("All", isSelected: active == nil, count: all.count, showsCheck: false) { ui.editFilter = nil }
-          .dsTooltip("Show every clip that needs work")
-        ForEach(filters, id: \.filter) { f in
-          DSChip(f.filter.title, isSelected: active == f.filter, count: f.count, showsCheck: false) {
-            ui.editFilter = active == f.filter ? nil : f.filter
-          }
-          .dsTooltip(active == f.filter ? "Show every clip again" : "Show only clips with this issue")
+    let column = mode == .wide || mode == .list
+    ScreenScaffold(model: model, screen: .edit, readingColumn: column) {
+      ListHeader(page: .edit, title: "Edit", count: all.isEmpty ? nil : list.count, total: all.count,
+                 filters: all.isEmpty ? [] : model.listFilterSections(.edit, all), readingColumn: column, showsSearch: !all.isEmpty) {
+        PipelineViewModeSwitcher(mode: model.viewModeBinding(.edit))
+      } chips: {
+        if !all.isEmpty {
+          DSStatusChips(options: filters.map { f in
+            DSStatusChipOption(id: f.filter.id, title: f.filter.title, count: f.count, tone: f.filter.kind.isBlock ? .danger : nil,
+                               tooltip: f.filter.help)
+          }, selection: prefs.statusBinding(.edit), allCount: scope.count, allTooltip: "Show every clip in Edit")
+        }
+      } sort: {
+        if !all.isEmpty { ListSortMenu(page: .edit) }
+      } trailing: {
+        DSButton("Send to Queue with defaults", variant: sel.isEmpty ? .primary : .outline,
+                 disabledReason: list.isEmpty ? "Nothing to edit" : nil,
+                 tooltip: sel.isEmpty ? "Confirm default crop for \(AppModel.pipelineClips(ids.count)) shown"
+                   : "Confirm default crop for \(AppModel.pipelineClips(sel.count)) selected") {
+          makeReady(sel.isEmpty ? ids : sel)
         }
       }
     } content: {
       if !model.loaded {
         Color.clear
-      } else if list.isEmpty {
+      } else if all.isEmpty {
         DSEmptyState(icon: "pencil", title: "Nothing to edit",
                      message: "Scored clips that still need a crop, text or caption show up here.",
                      actionTitle: "Open Queue") { model.screen = .queue }
+      } else if list.isEmpty {
+        DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match",
+                     message: "Nothing in Edit fits this search or these filters.", actionTitle: "Clear filters") {
+          model.clearListFilters(.edit)
+          prefs.setStatus(.edit, nil)
+        }
       } else {
         ClipCollection(model: model, screen: .edit, videos: list, mode: mode, clip: { v in clip(v, mode: mode) },
                        onOpen: { v in model.openEditor(v.id, in: ids) }) { v in
@@ -79,7 +89,7 @@ struct EditView: View {
   }
 
   private func makeReady(_ ids: [String]) {
-    model.pipelineBulk("Make \(AppModel.pipelineClips(ids.count)) ready?", verb: "Make ready", ids: ids,
+    model.pipelineBulk("Send \(AppModel.pipelineClips(ids.count)) to the Queue?", verb: "Send to Queue", ids: ids,
                        changes: [.init(field: "Crop", value: "Default anchor, confirmed where missing"),
                                  .init(field: "Text, caption, cover", value: "Keep following New clip defaults"),
                                  .init(field: "Title", value: "Not set by this — clips without one still need text")]) { b, dry in
@@ -91,7 +101,7 @@ struct EditView: View {
   static func filters(_ list: [Video], issues: [String: [ValidationIssue]]) -> [(filter: EditFilter, count: Int)] {
     var counts: [EditFilter: Int] = [:]
     for v in list {
-      let fs = Set((issues[v.id] ?? []).filter { $0.kind != .missingFile }.map { EditFilter(kind: $0.kind, platform: $0.platform) })
+      let fs = Set((issues[v.id] ?? []).map { EditFilter(kind: $0.kind, platform: $0.platform) })
       for f in fs { counts[f, default: 0] += 1 }
     }
     return counts.map { ($0.key, $0.value) }.sorted {
@@ -102,8 +112,8 @@ struct EditView: View {
 }
 
 /// Edit bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Top title · Caption ▾ (template + hashtags) · Kind ▾ ·
-/// More (Send to queue, Back to Score, agent prompt, apply defaults per section, skip platform, re-render) ·
-/// **Make ready** (with defaults).
+/// More (Back to Score, agent prompt, apply defaults per section, skip platform, re-render) ·
+/// **Send to Queue** (with defaults).
 private struct EditBulkBar: View {
   @Bindable var model: AppModel
   let ids: [String]
@@ -148,7 +158,6 @@ private struct EditBulkBar: View {
       }
     } more: {
       // Native items show no tooltip: titles carry the consequence.
-      Button("Send to queue", systemImage: "chevron.right") { model.stageForward(ids) }
       Button("Back to Score (clears their scores)", systemImage: "chevron.left") { model.stageBack(ids) }
       Divider()
       Button("Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") { model.copyAgentPrompt(ids) }
@@ -172,7 +181,7 @@ private struct EditBulkBar: View {
         }
       }
     } primary: {
-      DSButton("Make ready", variant: .primary, size: .sm,
+      DSButton("Send to Queue", variant: .primary, size: .sm,
                tooltip: "Confirm default crop for \(n) selected", action: makeReady)
     }
   }

@@ -67,7 +67,7 @@ extension AppModel {
     switch s {
     case .score: n = scoreList.count
     case .edit: n = editList.count
-    case .queue: n = queueList.count
+    case .queue: n = queueClips.count
     case .today: n = dueBadge
     case .posts: n = problems.count
     default: return nil

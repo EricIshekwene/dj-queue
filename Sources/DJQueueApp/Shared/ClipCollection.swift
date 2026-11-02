@@ -123,7 +123,7 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
         Section {
           ForEach(videos) { v in card(v) }
         } header: {
-          ClipListHeader(selectable: true).background(DS.color.background)
+          ClipListColumns(selectable: true).background(DS.color.background)
         }
       }
       .frame(maxWidth: DS.size.readingColumn)
@@ -194,6 +194,8 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
       visible.insert(v.id)
       model.requestPoster(v)
     }
+    // A stamp change (any edit) re-requests the edited cover + text overlay while the tile stays on screen.
+    .task(id: c.previewStamp) { if visible.contains(v.id) { model.requestPoster(v) } }
     .onDisappear { visible.remove(v.id) }
   }
 
@@ -222,6 +224,8 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
   private var proxyKey: String {
     proxyOrder.joined(separator: ",") + "|\(model.playback.loop.rawValue)|\(model.playback.autoplay)|\(mode.rawValue)"
       + "|\(model.playback.gridHoverOnly)|\(mode == .grid && model.playback.gridHoverOnly ? hovered ?? "" : "")"
+      // An edit changes the clip's preview stamp: the visible tiles re-ask for their (new) proxies (round 4 S6).
+      + "|" + proxyOrder.map { model.previewStamp($0) }.joined(separator: ",")
   }
 }
 
@@ -245,7 +249,7 @@ extension ClipCollection where Header == EmptyView, Menu == EmptyView {
 
 /// Column labels above List mode, aligned with DSClipCard `.list` (checkbox · thumb · title … score · next ·
 /// platforms · actions).
-struct ClipListHeader: View {
+struct ClipListColumns: View {
   var selectable = true
   var body: some View {
     HStack(spacing: DS.space.sm) {

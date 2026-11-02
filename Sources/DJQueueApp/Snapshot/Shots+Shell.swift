@@ -23,7 +23,7 @@ extension SnapshotShots {
         m.visibleIds[.edit] = ids
         m.setSelection(ids, screen: .edit)
         let bulk = m.bulk
-        m.requestBulk(BulkRequest(title: "Make \(ids.count) clips ready?", verb: "Make ready", ids: ids,
+        m.requestBulk(BulkRequest(title: "Send \(ids.count) clips to the Queue?", verb: "Send to Queue", ids: ids,
                                   changes: [.init(field: "Crop", value: "Default anchor, confirmed"),
                                             .init(field: "Text, caption, cover", value: "Defaults")]) { dry in
           try bulk.makeReadyWithDefaults(ids, dryRun: dry)
@@ -40,7 +40,7 @@ extension SnapshotShots {
         m.screen = .library
       },
       c.main("06-shell-editor") { m in
-        if let id = m.queueList.first?.id { m.openEditor(id, in: m.queueList.map(\.id)) }
+        if let id = m.queueClips.first?.id { m.openEditor(id, in: m.queueClips.map(\.id)) }
       },
       c.main("07-shell-shortcuts") { m in m.showShortcuts = true },
     ]

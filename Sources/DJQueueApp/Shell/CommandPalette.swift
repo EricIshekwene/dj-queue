@@ -44,7 +44,7 @@ extension AppModel {
     let queued = selectedVideoIds.compactMap(video).filter { [.queue, .scheduled].contains(ClipStage.of($0)) && !$0.heldInEdit }.map(\.id)
     if !queued.isEmpty {
       let blocked = removeFromQueueBlocker(queued)
-      c.append(.init(id: "selection.unqueue", title: "Remove \(queued.count) from queue", symbol: "arrow.uturn.backward",
+      c.append(.init(id: "selection.unqueue", title: "Send \(queued.count) back to Edit", symbol: "arrow.uturn.backward",
                      subtitle: blocked == nil ? Self.removeFromQueueHelp : nil, disabled: blocked) { [weak self] in
         self?.removeFromQueue(queued)
       })
@@ -79,7 +79,7 @@ extension AppModel {
                    disabled: weekStates[nextWeek] == .approved ? "Next week is already approved" : nil) { [weak self] in self?.approveWeek(nextWeek) })
     if weekStates[nextWeek] != .approved {
       c.append(.init(id: "week.proposeNext", title: "Propose next week", symbol: "wand.and.stars",
-                     subtitle: "Fill next week with ready clips as a draft") { [weak self] in self?.proposeWeek(nextWeek) })
+                     subtitle: "Fill next week with Queue clips as a draft") { [weak self] in self?.proposeWeek(nextWeek) })
     }
     c.append(.init(id: "week.rebuild", title: "Rebuild next week…", symbol: "arrow.clockwise",
                    subtitle: "Clear its unpinned days and plan them again") { [weak self] in self?.rebuildWeek(nextWeek) })

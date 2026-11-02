@@ -3,7 +3,8 @@ import SwiftUI
 
 /// Score (DESIGN-v2 §6.1) — job: give every new clip a score from 0 to 100, fast.
 ///
-/// Toolbar "Score · 12 to score" · view toggle (Single · Grid) · no primary (↩ is the primary).
+/// Shared list header (round 4 S3): "Score 12" · search (⌘F) · view toggle (Single · Grid) · status chips = one
+/// per session (`All 12 · Nov 1 set 8 · …`) · Filters (Kind) · sort. No primary (↩ is the primary).
 /// - **Single** (default): progress strip, the large autoplaying player with ‹ ›, a floating control pill (score
 ///   field · Save & next ↩ · Skip), the 280 pt side panel (title, session, length, Kind, notes, Exclude) and the
 ///   key-hint line. Keys: digits, ↩ save & next, ⇥ skip, ←/→ previous/next, ⌘⌫ exclude.
@@ -14,21 +15,38 @@ struct ScoreView: View {
   @Bindable var model: AppModel
   @State private var index = 0
   private var ui: PipelineUIState { .shared }
+  private var prefs: ListPrefs { .shared }
 
   var body: some View {
     let all = model.scoreList
-    let list = all.filter { !ui.scoreHidden.contains($0.id) }
+    let pending = all.filter { !ui.scoreHidden.contains($0.id) }
+    let scope = model.listScope(.score, pending)
+    let session = prefs[.score].status.flatMap { id in scope.contains { $0.sessionId == id } ? id : nil }
+    let list = model.listSorted(.score, scope.filter { session == nil || $0.sessionId == session })
     let mode: DSViewMode = model.viewMode(.score) == .grid ? .grid : .single
     let sel = model.selectedIds(.score)
-    ScreenScaffold(model: model, screen: .score, subtitle: list.isEmpty ? nil : "\(list.count) to score") {
-      PipelineViewModeSwitcher(mode: Binding(get: { mode }, set: { model.setViewMode($0, for: .score) }), modes: [.single, .grid],
-                               tips: [.single: "Score one clip at a time by keyboard", .grid: "Score many clips, typing under each"])
+    ScreenScaffold(model: model, screen: .score) {
+      ListHeader(page: .score, title: "Score", count: pending.isEmpty ? nil : list.count, total: pending.count,
+                 filters: pending.isEmpty ? [] : model.listFilterSections(.score, pending), showsSearch: !pending.isEmpty) {
+        PipelineViewModeSwitcher(mode: Binding(get: { mode }, set: { model.setViewMode($0, for: .score) }), modes: [.single, .grid],
+                                 tips: [.single: "Score one clip at a time by keyboard", .grid: "Score many clips, typing under each"])
+      } chips: {
+        if !pending.isEmpty { sessionChips(scope) }
+      } sort: {
+        if !pending.isEmpty { ListSortMenu(page: .score) }
+      }
     } content: {
       if !model.loaded {
         Color.clear
-      } else if list.isEmpty {
+      } else if pending.isEmpty {
         DSEmptyState(icon: "checkmark.circle", title: "Everything is scored", message: "New clips land here after intake.",
                      actionTitle: "Go to Edit") { model.screen = .edit }
+      } else if list.isEmpty {
+        DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match",
+                     message: "Nothing to score fits this search or these filters.", actionTitle: "Clear filters") {
+          model.clearListFilters(.score)
+          prefs.setStatus(.score, nil)
+        }
       } else if mode == .single {
         ScoreSingleView(model: model, videos: list, index: $index, progress: progress(all),
                         onSave: save, onExclude: exclude)
@@ -45,6 +63,15 @@ struct ScoreView: View {
     .dsBulkBar(isPresented: mode == .grid && !sel.isEmpty) {
       ScoreBulkBar(model: model, ids: sel)
     }
+  }
+
+  /// One chip per session with clips to score (newest set first), counted inside the search + filters scope.
+  private func sessionChips(_ scope: [Video]) -> some View {
+    let counts = Dictionary(grouping: scope, by: \.sessionId).mapValues(\.count)
+    let sessions = model.sessions.filter { counts[$0.id] != nil }.sorted { ($0.date ?? "", $0.name) > ($1.date ?? "", $1.name) }
+    return DSStatusChips(options: sessions.map { s in
+      DSStatusChipOption(id: s.id, title: Captions.setName(s.name), count: counts[s.id], tooltip: "Score only this set")
+    }, selection: prefs.statusBinding(.score), allCount: scope.count, allTooltip: "Score every set")
   }
 
   /// "17 of 29 scored": clips in the sets that still have something to score (short, not excluded or missing).

@@ -27,6 +27,25 @@ extension SampleData {
     m.refreshNow()
   }
 
+  private static var pipelineMissingId: String?
+
+  /// Marks the first Edit clip's file missing (on) or puts it back (off) — the missing-file Edit card shot.
+  static func pipelineMissing(_ m: AppModel, _ on: Bool) {
+    let s = m.store
+    if on, pipelineMissingId == nil, var v = m.editList.first(where: { !$0.missing }) {
+      v.missing = true
+      try? s.save(v)
+      try? s.refreshState(videoId: v.id)
+      pipelineMissingId = v.id
+    } else if !on, let id = pipelineMissingId, var v = try? s.video(id: id) {
+      v.missing = false
+      try? s.save(v)
+      try? s.refreshState(videoId: id)
+      pipelineMissingId = nil
+    }
+    m.refreshNow()
+  }
+
   static func pipelineRevert(_ m: AppModel) {
     let s = m.store
     if let id = pipelineScored {

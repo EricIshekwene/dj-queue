@@ -75,13 +75,14 @@ struct QueueCardList: View {
       visible.insert(v.id)
       model.requestPoster(v)
     }
+    .task(id: c.previewStamp) { if visible.contains(v.id) { model.requestPoster(v) } }
     .onDisappear { visible.remove(v.id) }
   }
 
   private func drop(_ id: String, onto target: Video) -> Bool {
     guard id != target.id, model.video(id) != nil else { return false }
     guard let slot = model.nextSlotByVideo[target.id] else {
-      model.show("The ready backlog follows the sort (\(model.settings.sort.displayName)). Drop on a planned clip, or pin a clip to a date.")
+      model.show("Clips waiting for a day follow the sort (\(model.settings.sort.displayName)). Drop on a planned clip, or pin a clip to a date.")
       return false
     }
     let day = Fmt.day(model.dm.date(slot.date), tz: model.tz)
@@ -149,7 +150,7 @@ struct QueueClipActions: View {
   }
 }
 
-/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Move one slot later · Remove from queue · stage
+/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Move one slot later · Back to Edit · stage
 /// moves · Open editor · Exclude. Acts on the selection (where it makes sense) when the clip is part of it. Native
 /// items show no tooltip, so a disabled item says why in its title.
 struct QueueClipMenu: View {
@@ -175,7 +176,7 @@ struct QueueClipMenu: View {
     }
     Divider()
     let removeWhy = model.removeFromQueueBlocker(targets)
-    Button((targets.count == 1 ? "Remove from queue" : "Remove \(n) from queue") + AppModel.menuReason(removeWhy),
+    Button((targets.count == 1 ? "Back to Edit" : "Send \(n) back to Edit") + AppModel.menuReason(removeWhy),
            systemImage: "arrow.uturn.backward") {
       model.removeFromQueue(targets)
     }
@@ -183,7 +184,7 @@ struct QueueClipMenu: View {
     if targets.count == 1 && ClipStage.of(video) != .queue {
       StageMenuItems(model: model, video: video, targets: targets)
     } else {
-      // Back for a Queue clip IS "Remove from queue" (above); only forward is left.
+      // Back for a Queue clip IS "Back to Edit" (above); only forward is left.
       let fwd = targets.count == 1 ? model.stageBlocker(video, .forward) : nil
       Button((targets.count == 1 ? model.stageForwardTitle(video) : "Forward a stage (\(targets.count))") + AppModel.menuReason(fwd),
              systemImage: "arrow.forward") {

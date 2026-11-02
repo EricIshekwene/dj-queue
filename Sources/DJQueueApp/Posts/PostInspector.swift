@@ -49,7 +49,7 @@ struct PostInspector: View {
         }
       }
       HStack(spacing: DS.space.sm) {
-        BrowsePoster(model: model, video: v, width: 36, height: 64, radius: DS.radius.sm)
+        BrowsePoster(model: model, video: v, width: 36, height: 64, radius: DS.radius.sm, post: post)
         VStack(alignment: .leading, spacing: 4) {
           Text(v.map(model.displayName) ?? post.videoId).font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).lineLimit(2)
           HStack(spacing: 6) {

@@ -72,6 +72,7 @@ enum SnapshotRunner {
         + SnapshotShots.browse(ctx) + SnapshotShots.settings(ctx)
         + SnapshotShots.unqueue(ctx)
         + SnapshotShots.r3posts(ctx)
+        + SnapshotShots.r4previews(ctx)
       if let only = ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_ONLY"] {
         shots = shots.filter { $0.name.contains(only) }
       }
@@ -134,6 +135,7 @@ struct SnapshotContext {
     m.loaded = true
     m.screen = .score
     m.weekStart = m.planner.weekStart(for: m.now)
+    ListPrefs.shared.reset()
   }
 }
 

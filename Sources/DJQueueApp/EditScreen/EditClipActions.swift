@@ -16,6 +16,15 @@ extension AppModel {
   /// The explicit fixes for a clip's blocking issues, in issue order.
   func editFixes(_ v: Video, ids: [String]) -> [EditFix] {
     var out: [EditFix] = []
+    // A scored clip whose file went missing sits in Edit (round 4 S1): the one fix is to find the file again.
+    if v.missing {
+      out.append(EditFix(id: "relink", title: "Relink", icon: "magnifyingglass",
+                         tooltip: "Look for the moved file now (intake finds it by fingerprint); Health › Doctor shows more",
+                         disabledReason: nil) { [self] in
+        runTick()
+        show(DSToastModel(message: "Looking for missing files", detail: "Intake finds renamed or moved files by fingerprint", duration: 4))
+      })
+    }
     for i in issuesByVideo[v.id] ?? [] {
       guard let p = i.platform ?? (i.kind == .titleTooLong ? .youtube : nil) else { continue }
       let name = p.displayName

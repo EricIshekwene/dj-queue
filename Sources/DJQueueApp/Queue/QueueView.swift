@@ -1,35 +1,54 @@
 import DJQCore
 import SwiftUI
 
-/// Queue (DESIGN-v2 §6.3, ref R2.QUEUE Hootsuite cards) — job: keep ready clips in posting order.
+/// Queue (DESIGN-v2 §6.3, ref R2.QUEUE Hootsuite cards) — job: keep complete clips in posting order.
 ///
-/// Toolbar "Queue · 41 ready · next Thu 5 Nov" · runway chip · sort menu ("Worst → best ▾", tie rule inside,
-/// writes `Settings.sort`) · view toggle. No filled primary: the primary act is direct manipulation.
-/// Order = the upcoming plan (date order) then the ready backlog in sort order. Cards: position · ⋮⋮ on hover ·
-/// thumb · title + meta · score · next-date chip · platform icons only when planned/posted · pin glyph. Hover
-/// actions: Post today, Pin to date…, ⋯ (Move one slot later, Exclude, Open editor). Drag a card onto a planned clip to take
-/// its day (pinned); the backlog itself follows the sort. Bulk: Pin to days… · Post today · Skip platform ▾ ·
-/// Exclude · More · **Add to week**. Hidden: unscored / not-ready / excluded clips, versions.
+/// Shared list header (round 4 S3): "Queue 41 · next Thu 5 Nov" · search (⌘F) · view toggle · runway chip ·
+/// status chips `All · Has a day · No day yet` · Filters (Session · Kind · Score) · sort ("Worst → best ▾",
+/// tie rule inside, writes `Settings.sort`). No filled primary: the primary act is direct manipulation.
+/// Order = the upcoming plan (date order) then the backlog in sort order; search and filters narrow it without
+/// renumbering. Cards: position · ⋮⋮ on hover · thumb · title + meta · score · next-date chip · platform icons only
+/// when planned/posted · pin glyph. Hover actions: stage control (‹ Back to Edit · Schedule ›), Post today, Pin to
+/// date…, ⋯. Drag a card onto a planned clip to take its day (pinned); the backlog itself follows the sort. Bulk:
+/// Pin to days… · Post today · More · **Add to week**. Hidden: Score/Edit clips, excluded clips, versions.
 struct QueueView: View {
   @Bindable var model: AppModel
   @State private var pinTarget: [String]?
+  private var prefs: ListPrefs { .shared }
 
   var body: some View {
-    let list = model.queueList
+    let all = model.queueClips
+    let scope = model.listScope(.queue, all)
+    let status = prefs[.queue].status.flatMap { ["scheduled", "unscheduled"].contains($0) ? $0 : nil }
+    let list = scope.filter { status == nil || isScheduled($0) == (status == "scheduled") }
     let ids = list.map(\.id)
     let mode = model.viewMode(.queue)
     let sel = model.selectedIds(.queue)
-    let positions = Dictionary(uniqueKeysWithValues: list.enumerated().map { ($1.id, $0 + 1) })
-    ScreenScaffold(model: model, screen: .queue, subtitle: subtitle(list), readingColumn: mode == .wide || mode == .list) {
-      RunwayChip(model: model)
-      QueueSortMenu(model: model)
-      PipelineViewModeSwitcher(mode: model.viewModeBinding(.queue))
+    let positions = Dictionary(uniqueKeysWithValues: all.enumerated().map { ($1.id, $0 + 1) })
+    let column = mode == .wide || mode == .list
+    ScreenScaffold(model: model, screen: .queue, readingColumn: column) {
+      ListHeader(page: .queue, title: "Queue", count: all.isEmpty ? nil : list.count, total: all.count, detail: nextText,
+                 filters: all.isEmpty ? [] : model.listFilterSections(.queue, all), readingColumn: column, showsSearch: !all.isEmpty) {
+        PipelineViewModeSwitcher(mode: model.viewModeBinding(.queue))
+      } chips: {
+        if !all.isEmpty { statusChips(scope) }
+      } sort: {
+        if !all.isEmpty { QueueSortMenu(model: model) }
+      } trailing: {
+        RunwayChip(model: model)
+      }
     } content: {
       if !model.loaded {
         Color.clear
-      } else if list.isEmpty {
-        DSEmptyState(icon: "list.bullet", title: "Nothing ready yet", message: "Clips appear here once they're scored and edited.",
+      } else if all.isEmpty {
+        DSEmptyState(icon: "list.bullet", title: "The Queue is empty", message: "Clips arrive here once they're scored and finished in Edit.",
                      actionTitle: "Go to Edit") { model.screen = .edit }
+      } else if list.isEmpty {
+        DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match",
+                     message: "Nothing in the Queue fits this search or these filters.", actionTitle: "Clear filters") {
+          model.clearListFilters(.queue)
+          prefs.setStatus(.queue, nil)
+        }
       } else if mode == .wide {
         QueueCardList(model: model, videos: list, positions: positions, onPin: { pinTarget = $0 })
       } else {
@@ -62,48 +81,46 @@ struct QueueView: View {
       }
     }
     .dsAnimation(DS.motion.popover, value: pinTarget)
+    .onChange(of: pinTarget == nil, initial: true) { _, closed in ListPrefs.shared.screenDialogOpen = !closed }
+    .onDisappear { ListPrefs.shared.screenDialogOpen = false }
   }
 
-  private func subtitle(_ list: [Video]) -> String? {
-    guard !list.isEmpty else { return nil }
+  /// Has a day in the plan (an approved or a draft week): the card's date chip shows it.
+  private func isScheduled(_ v: Video) -> Bool { model.nextSlotByVideo[v.id] != nil }
+
+  private func statusChips(_ scope: [Video]) -> some View {
+    let n = scope.filter(isScheduled).count
+    return DSStatusChips(options: [
+      DSStatusChipOption(id: "scheduled", title: "Has a day", count: n,
+                         tooltip: "Clips with a day in the plan (a draft or an approved week)"),
+      DSStatusChipOption(id: "unscheduled", title: "No day yet", count: scope.count - n, tooltip: "Clips still waiting for a day"),
+    ], selection: prefs.statusBinding(.queue), allCount: scope.count, allTooltip: "Every clip in the Queue")
+  }
+
+  /// "next Thu 5 Nov" / "next today".
+  private var nextText: String? {
     let next = model.upcomingSlots.first.flatMap { model.video($0.videoId) }.map { model.dateText($0) }
       .map { $0 == "Today" ? "today" : $0 }
-    return "\(list.count) ready" + (next.map { " · next \($0)" } ?? "")
+    return next.map { "next \($0)" }
   }
 }
 
-/// "Worst → best ▾": the backlog order (Settings.sort) with the tie rule explained inside.
+/// The Queue's sort (Settings › Queue sort: the backlog order the planner uses) with the tie rule explained inside.
 struct QueueSortMenu: View {
   @Bindable var model: AppModel
 
   var body: some View {
-    let current = model.settings.sort
-    Menu {
-      ForEach(SortDirection.allCases, id: \.self) { d in
-        Button {
-          if d != current { model.update { $0.sort = d } }
-        } label: {
-          if d == current { Label(d.displayName, systemImage: "checkmark") } else { Text(d.displayName) }
-        }
-      }
-      Divider()
-      Text("Ties: the older set first, then part, then start time")
-      Text("Planned clips keep their days; this orders the ready backlog")
-    } label: {
-      HStack(spacing: 5) {
-        Text(current.displayName)
-        Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).opacity(0.7)
-      }
-    }
-    .menuStyle(.button)
-    .buttonStyle(DSButtonStyle(variant: .ghost, size: .sm))
-    .menuIndicator(.hidden)
-    .fixedSize()
-    .dsTooltip("Order unplanned ready clips by score")
+    DSSortMenu(options: SortDirection.allCases.map { DSSortOption(id: $0.rawValue, title: $0.displayName) },
+               selection: Binding(get: { model.settings.sort.rawValue }, set: { new in
+                 if let d = SortDirection(rawValue: new), d != model.settings.sort { model.update { $0.sort = d } }
+               }),
+               tooltip: "Order the clips waiting for a day by score",
+               notes: ["Ties: the older set first, then part, then start time",
+                       "Clips with a day keep it; this orders the ones waiting"])
   }
 }
 
-/// Queue bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Pin to days… · Post today · More (Remove from queue,
+/// Queue bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Pin to days… · Post today · More (Back to Edit,
 /// Back / Forward a stage, Skip platform ▸, Exclude, post on a platform again, Kind, re-render) · **Add to week**.
 private struct QueueBulkBar: View {
   @Bindable var model: AppModel
@@ -126,12 +143,12 @@ private struct QueueBulkBar: View {
     } more: {
       // Native items show no tooltip: titles carry the consequence (or why not); each asks first and can be undone.
       let removeWhy = model.removeFromQueueBlocker(ids)
-      Button("Remove from queue (back to Edit)" + AppModel.menuReason(removeWhy), systemImage: "arrow.uturn.backward") {
+      Button("Back to Edit" + AppModel.menuReason(removeWhy), systemImage: "arrow.uturn.backward") {
         model.removeFromQueue(ids)
       }
       .disabled(removeWhy != nil)
-      Button("Back a stage (planned → Queue, ready → Edit)", systemImage: "chevron.left") { model.stageBack(ids) }
-      Button("Forward a stage (pin ready ones to open days)", systemImage: "chevron.right") { model.stageForward(ids) }
+      Button("Back a stage (Scheduled → Queue, Queue → Edit)", systemImage: "chevron.left") { model.stageBack(ids) }
+      Button("Forward a stage (Queue → Scheduled on open days)", systemImage: "chevron.right") { model.stageForward(ids) }
       Divider()
       Menu("Skip platform") {
         ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { setPlatform(p, skipped: true) } }
