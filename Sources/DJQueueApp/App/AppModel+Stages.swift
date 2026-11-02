@@ -7,6 +7,15 @@ import SwiftUI
 extension AppModel {
   func stage(_ v: Video) -> ClipStage? { ClipStage.of(v) }
 
+  /// The Queue screen's clips: the upcoming plan, then the backlog — never a clip whose stage is Score or Edit.
+  /// `queueList` takes every clip with an upcoming day, and draft (unapproved) weeks don't make a clip Scheduled, so
+  /// a clip that fell back to Edit while it still sat on a draft day used to show here with Edit's stage control
+  /// ("Send to queue" on a Queue card, round 4 S1). Such a clip is in Edit only. A planned clip whose file went
+  /// missing (no stage) stays in place and shows its problem.
+  var queueClips: [Video] {
+    queueList.filter { v in ClipStage.of(v).map { $0 >= .queue } ?? true }
+  }
+
   /// Why `direction` can't move `v` (nil = it can). Mirrors `BulkActions.blocker` from the loaded data (no DB read).
   func stageBlocker(_ v: Video, _ direction: StageDirection) -> String? {
     guard let st = ClipStage.of(v) else {
@@ -40,7 +49,7 @@ extension AppModel {
     switch ClipStage.of(v) {
     case .edit: "Clears its score (\(v.score.map(String.init) ?? "–")) and sends it back to Score"
     case .queue: Self.removeFromQueueHelp
-    case .scheduled: "Unschedule: removes its unposted days from the plan; it stays ready in the Queue"
+    case .scheduled: "Unschedule: removes its unposted days from the plan; it stays in the Queue"
     default: stageBlocker(v, .back) ?? "Back a stage"
     }
   }
@@ -157,7 +166,7 @@ extension AppModel {
       title: title, verb: one.map(stageBackTitle) ?? "Move back", ids: ids,
       changes: one == nil ? [.init(field: "Edit → Score", value: "Score cleared"),
                              .init(field: "Queue → Edit", value: "Removed from queue, held in Edit"),
-                             .init(field: "Scheduled → Queue", value: "Unposted days removed, stays ready")] : [],
+                             .init(field: "Scheduled → Queue", value: "Unposted days removed, stays in the Queue")] : [],
       alwaysConfirm: anyScore || hasScheduledDays(ids), previewTitle: one == nil ? "What happens" : "Scheduled days removed",
       previewLines: { [weak self] r in
         guard let self else { return [] }

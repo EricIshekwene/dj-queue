@@ -30,7 +30,7 @@ struct WeekView: View {
         if !model.loaded {
           WeekSkeleton()
         } else if slots.isEmpty && model.ordered.isEmpty && model.upcomingSlots.isEmpty {
-          DSEmptyState(icon: "calendar", title: "Nothing ready to plan", message: "Clips show up here once they're scored and edited.",
+          DSEmptyState(icon: "calendar", title: "Nothing to plan yet", message: "Clips show up here once they reach the Queue.",
                        actionTitle: "Go to Edit") { model.screen = .edit }
         } else {
           WeekGrid(model: model, days: days, slots: slots, approved: model.weekStates[ws] == .approved)
@@ -233,7 +233,7 @@ struct WeekDayColumn: View {
       Text(isPast ? "Nothing posted" : "Drop a clip").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
       if !isPast {
         DSButton("Add from queue", variant: .ghost, size: .sm,
-                 disabledReason: backlog.isEmpty ? "Nothing ready in the queue" : nil,
+                 disabledReason: backlog.isEmpty ? "Nothing in the Queue is waiting for a day" : nil,
                  tooltip: backlog.first.map { "Pin “\(model.displayName($0))” here (next in queue)" }) {
           if let v = backlog.first { model.pin(v.id, dayKey: day) }
         }
@@ -468,7 +468,8 @@ struct ExtraPostChip: View {
 
 // MARK: - Backlog drawer
 
-/// Collapsed bar at the bottom ("Next up · 6"); expanded = the next ready clips (queue order), draggable onto a day.
+/// Collapsed bar at the bottom ("Next up 6"); expanded = the shared list header (compact: search ⌘F · Filters ·
+/// sort, applied filters as chips) over the Queue clips still waiting for a day, draggable onto a day.
 struct BacklogDrawer: View {
   @Bindable var model: AppModel
   @Binding var expanded: Bool
@@ -476,32 +477,46 @@ struct BacklogDrawer: View {
 
   var body: some View {
     let backlog = model.weekBacklog
+    let list = model.listSorted(.backlog, model.listScope(.backlog, backlog))
     VStack(spacing: 0) {
       DSSeparator()
-      Button { dsWithAnimation { expanded.toggle() } } label: {
-        HStack(spacing: DS.space.xs) {
-          Image(systemName: expanded ? "chevron.down" : "chevron.up")
-            .font(.system(size: 10, weight: .semibold)).foregroundStyle(DS.color.textSecondary).frame(width: 14)
-          Text("Next up").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
-          Text("\(backlog.count)").font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
-          Spacer()
-          if expanded { Text("Drag a clip onto a day").font(DS.type.caption).foregroundStyle(DS.color.textTertiary) }
+      HStack(spacing: DS.space.xs) {
+        DSIconButton(expanded ? "chevron.down" : "chevron.up", tooltip: expanded ? "Hide the backlog" : "Show the Queue clips waiting for a day",
+                     size: .sm) { toggle() }
+        ListHeader(page: .backlog, title: "Next up", count: backlog.isEmpty ? 0 : list.count, total: backlog.count,
+                   filters: expanded && !backlog.isEmpty ? model.listFilterSections(.backlog, backlog) : [], compact: true,
+                   showsSearch: expanded && !backlog.isEmpty) {
+          EmptyView()
+        } sort: {
+          if expanded && !backlog.isEmpty { ListSortMenu(page: .backlog, size: .sm) }
+        } trailing: {
+          if expanded && !backlog.isEmpty {
+            Text("Drag a clip onto a day").font(DS.type.caption).foregroundStyle(DS.color.textTertiary).padding(.leading, DS.space.xs)
+          }
         }
-        .padding(.horizontal, gutter)
-        .frame(height: 44)
-        .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
-      .dsTooltip(expanded ? "Hide the backlog" : "Show the next ready clips")
-      .accessibilityLabel("Next up, \(backlog.count) ready clips")
+      .padding(.horizontal, gutter - 4)
+      .padding(.vertical, 8)
+      .frame(minHeight: 44)
+      .contentShape(Rectangle())
+      .onTapGesture { if !expanded { toggle() } }
+      .accessibilityLabel("Next up, \(backlog.count) clips waiting for a day")
       if expanded {
         if backlog.isEmpty {
-          Text("Nothing ready in the queue").font(DS.type.callout).foregroundStyle(DS.color.textTertiary)
+          Text("Nothing in the Queue is waiting for a day").font(DS.type.callout).foregroundStyle(DS.color.textTertiary)
             .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, gutter).frame(height: 60)
+        } else if list.isEmpty {
+          HStack(spacing: DS.space.xs) {
+            Text("No clips match").font(DS.type.callout).foregroundStyle(DS.color.textTertiary)
+            DSButton("Clear filters", variant: .ghost, size: .sm, tooltip: "Remove every filter and the search") {
+              model.clearListFilters(.backlog)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, gutter).frame(height: 60)
         } else {
           ScrollView(.horizontal) {
             LazyHStack(alignment: .top, spacing: DS.space.md) {
-              ForEach(backlog.prefix(40)) { v in BacklogTile(model: model, video: v) }
+              ForEach(list.prefix(40)) { v in BacklogTile(model: model, video: v) }
             }
             .padding(.horizontal, gutter)
             .padding(.bottom, DS.space.md)
@@ -514,6 +529,8 @@ struct BacklogDrawer: View {
     }
     .background(DS.color.background)
   }
+
+  private func toggle() { dsWithAnimation { expanded.toggle() } }
 }
 
 struct BacklogTile: View {

@@ -4,28 +4,34 @@ import SwiftUI
 /// Posts (DESIGN-v2 §6.7, refs R2.POSTS Substack segmented list + R2.POSTS-alt n8n status table). Job: see what was
 /// posted, and fix problems.
 ///
-/// Toolbar "Posts" · search · Platform ▾. Tabs `Problems 2 · Scheduled · Posted · All` head the centred column.
-/// Every tab shows one card per (clip, scheduled day) (`PostGroupCard`, round 3 F4): cover, title, day + time span,
-/// status summary and platform chips; "Show platforms" opens the per-platform rows (click one → the 360 pt
-/// inspector with attempt history, metrics, repost). Problems: cards open, the affected platforms as problem cards
-/// with their fixes, the rest folded into "+N fine".
+/// Shared list header (round 4 S3): "Posts 48" · search (⌘F) · status chips `All · Problems 2 · Scheduled ·
+/// Posted` · Filters (Platform · Session · Kind · Score) · sort (newest / oldest first); applied filters as
+/// removable chips + Clear all. Every chip shows one card per (clip, scheduled day) (`PostGroupCard`, round 3 F4):
+/// cover, title, day + time span, status summary and platform chips; "Show platforms" opens the per-platform rows
+/// (click one → the 360 pt inspector with attempt history, metrics, repost). Problems: cards open, the affected
+/// platforms as problem cards with their fixes, the rest folded into "+N fine".
 /// Bulk (checkbox / ⇧ / ⌘ / ⌘A): Reset · Skip · Retry, confirmed in a dialog, then a toast.
 struct PostsView: View {
   @Bindable var model: AppModel
   @Bindable private var ui = BrowseUI.shared
+  private var prefs: ListPrefs { .shared }
 
   var body: some View {
-    let tab = ui.postsTab
-    let list = rows(tab)
+    let tab = PostsTab(rawValue: prefs[.posts].status ?? "") ?? .all
+    let scope = scoped(model.posts)
+    let list = rows(tab, scope)
     let sel = model.selectedIds(.posts)
     let inspected = model.postsSelection.flatMap { id in model.posts.first { $0.id == id } }
+    let has = !model.posts.isEmpty
     ZStack {
-      ScreenScaffold(model: model, screen: .posts, subtitle: subtitle, readingColumn: true) {
-        if !model.posts.isEmpty {
-          DSTextField(placeholder: "Search posts", text: $ui.postsSearch, isSearch: true).frame(width: 220)
-          BrowseFilterMenu(placeholder: "Platform", selection: $ui.postsPlatform, anyValue: nil,
-                           options: [(nil, "All platforms")] + model.settings.activePlatforms.map { (Optional($0), $0.displayName) },
-                           tooltip: "Show one platform")
+      ScreenScaffold(model: model, screen: .posts, readingColumn: true) {
+        ListHeader(page: .posts, title: "Posts", count: model.loaded && has ? list.count : nil, total: model.posts.count,
+                   filters: has ? filterSections : [], readingColumn: true, showsSearch: has) {
+          EmptyView()
+        } chips: {
+          if has { statusChips(scope) }
+        } sort: {
+          if has { sortMenu(tab) }
         }
       } content: {
         HStack(alignment: .top, spacing: DS.space.md) {
@@ -58,10 +64,10 @@ struct PostsView: View {
 
   // MARK: Data
 
-  /// Attention card "Review" → `reviewProblems()` sets `postsFilter = .problems`; open that tab once.
+  /// Attention card "Review" → `reviewProblems()` sets `postsFilter = .problems`; open that chip once.
   private func consumeFilter() {
     guard model.postsFilter == .problems else { return }
-    ui.postsTab = .problems
+    prefs.setStatus(.posts, PostsTab.problems.rawValue)
     model.postsFilter = .all
   }
 
@@ -71,59 +77,83 @@ struct PostsView: View {
     if let s = model.selection[.posts], !s.isSubset(of: keep) { model.selection[.posts] = s.intersection(keep) }
   }
 
-  private func scoped(_ posts: [PlatformPost]) -> [PlatformPost] {
-    let q = ui.postsSearch.trimmingCharacters(in: .whitespaces)
+  /// Search (platform, clip title, tag) + the applied filters (platform on the post, the rest on its clip).
+  private func scoped(_ posts: [PlatformPost], except: String? = nil) -> [PlatformPost] {
+    let s = prefs[.posts]
+    let q = s.search.trimmingCharacters(in: .whitespaces)
+    let active = s.filters.filter { $0.key != except }
+    guard !q.isEmpty || !active.isEmpty else { return posts }
     return posts.filter { p in
-      (ui.postsPlatform == nil || p.platform == ui.postsPlatform)
-        && (q.isEmpty || p.platform.displayName.localizedCaseInsensitiveContains(q)
-            || (model.video(p.videoId).map { model.displayName($0).localizedCaseInsensitiveContains(q) || $0.tag.localizedCaseInsensitiveContains(q) } ?? false))
+      let v = model.video(p.videoId)
+      let hit = q.isEmpty || p.platform.displayName.localizedCaseInsensitiveContains(q) || (v.map { model.listSearchMatches($0, q) } ?? false)
+      return hit && active.allSatisfy { key, value in
+        if key == ListFilterKey.platform { return p.platform.rawValue == value }
+        return v.map { model.listFilterMatches($0, key, value) } ?? false
+      }
     }
   }
 
-  private func rows(_ tab: PostsTab) -> [PlatformPost] {
+  /// Filters popover: Platform first (counted in posts), then the clip sections (counted in clips with posts).
+  private var filterSections: [DSFilterSection] {
+    let byPlatform = Dictionary(grouping: scoped(model.posts, except: ListFilterKey.platform), by: \.platform).mapValues(\.count)
+    let withPosts = Set(model.posts.map(\.videoId))
+    let clips = model.videos.filter { withPosts.contains($0.id) }
+    return model.listFilterSections(.posts, clips, platformCount: { byPlatform[$0] ?? 0 })
+  }
+
+  private func inTab(_ p: PlatformPost, _ tab: PostsTab) -> Bool {
     switch tab {
-    case .problems: return scoped(model.problems)
-    case .scheduled: return scoped(model.posts.filter { !$0.state.isTerminal && $0.state != .overdue }).sorted { $0.scheduledAt < $1.scheduledAt }
-    case .posted: return scoped(model.posts.filter { $0.state == .posted }).sorted { ($0.postedAt ?? $0.scheduledAt) > ($1.postedAt ?? $1.scheduledAt) }
-    case .all: return scoped(model.posts).sorted { $0.scheduledAt > $1.scheduledAt }
+    case .problems: model.problems.contains { $0.id == p.id }
+    case .scheduled: !p.state.isTerminal && p.state != .overdue
+    case .posted: p.state == .posted
+    case .all: true
     }
   }
 
-  private var subtitle: String? {
-    guard model.loaded, !model.posts.isEmpty else { return nil }
-    let posted = model.posts.filter { $0.state == .posted }.count
-    let scheduled = model.posts.filter { !$0.state.isTerminal && $0.state != .overdue }.count
-    return "\(posted) posted · \(scheduled) scheduled"
+  private func rows(_ tab: PostsTab, _ scope: [PlatformPost]) -> [PlatformPost] {
+    let base = tab == .problems ? scoped(model.problems) : scope.filter { inTab($0, tab) }
+    let newest = (prefs[.posts].sort ?? Self.defaultSort(tab)) == "newest"
+    let date: (PlatformPost) -> Date = { tab == .posted ? ($0.postedAt ?? $0.scheduledAt) : $0.scheduledAt }
+    if tab == .problems && prefs[.posts].sort == nil { return base }  // newest problem first, as loaded
+    return base.sorted { newest ? date($0) > date($1) : date($0) < date($1) }
+  }
+
+  /// Scheduled reads soonest first; the rest newest first.
+  static func defaultSort(_ tab: PostsTab) -> String { tab == .scheduled ? "oldest" : "newest" }
+
+  private func sortMenu(_ tab: PostsTab) -> some View {
+    DSSortMenu(options: [DSSortOption(id: "newest", title: "Newest first"), DSSortOption(id: "oldest", title: "Oldest first")],
+               selection: Binding(get: { prefs[.posts].sort ?? Self.defaultSort(tab) }, set: { prefs.setSort(.posts, $0) }),
+               tooltip: "Order posts by date")
+  }
+
+  private func statusChips(_ scope: [PlatformPost]) -> some View {
+    let problems = scoped(model.problems).count
+    let opts = [PostsTab.problems, .scheduled, .posted].map { t in
+      DSStatusChipOption(id: t.rawValue, title: t.title, count: t == .problems ? problems : scope.filter { inTab($0, t) }.count,
+                         tone: t == .problems && problems > 0 ? .danger : nil, tooltip: t.blurb)
+    }
+    return DSStatusChips(options: opts, selection: prefs.statusBinding(.posts), allCount: scope.count,
+                         allTooltip: PostsTab.all.blurb)
   }
 
   // MARK: Column
 
   @ViewBuilder private func column(tab: PostsTab, list: [PlatformPost], compact: Bool) -> some View {
     VStack(alignment: .leading, spacing: DS.space.sm) {
-      if !model.posts.isEmpty {
-        DSTabs(selection: $ui.postsTab, tabs: [
-          DSTab(value: .problems, title: "Problems", count: model.problems.isEmpty ? nil : model.problems.count),
-          DSTab(value: .scheduled, title: "Scheduled"),
-          DSTab(value: .posted, title: "Posted"),
-          DSTab(value: .all, title: "All"),
-        ])
-        // DSTabs has no per-tab tooltip: one quiet line says what the open tab holds (e.g. Scheduled leaves out missed).
-        Text(tab.blurb).font(DS.type.caption).foregroundStyle(DS.color.textTertiary).padding(.leading, DS.space.xs)
-      }
       if !model.loaded {
         Color.clear
       } else if model.posts.isEmpty {
         DSEmptyState(icon: "paperplane", title: "No posts yet", message: "Posts appear once a week is approved.",
                      actionTitle: "Open Week") { model.screen = .week }
       } else if list.isEmpty {
-        if tab == .problems && ui.postsSearch.isEmpty && ui.postsPlatform == nil {
+        if tab == .problems && !prefs[.posts].isNarrowed(ignoringStatus: true) {
           DSEmptyState(icon: "checkmark.circle", title: "No problems", message: "Every post went out or is on schedule.",
-                       actionTitle: "Show all posts") { ui.postsTab = .all }
+                       actionTitle: "Show all posts") { prefs.setStatus(.posts, nil) }
         } else {
           DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No posts match",
-                       message: "Nothing in \(tab.title) fits this search or platform.", actionTitle: "Clear filters") {
-            ui.postsSearch = ""
-            ui.postsPlatform = nil
+                       message: "Nothing in \(tab.title) fits this search or these filters.", actionTitle: "Clear filters") {
+            model.clearListFilters(.posts)
           }
         }
       } else {
@@ -281,7 +311,7 @@ struct PostStatePill: View {
 }
 
 extension PostsTab {
-  /// What the tab holds, in one line (shown under the tabs).
+  /// What the chip holds, in one line (its tooltip).
   var blurb: String {
     switch self {
     case .problems: "Failed, missed or copyright posts that need you"

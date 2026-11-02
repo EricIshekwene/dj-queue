@@ -35,7 +35,7 @@ enum ScreenMetrics {
 /// `readingColumn: true` centres the sub-toolbar and attention cards in the 880 pt column (text-heavy screens and
 /// Cards view); otherwise they span the full width with gutters. The problems card is hidden on Posts (that
 /// screen is where it leads); the paused card shows only on Posts (the sidebar status is the indicator elsewhere).
-struct ScreenScaffold<Trailing: View, SubToolbar: View, Content: View>: View {
+struct ScreenScaffold<Trailing: View, SubToolbar: View, Header: View, Content: View>: View {
   @Bindable var model: AppModel
   let screen: Screen
   var title: String
@@ -43,12 +43,14 @@ struct ScreenScaffold<Trailing: View, SubToolbar: View, Content: View>: View {
   var readingColumn: Bool
   @ViewBuilder var trailing: Trailing
   @ViewBuilder var subToolbar: SubToolbar
+  /// Clip lists: the shared `DSListHeader` replaces the toolbar and sub-toolbar (round 4 S3).
+  @ViewBuilder var header: Header
   @ViewBuilder var content: Content
   @State private var width: CGFloat = 1180
 
   init(model: AppModel, screen: Screen, title: String? = nil, subtitle: String? = nil, readingColumn: Bool = false,
        @ViewBuilder trailing: () -> Trailing = { EmptyView() }, @ViewBuilder subToolbar: () -> SubToolbar = { EmptyView() },
-       @ViewBuilder content: () -> Content) {
+       @ViewBuilder content: () -> Content) where Header == EmptyView {
     self.model = model
     self.screen = screen
     self.title = title ?? screen.title
@@ -56,6 +58,21 @@ struct ScreenScaffold<Trailing: View, SubToolbar: View, Content: View>: View {
     self.readingColumn = readingColumn
     self.trailing = trailing()
     self.subToolbar = subToolbar()
+    self.header = EmptyView()
+    self.content = content()
+  }
+
+  /// A clip list: `header` (a `DSListHeader`) sits where the toolbar and sub-toolbar would, with the screen gutter.
+  init(model: AppModel, screen: Screen, readingColumn: Bool = false, @ViewBuilder header: () -> Header,
+       @ViewBuilder content: () -> Content) where Trailing == EmptyView, SubToolbar == EmptyView {
+    self.model = model
+    self.screen = screen
+    self.title = screen.title
+    self.subtitle = nil
+    self.readingColumn = readingColumn
+    self.trailing = EmptyView()
+    self.subToolbar = EmptyView()
+    self.header = header()
     self.content = content()
   }
 
@@ -63,9 +80,15 @@ struct ScreenScaffold<Trailing: View, SubToolbar: View, Content: View>: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      DSToolbar(title, subtitle: subtitle) { EmptyView() } trailing: { trailing }
-        .padding(.horizontal, gutter - DS.space.xl)
-        .background { WindowDragArea() }
+      if Header.self != EmptyView.self {
+        header
+          .padding(.horizontal, gutter)
+          .background { WindowDragArea() }
+      } else {
+        DSToolbar(title, subtitle: subtitle) { EmptyView() } trailing: { trailing }
+          .padding(.horizontal, gutter - DS.space.xl)
+          .background { WindowDragArea() }
+      }
       if SubToolbar.self != EmptyView.self {
         HStack(spacing: DS.space.xs) { subToolbar }
           .frame(maxWidth: readingColumn ? DS.size.readingColumn : .infinity, alignment: .leading)

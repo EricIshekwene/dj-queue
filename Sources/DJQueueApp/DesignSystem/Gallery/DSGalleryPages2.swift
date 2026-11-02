@@ -24,7 +24,7 @@ struct GallerySurfaces: View {
           .frame(width: 560)
         }
         GSection("Toolbar", note: "52 pt · transparent · one primary") {
-          DSToolbar("Queue", subtitle: "41 ready · next Thu 5 Nov") {
+          DSToolbar("Queue", subtitle: "41 · next Thu 5 Nov") {
             EmptyView()
           } trailing: {
             GState(DSViewMode.wide) { DSViewModeSwitcher(mode: $0, size: .sm) }

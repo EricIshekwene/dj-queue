@@ -79,8 +79,8 @@ struct AppSidebar: View {
     let n = count.map { "\($0) " } ?? ""
     let (purpose, meaning): (String, String?) = switch s {
     case .score: ("Score new clips", count == nil ? nil : "\(n)to score")
-    case .edit: ("Finish clips for posting", count == nil ? nil : "\(n)need work")
-    case .queue: ("See ready clips in posting order", count == nil ? nil : "\(n)ready")
+    case .edit: ("Finish clips for posting", count == nil ? nil : "\(n)in Edit")
+    case .queue: ("See Queue clips in posting order", count == nil ? nil : "\(n)in the Queue")
     case .week: ("Plan and approve the week", nil)
     case .today: ("See what to post today", count == nil ? nil : "\(n)due")
     case .library: ("Browse every clip, posted or not", nil)

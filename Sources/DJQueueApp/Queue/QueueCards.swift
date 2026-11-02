@@ -81,7 +81,7 @@ struct QueueCardList: View {
   private func drop(_ id: String, onto target: Video) -> Bool {
     guard id != target.id, model.video(id) != nil else { return false }
     guard let slot = model.nextSlotByVideo[target.id] else {
-      model.show("The ready backlog follows the sort (\(model.settings.sort.displayName)). Drop on a planned clip, or pin a clip to a date.")
+      model.show("Clips waiting for a day follow the sort (\(model.settings.sort.displayName)). Drop on a planned clip, or pin a clip to a date.")
       return false
     }
     let day = Fmt.day(model.dm.date(slot.date), tz: model.tz)

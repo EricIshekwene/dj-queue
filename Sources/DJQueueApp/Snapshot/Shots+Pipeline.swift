@@ -33,7 +33,6 @@ extension SnapshotShots {
       },
       c.main("13-edit-cards") { m in
         SampleData.pipelineEditExtras(m)
-        PipelineUIState.shared.editFilter = nil
         mode(m, .edit, .wide)
       },
       c.main("14-edit-grid") { m in
@@ -96,8 +95,8 @@ extension SnapshotShots {
       c.main("1c-queue-bulk") { m in
         SampleData.pipelineRevert(m)
         mode(m, .queue, .wide)
-        let ids = m.queueList.dropFirst(7).prefix(3).map(\.id)
-        m.visibleIds[.queue] = m.queueList.map(\.id)
+        let ids = m.queueClips.dropFirst(7).prefix(3).map(\.id)
+        m.visibleIds[.queue] = m.queueClips.map(\.id)
         m.setSelection(ids, screen: .queue)
       },
       c.main("1d-queue-empty", c.empty) { m in

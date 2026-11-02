@@ -47,7 +47,7 @@ struct GalleryTooltips: View {
         }
         GSection("In context", note: "toolbar · icon segmented · ⋯ · bulk bar") {
           VStack(alignment: .leading, spacing: 64) {
-            DSToolbar("Queue", subtitle: "41 ready · next Thu 5 Nov") {
+            DSToolbar("Queue", subtitle: "41 · next Thu 5 Nov") {
               EmptyView()
             } trailing: {
               GState(DSViewMode.grid) { DSViewModeSwitcher(mode: $0, size: .sm) }

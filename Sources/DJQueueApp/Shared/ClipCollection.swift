@@ -123,7 +123,7 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
         Section {
           ForEach(videos) { v in card(v) }
         } header: {
-          ClipListHeader(selectable: true).background(DS.color.background)
+          ClipListColumns(selectable: true).background(DS.color.background)
         }
       }
       .frame(maxWidth: DS.size.readingColumn)
@@ -245,7 +245,7 @@ extension ClipCollection where Header == EmptyView, Menu == EmptyView {
 
 /// Column labels above List mode, aligned with DSClipCard `.list` (checkbox · thumb · title … score · next ·
 /// platforms · actions).
-struct ClipListHeader: View {
+struct ClipListColumns: View {
   var selectable = true
   var body: some View {
     HStack(spacing: DS.space.sm) {

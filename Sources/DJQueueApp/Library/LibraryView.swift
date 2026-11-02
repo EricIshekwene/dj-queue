@@ -4,33 +4,39 @@ import SwiftUI
 /// Library (DESIGN-v2 §6.6, refs R2.LIBRARY Frame.io tiles + R2.VIEWMODES Arcade filters). Job: find any clip in
 /// any state.
 ///
-/// Toolbar "Library · 63 clips" · capsule search · view toggle (Grid default, all four modes, remembered).
-/// Sub-toolbar: filter pills with counts (All · Posted · Excluded · Missing · Long-form), Session ▾, Kind ▾,
-/// Score ▾, sort menu. Short clips go through the shared ClipCollection with a state chip; long-form clips get their
-/// own 16:9 section (tiles, or rows in List view) with **Mark posted**. Click: short → editor; long-form, missing or
-/// removed-from-videos.json → quick look. Bulk bar: Score… · Kind ▾ · Exclude/Include · Mark long-form posted ·
-/// More (Copy agent prompt, Re-render, Apply defaults).
+/// Shared list header (round 4 S3): "Library 63" · search (⌘F) · view toggle (Grid default, all four modes) ·
+/// status pills with counts (All · Posted · Excluded · Missing · Long-form) · Filters (Session · Kind · Score ·
+/// Stage) · sort; applied filters as removable chips + Clear all. Short clips go through the shared ClipCollection
+/// with their stage chip; long-form clips get their own 16:9 section (tiles, or rows in List view) with
+/// **Mark posted**. Click: short → editor; long-form, missing or removed-from-videos.json → quick look. Bulk bar:
+/// Score… · Kind ▾ · Exclude/Include · Mark long-form posted · More (Copy agent prompt, Re-render, Apply defaults).
 struct LibraryView: View {
   @Bindable var model: AppModel
   @Bindable private var ui = BrowseUI.shared
   @FocusState private var keyFocus: Bool
+  private var prefs: ListPrefs { .shared }
 
   var body: some View {
     let all = model.libraryAll
-    let shown = visible(all)
+    let scope = model.listScope(.library, all)
+    let status = LibraryFilter(rawValue: prefs[.library].status ?? "") ?? .all
+    let shown = model.listSorted(.library, scope.filter { matches($0, status) })
     let shorts = shown.filter { $0.type == .short }
     let longs = shown.filter { $0.type == .long }
     let mode = model.viewMode(.library)
     let sel = model.selectedIds(.library)
+    let column = mode == .wide || mode == .list
     ZStack {
-      ScreenScaffold(model: model, screen: .library, subtitle: subtitle(all: all.count, shown: shown.count),
-                     readingColumn: mode == .wide || mode == .list) {
-        if !all.isEmpty {
-          DSTextField(placeholder: "Search clips", text: $ui.search, isSearch: true).frame(width: 220)
-          DSViewModeSwitcher(mode: model.viewModeBinding(.library))
+      ScreenScaffold(model: model, screen: .library, readingColumn: column) {
+        ListHeader(page: .library, title: "Library", count: model.loaded && !all.isEmpty ? shown.count : nil, total: all.count,
+                   filters: all.isEmpty ? [] : model.listFilterSections(.library, all), readingColumn: column,
+                   showsSearch: !all.isEmpty) {
+          if !all.isEmpty { DSViewModeSwitcher(mode: model.viewModeBinding(.library)) }
+        } chips: {
+          if !all.isEmpty { statusChips(scope) }
+        } sort: {
+          if !all.isEmpty { ListSortMenu(page: .library) }
         }
-      } subToolbar: {
-        if !all.isEmpty { filterBar(all) }
       } content: {
         content(all: all, shorts: shorts, longs: longs, mode: mode)
       }
@@ -60,18 +66,6 @@ struct LibraryView: View {
 
   // MARK: Filtering
 
-  /// Session / kind / score / search scope (the pills' counts are computed inside this scope).
-  private func scoped(_ all: [Video]) -> [Video] {
-    let q = ui.search.trimmingCharacters(in: .whitespaces)
-    return all.filter { v in
-      (model.librarySession == nil || v.sessionId == model.librarySession)
-        && (ui.kind == .any || (ui.kind == .talking) == (v.kind == .talking))
-        && (ui.score == .any || (v.type == .short && ui.score.matches(v.score)))
-        && (q.isEmpty || model.displayName(v).localizedCaseInsensitiveContains(q) || v.tag.localizedCaseInsensitiveContains(q)
-            || v.name.localizedCaseInsensitiveContains(q))
-    }
-  }
-
   private func matches(_ v: Video, _ f: LibraryFilter) -> Bool {
     switch f {
     case .all: true
@@ -82,56 +76,17 @@ struct LibraryView: View {
     }
   }
 
-  private func visible(_ all: [Video]) -> [Video] {
-    sorted(scoped(all).filter { matches($0, ui.filter) })
-  }
+  // MARK: Status chips
 
-  private func sorted(_ vs: [Video]) -> [Video] {
-    switch ui.sort {
-    case .session:
-      return vs.sorted { a, b in
-        let sa = model.sessionById[a.sessionId]?.date ?? "", sb = model.sessionById[b.sessionId]?.date ?? ""
-        return (sb, a.part ?? 0, a.start ?? 0, a.id) < (sa, b.part ?? 0, b.start ?? 0, b.id)
-      }
-    case .newest: return vs.sorted { ($0.createdAt, $0.id) > ($1.createdAt, $1.id) }
-    case .scoreHigh: return vs.sorted { ($0.score ?? -1, $1.id) > ($1.score ?? -1, $0.id) }
-    case .scoreLow: return vs.sorted { ($0.score ?? 101, $0.id) < ($1.score ?? 101, $1.id) }
-    case .title:
-      return vs.sorted { model.displayName($0).localizedCaseInsensitiveCompare(model.displayName($1)) == .orderedAscending }
-    }
-  }
-
-  private func subtitle(all: Int, shown: Int) -> String? {
-    guard model.loaded, all > 0 else { return nil }
-    let noun = all == 1 ? "clip" : "clips"
-    return shown == all ? "\(all) \(noun)" : "\(shown) of \(all) \(noun)"
-  }
-
-  // MARK: Sub-toolbar
-
-  @ViewBuilder private func filterBar(_ all: [Video]) -> some View {
-    let scope = scoped(all)
-    ForEach(LibraryFilter.allCases) { f in
+  /// All · Posted · Excluded · Missing · Long-form, counted inside the search + filters scope.
+  private func statusChips(_ scope: [Video]) -> some View {
+    let pills = LibraryFilter.allCases.filter { $0 != .all }.map { f in
       let n = scope.filter { matches($0, f) }.count
-      DSChip(f.title, isSelected: ui.filter == f, tone: f == .missing && n > 0 && ui.filter != f ? .danger : nil, count: n,
-             showsCheck: false) { ui.filter = f }
-        .dsTooltip(tooltip(f))
+      return DSStatusChipOption(id: f.rawValue, title: f.title, count: n, tone: f == .missing && n > 0 ? .danger : nil,
+                                tooltip: tooltip(f))
     }
-    DSSeparator(vertical: true).frame(height: 18).padding(.horizontal, DS.space.xxs)
-    BrowseFilterMenu(placeholder: "Session", selection: $model.librarySession, anyValue: nil,
-                     options: [(nil, "All sessions")] + model.sessions.sorted { ($0.date ?? "") > ($1.date ?? "") }
-                       .map { (Optional($0.id), Captions.setName($0.name)) },
-                     tooltip: "Show one session")
-    BrowseFilterMenu(placeholder: "Kind", selection: $ui.kind, anyValue: .any,
-                     options: LibraryKindFilter.allCases.map { ($0, $0.title) }, tooltip: "Show only DJ vids or Talking clips")
-    BrowseFilterMenu(placeholder: "Score", selection: $ui.score, anyValue: .any,
-                     options: LibraryScoreFilter.allCases.map { ($0, $0.title) }, tooltip: "Filter short clips by score")
-    if ui.libraryFiltered || model.librarySession != nil {
-      DSButton("Clear filters", variant: .ghost, size: .sm, tooltip: "Clear filters and search") { clearFilters() }
-    }
-    Spacer(minLength: DS.space.xs)
-    BrowseFilterMenu(placeholder: LibrarySort.session.title, selection: $ui.sort, anyValue: .session,
-                     options: LibrarySort.allCases.map { ($0, $0.title) }, tooltip: "Sort clips")
+    return DSStatusChips(options: pills, selection: prefs.statusBinding(.library), allCount: scope.count,
+                         allTooltip: tooltip(.all))
   }
 
   private func tooltip(_ f: LibraryFilter) -> String {
@@ -145,8 +100,8 @@ struct LibraryView: View {
   }
 
   private func clearFilters() {
-    ui.clearLibraryFilters()
-    model.librarySession = nil
+    model.clearListFilters(.library)
+    prefs.setStatus(.library, nil)
   }
 
   // MARK: Content
@@ -160,7 +115,7 @@ struct LibraryView: View {
                    actionTitle: "Check for new clips", actionIcon: "arrow.clockwise") { model.runTick() }
     } else if shorts.isEmpty && longs.isEmpty {
       DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match",
-                   message: "Nothing fits these filters\(ui.search.isEmpty ? "" : " and “\(ui.search)”").",
+                   message: "Nothing fits these filters\(prefs[.library].search.isEmpty ? "" : " and “\(prefs[.library].search)”").",
                    actionTitle: "Clear filters") { clearFilters() }
     } else if shorts.isEmpty {
       // Only long-form clips: their own section in every view mode.
@@ -188,7 +143,8 @@ struct LibraryView: View {
     }
   }
 
-  /// The card model: shared mapping + a state chip; Library cards don't list issues (the chip says Needs edit).
+  /// The card model: shared mapping + its stage chip; Library cards don't list issues (the Edit chip's tooltip
+  /// says what's missing).
   private func libraryClip(_ v: Video, mode: DSViewMode) -> DSClip {
     var c = model.dsClip(v, for: .library)
     c.issues = []
@@ -399,9 +355,10 @@ struct LibrarySectionLabel: View {
 
 // MARK: - Library state
 
-/// The state chip on Library tiles (DESIGN-v2 §6.6).
-enum LibraryClipState {
-  case unscored, needsEdit, sentBack, ready, planned, posted, excluded, missing, removed
+/// The state chip on Library tiles (DESIGN-v2 §6.6, round 4 S1): the clip's stage name (Score · Edit · Queue ·
+/// Scheduled · Posted) — never "Ready" or "Needs edit"; stage IS readiness — or why it has no stage.
+enum LibraryClipState: Equatable {
+  case stage(ClipStage), longform, excluded, missing, removed
 }
 
 extension AppModel {
@@ -414,32 +371,41 @@ extension AppModel {
     if libraryIsMissing(v) { return .missing }
     if v.excluded { return .excluded }
     if libraryIsRemoved(v) { return .removed }
-    if v.type == .long { return v.longformURL == nil ? .ready : .posted }
-    if v.score == nil { return .unscored }
-    if v.heldInEdit { return .sentBack }
-    switch v.state {
-    case .needsEdit: return .needsEdit
-    case .ready: return .ready
-    case .planned, .posting: return .planned
-    case .posted, .partial: return .posted
-    case .excluded: return .excluded
-    case .missingFile: return .missing
-    }
+    if v.type == .long { return v.longformURL == nil ? .longform : .stage(.posted) }
+    return ClipStage.of(v).map(LibraryClipState.stage) ?? .missing
   }
 
   func libraryStateChip(_ v: Video) -> DSClipTag {
     switch libraryState(v) {
-    case .unscored: DSClipTag(text: "Unscored", style: .outline, tooltip: "Not scored yet — score it in Score")
-    case .needsEdit: DSClipTag(text: "Needs edit", style: .soft(.warning), tooltip: "Scored, but something is missing — fix it in Edit")
-    case .sentBack: DSClipTag(text: "Sent back to Edit", style: .soft(.warning), icon: "arrow.uturn.backward",
-                              tooltip: "Removed from the queue — Send to queue when it's ready")
-    case .ready: DSClipTag(text: "Ready", style: .soft(.neutral), tooltip: "Ready and waiting in the Queue")
-    case .planned: DSClipTag(text: "Planned", style: .soft(.info), tooltip: "Has upcoming days in the plan")
-    case .posted: DSClipTag(text: "Posted", style: .soft(.success), tooltip: "Posted on every planned platform")
+    case .stage(let st): stageTag(st, video: v)
+    case .longform: DSClipTag(text: "Not posted", style: .outline, tooltip: "Not on YouTube yet — Mark posted when it's up")
     case .excluded: DSClipTag(text: "Excluded", style: .outline, tooltip: "Never posted — Include brings it back")
     case .missing: DSClipTag(text: "Missing", style: .soft(.danger), tooltip: "The source file moved or was deleted — Health › Doctor relinks it")
     case .removed: DSClipTag(text: "Not in videos.json", style: .soft(.warning), tooltip: "Gone from the session's videos.json — kept here, never posted unless you keep it")
     }
+  }
+
+  /// A stage as a chip: its name, with what it means for this clip in the tooltip (Edit: what's missing).
+  func stageTag(_ st: ClipStage, video v: Video) -> DSClipTag {
+    switch st {
+    case .score: DSClipTag(text: "Score", style: .outline, tooltip: "In Score — not scored yet")
+    case .edit:
+      DSClipTag(text: "Edit", style: .soft(.warning), tooltip: editWhy(v).map { "In Edit — \($0)" } ?? "In Edit — open it to finish it")
+    case .queue: DSClipTag(text: "Queue", style: .soft(.neutral), tooltip: "In the Queue — waiting for a day")
+    case .scheduled: DSClipTag(text: "Scheduled", style: .soft(.info), tooltip: "Scheduled — has days in the plan")
+    case .posted: DSClipTag(text: "Posted", style: .soft(.success), tooltip: "Posted on every planned platform")
+    }
+  }
+
+  /// Why a clip is in Edit, in words ("no crop, no text"), from its Validation issues; nil when none are loaded.
+  func editWhy(_ v: Video) -> String? {
+    let titles = (issuesByVideo[v.id] ?? []).filter { $0.kind != .missingFile }
+      .map { EditFilter(kind: $0.kind, platform: $0.platform).title }
+    var seen = Set<String>()
+    let unique = titles.filter { seen.insert($0).inserted }
+    guard !unique.isEmpty else { return nil }
+    return unique.prefix(3).enumerated().map { i, t in i == 0 ? t : t.prefix(1).lowercased() + t.dropFirst() }
+      .joined(separator: ", ")
   }
 }
 

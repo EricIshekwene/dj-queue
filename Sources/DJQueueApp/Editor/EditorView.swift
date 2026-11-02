@@ -250,7 +250,8 @@ struct EditorHeader: View {
       DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark.triangle.fill")
         .dsTooltip("The clip file is gone; relink it in Health")
     } else if issues.isEmpty {
-      DSBadge("Ready", style: .soft(.success), icon: "checkmark").dsTooltip("Nothing to fix; this clip can be queued")
+      // Round 4 S1: no "Ready" label — stage is readiness; the stage control beside it names where the clip goes.
+      DSBadge("Nothing to fix", style: .soft(.success), icon: "checkmark").dsTooltip("Nothing missing; it can go to the Queue")
     } else {
       Button {
         if let first = issues.first { model.scrollTarget = EditorModel.section(for: first.kind) }

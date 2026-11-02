@@ -3,7 +3,8 @@ import Observation
 import SwiftUI
 
 /// UI state the pipeline screens (Score, Edit, Queue) keep outside their views, so it survives view rebuilds and
-/// snapshot setups can drive it: typed grid scores, Score's optimistic "saved" set, the Edit filter.
+/// snapshot setups can drive it: typed grid scores and Score's optimistic "saved" set. (List search, chips,
+/// filters and sort are in `ListPrefs`.)
 @MainActor
 @Observable
 final class PipelineUIState {
@@ -12,8 +13,6 @@ final class PipelineUIState {
   var typedScores: [String: String] = [:]
   /// Score: clips saved/skipped-away in this session that the list may still contain until the refresh lands.
   var scoreHidden: Set<String> = []
-  /// Edit: the active filter chip (nil = All).
-  var editFilter: EditFilter?
 
   /// A typed value that is a valid score, else nil.
   static func score(_ s: String?) -> Int? {

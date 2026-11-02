@@ -11,7 +11,7 @@ extension SnapshotShots {
       ui.reset()
       probe.override = nil
       m.postsSelection = nil
-      m.librarySession = nil
+      ListPrefs.shared.reset()
     }
     func library(_ m: AppModel, _ mode: DSViewMode) {
       prep(m)
@@ -25,7 +25,7 @@ extension SnapshotShots {
       c.main("33-library-posted") { m in
         library(m, .grid)
         SampleData.markSampleLongformPosted(m)
-        ui.filter = .posted
+        ListPrefs.shared.setStatus(.library, LibraryFilter.posted.rawValue)
       },
       c.main("34-library-bulk-confirm") { m in
         library(m, .grid)
@@ -42,12 +42,12 @@ extension SnapshotShots {
       c.main("35-library-empty", c.empty) { m in library(m, .grid) },
       c.main("36-posts-problems") { m in
         prep(m)
-        ui.postsTab = .problems
+        ListPrefs.shared.setStatus(.posts, PostsTab.problems.rawValue)
         m.screen = .posts
       },
       c.main("37-posts-all-inspector") { m in
         prep(m)
-        ui.postsTab = .all
+        ListPrefs.shared.setStatus(.posts, nil)
         m.postsSelection = (m.posts.first { $0.state == .posted && $0.metrics != nil } ?? m.posts.first)?.id
         m.screen = .posts
       },
@@ -78,7 +78,7 @@ extension SnapshotShots {
       c.main("3c-command-palette-clip") { m in
         prep(m)
         m.screen = .queue
-        ui.paletteClipId = m.queueList.first?.id
+        ui.paletteClipId = m.queueClips.first?.id
         m.showPalette = true
       },
       c.main("3d-library-missing-quicklook") { m in

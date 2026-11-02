@@ -134,6 +134,7 @@ struct SnapshotContext {
     m.loaded = true
     m.screen = .score
     m.weekStart = m.planner.weekStart(for: m.now)
+    ListPrefs.shared.reset()
   }
 }
 

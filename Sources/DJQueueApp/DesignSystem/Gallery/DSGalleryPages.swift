@@ -57,7 +57,7 @@ struct GalleryFoundations: View {
             typeRow("display 28", DS.type.display, "Everything is scored")
             typeRow("title 20", DS.type.title, "Queue")
             typeRow("headline 15", DS.type.headline, "Chanel x Ke Star")
-            typeRow("body 14", DS.type.body, "Scored clips that aren't ready yet.")
+            typeRow("body 14", DS.type.body, "Scored clips that still need a crop or text.")
             typeRow("callout 13", DS.type.callout, "Afroween Jazz Piano · 0:14")
             typeRow("caption 12", DS.type.caption, "158/1500 · helper text")
             typeRow("micro 11", DS.type.micro, "Browse · 0:42")
@@ -317,8 +317,8 @@ struct GalleryInputs: View {
               GState("worst") { DSSegmented(selection: $0, segments: [DSSegment(value: "worst", title: "Worst → best"), DSSegment(value: "best", title: "Best → worst")]) }
               GState(DSViewMode.wide) { DSViewModeSwitcher(mode: $0) }
             }
-            GState("ready") {
-              DSTabs(selection: $0, tabs: [DSTab(value: "all", title: "All", count: 63), DSTab(value: "ready", title: "Ready", count: 31),
+            GState("queue") {
+              DSTabs(selection: $0, tabs: [DSTab(value: "all", title: "All", count: 63), DSTab(value: "queue", title: "Queue", count: 31),
                                            DSTab(value: "posted", title: "Posted", count: 20), DSTab(value: "excluded", title: "Excluded", count: 2)])
             }
           }
@@ -341,9 +341,9 @@ struct GalleryStatus: View {
         GSection("Badges", note: "short words, never sentences") {
           VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-              DSBadge("Ready", style: .soft(.success))
-              DSBadge("Planned", style: .soft(.info))
-              DSBadge("Needs edit", style: .soft(.warning))
+              DSBadge("Posted", style: .soft(.success))
+              DSBadge("Scheduled", style: .soft(.info))
+              DSBadge("No crop", style: .soft(.warning))
               DSBadge("Failed", style: .soft(.danger), icon: "exclamationmark")
               DSBadge("Skipped")
               DSBadge("Talking", style: .outline)
@@ -391,7 +391,7 @@ struct GalleryStatus: View {
         GSection("Stats") {
           HStack(alignment: .top, spacing: DS.space.xxl) {
             DSStat(value: "5d", label: "Approved runway")
-            DSStat(value: "21d", label: "Ready runway", hint: "+3 this week")
+            DSStat(value: "21d", label: "Queue runway", hint: "+3 this week")
             DSStat(value: "1d", label: "Low runway", tone: .warning)
             DSStat(value: "41", label: "Score (card)", size: .sm)
           }

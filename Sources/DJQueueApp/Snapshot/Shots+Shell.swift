@@ -40,7 +40,7 @@ extension SnapshotShots {
         m.screen = .library
       },
       c.main("06-shell-editor") { m in
-        if let id = m.queueList.first?.id { m.openEditor(id, in: m.queueList.map(\.id)) }
+        if let id = m.queueClips.first?.id { m.openEditor(id, in: m.queueClips.map(\.id)) }
       },
       c.main("07-shell-shortcuts") { m in m.showShortcuts = true },
     ]

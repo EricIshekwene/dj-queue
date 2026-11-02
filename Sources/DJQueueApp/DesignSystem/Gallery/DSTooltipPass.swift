@@ -41,7 +41,7 @@ enum DSTooltipPass {
         Case(name: "11-posts", screen: .posts),
         Case(name: "12-health", screen: .health),
         Case(name: "13-settings", screen: .queue) { $0.showSettings = true },
-        Case(name: "14-editor", screen: .queue) { m in if let id = m.queueList.first?.id { m.openEditor(id, in: m.queueList.map(\.id)) } },
+        Case(name: "14-editor", screen: .queue) { m in if let id = m.queueClips.first?.id { m.openEditor(id, in: m.queueClips.map(\.id)) } },
         Case(name: "15-command-palette", screen: .queue) { $0.showPalette = true },
         Case(name: "16-edit-bulk-bar", screen: .edit, mode: .wide) { m in
           m.setSelection(Array(m.editList.prefix(3).map(\.id)), screen: .edit)
@@ -53,7 +53,7 @@ enum DSTooltipPass {
         Case(name: "21-library-single", screen: .library, mode: .single),
         Case(name: "22-edit-list", screen: .edit, mode: .list),
         Case(name: "23-posts-inspector", screen: .posts) { m in m.postsSelection = m.posts.first { !$0.state.isTerminal }?.id },
-        Case(name: "24-sheet-pin", screen: .queue) { m in m.pinPrompt = m.queueList.first },
+        Case(name: "24-sheet-pin", screen: .queue) { m in m.pinPrompt = m.queueClips.first },
         Case(name: "25-sheet-mark-posted", screen: .today) { m in m.markPostedTarget = m.dueNow.first ?? m.nextPost },
         Case(name: "26-sheet-bulk-confirm", screen: .edit, mode: .wide) { m in
           let ids = Array(m.editList.prefix(3).map(\.id))

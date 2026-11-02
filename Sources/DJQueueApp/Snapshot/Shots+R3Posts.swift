@@ -13,7 +13,7 @@ extension SnapshotShots {
       cards.fineShown = []
       m.postsSelection = nil
       m.update { $0.paused = false }; m.toast = nil  // setup, not an action shown in the shot
-      ui.postsTab = tab
+      ListPrefs.shared.setStatus(.posts, tab == .all ? nil : tab.rawValue)
       m.screen = .posts
     }
     /// The first scheduled card with several platforms (the one shown open).
@@ -51,7 +51,7 @@ extension SnapshotShots {
       c.view("grid-edit-hover", width: 760) {
         let m = c.model
         m.update { $0.paused = false }; m.toast = nil  // setup, not an action shown in the shot
-        let vids = Array((m.editList.isEmpty ? m.queueList : m.editList).prefix(4))
+        let vids = Array((m.editList.isEmpty ? m.queueClips : m.editList).prefix(4))
         m.requestProxies(vids.map(\.id))
         return AnyView(HStack(alignment: .top, spacing: DS.space.md) {
           ForEach(Array(vids.enumerated()), id: \.element.id) { i, v in
