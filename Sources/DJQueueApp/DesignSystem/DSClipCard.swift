@@ -8,6 +8,8 @@ struct DSClipTag: Identifiable, Hashable {
   var text: String
   var style: DSBadgeStyle = .outline
   var icon: String? = nil
+  /// What the tag means (hover). Every tag on a card should explain itself.
+  var tooltip: String? = nil
   var id: String { text }
 }
 
@@ -219,8 +221,8 @@ struct DSClipCard<Actions: View>: View {
     out += clip.suggestions.prefix(3).map { s in
       AnyView(DSSuggestionChip(suggestion: s) { onAcceptSuggestion?(s) })
     }
-    if let st = clip.status { out.append(AnyView(DSBadge(st.text, style: st.style, icon: st.icon))) }
-    out += clip.tags.map { t in AnyView(DSBadge(t.text, style: t.style, icon: t.icon)) }
+    if let st = clip.status { out.append(AnyView(DSBadge(st.text, style: st.style, icon: st.icon, help: st.tooltip))) }
+    out += clip.tags.map { t in AnyView(DSBadge(t.text, style: t.style, icon: t.icon, help: t.tooltip)) }
     return out
   }
 
@@ -377,7 +379,7 @@ struct DSClipCard<Actions: View>: View {
       if clip.isMissing {
         DSBadge("File missing", style: .soft(.danger), size: .sm, help: "The source file moved or was deleted — Health › Doctor relinks it")
       } else if let k = clip.kind {
-        DSBadge(k, style: .outline, size: .sm)
+        DSBadge(k, style: .outline, size: .sm, help: "Kind: \(k) (Talking clips start with no text)")
       }
       Group {
         if let s = clip.score { Text("\(s)").foregroundStyle(DS.color.text) } else { Text("—").foregroundStyle(DS.color.textTertiary) }

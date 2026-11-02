@@ -95,6 +95,9 @@ final class EditorModel: ObservableObject {
   private var overlayKey: OverlayKey?
   private var toastTask: Task<Void, Never>?
   private static let saveQueue = DispatchQueue(label: "com.djlovd.queue.editor.save", qos: .userInitiated)
+
+  /// Blocks until every queued editor write has landed (the app journals the session after it).
+  static func waitForSaves() { saveQueue.sync {} }
   nonisolated(unsafe) static var defaults = UserDefaults.standard
 
   init(store: Store, videoId: String, snapshotMode: Bool = false) {

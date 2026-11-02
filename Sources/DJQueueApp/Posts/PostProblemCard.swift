@@ -67,7 +67,8 @@ struct PostProblemCard: View {
               .dsTooltip(Fmt.day(post.updatedAt, tz: model.tz, style: "EEE d MMM, h:mm a"))
           }
           HStack(spacing: 6) {
-            DSBadge(PostText.problemType(post), style: .soft(tone), icon: post.state.isCopyright ? "c.circle" : nil)
+            DSBadge(PostText.problemType(post), style: .soft(tone), icon: post.state.isCopyright ? "c.circle" : nil,
+                    help: post.state.isCopyright ? "The platform flagged the audio — copyright blocks are never retried automatically" : "What went wrong — the actions on the right fix it")
             if post.versionNo != 1 || post.attemptNo != 1 || post.kind != .regular {
               Text("v\(post.versionNo) · \(PostText.attempt(post))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
             }

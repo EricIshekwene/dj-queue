@@ -79,7 +79,7 @@ Eric delegated these calls. Each decision gives a one-line reason. The component
 
     Everything else gets Undo with no prompt. Why: asking on every click adds friction, and Undo is the calmer safety net (ChatGPT, Linear).
 30. **The editor keeps its own history: a snapshot of edit + versions + title + kind before each change.** Changes less than 0.8 s apart (drags, sliders, typing a word) coalesce into one step. ⌘Z / ⇧⌘Z step through it and save. While a text field has focus, ⌘Z goes to the field's own typing undo. The app-level ⌘Z is off while the editor is open. Why: autosave every 300 ms made every reset, chip and trim permanent. Field-level undo is what an editor is expected to do.
-31. **Native help tags are pushed out of reach (`NSInitialToolTipDelay` 1 h) after every `.help()` became `.dsTooltip()`.** Why: no screen can show two bubbles, even from a stray `.help`.
+31. **No `.help()` in the app. The lint fails on any `.help(` and on always-empty `.dsTooltip(nil)` / `.dsTooltip("")`.** The one exception is the menu-bar status item, where DSTooltip can't reach because it lives in the system menu bar. It uses a native help tag ("5 days of approved posts left · Something needs attention"), marked `// native-help-ok`. *(Review fix: an earlier global `NSInitialToolTipDelay` suppression was removed, because it also silenced the status item.)*
 32. **Disabled native menu items carry their reason in the title ("Back to Queue — already posted on TikTok").** Why: macOS menus can't show hover tooltips.
 33. **`DSBadge(help:)`, `DSChip(tooltip:)` and `DSChipOption.tooltip` let status chips explain themselves.** The clip card's "File missing · Relink" became "File missing", with a tooltip pointing to Health › Doctor. Why: it said "Relink" but couldn't be clicked.
 34. **Eric's acceptance rule is enforced in code. Every icon-only `Button`/`Menu` needs a tooltip:**
@@ -94,3 +94,9 @@ Eric delegated these calls. Each decision gives a one-line reason. The component
     - Every anchor's text (`DJQ_TOOLTIP_PASS`).
 
     Not proven: that SwiftUI's `.onHover` delivers enter/exit to those calls under a physical pointer. That is standard SwiftUI behaviour, but Eric's first hover is the real test.
+38. **An editor session is ONE entry on the app's ⌘Z history ("Edits to <clip>").** When the editor opens, every clip it can reach is snapshotted (`BulkActions.begin`). When it closes, after the last write lands, the clips that changed are journaled (`commit`). In the editor, ⌘Z stays field-level. Why (review): before this, ⌘Z after closing the editor undid an older, unrelated action.
+39. **Undos run on a serial queue (`UndoRunner`).** Why (review): two fast ⌘Z presses raced, the older one ran first and was skipped as "changed since", and the clip ended at an intermediate value. The test case is 10 → 50 → 60, then ⌘Z⌘Z → 10.
+40. **Every tag on a card explains itself (`DSClipTag.tooltip`):**
+    - Queue date/pin tag: "Next planned post day" / "Pinned to this day".
+    - Edit "Cover": "Cover frame chosen in the editor".
+    - Library state chips, long-form, missing file, Posts state and problem badges, and the editor crop badges.

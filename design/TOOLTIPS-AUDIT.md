@@ -26,13 +26,13 @@ Rows that repeat across screens (the shared clip and post context menus, the ⌘
 
 | | Rows |
 |---|---|
-| ✅ fixed (tooltip, clearer label, disabled reason, Undo or confirm) | 416 |
-| ➖ no change needed (label already says it) | 319 |
-| ⏭ deferred (reason in the row) | 14 |
+| ✅ fixed (tooltip, clearer label, disabled reason, Undo or confirm) | 420 |
+| ➖ no change needed (label already says it) | 320 |
+| ⏭ deferred (reason in the row) | 12 |
 | **Total, including the round-3 controls added in Phase B** | **749** |
 
 - **Icon-only lint:** `scripts/check-icon-tooltips.py` (and `IconTooltipLintTests` in `swift test`) finds every `Button`/`Menu` whose label is only an image, or is drawn `.labelStyle(.iconOnly)`, and has no `.dsTooltip`. On `main` before the pass it found 2. Now it finds 0. `DSIconButton` requires its tooltip at compile time. Media actions on grid tiles take their Label title as the tooltip automatically.
-- **`.help(`:** 0 left; native help tags are disabled app-wide.
+- **`.help(`:** the lint fails on any `.help(` (it would draw a second, system bubble) except the menu-bar status item, which lives outside our windows and is marked `// native-help-ok`. It also fails on always-empty `.dsTooltip(nil)` / `.dsTooltip("")`.
 - **Undo/confirm:**
   - Every one-click data change is journaled and shows "· Undo".
   - ⌘Z always undoes the most recent change.
@@ -40,7 +40,18 @@ Rows that repeat across screens (the shared clip and post context menus, the ⌘
   - Plan-wide and destructive actions ask first.
 
   Cross-cutting findings 1–8 below are done, except: "Keep posting it", the caption template/hashtag-set deletes and the long-form URL are confirmed instead of undoable, because they aren't in the journal.
-- **Evidence:** a per-screen pass is written to `DJQ_TOOLTIP_PASS=1` captures. For every screen, view mode and overlay, the real window shows the first tile hovered, every tooltip anchor numbered, and a legend.
+- **Evidence (`DJQ_TOOLTIP_PASS=1`):** 37 real-window cases in light and dark. Each shows the first tile hovered, every tooltip anchor numbered, and a legend of what each says. Coverage:
+  - Score: grid, single.
+  - Edit: grid, cards, list, bulk bar.
+  - Queue: cards, grid, list.
+  - Library: grid, cards, list, single.
+  - Week (plus the Rebuild-week confirm), Today, Posts (list and inspector), Health.
+  - The editor, ⌘K, the compact sidebar.
+  - Sheets: Pin and Mark posted (their own controls only), the bulk confirm.
+  - Every one of the 10 Settings sections.
+  - The menu-bar popover.
+- **Not covered:** the long-form section's own cards and the quick-look sheet. They are covered in code by the lint, but there is no capture.
+- **Counting caveat:** in-window overlays (Settings, ⌘K, Mark posted, bulk confirm) also count the screen under them, and the legend says so.
 
 ## Cross-cutting findings (fix once, in core or DS, before the page pass)
 
@@ -281,7 +292,7 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 ## Shell — Menu bar popover (MenuBar/MenuBarView.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| ⏭ Menu bar icon "▶ 5d" (+ red dot) | icon | MenuBarView.swift:49-57 | ❌ "5d" and dot unexplained (a11y only) | — (accessibilityDescription) | Can't `.help` a MenuBarExtra label → add a caption line in popover: "5 d of approved posts" | MenuBarExtra label can't host a tooltip (a11y description already says "N days approved…"); popover caption is a design follow-up |
+| ✅ Menu bar icon "▶ 5d" (+ red dot) | icon | MenuBarView.swift:49-57 | ❌ "5d" and dot unexplained (a11y only) | — (accessibilityDescription) | Can't `.help` a MenuBarExtra label → add a caption line in popover: "5 d of approved posts" | status-item help tag: "5 days of approved posts left · Something needs attention (2)" (+ paused / engine stopped) |
 | ✅ Copy caption | text button | MenuBarView.swift:172 | ✅ | — | Copy the <Platform> caption | — |
 | ➖ `textformat` | icon | MenuBarView.swift:174 | ✅ | "Copy title for YouTube" | — | — |
 | ➖ Mark posted (opens URL field) | text button | MenuBarView.swift:177 | ✅ | "Paste the post URL" / "Not due yet — you can still mark it posted early" | — | — |
@@ -366,7 +377,7 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 | ✅ Open editor | text button | EditClipActions.swift:97 | ✅ | "Crop, text, caption, cover and platforms" | Edit crop, text, caption, cover, platforms | — |
 | ✅ `ellipsis` ⋯ | menu | EditClipActions.swift:98 | ⚠️ generic | "More actions" | Show kind, caption, defaults and more | — |
 | ✅ Suggestion chips | chip | DSClipCard.swift:403 | ⚠️ (see Shared) | "Use as title" | Set this as the clip's title | DS: Set the Title to “<song>” |
-| ⏭ "Cover" tag | chip (static) | EditView.swift:74 | ⚠️ meaning unclear | — | This clip is a session cover | DS component (parent-owned) — not changed here (DSClipTag has no tooltip slot) |
+| ✅ "Cover" tag | chip (static) | EditView.swift:74 | ⚠️ meaning unclear | — | This clip is a session cover | DSClipTag.tooltip: Cover frame chosen in the editor |
 
 ### Card actions — Grid mode (hover, shown only when not missing)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
@@ -448,7 +459,7 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 | ✅ `pin` (round, on media) | icon | QueueCards.swift:107 | ✅ | `.help` "Pin to date…" | Pin to a day the planner won't change (.help → .dsTooltip) | ok (dialog + undo) |
 | ✅ `chevron.left` Back a stage / Remove from queue (round, on media; round 3, new) | icon | QueueCards.swift (grid) | ⚠️ was `.disabled` + `.help` | `.help` | "<Remove from queue / Back to Queue>"; blocked: reason (soft-disabled, click says why) | ok (confirm+undo) |
 | ⏭ (no ⋯ in Grid — Skip next/Exclude only via right-click) | — | QueueCards.swift:105-107 | ⚠️ | — | add ⋯ | Grid hover slot renders Buttons icon-only (DSMediaActionStyle); a ⋯ Menu there needs a DS style — right-click has every action |
-| ⏭ Date tag on tile | chip (static) | QueueView.swift:40-41 | ⚠️ no tooltip (badge, not dateChip) | — | Next planned post day | DS component (parent-owned) — not changed here (DSClipTag has no tooltip slot) |
+| ✅ Date tag on tile | chip (static) | QueueView.swift:40-41 | ⚠️ no tooltip (badge, not dateChip) | — | Next planned post day | DSClipTag.tooltip: Next planned post day / Pinned to this day — the plan works around it |
 
 ### Card hover actions — List mode (same view as Cards' `default` case)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |

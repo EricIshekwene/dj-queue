@@ -429,15 +429,16 @@ extension AppModel {
 
   func libraryStateChip(_ v: Video) -> DSClipTag {
     switch libraryState(v) {
-    case .unscored: DSClipTag(text: "Unscored", style: .outline)
-    case .needsEdit: DSClipTag(text: "Needs edit", style: .soft(.warning))
-    case .sentBack: DSClipTag(text: "Sent back to Edit", style: .soft(.warning), icon: "arrow.uturn.backward")
-    case .ready: DSClipTag(text: "Ready", style: .soft(.neutral))
-    case .planned: DSClipTag(text: "Planned", style: .soft(.info))
-    case .posted: DSClipTag(text: "Posted", style: .soft(.success))
-    case .excluded: DSClipTag(text: "Excluded", style: .outline)
-    case .missing: DSClipTag(text: "Missing", style: .soft(.danger))
-    case .removed: DSClipTag(text: "Not in videos.json", style: .soft(.warning))
+    case .unscored: DSClipTag(text: "Unscored", style: .outline, tooltip: "Not scored yet — score it in Score")
+    case .needsEdit: DSClipTag(text: "Needs edit", style: .soft(.warning), tooltip: "Scored, but something is missing — fix it in Edit")
+    case .sentBack: DSClipTag(text: "Sent back to Edit", style: .soft(.warning), icon: "arrow.uturn.backward",
+                              tooltip: "Removed from the queue — Send to queue when it's ready")
+    case .ready: DSClipTag(text: "Ready", style: .soft(.neutral), tooltip: "Ready and waiting in the Queue")
+    case .planned: DSClipTag(text: "Planned", style: .soft(.info), tooltip: "Has upcoming days in the plan")
+    case .posted: DSClipTag(text: "Posted", style: .soft(.success), tooltip: "Posted on every planned platform")
+    case .excluded: DSClipTag(text: "Excluded", style: .outline, tooltip: "Never posted — Include brings it back")
+    case .missing: DSClipTag(text: "Missing", style: .soft(.danger), tooltip: "The source file moved or was deleted — Health › Doctor relinks it")
+    case .removed: DSClipTag(text: "Not in videos.json", style: .soft(.warning), tooltip: "Gone from the session's videos.json — kept here, never posted unless you keep it")
     }
   }
 }

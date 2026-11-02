@@ -16,9 +16,13 @@ enum DSTooltipPass {
     var screen: Screen
     var mode: DSViewMode? = nil
     var setup: (AppModel) -> Void = { _ in }
+    /// A view in its own window instead of the main window (the menu-bar popover).
+    var standalone: ((AppModel) -> AnyView)? = nil
+    var size = CGSize(width: 1440, height: 900)
   }
 
   static func run(outputDir: String) async -> Int32 {
+    defer { DSTooltipProbe.cleanUp() }
     let out = URL(fileURLWithPath: outputDir)
     do {
       try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
@@ -44,6 +48,31 @@ enum DSTooltipPass {
         },
         Case(name: "17-compact-sidebar", screen: .library, mode: .grid) { $0.sidebarCollapsed = true },
         Case(name: "18-confirm-rebuild-week", screen: .week) { m in m.rebuildWeek(m.weekStart) },
+        Case(name: "19-library-cards", screen: .library, mode: .wide),
+        Case(name: "20-library-list", screen: .library, mode: .list),
+        Case(name: "21-library-single", screen: .library, mode: .single),
+        Case(name: "22-edit-list", screen: .edit, mode: .list),
+        Case(name: "23-posts-inspector", screen: .posts) { m in m.postsSelection = m.posts.first { !$0.state.isTerminal }?.id },
+        Case(name: "24-sheet-pin", screen: .queue) { m in m.pinPrompt = m.queueList.first },
+        Case(name: "25-sheet-mark-posted", screen: .today) { m in m.markPostedTarget = m.dueNow.first ?? m.nextPost },
+        Case(name: "26-sheet-bulk-confirm", screen: .edit, mode: .wide) { m in
+          let ids = Array(m.editList.prefix(3).map(\.id))
+          m.setSelection(ids, screen: .edit)
+          let bulk = m.bulk
+          m.requestBulk(BulkRequest(title: "Make \(ids.count) clips ready?", verb: "Make ready", ids: ids,
+                                    changes: [.init(field: "Crop", value: "Default anchor, confirmed")]) { dry in
+            try bulk.makeReadyWithDefaults(ids, dryRun: dry)
+          })
+          if let r = try? bulk.makeReadyWithDefaults(ids, dryRun: true) { m.pendingBulk?.preview = r }
+        },
+      ] + SettingsSection.allCases.enumerated().map { i, sec in
+        Case(name: String(format: "%02d-settings-%@", 27 + i, sec.rawValue), screen: .queue) { m in
+          m.settingsSection = sec
+          m.showSettings = true
+        }
+      } + [
+        Case(name: "37-menu-bar-popover", screen: .queue, standalone: { m in AnyView(MenuBarView(model: m)) },
+             size: CGSize(width: 360, height: 560)),
       ]
       let only = ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_ONLY"]
       var summary: [[String: String]] = []
@@ -57,7 +86,17 @@ enum DSTooltipPass {
           if let mode = k.mode { model.viewModes[k.screen] = mode }
           model.screen = k.screen
           k.setup(model)
-          let w = WindowManager.makeMainWindow(model: model, make: SnapshotWindow.make)
+          let w: NSWindow
+          if let make = k.standalone {
+            let hv = NSHostingView(rootView: make(model).frame(width: k.size.width).background(DS.color.surfaceRaised)
+              .modifier(SnapshotActive(on: true)))
+            let fit = hv.fittingSize
+            hv.frame = NSRect(x: 0, y: 0, width: k.size.width, height: max(200, fit.height))
+            w = SnapshotWindow.make(hv.frame, [.borderless])
+            w.contentView = hv
+          } else {
+            w = WindowManager.makeMainWindow(model: model, make: SnapshotWindow.make)
+          }
           w.isReleasedWhenClosed = false
           w.appearance = NSAppearance(named: appearance)
           w.setFrameOrigin(NSPoint(x: screen.midX - 720, y: screen.midY - 450))
@@ -75,7 +114,8 @@ enum DSTooltipPass {
           w.displayIfNeeded()
           // A media action's automatic tooltip (its Label title) sits inside the button's own explicit one: list the
           // explicit text; keep the automatic one only where it is the only tooltip.
-          let found = DSTooltipProbe.anchors(in: w)
+          // A sheet is modal: only its controls can be hovered, so list those.
+          let found = DSTooltipProbe.anchors(in: w.attachedSheet ?? w)
           let explicit = found.filter { $0.content.richLabel == nil }
           let anchors = found.filter { a in
             guard a.content.richLabel != nil, let r = a.visibleScreenRect else { return true }
@@ -111,10 +151,20 @@ enum DSTooltipPass {
           w.close()
           model.editor = nil
           model.pendingConfirm = nil
+          model.pendingBulk = nil
+          model.pinPrompt = nil
+          model.markPostedTarget = nil
+          model.postsSelection = nil
         }
       }
-      try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
-        .write(to: out.appendingPathComponent("summary.json"))
+      // A filtered run (DJQ_SNAPSHOT_ONLY) updates its cases in the existing summary.
+      let sumURL = out.appendingPathComponent("summary.json")
+      let rerun = Set(summary.compactMap { $0["case"] })
+      let kept = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: sumURL))) as? [[String: String]] ?? [])
+        .filter { !rerun.contains($0["case"] ?? "") }
+      try JSONSerialization.data(withJSONObject: (kept + summary).sorted { ($0["case"] ?? "") < ($1["case"] ?? "") },
+                                 options: [.prettyPrinted, .sortedKeys])
+        .write(to: sumURL)
       DSClipCardDebug.hoverIds = []
       return 0
     } catch {
@@ -166,7 +216,8 @@ enum DSTooltipPass {
         ("\(n)" as NSString).draw(in: dot.insetBy(dx: 1, dy: 0), withAttributes: [.font: font, .foregroundColor: NSColor.white])
       }
       var y: CGFloat = 16
-      let title = "\(anchors.count) tooltips · \(order.count) distinct" as NSString
+      let overlay = anchors.isEmpty ? "" : " (an open sheet or modal also lists the screen under it)"
+      let title = "\(anchors.count) tooltips · \(order.count) distinct\(overlay)" as NSString
       title.draw(at: CGPoint(x: w.frame.width + 16, y: y), withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg])
       y += 24
       for (i, t) in order.enumerated() {

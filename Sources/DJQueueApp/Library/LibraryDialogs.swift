@@ -29,13 +29,13 @@ struct LibraryQuickLook: View {
         .aspectRatio(16 / 9, contentMode: .fit)
         .background(DS.color.canvas, in: RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
         HStack(spacing: 6) {
-          if v.type == .long { DSBadge("Long-form", style: .outline) }
+          if v.type == .long { DSBadge("Long-form", style: .outline, help: "A full set — uploaded by hand, never queued") }
           if missing {
-            DSBadge("File missing · Relink", style: .soft(.danger), icon: "exclamationmark")
+            DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark", help: "The source file moved or was deleted — Health › Doctor relinks it")
           } else {
-            DSBadge(chip.text, style: chip.style)
+            DSBadge(chip.text, style: chip.style, help: chip.tooltip)
           }
-          if let s = v.score, v.type == .short { DSBadge("Score \(s)", style: .outline) }
+          if let s = v.score, v.type == .short { DSBadge("Score \(s)", style: .outline, help: "Your score (0–100) — it sets the posting order") }
           Spacer(minLength: 0)
         }
         if missing {

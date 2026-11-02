@@ -146,10 +146,11 @@ struct EditorCanvas: View {
   private var frameBar: some View {
     HStack(spacing: DS.space.xs) {
       if model.upscale > 1.01 {
-        DSBadge(String(format: "Upscaled %.1f×", model.upscale), style: .soft(.warning), icon: "exclamationmark.triangle.fill")
+        DSBadge(String(format: "Upscaled %.1f×", model.upscale), style: .soft(.warning), icon: "exclamationmark.triangle.fill",
+                help: "Zoomed past the source's resolution — it may look soft")
       }
       if model.cropIsSet {
-        DSBadge("Crop confirmed", style: .soft(.success), icon: "checkmark")
+        DSBadge("Crop confirmed", style: .soft(.success), icon: "checkmark", help: "This frame is saved as the clip's crop")
       } else {
         Text("Drag to move · scroll or pinch to zoom").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
         DSButton("Use this crop", icon: "checkmark", variant: .outline, size: .sm,

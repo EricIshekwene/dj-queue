@@ -73,7 +73,8 @@ struct EditView: View {
     let short = c.blocks.map { $0.components(separatedBy: " · ").first ?? $0 }
     if mode == .grid { c.blocks = short }
     if mode == .list, !(short + c.issues).isEmpty { c.subtitle = (short + c.issues).joined(separator: " · ") }
-    if model.coverIds.contains(v.id) { c.tags.append(DSClipTag(text: "Cover", style: .outline, icon: "photo")) }
+    if model.coverIds.contains(v.id) { c.tags.append(DSClipTag(text: "Cover", style: .outline, icon: "photo",
+                                                                           tooltip: "Cover frame chosen in the editor")) }
     return c
   }
 

@@ -276,7 +276,7 @@ struct PostStatePill: View {
   let post: PlatformPost
   var body: some View {
     let s = PostText.pill(post)
-    DSBadge(s.text, style: s.style, icon: s.icon)
+    DSBadge(s.text, style: s.style, icon: s.icon, help: "\(post.platform.displayName): \(s.text.lowercased())")
   }
 }
 

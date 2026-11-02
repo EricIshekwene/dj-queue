@@ -38,7 +38,8 @@ struct QueueView: View {
           c.position = positions[v.id]
           // Grid tiles have no date chip of their own: the next day rides as a tag (only when scheduled).
           if mode == .grid, let d = c.dateText, d != "Not scheduled" {
-            c.tags.append(DSClipTag(text: d, style: .outline, icon: c.isPinned ? "pin.fill" : "calendar"))
+            c.tags.append(DSClipTag(text: d, style: .outline, icon: c.isPinned ? "pin.fill" : "calendar",
+                                    tooltip: c.isPinned ? "Pinned to this day — the plan works around it" : "Next planned post day"))
           }
           return c
         }, onOpen: { v in model.openEditor(v.id, in: ids) }) { v in

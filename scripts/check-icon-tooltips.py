@@ -173,6 +173,24 @@ def check(root=SRC):
                 line = s.count("\n", 0, m.start()) + 1
                 offenders.append((os.path.relpath(p, os.path.dirname(os.path.dirname(root))), line,
                                   ".help only" if ".help(" in chain else "no tooltip"))
+    # A tooltip that is always empty is no tooltip: `.dsTooltip(nil…)` / `.dsTooltip("")` literals.
+    empty = re.compile(r'\.dsTooltip\(\s*(nil|"")\s*\)')
+    # Native help tags draw a second, system bubble next to DSTooltip: only where DSTooltip can't reach (the menu-bar
+    # status item), marked `// native-help-ok`.
+    native = re.compile(r'\.help\(')
+    for dp, _, files in os.walk(root):
+        for f in sorted(files):
+            if f.endswith(".swift"):
+                p = os.path.join(dp, f)
+                s = open(p, encoding="utf-8").read()
+                rel = os.path.relpath(p, os.path.dirname(os.path.dirname(root)))
+                for m in empty.finditer(s):
+                    offenders.append((rel, s.count("\n", 0, m.start()) + 1, "empty .dsTooltip literal"))
+                for m in native.finditer(s):
+                    eol = s.find("\n", m.start())
+                    line_text = s[s.rfind("\n", 0, m.start()) + 1:eol if eol >= 0 else len(s)]
+                    if "native-help-ok" not in line_text and not line_text.lstrip().startswith("//"):
+                        offenders.append((rel, s.count("\n", 0, m.start()) + 1, "native .help( — use .dsTooltip (it draws a second, system bubble)"))
     return offenders
 
 
@@ -182,8 +200,9 @@ if __name__ == "__main__":
         print(len(off))
         sys.exit(0)
     for p, line, why in off:
-        print(f"{p}:{line}: icon-only Button/Menu without .dsTooltip ({why})")
+        icon = why in ("no tooltip", ".help only")
+        print(f"{p}:{line}: " + (f"icon-only Button/Menu without .dsTooltip ({why})" if icon else why))
     if off:
-        print(f"{len(off)} icon-only button(s) without a tooltip", file=sys.stderr)
+        print(f"{len(off)} tooltip problem(s)", file=sys.stderr)
         sys.exit(1)
     print("check-icon-tooltips: every icon-only button has a tooltip")

@@ -112,4 +112,45 @@ import Testing
     try b.undo(r.batchId!)
     #expect(try f.store.video(id: "clip-0")?.kind == k0)
   }
+
+  /// Reviewer scenario: score clip A, edit clip B in the editor, close, ⌘Z → B's edits go, A's score stays.
+  @Test func editorSessionIsOneUndoEntryOnTop() throws {
+    let f = try Fixture.engine(3)
+    let b = bulk(f)
+    var history = UndoHistory()
+    let a = try b.setScore(["clip-0"], 88)
+    history.push(try #require(a.batchId), label: "Score 88")
+    // Editor opens on B (with its neighbours reachable), several changes, closes.
+    let session = try b.begin("editor", ids: ["clip-1", "clip-2"])
+    let title0 = try f.store.video(id: "clip-1")?.title
+    try f.store.setTitle("clip-1", "Edited in the editor")
+    var e = try f.store.edit(videoId: "clip-1")
+    e.coverTime = 1.5
+    try f.store.save(e, videoId: "clip-1")
+    let r = try b.commit(session)
+    #expect(r.changed == ["clip-1"])  // clip-2 untouched → not journaled
+    history.push(try #require(r.batchId), label: "Edits to clip-1")
+    let top = history.popTop()
+    #expect(top?.label == "Edits to clip-1")
+    try b.undo(try #require(top?.batchId))
+    #expect(try f.store.video(id: "clip-1")?.title == title0)
+    #expect(try f.store.edit(videoId: "clip-1").coverTime == nil)
+    #expect(try f.store.video(id: "clip-0")?.score == 88)  // the older action is untouched
+    // A session with no changes leaves no entry.
+    #expect(try b.commit(try b.begin("editor", ids: ["clip-2"])).batchId == nil)
+  }
+
+  /// Rapid ⌘Z⌘Z: 10 → 50 → 60, two undos submitted back to back → 10 (the runner keeps them in order).
+  @Test func rapidUndosApplyInOrder() throws {
+    let f = try Fixture.engine(1)
+    let b = bulk(f)
+    _ = try b.setScore(["clip-0"], 10)
+    let s50 = try #require(try b.setScore(["clip-0"], 50).batchId)
+    let s60 = try #require(try b.setScore(["clip-0"], 60).batchId)
+    let runner = UndoRunner(bulk: b)
+    runner.undo(s60) { _ in }
+    runner.undo(s50) { _ in }
+    runner.wait()
+    #expect(try f.store.video(id: "clip-0")?.score == 10)
+  }
 }

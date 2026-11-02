@@ -138,12 +138,11 @@ extension AppModel {
 
   /// Undoes one batch (toast "Undone: <what>", or why not). Clips changed again since are skipped by BulkActions.
   func undo(batch id: String) {
-    let b = bulk
     let label = undoHistory.entries.first { $0.batchId == id }?.label
     undoHistory.remove(id)
-    Task.detached(priority: .userInitiated) {
-      let out: Result<BulkResult, Error> = Result { try b.undo(id) }
-      await MainActor.run {
+    // UndoRunner is serial: ⌘Z⌘Z restores newest-first even when pressed faster than an undo takes.
+    undoRunner.undo(id) { out in
+      DispatchQueue.main.async {
         self.refresh()
         switch out {
         case .success(let r):

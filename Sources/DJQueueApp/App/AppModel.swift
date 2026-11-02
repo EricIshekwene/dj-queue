@@ -114,7 +114,14 @@ final class AppModel {
   var postsSelection: String? = nil
   var postsFilter: PostsFilter = .all
   var weekStart: String = "" { didSet { if oldValue != weekStart && !oldValue.isEmpty { refresh() } } }
-  var editor: EditorRequest?
+  var editor: EditorRequest? {
+    didSet { if editor == nil, oldValue != nil { finishEditorSession() } }
+  }
+  /// The open editor session's journal entry: every clip it can reach is snapshotted at open, and the whole session
+  /// becomes ONE app-level undo ("Edits to <clip>") when the editor closes (F8; in-editor ⌘Z is field-level).
+  var editorSession: BulkActions.OpenEntry?
+  /// Undos run one at a time, in the order asked (rapid ⌘Z⌘Z).
+  @ObservationIgnored lazy var undoRunner = UndoRunner(bulk: bulk)
   var showPalette = false
   /// In-window Settings modal (DESIGN-v2 §6.9), opened by the sidebar row, ⌘, and `WindowManager.showSettings`.
   var showSettings = false
@@ -897,7 +904,31 @@ final class AppModel {
   // MARK: Navigation
 
   func openEditor(_ videoId: String, in ids: [String]? = nil, fixPostId: String? = nil) {
-    editor = EditorRequest(videoId: videoId, videoIds: ids ?? [videoId], fixPostId: fixPostId)
+    let all = ids ?? [videoId]
+    if editorSession == nil { editorSession = try? bulk.begin("editor", ids: all.contains(videoId) ? all : [videoId] + all) }
+    editor = EditorRequest(videoId: videoId, videoIds: all, fixPostId: fixPostId)
+  }
+
+  /// After the editor's last writes land: journal the session (nothing changed → no entry).
+  private func finishEditorSession() {
+    guard let e = editorSession else { return }
+    editorSession = nil
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      EditorModel.waitForSaves()
+      do {
+        let r = try self.bulk.commit(e)
+        guard let b = r.batchId else { return }
+        let name = r.changed.count == 1 ? self.video(r.changed[0]).map(self.displayName) ?? "1 clip" : "\(r.changed.count) clips"
+        self.undoHistory.push(b, label: "Edits to \(name)")
+        if self.toast == nil {
+          self.show(DSToastModel(message: "Edits to \(name) saved", tone: .neutral, actionTitle: "Undo",
+                                 action: { [weak self] in self?.undo(batch: b) }, duration: 6))
+        }
+      } catch {
+        Log.shared.error("editor session journal failed: \(error)")
+      }
+    }
   }
 
   func closeEditor() {

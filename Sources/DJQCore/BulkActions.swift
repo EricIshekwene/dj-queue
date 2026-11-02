@@ -464,6 +464,45 @@ public final class BulkActions: @unchecked Sendable {
     return result
   }
 
+  /// A journal entry opened before a long interaction (the editor) and closed after it — see `begin`/`commit`.
+  public struct OpenEntry: Sendable {
+    public let action: String
+    public let ids: [String]
+    let before: Snapshot
+  }
+
+  /// Snapshots `ids` now; `commit` later records ONE undoable batch for whatever changed in between (e.g. a whole
+  /// editor session: every crop, trim, text, title and version change → one ⌘Z on the app's history).
+  public func begin(_ action: String, ids raw: [String]) throws -> OpenEntry {
+    var seen = Set<String>()
+    let ids = try raw.filter { !$0.isEmpty && seen.insert($0).inserted }.filter { try store.video(id: $0) != nil }
+    return OpenEntry(action: action, ids: ids, before: Snapshot(clips: try ids.map { try clipSnapshot($0, renders: false) }, plan: nil))
+  }
+
+  /// Records the batch for an `OpenEntry` (nil `batchId` when nothing changed). Only the clips that changed are
+  /// journaled, so undo leaves the others alone.
+  @discardableResult
+  public func commit(_ e: OpenEntry) throws -> BulkResult {
+    var result = BulkResult(batchId: nil, action: e.action, dryRun: false, videoIds: e.ids, changed: [], skipped: [:],
+                            remainingIssues: [:], summary: "")
+    try store.db.transaction {
+      let now = try e.before.clips.map { try clipSnapshot($0.id, renders: false) }
+      let pairs = zip(e.before.clips, now).filter { $0 != $1 }
+      guard !pairs.isEmpty else { result.summary = "\(e.action): nothing changed"; return }
+      let before = Snapshot(clips: pairs.map(\.0), plan: nil), after = Snapshot(clips: pairs.map(\.1), plan: nil)
+      result.changed = pairs.map(\.0.id)
+      result.summary = "\(e.action): \(result.changed.count) clip\(result.changed.count == 1 ? "" : "s")"
+      let batchId = newId()
+      try store.db.run("""
+        INSERT INTO batches(id,action,params,video_ids,before,after,summary,created_at) VALUES(?,?,?,?,?,?,?,?)
+        """, [batchId, e.action, JSONCoding.string([String: String]()), JSONCoding.string(result.changed), JSONCoding.string(before),
+              JSONCoding.string(after), result.summary, store.clock.now])
+      for id in result.changed { try store.logEvent("action", "\(e.action) (batch \(batchId.prefix(8)))", videoId: id) }
+      result.batchId = batchId
+    }
+    return result
+  }
+
   // MARK: Journal
 
   public func batches(limit: Int = 50) throws -> [BatchRecord] {
@@ -809,4 +848,21 @@ public struct UndoHistory: Sendable, Equatable {
 
   /// Drops an entry undone some other way (its toast's Undo button) or that can no longer be undone.
   public mutating func remove(_ batchId: String) { entries.removeAll { $0.batchId == batchId } }
+}
+
+/// Runs undos one at a time, in the order they were asked for (rapid ⌘Z⌘Z): a serial queue, so the older batch
+/// never runs before the newer one (it would be skipped as "changed since" and leave an intermediate value).
+public final class UndoRunner: @unchecked Sendable {
+  private let bulk: BulkActions
+  private let queue = DispatchQueue(label: "com.djlovd.queue.undo", qos: .userInitiated)
+
+  public init(bulk: BulkActions) { self.bulk = bulk }
+
+  /// Undoes batch `id` after every undo submitted before it; `done` runs on the runner's queue.
+  public func undo(_ id: String, done: @escaping @Sendable (Result<BulkResult, Error>) -> Void) {
+    queue.async { [bulk] in done(Result { try bulk.undo(id) }) }
+  }
+
+  /// Blocks until every submitted undo has finished (tests).
+  public func wait() { queue.sync {} }
 }

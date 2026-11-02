@@ -63,10 +63,10 @@ private struct LongformStatus: View {
 
   @ViewBuilder private var chips: some View {
     if model.libraryIsMissing(video) {
-      DSBadge("File missing · Relink", style: .soft(.danger), icon: "exclamationmark")
+      DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark", help: "The source file moved or was deleted — Health › Doctor relinks it")
     } else {
-      DSBadge("Long-form", style: .outline)
-      DSBadge(model.libraryStateChip(video).text, style: model.libraryStateChip(video).style)
+      DSBadge("Long-form", style: .outline, help: "A full set — uploaded by hand, never queued")
+      DSBadge(model.libraryStateChip(video).text, style: model.libraryStateChip(video).style, help: model.libraryStateChip(video).tooltip)
     }
   }
 

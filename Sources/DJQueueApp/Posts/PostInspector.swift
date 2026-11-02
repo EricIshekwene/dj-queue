@@ -111,7 +111,7 @@ struct PostInspector: View {
 
   private var problem: some View {
     VStack(alignment: .leading, spacing: 6) {
-      DSBadge(PostText.problemType(post), style: .soft(.danger))
+      DSBadge(PostText.problemType(post), style: .soft(.danger), help: "What went wrong with this post")
       if let m = post.errorMessage, !m.isEmpty {
         Text(m).font(DS.type.callout).foregroundStyle(DS.color.text).fixedSize(horizontal: false, vertical: true)
       }

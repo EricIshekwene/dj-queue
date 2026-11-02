@@ -28,6 +28,7 @@ enum DSTooltipProbe {
   }
 
   static func run(outputDir: String) async -> Int32 {
+    defer { cleanUp() }
     let out = URL(fileURLWithPath: outputDir)
     do {
       try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
@@ -156,9 +157,18 @@ enum DSTooltipProbe {
   // MARK: Helpers
 
   /// The real model on a throwaway copy of the dev DB (never the source DB), seeded like SnapshotRunner.
+  /// Throwaway DB folders this run created (and only those) — removed by `cleanUp()` when the run ends.
+  static var scratchDirs: [URL] = []
+
+  static func cleanUp() {
+    for d in scratchDirs { try? FileManager.default.removeItem(at: d) }
+    scratchDirs = []
+  }
+
   static func makeModel() throws -> AppModel {
     let src = Paths.standard
     let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("djq-tooltip-probe-\(UUID().uuidString)")
+    scratchDirs.append(tmp)
     let paths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("support"), logs: tmp.appendingPathComponent("logs"),
                       launchAgents: tmp.appendingPathComponent("LaunchAgents"))
     try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
@@ -238,11 +248,13 @@ enum DSTooltipProbe {
   /// The window server's image of `w` (plus `panel` when visible), framed by the window: own windows need no
   /// Screen Recording permission.
   static func captureImage(_ w: NSWindow, panel: NSWindow?) -> CGImage? {
-    let wins = [panel?.isVisible == true ? panel : nil, w].compactMap { $0 }
+    // The tooltip panel, any sheet on the window, then the window itself (front to back).
+    let wins = [panel?.isVisible == true ? panel : nil, w.attachedSheet, w].compactMap { $0 }
     var ids: [UnsafeRawPointer?] = wins.map { UnsafeRawPointer(bitPattern: UInt($0.windowNumber)) }
     guard let fromArray, let arr = CFArrayCreate(nil, &ids, ids.count, nil) else { return nil }
     let primaryH = NSScreen.screens.first?.frame.height ?? 0
-    let r = w.frame
+    var r = w.frame
+    if let s = w.attachedSheet { r = r.union(s.frame) }
     let cg = CGRect(x: r.minX, y: primaryH - r.maxY, width: r.width, height: r.height)
     guard let img = fromArray(cg, arr, 1 << 4)?.takeRetainedValue(), img.width > 10 else { return nil }
     return img

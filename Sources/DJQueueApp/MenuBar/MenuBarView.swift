@@ -48,9 +48,23 @@ enum MenuBarIcon {
 
 struct MenuBarLabel: View {
   let host: AppHost
+
+  /// "5 days of approved posts left · Something needs attention" (what the "5d" and the dot mean).
+  @MainActor static func help(_ m: AppModel) -> String {
+    let d = m.runway.approvedDays
+    var parts = ["\(d) day\(d == 1 ? "" : "s") of approved posts left"]
+    if m.settings.paused { parts.append("Posting is paused") }
+    if !m.engineRunning { parts.append("The engine is stopped") }
+    if !m.problems.isEmpty { parts.append("Something needs attention (\(m.problems.count))") }
+    return parts.joined(separator: " · ")
+  }
+
   var body: some View {
     if let m = host.model {
       Image(nsImage: MenuBarIcon.image(days: m.runway.approvedDays, errors: m.problems.count, engineOn: m.engineRunning, paused: m.settings.paused))
+        // The status item lives in the system menu bar, outside our windows, so DSTooltip can't reach it: the one
+        // place a native help tag is right.
+        .help(Self.help(m))  // native-help-ok
     } else {
       Image(systemName: "exclamationmark.triangle")
     }
