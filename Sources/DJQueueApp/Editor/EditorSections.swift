@@ -119,10 +119,10 @@ struct EditorTextSection: View {
           }
         }
         .disabled(r.noText)
-        EditorField(label: "Size", isCustom: !r.isDefault("size"), inheritedFrom: model.source(of: "size"),
+        EditorField(label: "Size", value: "\(Self.sizeName(r.size)) · \(Int(r.size))", isCustom: !r.isDefault("size"), inheritedFrom: model.source(of: "size"),
                     onReset: resetter(["size"])) {
           DSSlider(value: Binding(get: { r.size }, set: { v in model.updateVersion { $0.size = v.rounded() } }),
-                   range: 40...110, step: 1, format: { "\(Self.sizeName($0)) · \(Int($0))" },
+                   range: 40...110, step: 1, format: { "\(Self.sizeName($0)) · \(Int($0))" }, showsValue: false,
                    disabledReason: r.noText ? "No text on this clip" : nil)
         }
         EditorField(label: "Alignment", isCustom: !r.isDefault("align"), inheritedFrom: model.source(of: "align"),

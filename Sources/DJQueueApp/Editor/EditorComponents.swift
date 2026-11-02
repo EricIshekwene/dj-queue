@@ -35,6 +35,8 @@ struct EditorCustomTag: View {
 struct EditorField<Content: View>: View {
   var label: String
   var help: String? = nil
+  /// Current value shown at the right of the label (e.g. "Medium · 64").
+  var value: String? = nil
   var isCustom = false
   var inheritedFrom: Int? = nil
   var resetHelp = "Reset to the default"
@@ -47,6 +49,9 @@ struct EditorField<Content: View>: View {
         Text(label).font(DS.type.calloutMedium).foregroundStyle(DS.color.text)
           .help(help ?? "")
         Spacer(minLength: 0)
+        if let value {
+          Text(value).font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+        }
         EditorCustomTag(isCustom: isCustom, inheritedFrom: inheritedFrom, resetHelp: resetHelp, onReset: onReset)
       }
       content

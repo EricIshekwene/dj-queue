@@ -62,6 +62,8 @@ struct EditorView: View {
     }
     .dsAnimation(DS.motion.popover, value: model.toast)
     .background(EditorKeyMonitor(handle: handleKey))
+    // Don't start with the cursor in the Title field (Space should play, not type).
+    .onAppear { DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) } }
     .onDisappear { model.flushAndWait(); if !model.snapshotMode { model.playback.unload() } }
   }
 

@@ -128,6 +128,29 @@ enum EditorSnapshot {
     NSApp.activate(ignoringOtherApps: true)
     print("editor-live: window \(window.windowNumber)")
     fflush(stdout)
+    // Optional in-process capture of our own window (window-server image: shows the live player frame; needs no
+    // Screen Recording permission) — `DJQ_EDITOR_LIVE_PNG=<file>`, taken after 8 s.
+    if let png = ProcessInfo.processInfo.environment["DJQ_EDITOR_LIVE_PNG"] {
+      try? await Task.sleep(for: .seconds(8))
+      if let data = WindowCapture.png(window) {
+        try? data.write(to: URL(fileURLWithPath: png))
+        print("editor-live: captured \(png)")
+      } else {
+        print("editor-live: window capture unavailable")
+      }
+      // The window server returns a blank image while the display sleeps, so also let AppKit draw the live view tree
+      // (the live player layer doesn't draw this way; everything else is the real, non-snapshot editor).
+      if let view = window.contentView {
+        view.layoutSubtreeIfNeeded()
+        if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+          view.cacheDisplay(in: view.bounds, to: rep)
+          let viewPNG = png.replacingOccurrences(of: ".png", with: "-view.png")
+          try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: viewPNG))
+          print("editor-live: drew \(viewPNG)")
+        }
+      }
+      fflush(stdout)
+    }
     try? await Task.sleep(for: .seconds(seconds))
     window.close()
     return 0
