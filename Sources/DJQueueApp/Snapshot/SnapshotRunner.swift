@@ -10,6 +10,7 @@ import SwiftUI
 @MainActor
 enum SnapshotRunner {
   static func run(outputDir: String) async -> Int32 {
+    if ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_GALLERY"] != nil { return await DSGallerySnapshot.run(outputDir: outputDir) }
     let out = URL(fileURLWithPath: outputDir)
     do {
       try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
