@@ -39,7 +39,9 @@ public struct AutoUpdatePaths: Sendable {
     dir = paths.appSupport.appendingPathComponent("autoupdate")
     logs = paths.logs
     launchAgents = paths.launchAgents
-    let home = URL(fileURLWithPath: LaunchAgent.realHome)
+    // A dev run (DJQ_HOME set) never installs over the real app: without DJQ_APP_DIR / DJQ_BIN_DIR it uses
+    // $DJQ_HOME/Applications and $DJQ_HOME/bin.
+    let home = environment["DJQ_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) } ?? URL(fileURLWithPath: LaunchAgent.realHome)
     appDir = environment["DJQ_APP_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) } ?? home.appendingPathComponent("Applications")
     binDir = environment["DJQ_BIN_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) } ?? home.appendingPathComponent("bin")
   }
@@ -52,6 +54,8 @@ public struct AutoUpdatePaths: Sendable {
   public var lock: URL { dir.appendingPathComponent("run.lock") }
   /// The bundle that was installed before the current one (kept for `djq autoupdate rollback`).
   public var previous: URL { dir.appendingPathComponent("previous/\(Self.appName)") }
+  /// The previous bundle's predecessor, held only during an install so a failed verify can restore both slots.
+  public var previousOlder: URL { dir.appendingPathComponent("previous-older/\(Self.appName)") }
   /// A gated build waiting for the window to close (or for "Restart & update").
   public var staged: URL { dir.appendingPathComponent("staged/\(Self.appName)") }
   /// The build a failed verify rolled back from (kept for a look; replaced by the next failure).

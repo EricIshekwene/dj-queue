@@ -271,6 +271,7 @@ import Testing
     #expect(r.kind == .rolledBack)
     #expect(e.installed?.commit == first)
     #expect(BundleInfo.build(e.au.failed)?.commit == v2)
+
     let s = e.files.state()
     #expect(s.blocked?.commit == v2)
     #expect(s.rolledBackFrom == v2)
@@ -278,6 +279,23 @@ import Testing
     // Not retried on the next trigger.
     e.extraEnv = [:]
     #expect(e.runner().run(trigger: .watch).kind != .installed)
+  }
+
+  @Test func aFailedUpdateKeepsTheOlderBuildForRollback() throws {
+    let e = try Env()
+    try e.setUp()
+    let first = e.git("rev-parse", "HEAD")
+    e.runner().run(trigger: .manual)
+    try e.write("Sources.swift", "// v2")
+    let v2 = e.commit("v2")
+    e.runner().run(trigger: .manual)
+    try e.write("Sources.swift", "// v3")
+    e.commit("v3")
+    e.extraEnv["DJQ_AUTOUPDATE_FAIL_VERIFY"] = "1"
+    #expect(e.runner().run(trigger: .watch).kind == .rolledBack)
+    #expect(e.installed?.commit == v2)
+    #expect(BundleInfo.build(e.au.previous)?.commit == first)
+    #expect(!FileManager.default.fileExists(atPath: e.au.previousOlder.path))
   }
 
   @Test func changedDataFailsVerify() throws {
@@ -322,6 +340,8 @@ import Testing
     #expect(e.installed?.commit == first)
     r = try e.runner().rollback(restoreDB: false)  // roll forward again
     #expect(e.installed?.commit == v2)
+    #expect(r.message.hasPrefix("Rolled forward"))
+    #expect(e.files.state().rolledBackFrom == nil)
 
     // Pretend v2 migrated the database: the rollback is refused unless the backup is restored too.
     var s = e.files.state()
@@ -367,6 +387,15 @@ import Testing
     #expect(e.runner().run(trigger: .watch).message == "Auto-update is off.")
     #expect(e.installed == nil)
     #expect(e.runner().run(trigger: .manual).kind == .installed)
+  }
+
+  @Test func neverSetUpCountsAsOffAndDevRunsStayInScratch() throws {
+    let e = try Env()
+    #expect(e.runner().run(trigger: .launch).message == "Auto-update is off.")
+    #expect(e.installed == nil)
+    let au = AutoUpdatePaths(e.paths, environment: ["DJQ_HOME": "/tmp/djq-dev-home"])
+    #expect(au.appDir.path == "/tmp/djq-dev-home/Applications")
+    #expect(au.binDir.path == "/tmp/djq-dev-home/bin")
   }
 
   @Test func doctorReportsBlockedAndMissingWatcher() throws {

@@ -98,11 +98,13 @@ enum AutoUpdateCommand {
         return x
       } ?? .manual
       let runner = AutoUpdateRunner(paths: paths)
+      runner.progress = { print($0); fflush(stdout) }  // the watcher's stdout is a log file: keep it live
       let r = runner.run(trigger: trigger, force: force)
       return [.failed, .blocked, .rolledBack].contains(r.kind) ? 1 : 0
 
     case "rollback":
       let runner = AutoUpdateRunner(paths: paths)
+      runner.progress = { print($0); fflush(stdout) }
       do {
         _ = try runner.rollback(restoreDB: flag("--restore-db"))
       } catch let e as AutoUpdateRunner.RollbackError {

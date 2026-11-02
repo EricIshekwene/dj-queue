@@ -91,7 +91,12 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | `tools.versions` | Info only. |
 | `system.timezone` | Info for Eric; slots stay in the Settings time zone (America/New_York). |
 | `capcut.markers` | Info: marker drift isn't checked automatically. By hand: run `pair_markers.py <draft_info.json>` and compare with `videos.json` `marked_start`/`marked_end`; if they moved, re-export that clip. |
-| `manifest`, `engine`, `db`, `runway`, `tools`, `posts.problems` | Group names that appear under "Passed". |
+| `autoupdate.watcher` | Auto-update is on but its watcher isn't loaded, so commits to main won't install. Ask Eric to run `djq autoupdate on` (reinstalls and loads it; installed app only). |
+| `autoupdate.blocked` | The newest commit on main failed the gate (build or tests) and wasn't installed; the reason names the failing tests. `djq autoupdate log --run` shows the output. The fix is a code change on main (a session's job), never a data change; the watcher retries on the next commit. |
+| `autoupdate.failed` | The last update failed or its checks failed after install (`djq autoupdate status` / `log`). `djq autoupdate run` retries. If it was rolled back, Eric's data is as before; don't roll forward by hand. |
+| `autoupdate.ready` | Info: an update has waited > 24 h for the main window to close. Eric clicks Restart & update in the banner (it waits for renders) or closes the window. |
+| `autoupdate.off` | Info: Eric turned auto-update off. Leave it; `djq autoupdate on` turns it back on only if Eric asks. |
+| `manifest`, `engine`, `db`, `runway`, `tools`, `posts.problems`, `autoupdate` | Group names that appear under "Passed". |
 
 ## Other safe commands
 

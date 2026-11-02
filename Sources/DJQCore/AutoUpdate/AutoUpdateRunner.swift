@@ -117,7 +117,10 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     state = files.state()
     let config = files.config()
     let request = takeRequest()
-    if !config.enabled, trigger != .manual, request?.action != .install {
+    // Never set up (no config.json) counts as off for automatic triggers: only `djq autoupdate on` (the v0.6.0
+    // install runs it) starts installing on its own.
+    let on = config.enabled && files.configIfSet() != nil
+    if !on, trigger != .manual, request?.action != .install {
       say("\(trigger.rawValue): auto-update is off (djq autoupdate on turns it back on)")
       return AutoUpdateResult(kind: .upToDate, message: "Auto-update is off.", commit: nil, at: now())
     }
@@ -277,6 +280,9 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     if let b = backupPath { say("database backed up to \(b)") }
 
     let hadPrevious = fm.fileExists(atPath: au.installedApp.path)
+    // The kept build's predecessor waits aside until verify passes, so a rollback leaves a kept build behind.
+    try? fm.removeItem(at: au.previousOlder.deletingLastPathComponent())
+    if hadPrevious, fm.fileExists(atPath: au.previous.path) { try? replace(au.previousOlder, with: au.previous, move: true) }
     do {
       if hadPrevious { try replace(au.previous, with: au.installedApp, move: true) }
       try replace(au.installedApp, with: au.staged, move: true)
@@ -321,6 +327,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
                                    schemaBefore: schemaBefore, schemaAfter: schemaAfter, backup: backupPath)
     }
 
+    try? fm.removeItem(at: au.previousOlder.deletingLastPathComponent())
     let build = AutoUpdateBuild(version: candidate.version, commit: candidate.commit, at: now())
     state.history.append(AutoUpdateInstall(to: build, from: current.map { b in AutoUpdateBuild(version: b.version, commit: b.commit ?? state.installed?.commit) },
                                            schemaBefore: schemaBefore, schemaAfter: schemaAfter, backup: backupPath, at: now()))
@@ -379,6 +386,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     do {
       try replace(au.failed, with: au.installedApp, move: true)
       try replace(au.installedApp, with: au.previous, move: true)
+      if fm.fileExists(atPath: au.previousOlder.path) { try replace(au.previous, with: au.previousOlder, move: true) }
       linkCLI()
     } catch {
       block("Checks after installing failed (\(why)) and the rollback failed: \(error).")
@@ -443,12 +451,18 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     try replace(au.previous, with: tmp, move: true)
     linkCLI()
     say(restartEngine())
-    state.installed = AutoUpdateBuild(version: prev.version, commit: prev.commit ?? record?.from?.commit, at: now())
-    state.rolledBackFrom = curCommit
+    let prevCommit = prev.commit ?? record?.from?.commit
+    // Swapping back to a newer build (a second rollback) is a roll forward: nothing to skip then.
+    let repo = files.config().repoPath(environment: environment)
+    let forward = curCommit != nil && prevCommit != nil && curCommit != prevCommit && isAncestor(repo, curCommit!, of: prevCommit!)
+    state.installed = AutoUpdateBuild(version: prev.version, commit: prevCommit, at: now())
+    state.rolledBackFrom = forward ? nil : curCommit
     state.ready = nil
     state.phase = .idle
     state.runPid = nil
-    var message = "Rolled back \(cur?.version ?? "the installed build") → \(prev.version). Auto-update skips \(curCommit.map { String($0.prefix(7)) } ?? "that commit") until a newer commit lands."
+    var message = forward
+      ? "Rolled forward \(cur?.version ?? "the installed build") → \(prev.version)."
+      : "Rolled back \(cur?.version ?? "the installed build") → \(prev.version). Auto-update skips \(curCommit.map { String($0.prefix(7)) } ?? "that commit") until a newer commit lands."
     // A build older than auto-update has no `djq autoupdate`: the watcher would fail on every trigger.
     if let d = djq(in: au.installedApp), shell(d.path, ["autoupdate", "status"], cwd: nil).status != 0 {
       try? AutoUpdateWatcher.uninstall(au, unload: !isDev)
@@ -457,7 +471,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
       try? files.saveConfig(c)
       message += " \(prev.version) has no auto-update, so the watcher is off."
     }
-    notice("Rolled back to \(prev.version)", message, "rollback", curCommit)
+    notice(forward ? "Rolled forward to \(prev.version)" : "Rolled back to \(prev.version)", message, "rollback", curCommit)
     let r = finish(.rolledBack, message, commit: curCommit)
     save()
     return r
