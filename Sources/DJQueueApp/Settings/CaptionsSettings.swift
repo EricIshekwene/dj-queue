@@ -17,7 +17,7 @@ struct CaptionsSettings: View {
       ForEach($templates) { $t in
         templateRow($t)
       }
-      DSButton("Add template", icon: "plus", variant: .ghost, size: .sm) { addTemplate() }
+      DSButton("Add template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add an empty caption template") { addTemplate() }
         .padding(.top, DS.space.xs)
 
       SettingsGroupHeader("Hashtag sets", description: "Grouped by primary category. A clip's hashtags come from its chosen sets.")
@@ -26,14 +26,15 @@ struct CaptionsSettings: View {
         ForEach($sets) { $s in
           if s.category == cat { HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), onSave: save, onDelete: deleteSet) }
         }
-        DSButton("Add set to \(cat)", icon: "plus", variant: .ghost, size: .sm) { addSet(cat) }
+        DSButton("Add set to \(cat)", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add an empty hashtag set to \(cat)") { addSet(cat) }
           .padding(.top, DS.space.xxs)
       }
       HStack(spacing: DS.space.xs) {
         DSTextField(placeholder: "New category, e.g. Afrobeats", text: $newCategory, size: .sm, onSubmit: addCategory)
           .frame(width: 260)
         DSButton("Add category", variant: .outline, size: .sm,
-                 disabledReason: newCategory.trimmingCharacters(in: .whitespaces).isEmpty ? "Type a category name first" : nil) { addCategory() }
+                 disabledReason: newCategory.trimmingCharacters(in: .whitespaces).isEmpty ? "Type a category name first" : nil,
+                 tooltip: "Create the category with one empty set", shortcut: "↩") { addCategory() }
       }
       .padding(.top, DS.space.md)
 
@@ -43,7 +44,8 @@ struct CaptionsSettings: View {
       }
       SettingsRow("Ask an agent", description: "Copies a prompt with each clip's tag, set position and the exact djq command. Suggestions appear in the editor.") {
         DSButton(askTitle, icon: "doc.on.doc", variant: .outline, size: .sm,
-                 disabledReason: model.needsTitleHelp.isEmpty ? "Every clip has a title or a confident suggestion" : nil) {
+                 disabledReason: model.needsTitleHelp.isEmpty ? "Every clip has a title or a confident suggestion" : nil,
+                 tooltip: "Copy a song-name prompt for untitled clips") {
           model.copyAgentPrompt(model.needsTitleHelp.sorted())
         }
       }
@@ -65,9 +67,9 @@ struct CaptionsSettings: View {
       HStack(spacing: DS.space.xs) {
         DSTextField(placeholder: "Template name", text: t.name, size: .sm).frame(width: 240)
           .accessibilityLabel("Template name")
-        if id == defaults.captionTemplateId { DSBadge("Default", style: .soft(.neutral)) }
+        if id == defaults.captionTemplateId { DSBadge("Default", style: .soft(.neutral), help: "New clips use this template") }
         Spacer(minLength: 0)
-        DSIconButton("trash", tooltip: "Delete template", size: .sm,
+        DSIconButton("trash", tooltip: "Delete this template…", size: .sm,
                      disabledReason: usedBy.map { "Used by New clip defaults (\($0)) — choose another template there first" }) {
           deleteTemplate(t.wrappedValue)
         }
@@ -92,10 +94,16 @@ struct CaptionsSettings: View {
     templates.append(t)
   }
 
+  /// Asks first: templates aren't in the undo history, and clips that chose this one lose it.
   private func deleteTemplate(_ t: CaptionTemplate) {
-    if model.perform("Template deleted", { try model.store.deleteCaptionTemplate(t.id) }) {
-      templates.removeAll { $0.id == t.id }
-    }
+    model.confirm(ConfirmRequest(
+      title: "Delete “\(t.name)”?",
+      message: "Clips that chose this template show “Missing template” until you pick another. You can't undo this.",
+      verb: "Delete template", icon: "trash", destructive: true) {
+        if model.perform("Template “\(t.name)” deleted", { try model.store.deleteCaptionTemplate(t.id) }) {
+          templates.removeAll { $0.id == t.id }
+        }
+      })
   }
 
   // MARK: Hashtag sets
@@ -122,10 +130,16 @@ struct CaptionsSettings: View {
     newCategory = ""
   }
 
+  /// Asks first: hashtag sets aren't in the undo history, and clips that chose this one lose its tags.
   private func deleteSet(_ s: HashtagSet) {
-    if model.perform("Hashtag set deleted", { try model.store.deleteHashtagSet(s.id) }) {
-      sets.removeAll { $0.id == s.id }
-    }
+    model.confirm(ConfirmRequest(
+      title: "Delete “\(s.name)”?",
+      message: "Clips that chose this set lose its hashtags (\(s.tags.isEmpty ? "it has none" : s.tags.joined(separator: " "))). You can't undo this.",
+      verb: "Delete set", icon: "trash", destructive: true) {
+        if model.perform("Hashtag set “\(s.name)” deleted", { try model.store.deleteHashtagSet(s.id) }) {
+          sets.removeAll { $0.id == s.id }
+        }
+      })
   }
 
   private func load() {
@@ -152,8 +166,8 @@ private struct HashtagSetRow: View {
         if parsed != set.tags { set.tags = parsed }
       }), size: .sm)
       .accessibilityLabel("Hashtags")
-      if isDefault { DSBadge("Default", style: .soft(.neutral)) }
-      DSIconButton("trash", tooltip: "Delete set", size: .sm,
+      if isDefault { DSBadge("Default", style: .soft(.neutral), help: "New clips use this set") }
+      DSIconButton("trash", tooltip: "Delete this hashtag set…", size: .sm,
                    disabledReason: isDefault ? "Used by New clip defaults — remove it from Hashtag sets there first" : nil) {
         onDelete(set)
       }

@@ -5,7 +5,7 @@ import SwiftUI
 /// Every DS component in every state. Open it from anywhere (`DSGallery()`), or render it to PNGs with
 /// `DSGallerySnapshot.run(outputDir:)` (`DJQ_SNAPSHOT_GALLERY=1 DJQueueApp --snapshot <dir>`).
 enum DSGalleryPage: String, CaseIterable, Identifiable {
-  case foundations, actions, inputs, status, surfaces, clips, single
+  case foundations, actions, inputs, status, surfaces, clips, single, tooltips
   var id: String { rawValue }
 
   var title: String {
@@ -17,6 +17,7 @@ enum DSGalleryPage: String, CaseIterable, Identifiable {
     case .surfaces: "Surfaces & overlays"
     case .clips: "Clip cards"
     case .single: "Clip · single"
+    case .tooltips: "Tooltips"
     }
   }
 
@@ -29,6 +30,7 @@ enum DSGalleryPage: String, CaseIterable, Identifiable {
     case .surfaces: "square.on.square"
     case .clips: "rectangle.grid.1x2"
     case .single: "rectangle.portrait"
+    case .tooltips: "text.bubble"
     }
   }
 
@@ -99,6 +101,7 @@ struct DSGallery: View {
     case .surfaces: GallerySurfaces()
     case .clips: GalleryClips(media: media)
     case .single: GallerySingle(media: media)
+    case .tooltips: GalleryTooltips()
     }
   }
 }

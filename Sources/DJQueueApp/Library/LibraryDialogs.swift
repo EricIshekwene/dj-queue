@@ -29,13 +29,13 @@ struct LibraryQuickLook: View {
         .aspectRatio(16 / 9, contentMode: .fit)
         .background(DS.color.canvas, in: RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
         HStack(spacing: 6) {
-          if v.type == .long { DSBadge("Long-form", style: .outline) }
+          if v.type == .long { DSBadge("Long-form", style: .outline, help: "A full set — uploaded by hand, never queued") }
           if missing {
-            DSBadge("File missing · Relink", style: .soft(.danger), icon: "exclamationmark")
+            DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark", help: "The source file moved or was deleted — Health › Doctor relinks it")
           } else {
-            DSBadge(chip.text, style: chip.style)
+            DSBadge(chip.text, style: chip.style, help: chip.tooltip)
           }
-          if let s = v.score, v.type == .short { DSBadge("Score \(s)", style: .outline) }
+          if let s = v.score, v.type == .short { DSBadge("Score \(s)", style: .outline, help: "Your score (0–100) — it sets the posting order") }
           Spacer(minLength: 0)
         }
         if missing {
@@ -78,21 +78,22 @@ struct LibraryQuickLook: View {
   @ViewBuilder private func footer(_ v: Video, missing: Bool, removed: Bool) -> some View {
     DSButton("Close", variant: .ghost, action: close).keyboardShortcut(.cancelAction)
     if missing {
-      DSButton(v.excluded ? "Include" : "Exclude", variant: .outline) { model.setExcluded([v.id], !v.excluded) }
+      DSButton(v.excluded ? "Include" : "Exclude", variant: .outline,
+               tooltip: v.excluded ? "Put it back into the plan" : "Keep it out of the plan while missing") { model.setExcluded([v.id], !v.excluded) }
       DSButton("Look for the file", icon: "magnifyingglass", variant: .primary,
-               tooltip: "Runs intake now; it relinks renamed or moved files by fingerprint") {
+               tooltip: "Run intake now to relink moved files") {
         model.runTick()
         close()
       }
     } else if removed {
-      DSButton("Exclude", variant: .outline) {
+      // Exclude is journaled (Undo restores posting); the "kept" flag that clears the warning isn't.
+      DSButton("Exclude", variant: .outline, tooltip: "Stop posting it; keep its history") {
         model.setExcluded([v.id], true)
         model.keepRemoved(v.id)
         close()
       }
-      DSButton("Keep posting it", variant: .primary) {
-        model.keepRemoved(v.id)
-        close()
+      DSButton("Keep posting it…", variant: .primary, tooltip: "Keep posting though it left videos.json") {
+        model.confirmKeepRemoved(v) { close() }
       }
     } else if v.type == .long {
       if let u = v.longformURL, let url = URL(string: u) {
@@ -160,7 +161,8 @@ struct LongformPostedDialog: View {
       }
     } footer: {
       DSButton("Cancel", variant: .ghost, action: close).keyboardShortcut(.cancelAction)
-      DSButton(one ? "Mark posted" : "Mark \(max(ready.count, 1)) posted", variant: .primary, disabledReason: blocker, action: save)
+      DSButton(one ? "Mark posted" : "Mark \(max(ready.count, 1)) posted", variant: .primary, disabledReason: blocker,
+               tooltip: "Save links; files move to Posted/Longform", shortcut: "↩", action: save)
         .keyboardShortcut(.defaultAction)
     }
   }

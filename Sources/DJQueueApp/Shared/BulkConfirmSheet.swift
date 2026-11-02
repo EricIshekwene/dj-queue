@@ -20,9 +20,10 @@ struct BulkConfirmSheet: View {
         preview
       }
     } footer: {
-      DSButton("Cancel", variant: .ghost) { model.cancelPendingBulk() }
+      DSButton("Cancel", variant: .ghost, shortcut: "esc") { model.cancelPendingBulk() }
         .keyboardShortcut(.cancelAction)
-      DSButton(r.verb, variant: .primary, isLoading: pending.applying, disabledReason: disabledReason) {
+      DSButton(r.verb, variant: .primary, isLoading: pending.applying, disabledReason: disabledReason,
+               tooltip: r.ids.count == 1 ? "Apply it (you can undo)" : "Apply to \(r.ids.count) clips (you can undo)", shortcut: "↩") {
         model.confirmPendingBulk()
       }
       .keyboardShortcut(.defaultAction)
@@ -111,12 +112,12 @@ struct BulkConfirmSheet: View {
             .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
           HStack(spacing: DS.space.xs) {
             DSButton("Ask an agent for these \(m)", icon: "doc.on.clipboard", variant: .outline, size: .sm,
-                     tooltip: "Copies a prompt for these \(m) clips; your agent answers with title suggestions via djq suggest") {
+                     tooltip: "Copy a title prompt for your agent") {
               model.copyAgentPrompt(o.needTitle)
             }
             DSButton("Use raw tag as title for these \(m)", icon: "tag", variant: .outline, size: .sm,
                      disabledReason: pending.applying ? "Applying…" : nil,
-                     tooltip: "Sets each clip's title to its marker tag exactly as written (undoable)") {
+                     tooltip: "Set each title to its marker tag (undoable)") {
               model.useRawTagAsTitle(o.needTitle)
             }
           }

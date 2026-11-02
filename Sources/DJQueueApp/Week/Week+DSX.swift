@@ -87,6 +87,8 @@ struct DSXSlotChip: View {
   let time: String
   let status: DSXPostStatus
   var paused = false
+  /// A post exists, so right-click opens the post actions (said in the tooltip).
+  var hasActions = false
 
   var body: some View {
     let struck = status == .skipped || paused
@@ -116,7 +118,7 @@ struct DSXSlotChip: View {
     .background(status.problemTone.map { DS.color.tint($0) } ?? .clear,
                 in: RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
     .contentShape(Rectangle())
-    .dsTooltip("\(platform.displayName) · \(time) · \(status.text)\(paused ? " · platform paused" : "")")
+    .dsTooltip("\(platform.displayName) · \(time) · \(status.text)\(paused ? " · platform paused" : "")\(hasActions ? " · right-click for actions" : "")")
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("\(platform.displayName), \(time), \(status.text)\(paused ? ", paused" : "")")
   }
@@ -152,6 +154,8 @@ struct DSXMenuLabelButton<Items: View>: View {
   var variant: DSButtonVariant = .ghost
   var size: DSButtonSize = .sm
   var tooltip: String? = nil
+  /// Why the menu can't open (shown under the label in the tooltip); nil = enabled.
+  var disabledReason: String? = nil
   @ViewBuilder var items: Items
 
   var body: some View {
@@ -168,7 +172,8 @@ struct DSXMenuLabelButton<Items: View>: View {
     .menuIndicator(.hidden)
     .buttonStyle(DSButtonStyle(variant: variant, size: size))
     .fixedSize()
-    .dsTooltip(tooltip)
+    .disabled(disabledReason != nil)
+    .dsTooltip(tooltip, disabledReason: disabledReason)
   }
 }
 

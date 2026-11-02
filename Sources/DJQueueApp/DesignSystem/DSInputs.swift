@@ -128,7 +128,7 @@ struct DSTextField: View {
           Button { text = "" } label: {
             Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(DS.color.textTertiary)
           }
-          .buttonStyle(.plain).dsTooltip("Clear")
+          .buttonStyle(.plain).dsTooltip("Clear the text")
         }
       }
       .padding(.horizontal, isSearch ? 14 : 12)

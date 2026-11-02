@@ -11,7 +11,7 @@ struct EngineSettings: View {
   var body: some View {
     if let err = model.agentError {
       VStack(alignment: .leading, spacing: 0) {
-        DSAttentionCard(title: "Background engine not installed", tone: .danger, actionTitle: "Try again", action: { confirmInstall() })
+        DSAttentionCard(title: "Background engine not installed", tone: .danger, actionTitle: "Reinstall engine…", action: { confirmInstall() })
         SettingsNote(err, icon: "exclamationmark.circle")
       }
       .padding(.top, DS.space.lg)
@@ -20,8 +20,10 @@ struct EngineSettings: View {
     SettingsRow("Run at login", description: "Starts DJ Queue at login; the engine keeps running with the window closed.") {
       HStack(spacing: DS.space.xs) {
         agentBadge
-        DSButton(loaded == true ? "Reinstall…" : "Install…", variant: .outline, size: .sm) { confirmInstall() }
-        DSButton("Stop…", variant: .ghost, size: .sm, disabledReason: loaded == true ? nil : "The background engine isn't loaded.") { confirmStop() }
+        DSButton(loaded == true ? "Reinstall…" : "Install…", variant: .outline, size: .sm,
+                 tooltip: loaded == true ? "Reinstall and reload the background engine" : "Install the engine to run at login") { confirmInstall() }
+        DSButton("Stop…", variant: .ghost, size: .sm, disabledReason: loaded == true ? nil : "The background engine isn't loaded.",
+                 tooltip: "Stop the engine and remove it from login") { confirmStop() }
       }
     }
     SettingsRow("Engine", description: model.engineInProcess ? "Running in this app." : "Running in another process.") {
@@ -29,11 +31,11 @@ struct EngineSettings: View {
         DSStatusDot(tone: model.engineRunning ? .success : .danger)
         Text(model.lastHeartbeat.map { "Last tick \(Fmt.relative($0.at, now: model.now))" } ?? "No heartbeat")
           .font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
-        DSButton("Tick now", variant: .outline, size: .sm, tooltip: "Run one engine pass now") { model.runTick() }
+        DSButton("Tick now", variant: .outline, size: .sm, tooltip: "Prepare due posts and reminders now") { model.runTick() }
       }
     }
     SettingsRow("Wake before first slot", description: "Schedules a Mac wake with pmset (needs an admin password).") {
-      DSSwitch(isOn: model.binding(\.wakeBeforeFirstSlot)).accessibilityLabel("Wake before first slot")
+      DSSwitch(isOn: model.toggleBinding(\.wakeBeforeFirstSlot, "Wake before first slot")).accessibilityLabel("Wake before first slot")
     }
     SettingsRow("Engine log", description: model.store.paths.engineLog.path, isPath: true) {
       DSButton("Open log", variant: .outline, size: .sm,
@@ -50,7 +52,7 @@ struct EngineSettings: View {
 
     SettingsGroupHeader("Backups")
     SettingsRow("Daily backup", description: "Keeps 14 copies of the database.") {
-      DSButton("Back up now", variant: .outline, size: .sm) {
+      DSButton("Back up now", variant: .outline, size: .sm, tooltip: "Copy the database to Backups now") {
         var made: URL?
         if model.perform(nil, { made = try Backup.runIfDue(store: model.store) }) {
           model.show(made == nil ? "Today's backup already exists" : "Backup saved")
@@ -66,8 +68,8 @@ struct EngineSettings: View {
 
   @ViewBuilder private var agentBadge: some View {
     switch loaded {
-    case true?: DSBadge("Loaded", style: .soft(.success))
-    case false?: DSBadge("Not loaded", style: .soft(.danger))
+    case true?: DSBadge("Loaded", style: .soft(.success), help: "The background engine is loaded and runs on its own")
+    case false?: DSBadge("Not loaded", style: .soft(.danger), help: "The background engine isn't loaded")
     case nil: DSSpinner(size: 12, color: DS.color.textTertiary)
     }
   }

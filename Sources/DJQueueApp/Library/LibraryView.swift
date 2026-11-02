@@ -123,11 +123,11 @@ struct LibraryView: View {
                        .map { (Optional($0.id), Captions.setName($0.name)) },
                      tooltip: "Show one session")
     BrowseFilterMenu(placeholder: "Kind", selection: $ui.kind, anyValue: .any,
-                     options: LibraryKindFilter.allCases.map { ($0, $0.title) }, tooltip: "DJ vid or Talking")
+                     options: LibraryKindFilter.allCases.map { ($0, $0.title) }, tooltip: "Show only DJ vids or Talking clips")
     BrowseFilterMenu(placeholder: "Score", selection: $ui.score, anyValue: .any,
                      options: LibraryScoreFilter.allCases.map { ($0, $0.title) }, tooltip: "Filter short clips by score")
     if ui.libraryFiltered || model.librarySession != nil {
-      DSButton("Clear", variant: .ghost, size: .sm, tooltip: "Show every clip") { clearFilters() }
+      DSButton("Clear filters", variant: .ghost, size: .sm, tooltip: "Clear filters and search") { clearFilters() }
     }
     Spacer(minLength: DS.space.xs)
     BrowseFilterMenu(placeholder: LibrarySort.session.title, selection: $ui.sort, anyValue: .session,
@@ -205,24 +205,28 @@ struct LibraryView: View {
 
   @ViewBuilder private func actions(_ v: Video, mode: DSViewMode) -> some View {
     if mode == .grid {
-      Button { quickLook(v) } label: { Label("Quick look", systemImage: "eye") }.dsTooltip("Quick look", shortcut: "Space")
+      // Icon-only in Grid (DSMediaActionStyle): the tooltip names it. Space opens the first *selected* clip, so it
+      // isn't advertised on a hover button.
+      Button { quickLook(v) } label: { Label("Quick look", systemImage: "eye") }.dsTooltip("Preview the clip and its status")
     } else if mode == .single {
       HStack(spacing: DS.space.xs) {
-        DSButton("Quick look", icon: "eye", variant: .outline, size: .sm) { quickLook(v) }
-        DSButton(v.excluded ? "Include" : "Exclude", variant: .ghost, size: .sm) { model.setExcluded([v.id], !v.excluded) }
+        DSButton("Quick look", icon: "eye", variant: .outline, size: .sm, tooltip: "Preview the clip and its status") { quickLook(v) }
+        // AppModel.setExcluded is journaled: toast "Excluded · Undo", ⌘Z.
+        DSButton(v.excluded ? "Include" : "Exclude", variant: .ghost, size: .sm,
+                 tooltip: v.excluded ? "Put it back into the plan" : "Keep this clip out of the plan") { model.setExcluded([v.id], !v.excluded) }
       }
     } else {
-      DSIconButton("eye", tooltip: "Quick look", size: .sm, shortcut: "Space") { quickLook(v) }
+      DSIconButton("eye", tooltip: "Preview the clip and its status", size: .sm) { quickLook(v) }
     }
   }
 
   @ViewBuilder private func contextMenu(_ v: Video) -> some View {
     Button("Quick look", systemImage: "eye") { quickLook(v) }
     if model.libraryIsMissing(v) {
-      Button("Look for the file", systemImage: "magnifyingglass") { relink() }
+      Button("Look for the file (run intake now)", systemImage: "magnifyingglass") { relink() }
     }
     if model.libraryIsRemoved(v) {
-      Button("Keep posting it", systemImage: "checkmark.circle") { model.keepRemoved(v.id) }
+      Button("Keep posting it…", systemImage: "checkmark.circle") { model.confirmKeepRemoved(v) }
     }
     Divider()
     VideoContextMenu(model: model, video: v, ids: model.selectedIds(.library))
@@ -254,7 +258,8 @@ struct LibraryView: View {
     let allExcluded = !vids.isEmpty && vids.allSatisfy(\.excluded)
     return ScreenBulkBar(model: model, screen: .library) {
       if !shorts.isEmpty {
-        bulkButton("Score…", icon: "number", why: nil, tooltip: "Give the selected short clips one score") {
+        // Digits typed with clips selected also score them (LibraryView key handler) — said here, where it applies.
+        bulkButton("Score…", icon: "number", why: nil, tooltip: "Score the selection, or type a number 0–100") {
           ui.scoreTargets = shorts
         }
       }
@@ -274,7 +279,7 @@ struct LibraryView: View {
       .buttonStyle(DSBulkActionStyle())
       .menuIndicator(.hidden)
       .fixedSize()
-      .dsTooltip("Set the kind")
+      .dsTooltip("Set DJ vid or Talking for the selection")
       Button { setExcluded(sel, !allExcluded) } label: {
         Label(allExcluded ? "Include" : "Exclude", systemImage: allExcluded ? "plus.circle" : "minus.circle").lineLimit(1).fixedSize()
       }
@@ -291,10 +296,13 @@ struct LibraryView: View {
         Button("Mark \(unpostedLongs.count) long-form posted…") { ui.longformTargets = unpostedLongs }
         Divider()
       }
-      Button("Copy agent prompt for \(shorts.count) clip\(shorts.count == 1 ? "" : "s")") { model.copyAgentPrompt(shorts) }
+      // Disabled native menu items can't show a tooltip: the reason goes in the title.
+      Button(shorts.isEmpty ? "Copy agent prompt — select short clips"
+             : "Copy agent prompt to find titles (\(shorts.count) clip\(shorts.count == 1 ? "" : "s"))") { model.copyAgentPrompt(shorts) }
         .disabled(shorts.isEmpty)
-      Button("Re-render \(sel.count) clip\(sel.count == 1 ? "" : "s")") { reRender(sel) }
-      Button("Apply defaults to \(shorts.count) clip\(shorts.count == 1 ? "" : "s")…") { applyDefaults(shorts) }
+      Button("Re-render \(sel.count) clip\(sel.count == 1 ? "" : "s")…") { reRender(sel) }
+      Button(shorts.isEmpty ? "Apply defaults — select short clips"
+             : "Apply defaults (frame, trim, text, caption) to \(shorts.count) clip\(shorts.count == 1 ? "" : "s")…") { applyDefaults(shorts) }
         .disabled(shorts.isEmpty)
     }
   }
@@ -361,6 +369,18 @@ struct LibraryView: View {
   }
 }
 
+extension AppModel {
+  /// "Keep posting it" for a clip that left videos.json. The kept flag isn't journaled (no Undo), so it asks first.
+  func confirmKeepRemoved(_ v: Video, then: (() -> Void)? = nil) {
+    confirm(ConfirmRequest(title: "Keep posting “\(displayName(v))”?",
+                           message: "It was removed from videos.json. Its warning goes away for good and it stays in the plan. You can't undo this; exclude it later to stop posting it.",
+                           verb: "Keep posting", icon: "checkmark.circle", destructive: false) { [weak self] in
+      self?.keepRemoved(v.id)
+      then?()
+    })
+  }
+}
+
 /// "Long-form · 1" / "Short clips · 62" label above a Library section.
 struct LibrarySectionLabel: View {
   let title: String
@@ -409,15 +429,16 @@ extension AppModel {
 
   func libraryStateChip(_ v: Video) -> DSClipTag {
     switch libraryState(v) {
-    case .unscored: DSClipTag(text: "Unscored", style: .outline)
-    case .needsEdit: DSClipTag(text: "Needs edit", style: .soft(.warning))
-    case .sentBack: DSClipTag(text: "Sent back to Edit", style: .soft(.warning), icon: "arrow.uturn.backward")
-    case .ready: DSClipTag(text: "Ready", style: .soft(.neutral))
-    case .planned: DSClipTag(text: "Planned", style: .soft(.info))
-    case .posted: DSClipTag(text: "Posted", style: .soft(.success))
-    case .excluded: DSClipTag(text: "Excluded", style: .outline)
-    case .missing: DSClipTag(text: "Missing", style: .soft(.danger))
-    case .removed: DSClipTag(text: "Not in videos.json", style: .soft(.warning))
+    case .unscored: DSClipTag(text: "Unscored", style: .outline, tooltip: "Not scored yet — score it in Score")
+    case .needsEdit: DSClipTag(text: "Needs edit", style: .soft(.warning), tooltip: "Scored, but something is missing — fix it in Edit")
+    case .sentBack: DSClipTag(text: "Sent back to Edit", style: .soft(.warning), icon: "arrow.uturn.backward",
+                              tooltip: "Removed from the queue — Send to queue when it's ready")
+    case .ready: DSClipTag(text: "Ready", style: .soft(.neutral), tooltip: "Ready and waiting in the Queue")
+    case .planned: DSClipTag(text: "Planned", style: .soft(.info), tooltip: "Has upcoming days in the plan")
+    case .posted: DSClipTag(text: "Posted", style: .soft(.success), tooltip: "Posted on every planned platform")
+    case .excluded: DSClipTag(text: "Excluded", style: .outline, tooltip: "Never posted — Include brings it back")
+    case .missing: DSClipTag(text: "Missing", style: .soft(.danger), tooltip: "The source file moved or was deleted — Health › Doctor relinks it")
+    case .removed: DSClipTag(text: "Not in videos.json", style: .soft(.warning), tooltip: "Gone from the session's videos.json — kept here, never posted unless you keep it")
     }
   }
 }

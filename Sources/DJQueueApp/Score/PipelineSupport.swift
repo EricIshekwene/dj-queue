@@ -77,6 +77,13 @@ extension AppModel {
     requestBulk(BulkRequest(title: title, verb: verb, ids: ids, changes: changes, doneMessage: done) { dry in try body(b, dry) })
   }
 
+  /// A disabled native menu item's reason, appended to its title (menu items show no tooltip): " — already posted
+  /// on X" from "Already posted on X — it can't leave the plan; …". Empty when the item is enabled.
+  static func menuReason(_ why: String?) -> String {
+    guard let why, let first = why.components(separatedBy: " — ").first, !first.isEmpty else { return "" }
+    return " — " + first.prefix(1).lowercased() + first.dropFirst()
+  }
+
   /// "Clip" / "N clips".
   static func pipelineClips(_ n: Int) -> String { n == 1 ? "1 clip" : "\(n) clips" }
 
@@ -85,6 +92,7 @@ extension AppModel {
   /// reverts every batch (⌘Z reverts the last one).
   func pipelineSaveScores(_ scores: [String: Int]) {
     guard !scores.isEmpty else { return }
+    splitEditorSession()
     let b = bulk
     let groups = Dictionary(grouping: scores.keys.sorted(), by: { scores[$0]! })
     Task.detached(priority: .userInitiated) {
@@ -102,7 +110,7 @@ extension AppModel {
       await MainActor.run {
         self.refresh()
         if let failure = fail { self.show(failure, error: true); return }
-        if let last = all.last { self.lastBatchId = last }
+        for id in all { self.undoHistory.push(id, label: "Saved \(done) score\(done == 1 ? "" : "s")") }
         self.show(DSToastModel(message: "Saved \(done) score\(done == 1 ? "" : "s")", tone: .success,
                                actionTitle: all.isEmpty ? nil : "Undo",
                                action: all.isEmpty ? nil : { for id in all.reversed() { self.undo(batch: id) } }, duration: 6))
@@ -161,6 +169,26 @@ extension View {
   func pipelineClipFeed(_ model: AppModel, _ screen: Screen, ids: [String], play: [String],
                         layout: PreviewPlayback.Layout = .cards, hovered: String? = nil) -> some View {
     modifier(PipelineClipFeed(model: model, screen: screen, ids: ids, playIds: play, layout: layout, hovered: hovered))
+  }
+}
+
+/// The view toggle (DSViewModeSwitcher look) with a tooltip per mode that says what the layout is for, not just its
+/// name ("One clip at a time, keyboard scoring"). Modes without a tip fall back to their name.
+struct PipelineViewModeSwitcher: View {
+  @Binding var mode: DSViewMode
+  var modes: [DSViewMode] = DSViewMode.allCases
+  var tips: [DSViewMode: String] = PipelineViewModeSwitcher.clipTips
+
+  /// Edit / Queue: the four layouts of a clip list.
+  static let clipTips: [DSViewMode: String] = [
+    .wide: "Show clips as cards with their actions",
+    .grid: "Show many clips at a glance",
+    .single: "Show one big clip at a time",
+    .list: "Show clips as compact rows",
+  ]
+
+  var body: some View {
+    DSSegmented(selection: $mode, segments: modes.map { DSSegment(value: $0, icon: $0.icon, tooltip: tips[$0] ?? $0.help) })
   }
 }
 

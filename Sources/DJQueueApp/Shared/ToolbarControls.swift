@@ -26,7 +26,7 @@ struct RunwayChip: View {
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
-    .dsTooltip("Runway: how many days of posts are covered")
+    .dsTooltip("See how many days of posts are covered")
     .accessibilityLabel("Runway: \(model.runway.approvedDays) days approved, \(model.runway.readyDays) ready, \(model.runway.totalDays) total")
     .dsPopover(isPresented: $open, width: 320) { RunwayDetail(model: model) }
   }
@@ -56,22 +56,6 @@ struct RunwayDetail: View {
         Text(title).font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
         Text(text).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
       }
-    }
-  }
-}
-
-/// Toolbar kill switch (DESIGN-v2 §3 engine controls): a ghost pause button while posting runs (asks first), an
-/// amber "Resume posting" capsule while paused.
-struct PauseControl: View {
-  @Bindable var model: AppModel
-
-  var body: some View {
-    if model.settings.paused {
-      DSButton("Resume posting", icon: "play.fill", variant: .outline, size: .sm, tooltip: "Posting is paused — resume it") {
-        model.setPaused(false)
-      }
-    } else {
-      DSIconButton("pause.circle", tooltip: "Pause all posting", size: .sm) { model.confirmPause = true }
     }
   }
 }

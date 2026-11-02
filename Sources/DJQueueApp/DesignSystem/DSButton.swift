@@ -150,8 +150,9 @@ struct DSButtonLabelStyle: LabelStyle {
   }
 }
 
-/// The DS button. `disabledReason` non-nil = disabled, and the reason shows as a tooltip (decision #6/#7:
-/// disabled controls say why). `isLoading` swaps the icon for a spinner and blocks the action.
+/// The DS button. `tooltip` explains a non-obvious consequence (optional — the title is the label; required when
+/// the title is empty). `disabledReason` non-nil = disabled, and the reason shows in the tooltip under the label
+/// (decision #6/#7: disabled controls say why). `shortcut` shows as keycaps in the tooltip. `isLoading` swaps the icon for a spinner and blocks the action.
 struct DSButton: View {
   let title: String
   var icon: String? = nil
@@ -179,6 +180,9 @@ struct DSButton: View {
     self.tooltip = tooltip
     self.shortcut = shortcut
     self.action = action
+    // Icon-only DSButton (empty title) must explain itself — use DSIconButton, which requires a tooltip.
+    assert(!title.trimmingCharacters(in: .whitespaces).isEmpty || !(tooltip ?? "").isEmpty,
+           "DSButton without a title needs a tooltip (\(icon ?? "no icon"))")
   }
 
   var body: some View {
@@ -199,13 +203,16 @@ struct DSButton: View {
       }
     }
     .buttonStyle(DSButtonStyle(variant: variant, size: size, fullWidth: fullWidth, softDisabled: disabledReason != nil))
-    .dsTooltip(disabledReason ?? tooltip, shortcut: disabledReason == nil ? shortcut : nil)
+    // The title is the label: a tooltip appears when there is more to say — an explanation, a shortcut (Linear:
+    // "Save & next ↩"), or why it's disabled (title, then the reason).
+    .dsTooltip(tooltip ?? (shortcut != nil || disabledReason != nil ? title : nil), shortcut: shortcut, disabledReason: disabledReason)
     .accessibilityLabel(title)
     .dsAccessibilityDisabled(disabledReason)
   }
 }
 
-/// Square/round icon-only button. Tooltip is required (icon-only controls must explain themselves).
+/// Square/round icon-only button. `tooltip` is required (non-optional, non-empty — asserted in debug): icon-only
+/// controls must explain themselves. It is also the VoiceOver label.
 struct DSIconButton: View {
   let icon: String
   let tooltip: String
@@ -226,6 +233,7 @@ struct DSIconButton: View {
     self.disabledReason = disabledReason
     self.isOn = isOn
     self.action = action
+    assert(!tooltip.trimmingCharacters(in: .whitespaces).isEmpty, "DSIconButton(\(icon)) needs a tooltip: icon-only controls explain themselves")
   }
 
   var body: some View {
@@ -235,7 +243,7 @@ struct DSIconButton: View {
       Image(systemName: icon).font(.system(size: size.iconSize + 1, weight: .medium))
     }
     .buttonStyle(DSButtonStyle(variant: isOn ? .secondary : variant, size: size, softDisabled: disabledReason != nil, iconOnly: true))
-    .dsTooltip(disabledReason ?? tooltip, shortcut: disabledReason == nil ? shortcut : nil)
+    .dsTooltip(tooltip, shortcut: shortcut, disabledReason: disabledReason)
     .accessibilityLabel(tooltip)
     .dsAccessibilityDisabled(disabledReason)
   }

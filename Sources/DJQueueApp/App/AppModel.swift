@@ -114,7 +114,14 @@ final class AppModel {
   var postsSelection: String? = nil
   var postsFilter: PostsFilter = .all
   var weekStart: String = "" { didSet { if oldValue != weekStart && !oldValue.isEmpty { refresh() } } }
-  var editor: EditorRequest?
+  var editor: EditorRequest? {
+    didSet { if editor == nil, oldValue != nil { finishEditorSession() } }
+  }
+  /// The open editor session's journal entry: every clip it can reach is snapshotted at open, and the whole session
+  /// becomes ONE app-level undo ("Edits to <clip>") when the editor closes (F8; in-editor ⌘Z is field-level).
+  var editorSession: BulkActions.OpenEntry?
+  /// Undos run one at a time, in the order asked (rapid ⌘Z⌘Z).
+  @ObservationIgnored lazy var undoRunner = UndoRunner(bulk: bulk)
   var showPalette = false
   /// In-window Settings modal (DESIGN-v2 §6.9), opened by the sidebar row, ⌘, and `WindowManager.showSettings`.
   var showSettings = false
@@ -165,8 +172,22 @@ final class AppModel {
   let bulk: BulkActions
   /// Bulk confirmation sheet currently shown (AppModel+Bulk.swift).
   var pendingBulk: PendingBulk?
-  /// Batch the next ⌘Z undoes.
-  var lastBatchId: String?
+  /// ⌘Z order: every undoable action's journal batch, most recent last (UndoHistory, round 3 F8).
+  var undoHistory = UndoHistory() {
+    didSet {
+      // A new action was journaled while the editor is open: the session starts after it (review r4 M1).
+      if let s = editorSession, let top = undoHistory.top?.batchId, !oldValue.entries.contains(where: { $0.batchId == top }) {
+        editorSession = (try? bulk.rebase(s, onto: top)) ?? s
+      }
+    }
+  }
+  /// The batch the next ⌘Z undoes. Setting pushes onto the history (label from `undoLabel`).
+  var lastBatchId: String? {
+    get { undoHistory.top?.batchId }
+    set { if let b = newValue { undoHistory.push(b, label: "Change") } }
+  }
+  /// A destructive or plan-wide action waiting for "Are you sure?" (hosted by MainWindowView).
+  var pendingConfirm: ConfirmRequest?
 
   /// True while rendering `--snapshot` (no UserDefaults reads/writes, no proxy generation).
   static let isSnapshotRun: Bool = { if case .snapshot = LaunchMode.current { return true } else { return false } }()
@@ -226,7 +247,7 @@ final class AppModel {
   func reupload(_ post: PlatformPost, version: Int?, newVersion: Bool = false) {
     if newVersion {
       var made = 0
-      guard perform(nil, {
+      guard undoable("Re-upload as a new version", "reupload-new-version", ids: [post.videoId], plan: true, {
         let vs = try store.versions(videoId: post.videoId)
         var v = vs.last ?? Version(number: 1)
         v.number = (vs.map(\.number).max() ?? 0) + 1
@@ -237,7 +258,7 @@ final class AppModel {
       show("Re-uploading as v\(made) — edit it now")
       openEditor(post.videoId)
     } else {
-      perform("Re-upload queued\(version.map { " (v\($0))" } ?? "")") {
+      undoable("Re-upload queued\(version.map { " (v\($0))" } ?? "")", "reupload", ids: [post.videoId], plan: true) {
         try postActions.resolveCopyright(postId: post.id, .reuploadAnyway(versionNo: version))
       }
     }
@@ -520,6 +541,35 @@ final class AppModel {
     }
   }
 
+  /// Runs a data-changing action as one journaled, undoable step (BulkActions.record): the toast says `label` with
+  /// Undo, and ⌘Z undoes it (always the most recent action). `ids` = clips it may touch; `plan` = it may change
+  /// slots, weeks or posts; `settings` = it changes Settings. Nothing changed → plain `label` toast, no Undo.
+  @discardableResult
+  func undoable(_ label: String, _ action: String, ids: [String] = [], plan: Bool = false, settings: Bool = false,
+                renders: Bool = false, _ body: () throws -> Void) -> Bool {
+    splitEditorSession()
+    do {
+      let r = try bulk.record(action, ids: ids, plan: plan, settings: settings, renders: renders, body)
+      ChangeSignal.post()
+      refresh()
+      if let b = r.batchId {
+        undoHistory.push(b, label: label)
+        show(DSToastModel(message: label, tone: .neutral, actionTitle: "Undo", action: { [weak self] in self?.undo(batch: b) },
+                          duration: 6))
+      } else {
+        show(label)
+      }
+      return true
+    } catch {
+      refresh()
+      show(error.localizedDescription, error: true)
+      return false
+    }
+  }
+
+  /// Asks before a destructive or plan-wide action (in-window dialog; Cancel is the default).
+  func confirm(_ r: ConfirmRequest) { pendingConfirm = r }
+
   /// One-line toast. Errors use the danger tone and stay 6 s (others 3 s); snapshot mode keeps it on screen.
   func show(_ text: String, error: Bool = false) {
     show(DSToastModel(message: text, tone: error ? .danger : .neutral, duration: error ? 6 : 3))
@@ -559,7 +609,6 @@ final class AppModel {
       guard let self, let n = Int(self.digitBuffer), n <= 100 else { self?.digitBuffer = ""; return }
       self.digitBuffer = ""
       self.setScore(self.digitTargets, n)
-      self.show("Score \(n)")
     }
     digitCommit = commit
     if done { commit.perform() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: commit) }
@@ -568,15 +617,23 @@ final class AppModel {
   // MARK: Video actions
 
   func setScore(_ ids: some Collection<String>, _ score: Int?) {
-    perform(ids.count > 1 ? "Scored \(ids.count)" : nil) { for id in ids { try store.setScore(id, score.map { min(100, max(0, $0)) }) } }
+    let label = score.map { "Score \(min(100, max(0, $0)))" } ?? "Score cleared"
+    undoable(ids.count > 1 ? "\(label) for \(ids.count) clips" : label, "score", ids: Array(ids)) {
+      for id in ids { try store.setScore(id, score.map { min(100, max(0, $0)) }) }
+    }
   }
 
   func setKind(_ ids: some Collection<String>, _ kind: Kind) {
-    perform { for id in ids { try store.setKind(id, kind) } }
+    undoable("Kind set to \(kind.displayName)\(ids.count > 1 ? " for \(ids.count) clips" : "")", "kind", ids: Array(ids)) {
+      for id in ids { try store.setKind(id, kind) }
+    }
   }
 
   func setExcluded(_ ids: some Collection<String>, _ ex: Bool) {
-    perform(ex ? "Excluded \(ids.count)" : "Included \(ids.count)") { for id in ids { try store.setExcluded(id, ex) } }
+    let n = ids.count == 1 ? "" : " \(ids.count) clips"
+    undoable(ex ? "Excluded\(n)" : "Included\(n)", ex ? "exclude" : "include", ids: Array(ids), plan: true) {
+      for id in ids { try store.setExcluded(id, ex) }
+    }
   }
 
   func setNotes(_ id: String, _ notes: String) { perform { try store.setNotes(id, notes) } }
@@ -591,19 +648,49 @@ final class AppModel {
 
   func pin(_ videoId: String, date: Date) {
     let key = dm.key(date)
-    perform("Pinned to \(Fmt.day(dm.date(key), tz: tz))") { try planner.pin(videoId: videoId, date: key) }
+    undoable("Pinned to \(Fmt.day(dm.date(key), tz: tz))", "pin", ids: [videoId], plan: true) { try planner.pin(videoId: videoId, date: key) }
   }
 
-  func pin(_ videoId: String, dayKey: String) { perform("Pinned") { try planner.pin(videoId: videoId, date: dayKey) } }
-  func postToday(_ videoId: String) { perform("Posting today") { try planner.postToday(videoId: videoId) } }
-  func skipNext(_ videoId: String) { perform("Swapped with the next open slot") { try planner.skipNext(videoId: videoId) } }
-  func removeSlot(_ slotId: String) { perform("Removed from week") { try planner.remove(slotId: slotId) } }
-  func swap(_ a: String, _ b: String) { perform("Swapped") { try planner.swap(a, b) } }
-  func move(_ slotId: String, to day: String) { perform("Moved") { try planner.move(slotId: slotId, to: day) } }
-  func approveWeek(_ ws: String) { perform("Week approved") { try planner.approveWeek(ws) } }
-  func rebuildWeek(_ ws: String) { perform("Week rebuilt") { try planner.rebuildWeek(ws) } }
-  func proposeWeek(_ ws: String) { perform("Week proposed") { _ = try planner.proposeWeek(ws) } }
-  func pushPlan(days: Int = 1) { perform("Plan pushed by \(days) day") { try planner.pushPlan(from: todayKey, days: days) } }
+  func pin(_ videoId: String, dayKey: String) {
+    undoable("Pinned to \(Fmt.day(dm.date(dayKey), tz: tz))", "pin", ids: [videoId], plan: true) { try planner.pin(videoId: videoId, date: dayKey) }
+  }
+  func postToday(_ videoId: String) { undoable("Posting today", "post-today", ids: [videoId], plan: true) { try planner.postToday(videoId: videoId) } }
+  func skipNext(_ videoId: String) {
+    undoable("Swapped with the next open slot", "skip-next", ids: [videoId], plan: true) { try planner.skipNext(videoId: videoId) }
+  }
+  func removeSlot(_ slotId: String) { undoable("Removed from week", "remove-slot", plan: true) { try planner.remove(slotId: slotId) } }
+  func swap(_ a: String, _ b: String) { undoable("Swapped days", "swap", plan: true) { try planner.swap(a, b) } }
+  func move(_ slotId: String, to day: String) {
+    undoable("Moved to \(Fmt.day(dm.date(day), tz: tz))", "move", plan: true) { try planner.move(slotId: slotId, to: day) }
+  }
+  func approveWeek(_ ws: String) { undoable("Week approved", "approve-week", plan: true) { try planner.approveWeek(ws) } }
+  func proposeWeek(_ ws: String) { undoable("Week proposed", "propose-week", plan: true) { _ = try planner.proposeWeek(ws) } }
+
+  /// Wipes the week's unpinned future slots and posts and drafts it again — asks first, then undoable.
+  func rebuildWeek(_ ws: String, confirmed: Bool = false) {
+    guard confirmed else {
+      confirm(ConfirmRequest(title: "Rebuild the week of \(Fmt.day(dm.date(ws), tz: tz))?",
+                             message: "Unpinned days from today on are cleared and planned again from the queue, and the week goes back to Draft (approve it again). Pinned days and anything posted stay. You can undo this.",
+                             verb: "Rebuild week", icon: "arrow.triangle.2.circlepath", destructive: true) { [weak self] in
+        self?.rebuildWeek(ws, confirmed: true)
+      })
+      return
+    }
+    undoable("Week rebuilt", "rebuild-week", plan: true) { try planner.rebuildWeek(ws) }
+  }
+
+  /// Shifts every unpinned slot from today on, across all weeks — asks first, then undoable.
+  func pushPlan(days: Int = 1, confirmed: Bool = false) {
+    guard confirmed else {
+      confirm(ConfirmRequest(title: "Push the whole plan by \(days) day\(days == 1 ? "" : "s")?",
+                             message: "Every unpinned day from today on moves \(days) day\(days == 1 ? "" : "s") later, in every week. Pinned days stay. You can undo this.",
+                             verb: "Push plan", icon: "calendar.badge.clock", destructive: false) { [weak self] in
+        self?.pushPlan(days: days, confirmed: true)
+      })
+      return
+    }
+    undoable("Plan pushed by \(days) day\(days == 1 ? "" : "s")", "push-plan", plan: true) { try planner.pushPlan(from: todayKey, days: days) }
+  }
 
   /// The upcoming planned slot before/after this video's next slot (Move up / down in ⌘K).
   func neighbourSlot(_ videoId: String, _ d: Int) -> PlanSlot? {
@@ -620,7 +707,7 @@ final class AppModel {
 
   /// Q.S5 "Add to week": each video goes to the next open day from today.
   func addToWeek(_ ids: [String]) {
-    perform("Added \(ids.count) to the plan") {
+    undoable("Added \(ids.count) to the plan", "add-to-plan", ids: ids, plan: true) {
       var day = todayKey
       for id in ids {
         while try !store.planSlots(where: "date=?", [day]).isEmpty { day = dm.addDays(day, 1) }
@@ -630,7 +717,7 @@ final class AppModel {
   }
 
   func repost(_ videoId: String, _ p: Platform) {
-    perform("Repost queued on \(p.displayName)") { _ = try postActions.repost(videoId: videoId, platform: p) }
+    undoable("Repost queued on \(p.displayName)", "repost", ids: [videoId], plan: true) { _ = try postActions.repost(videoId: videoId, platform: p) }
   }
 
   /// nil when a repost is possible; otherwise why not (the API needs the next version to exist).
@@ -642,7 +729,7 @@ final class AppModel {
   }
 
   func duplicateVersion(_ videoId: String) {
-    perform("Version duplicated") {
+    undoable("New version added", "duplicate-version", ids: [videoId]) {
       let vs = try store.versions(videoId: videoId)
       var v = vs.last ?? Version(number: 1)
       v.number = (vs.map(\.number).max() ?? 0) + 1
@@ -663,29 +750,42 @@ final class AppModel {
   // MARK: Post actions
 
   func markPosted(_ post: PlatformPost, url: String, at: Date) {
-    perform("Marked posted") { try postActions.markPosted(postId: post.id, url: url, at: at) }
+    undoable("\(post.platform.displayName) marked posted", "mark-posted", ids: [post.videoId], plan: true) {
+      try postActions.markPosted(postId: post.id, url: url, at: at)
+    }
   }
 
   func reportProblem(_ post: PlatformPost, type: ErrorType, message: String, raw: String?) {
-    perform("Problem recorded") { try postActions.reportProblem(postId: post.id, type: type, message: message, raw: raw) }
+    undoable("Problem recorded", "report-problem", ids: [post.videoId], plan: true) {
+      try postActions.reportProblem(postId: post.id, type: type, message: message, raw: raw)
+    }
   }
 
-  func resolve(_ post: PlatformPost, _ r: CopyrightResolution) { perform("Resolved") { try postActions.resolveCopyright(postId: post.id, r) } }
-  func fixed(_ postId: String) { perform("Re-queued for the next day") { _ = try postActions.fixed(postId: postId) } }
-  func reset(_ post: PlatformPost) { perform("Post reset") { try postActions.reset(postId: post.id) } }
+  func resolve(_ post: PlatformPost, _ r: CopyrightResolution) {
+    undoable("Resolved", "resolve", ids: [post.videoId], plan: true) { try postActions.resolveCopyright(postId: post.id, r) }
+  }
+  func fixed(_ postId: String) {
+    let vid = posts.first { $0.id == postId }?.videoId
+    undoable("Re-queued for the next day", "fixed", ids: vid.map { [$0] } ?? [], plan: true) { _ = try postActions.fixed(postId: postId) }
+  }
+  func reset(_ post: PlatformPost) {
+    undoable("\(post.platform.displayName) post reset", "reset-post", ids: [post.videoId], plan: true) { try postActions.reset(postId: post.id) }
+  }
   func skip(_ post: PlatformPost) {
     if post.state.isCopyright { resolve(post, .skipPlatform); return }
-    perform("\(post.platform.displayName) skipped") { try postActions.skip(postId: post.id) }
+    undoable("\(post.platform.displayName) skipped", "skip-post", ids: [post.videoId], plan: true) { try postActions.skip(postId: post.id) }
   }
   func postNow(_ post: PlatformPost) {
-    let ok = perform("\(post.platform.displayName) is due now") { try postActions.postNow(postId: post.id) }
+    let ok = undoable("\(post.platform.displayName) is due now", "post-now", ids: [post.videoId], plan: true) { try postActions.postNow(postId: post.id) }
     guard ok else { return }
     highlightPostId = post.id
     screen = .today
   }
 
   func shiftPlan(_ post: PlatformPost) {
-    perform("Moved to the next free \(post.platform.displayName) slot") { try postActions.shiftPlan(postId: post.id) }
+    undoable("Moved to the next free \(post.platform.displayName) slot", "shift-plan", ids: [post.videoId], plan: true) {
+      try postActions.shiftPlan(postId: post.id)
+    }
   }
 
   /// `PostActions.heldReason` when the clip was sent back to Edit (nothing of it may post), else nil.
@@ -698,7 +798,9 @@ final class AppModel {
   }
   func isResolved(_ p: PlatformPost) -> Bool { p.resolution != nil }
   func setMetrics(_ post: PlatformPost, views: Int?, likes: Int?) {
-    perform("Metrics saved") { try postActions.setMetrics(postId: post.id, PostMetrics(views: views, likes: likes, at: now)) }
+    undoable("Metrics saved", "metrics", ids: [post.videoId], plan: true) {
+      try postActions.setMetrics(postId: post.id, PostMetrics(views: views, likes: likes, at: now))
+    }
   }
 
   func markLongformPosted(_ v: Video, url: String) {
@@ -707,15 +809,17 @@ final class AppModel {
 
   // MARK: Settings
 
-  func update(_ change: (inout AppSettings) -> Void) {
+  /// Immediate settings change, undoable (toast `label` · Undo, ⌘Z).
+  func update(_ label: String = "Setting saved", _ change: (inout AppSettings) -> Void) {
     var s = settings
     change(&s)
-    perform { try store.save(s) }
+    guard s != settings else { return }
+    undoable(label, "settings", settings: true) { try store.save(s) }
   }
 
-  func setPaused(_ paused: Bool) { update { $0.paused = paused } }
+  func setPaused(_ paused: Bool) { update(paused ? "Posting paused" : "Posting resumed") { $0.paused = paused } }
   func setPlatformPaused(_ p: Platform, _ paused: Bool) {
-    update { if paused { $0.pausedPlatforms.insert(p) } else { $0.pausedPlatforms.remove(p) } }
+    update("\(p.displayName) \(paused ? "paused" : "resumed")") { if paused { $0.pausedPlatforms.insert(p) } else { $0.pausedPlatforms.remove(p) } }
   }
 
   // MARK: Manual publisher (Today)
@@ -808,7 +912,49 @@ final class AppModel {
   // MARK: Navigation
 
   func openEditor(_ videoId: String, in ids: [String]? = nil, fixPostId: String? = nil) {
-    editor = EditorRequest(videoId: videoId, videoIds: ids ?? [videoId], fixPostId: fixPostId)
+    let all = ids ?? [videoId]
+    if editorSession == nil { editorSession = try? bulk.begin("editor", ids: all.contains(videoId) ? all : [videoId] + all) }
+    editor = EditorRequest(videoId: videoId, videoIds: all, fixPostId: fixPostId)
+  }
+
+  /// A journaled action (or an undo) is about to run while the editor is open: close the session so far as its own
+  /// entry and start a new one, so the history reads Edits₁ → the action → Edits₂ and ⌘Z unwinds them in order
+  /// (review r4 M1: folding the action into one session entry made its own undo skip the clip).
+  func splitEditorSession() {
+    guard let e = editorSession else { return }
+    EditorModel.flushLiveAndWait()
+    do {
+      let (r, next) = try bulk.split(e)
+      if let b = r.batchId {
+        let name = r.changed.count == 1 ? video(r.changed[0]).map(displayName) ?? "1 clip" : "\(r.changed.count) clips"
+        undoHistory.push(b, label: "Edits to \(name)")
+      }
+      editorSession = next
+    } catch {
+      Log.shared.error("editor session split failed: \(error)")
+    }
+  }
+
+  /// After the editor's last writes land: journal the session (nothing changed → no entry).
+  private func finishEditorSession() {
+    guard let e = editorSession else { return }
+    editorSession = nil
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      EditorModel.waitForSaves()
+      do {
+        let r = try self.bulk.commit(e)
+        guard let b = r.batchId else { return }
+        let name = r.changed.count == 1 ? self.video(r.changed[0]).map(self.displayName) ?? "1 clip" : "\(r.changed.count) clips"
+        self.undoHistory.push(b, label: "Edits to \(name)")
+        if self.toast == nil {
+          self.show(DSToastModel(message: "Edits to \(name) saved", tone: .neutral, actionTitle: "Undo",
+                                 action: { [weak self] in self?.undo(batch: b) }, duration: 6))
+        }
+      } catch {
+        Log.shared.error("editor session journal failed: \(error)")
+      }
+    }
   }
 
   func closeEditor() {

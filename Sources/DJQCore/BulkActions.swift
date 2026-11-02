@@ -414,6 +414,134 @@ public final class BulkActions: @unchecked Sendable {
     }
   }
 
+  // MARK: Single actions (journaled)
+
+  /// Runs any app action (`body`) as one undoable journal entry — the same snapshot/restore machinery as the bulk
+  /// ops: the clips in `ids`, plus the whole plan (slots, weeks, posts) when `plan`, plus the settings row when
+  /// `settings`. Nothing changed = no batch (`batchId` nil). `changed` lists the clips whose snapshot differs plus
+  /// every clip whose slots or posts differ. Used by AppModel so every one-click action has Undo and ⌘Z always
+  /// undoes the most recent one (round 3, F8).
+  @discardableResult
+  public func record(_ action: String, ids raw: [String] = [], params: [String: String] = [:], plan: Bool = false,
+                     settings: Bool = false, renders: Bool = false, _ body: () throws -> Void) throws -> BulkResult {
+    var seen = Set<String>()
+    let ids = raw.filter { !$0.isEmpty && seen.insert($0).inserted }
+    var result = BulkResult(batchId: nil, action: action, dryRun: false, videoIds: ids, changed: [], skipped: [:],
+                            remainingIssues: [:], summary: "")
+    try store.db.transaction {
+      let existing = try ids.filter { try store.video(id: $0) != nil }
+      let before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
+                            plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil)
+      try body()
+      let after = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
+                           plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil)
+      var changed = Set(zip(before.clips, after.clips).filter { $0 != $1 }.map(\.0.id))
+      if let b = before.plan, let a = after.plan, b != a {
+        let bs = Dictionary(uniqueKeysWithValues: b.slots.map { ($0.id, $0) }), asl = Dictionary(uniqueKeysWithValues: a.slots.map { ($0.id, $0) })
+        for id in Set(bs.keys).union(asl.keys) where bs[id] != asl[id] { changed.formUnion([bs[id]?.videoId, asl[id]?.videoId].compactMap { $0 }) }
+        let bp = Dictionary(uniqueKeysWithValues: b.posts.map { ($0.id, $0) }), ap = Dictionary(uniqueKeysWithValues: a.posts.map { ($0.id, $0) })
+        for id in Set(bp.keys).union(ap.keys) where bp[id] != ap[id] { changed.formUnion([bp[id]?.videoId, ap[id]?.videoId].compactMap { $0 }) }
+        if changed.isEmpty { changed.insert("") }  // weeks only (approve/propose): still a change
+      }
+      let settingsChanged = before.settings != after.settings
+      guard !changed.isEmpty || settingsChanged else {
+        result.summary = "\(action): nothing changed"
+        return
+      }
+      changed.remove("")
+      result.changed = changed.sorted()
+      result.summary = "\(action): \(result.changed.count) clip\(result.changed.count == 1 ? "" : "s")"
+        + (before.plan != nil && before.plan != after.plan ? " · plan" : "") + (settingsChanged ? " · settings" : "")
+      let batchId = newId()
+      try store.db.run("""
+        INSERT INTO batches(id,action,params,video_ids,before,after,summary,created_at) VALUES(?,?,?,?,?,?,?,?)
+        """, [batchId, action, JSONCoding.string(params), JSONCoding.string(result.changed), JSONCoding.string(before),
+              JSONCoding.string(after), result.summary, store.clock.now])
+      for id in result.changed { try store.logEvent("action", "\(action) (batch \(batchId.prefix(8)))", videoId: id) }
+      result.batchId = batchId
+    }
+    if postsChangeSignal && result.batchId != nil { ChangeSignal.post() }
+    return result
+  }
+
+  /// A journal entry opened before a long interaction (the editor) and closed after it — see `begin`/`commit`.
+  public struct OpenEntry: Sendable {
+    public let action: String
+    public let ids: [String]
+    var before: Snapshot
+  }
+
+  /// Snapshots `ids` now; `commit` later records ONE undoable batch for whatever changed in between (e.g. a whole
+  /// editor session: every crop, trim, text, title and version change → one ⌘Z on the app's history).
+  public func begin(_ action: String, ids raw: [String]) throws -> OpenEntry {
+    var seen = Set<String>()
+    let ids = try raw.filter { !$0.isEmpty && seen.insert($0).inserted }.filter { try store.video(id: $0) != nil }
+    return OpenEntry(action: action, ids: ids, before: Snapshot(clips: try ids.map { try clipSnapshot($0, renders: false) }, plan: nil))
+  }
+
+  /// Records the batch for an `OpenEntry` (nil `batchId` when nothing changed). Only the clips that changed are
+  /// journaled, so undo leaves the others alone; score, excluded and held are left to their own journaled actions.
+  @discardableResult
+  public func commit(_ e: OpenEntry) throws -> BulkResult {
+    var result = BulkResult(batchId: nil, action: e.action, dryRun: false, videoIds: e.ids, changed: [], skipped: [:],
+                            remainingIssues: [:], summary: "")
+    try store.db.transaction {
+      let now = try e.before.clips.map { try clipSnapshot($0.id, renders: false) }
+      // Only the fields a long interaction owns (kind, title, edit, versions) are journaled here. Score, excluded and
+      // held change only through actions that journal themselves (e.g. a stage move from the editor header), so the
+      // session takes their current values and its undo never reverts or double-counts them.
+      let pairs = zip(e.before.clips, now).map { b, n -> (ClipSnap, ClipSnap) in
+        var b = b
+        b.score = n.score; b.excluded = n.excluded; b.held = n.held
+        return (b, n)
+      }.filter { $0 != $1 }
+      guard !pairs.isEmpty else { result.summary = "\(e.action): nothing changed"; return }
+      let before = Snapshot(clips: pairs.map(\.0), plan: nil), after = Snapshot(clips: pairs.map(\.1), plan: nil)
+      result.changed = pairs.map(\.0.id)
+      result.summary = "\(e.action): \(result.changed.count) clip\(result.changed.count == 1 ? "" : "s")"
+      let batchId = newId()
+      try store.db.run("""
+        INSERT INTO batches(id,action,params,video_ids,before,after,summary,created_at) VALUES(?,?,?,?,?,?,?,?)
+        """, [batchId, e.action, JSONCoding.string([String: String]()), JSONCoding.string(result.changed), JSONCoding.string(before),
+              JSONCoding.string(after), result.summary, store.clock.now])
+      for id in result.changed { try store.logEvent("action", "\(e.action) (batch \(batchId.prefix(8)))", videoId: id) }
+      result.batchId = batchId
+    }
+    return result
+  }
+
+  /// Closes `e` as its own batch (when anything changed) and opens a fresh entry on the same clips: call it before a
+  /// journaled action runs inside a long interaction, so the history reads interaction₁ → action → interaction₂.
+  public func split(_ e: OpenEntry) throws -> (BulkResult, OpenEntry) {
+    let r = try commit(e)
+    return (r, try begin(e.action, ids: e.ids))
+  }
+
+  /// Moves `e`'s starting point past batch `batchId` (a journaled action that ran while `e` was open): every
+  /// interaction-owned field that batch changed starts from its result, so `e` never claims — or undoes — the
+  /// action's change, and the action's own undo still finds its clip as it left it.
+  public func rebase(_ e: OpenEntry, onto batchId: String) throws -> OpenEntry {
+    guard let row = try store.db.one("SELECT before, after FROM batches WHERE id=?", [batchId]),
+          let bs = row.string("before"), let asx = row.string("after"),
+          let b = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(bs.utf8)),
+          let a = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(asx.utf8)) else { return e }
+    let bById = Dictionary(b.clips.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
+    let aById = Dictionary(a.clips.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
+    var out = e
+    for i in out.before.clips.indices {
+      let id = out.before.clips[i].id
+      guard let x = bById[id], let y = aById[id] else { continue }
+      if x.kind != y.kind { out.before.clips[i].kind = y.kind }
+      if x.title != y.title || x.titleTracks != y.titleTracks || x.titleSource != y.titleSource {
+        out.before.clips[i].title = y.title; out.before.clips[i].titleTracks = y.titleTracks
+        out.before.clips[i].titleSource = y.titleSource
+      }
+      if x.edit != y.edit { out.before.clips[i].edit = y.edit }
+      if x.versions != y.versions { out.before.clips[i].versions = y.versions }
+    }
+    return out
+  }
+
   // MARK: Journal
 
   public func batches(limit: Int = 50) throws -> [BatchRecord] {
@@ -467,6 +595,14 @@ public final class BulkActions: @unchecked Sendable {
           touched.formUnion(bp.slots.map(\.videoId) + ap.slots.map(\.videoId) + bp.posts.map(\.videoId) + ap.posts.map(\.videoId))
           result.changed = Array(Set(result.changed).union(rec.videoIds.filter { touched.contains($0) })).sorted()
           restored.insert(Self.planMarker)
+        }
+        if let bset = before.settings, let aset = after.settings, !restored.contains(Self.settingsMarker) {
+          let cur = try settingsSnapshot()
+          if !force, cur != aset {
+            throw EngineError("Can't undo the settings part of \(rec.action): settings changed after it. Use force to overwrite.")
+          }
+          if cur != bset { try restoreSettings(bset) }
+          restored.insert(Self.settingsMarker)
         }
         for v in touched { try store.refreshState(videoId: v) }
         for v in result.changed {
@@ -537,7 +673,28 @@ public final class BulkActions: @unchecked Sendable {
     var posts: [PlatformPost]
   }
 
-  struct Snapshot: Codable { var clips: [ClipSnap]; var plan: PlanSnap? }
+  /// The raw settings row (nil json = no row yet). Captured only by journaled actions that change settings.
+  struct SettingsSnap: Codable, Equatable { var json: String? }
+
+  struct Snapshot: Codable {
+    var clips: [ClipSnap]
+    var plan: PlanSnap?
+    var settings: SettingsSnap? = nil
+  }
+
+  static let settingsMarker = "#settings"
+
+  func settingsSnapshot() throws -> SettingsSnap {
+    SettingsSnap(json: try store.db.one("SELECT json FROM kv WHERE key='settings'")?.string("json"))
+  }
+
+  private func restoreSettings(_ s: SettingsSnap) throws {
+    if let j = s.json {
+      try store.db.run("INSERT INTO kv(key,json) VALUES('settings',?) ON CONFLICT(key) DO UPDATE SET json=excluded.json", [j])
+    } else {
+      try store.db.run("DELETE FROM kv WHERE key='settings'")
+    }
+  }
 
   func run(_ action: String, ids raw: [String], params: [String: String] = [:], dryRun: Bool, plan: Bool = false,
                    renders: Bool = false, reportsAll: Bool = false, _ body: (Int, Video, Settings) throws -> Outcome) throws -> BulkResult {
@@ -702,4 +859,49 @@ public final class BulkActions: @unchecked Sendable {
                 videoIds: r.json("video_ids") ?? [], summary: r.string("summary") ?? "", createdAt: r.date("created_at")!,
                 undoneAt: r.date("undone_at"), restored: r.json("restored") ?? [])
   }
+}
+
+/// The app's ⌘Z order: journal batch ids, most recent last (round 3, F8). Every undoable action pushes; Undo from a
+/// toast removes that entry wherever it is; ⌘Z takes the most recent one. Bounded so a long session stays small.
+public struct UndoHistory: Sendable, Equatable {
+  public struct Entry: Sendable, Equatable {
+    public var batchId: String
+    public var label: String
+  }
+
+  public private(set) var entries: [Entry] = []
+  public var limit: Int
+
+  public init(limit: Int = 50) { self.limit = limit }
+
+  public var top: Entry? { entries.last }
+
+  public mutating func push(_ batchId: String, label: String) {
+    entries.removeAll { $0.batchId == batchId }
+    entries.append(Entry(batchId: batchId, label: label))
+    if entries.count > limit { entries.removeFirst(entries.count - limit) }
+  }
+
+  /// Takes the most recent entry off (⌘Z).
+  public mutating func popTop() -> Entry? { entries.popLast() }
+
+  /// Drops an entry undone some other way (its toast's Undo button) or that can no longer be undone.
+  public mutating func remove(_ batchId: String) { entries.removeAll { $0.batchId == batchId } }
+}
+
+/// Runs undos one at a time, in the order they were asked for (rapid ⌘Z⌘Z): a serial queue, so the older batch
+/// never runs before the newer one (it would be skipped as "changed since" and leave an intermediate value).
+public final class UndoRunner: @unchecked Sendable {
+  private let bulk: BulkActions
+  private let queue = DispatchQueue(label: "com.djlovd.queue.undo", qos: .userInitiated)
+
+  public init(bulk: BulkActions) { self.bulk = bulk }
+
+  /// Undoes batch `id` after every undo submitted before it; `done` runs on the runner's queue.
+  public func undo(_ id: String, done: @escaping @Sendable (Result<BulkResult, Error>) -> Void) {
+    queue.async { [bulk] in done(Result { try bulk.undo(id) }) }
+  }
+
+  /// Blocks until every submitted undo has finished (tests).
+  public func wait() { queue.sync {} }
 }

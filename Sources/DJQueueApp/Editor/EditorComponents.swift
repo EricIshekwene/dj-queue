@@ -10,6 +10,8 @@ struct EditorCustomTag: View {
   var isCustom: Bool
   var inheritedFrom: Int? = nil
   var resetHelp = "Reset to the default"
+  /// What the "Custom" badge means here (the Title isn't a New clip default).
+  var customHelp = "Changed from your New clip defaults"
   /// nil = the value is inherited, so there's nothing on this version to reset.
   var onReset: (() -> Void)?
 
@@ -17,11 +19,12 @@ struct EditorCustomTag: View {
     HStack(spacing: 2) {
       if let v = inheritedFrom {
         DSBadge("from v\(v)", style: .outline, size: .sm)
-          .help("Carried forward from v\(v) — change it here to make this version different")
+          .dsTooltip("Carried forward from v\(v); edit it to change this version")
       } else if isCustom {
         DSBadge("Custom", style: .soft(.neutral), size: .sm)
-          .help("Changed from your New clip defaults")
+          .dsTooltip(customHelp)
         if let onReset {
+          // Every reset goes through EditorModel, so ⌘Z (Undo in the header) brings the value back.
           DSIconButton("arrow.uturn.backward", tooltip: resetHelp, size: .sm, action: onReset)
             .scaleEffect(0.86)
         }
@@ -47,7 +50,7 @@ struct EditorField<Content: View>: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 6) {
         Text(label).font(DS.type.calloutMedium).foregroundStyle(DS.color.text)
-          .help(help ?? "")
+          .dsTooltip(help)
         Spacer(minLength: 0)
         if let value {
           Text(value).font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.textSecondary)

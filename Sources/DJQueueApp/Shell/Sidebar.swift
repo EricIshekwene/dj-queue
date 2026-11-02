@@ -13,7 +13,8 @@ struct AppSidebar: View {
     VStack(alignment: .leading, spacing: 0) {
       header
       VStack(alignment: .leading, spacing: 2) {
-        SidebarRow(title: "Search clips", icon: "magnifyingglass", hint: "⌘K", compact: compact) { model.showPalette = true }
+        SidebarRow(title: "Search clips", icon: "magnifyingglass", hint: "⌘K", shortcut: "⌘K", tooltip: "Search clips and commands",
+                   compact: compact) { model.showPalette = true }
           .padding(.bottom, DS.space.xs)
         ForEach(Screen.allCases.filter(\.isPipeline)) { s in row(s) }
         if compact {
@@ -27,7 +28,8 @@ struct AppSidebar: View {
       Spacer(minLength: DS.space.md)
       VStack(alignment: .leading, spacing: 2) {
         EngineLine(model: model, compact: compact)
-        SidebarRow(title: "Settings", icon: "gearshape", hint: compact ? nil : "⌘,", compact: compact) {
+        SidebarRow(title: "Settings", icon: "gearshape", hint: compact ? nil : "⌘,", shortcut: "⌘,", tooltip: "Open Settings",
+                   compact: compact) {
           WindowManager.shared.showSettings()
         }
       }
@@ -45,7 +47,7 @@ struct AppSidebar: View {
       if !compact {
         Text("DJ Queue").font(DS.type.headline).foregroundStyle(DS.color.text).padding(.leading, 78)
         Spacer(minLength: 0)
-        DSIconButton("sidebar.left", tooltip: "Collapse sidebar", size: .sm) { model.sidebarCollapsed = true }
+        DSIconButton("sidebar.left", tooltip: "Collapse sidebar to icons", size: .sm) { model.sidebarCollapsed = true }
       } else {
         Spacer(minLength: 0)
       }
@@ -66,8 +68,35 @@ struct AppSidebar: View {
     let count = model.sidebarCount(s)
     return SidebarRow(title: s.title, icon: s.symbol, count: s == .health ? nil : count, countStyle: model.sidebarCountStyle(s),
                       dot: s == .health ? model.healthTone : nil, hint: nil, shortcut: "⌘\(s.key.character)",
-                      isSelected: model.screen == s, compact: compact) {
+                      tooltip: rowTooltip(s, count: count), isSelected: model.screen == s, compact: compact) {
       model.screen = s
+    }
+  }
+
+  /// Expanded: what the screen is for, plus what its count or dot means ("Score new clips · 13 to score"). Compact
+  /// (no visible title): the screen's name with the same meaning ("Score · 13 to score"). ⌘1…⌘8 ride as keycaps.
+  private func rowTooltip(_ s: Screen, count: Int?) -> String {
+    let n = count.map { "\($0) " } ?? ""
+    let (purpose, meaning): (String, String?) = switch s {
+    case .score: ("Score new clips", count == nil ? nil : "\(n)to score")
+    case .edit: ("Finish clips for posting", count == nil ? nil : "\(n)need work")
+    case .queue: ("See ready clips in posting order", count == nil ? nil : "\(n)ready")
+    case .week: ("Plan and approve the week", nil)
+    case .today: ("See what to post today", count == nil ? nil : "\(n)due")
+    case .library: ("Browse every clip, posted or not", nil)
+    case .posts: ("See every post", count == nil ? nil : "\(n)need attention")
+    case .health: ("Check engine and runway", healthMeaning)
+    }
+    return [compact ? s.title : purpose, meaning].compactMap { $0 }.joined(separator: " · ")
+  }
+
+  /// Why the Health dot has its colour.
+  private var healthMeaning: String {
+    switch model.healthTone {
+    case .danger: model.loadError != nil ? "database error" : "engine stopped"
+    case .warning:
+      model.settings.paused ? "posting paused" : !model.settings.pausedPlatforms.isEmpty ? "a platform paused" : "runway low"
+    default: "all good"
     }
   }
 }
@@ -82,6 +111,8 @@ struct SidebarRow: View {
   var dot: DSTone? = nil
   var hint: String? = nil
   var shortcut: String? = nil
+  /// Hover text (expanded and compact). nil = the title, shown only in the compact rail.
+  var tooltip: String? = nil
   var isSelected = false
   var compact = false
   let action: () -> Void
@@ -115,15 +146,15 @@ struct SidebarRow: View {
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
-    .dsTooltip(compact ? title : nil, shortcut: shortcut)
+    .dsTooltip(tooltip ?? (compact ? title : nil), shortcut: shortcut, side: .trailing)
     .accessibilityLabel(count.map { "\(title), \($0)" } ?? title)
     .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
   }
 }
 
 /// Sidebar footer — the posting status everywhere except Posts (which also has the paused card) and its control:
-/// "● Running · next 7:00 PM TikTok" / amber "⏸ Posting paused" / red "Engine stopped". Click → menu: Resume posting
-/// (or Pause posting…, which asks first), Pause one platform ▸ (per-platform toggles), Open Health.
+/// "● Running · next 7:00 PM TikTok" / amber "⏸ Posting paused" / red "Engine stopped". Click → menu: Resume all
+/// posting (or Pause all posting…, which asks first), Pause or resume one platform ▸ (Pause X / Resume X), Open Health.
 struct EngineLine: View {
   @Bindable var model: AppModel
   var compact = false
@@ -159,13 +190,15 @@ struct EngineLine: View {
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
-    .dsTooltip(paused ? "Posting is paused — click to resume posting" : compact ? line.text : "Posting status — click to pause or resume posting")
+    .dsTooltip(compact ? line.text : paused ? "Resume posting or open Health" : "Pause or resume posting, or open Health",
+               side: .trailing)
     .accessibilityLabel("Engine: \(line.text)")
     .dsPopover(isPresented: $open, edge: .top, width: 260) { EngineMenu(model: model) { open = false } }
   }
 }
 
-/// The engine menu (DSMenuList). "Pause one platform" swaps to a second page of per-platform toggles.
+/// The engine menu (DSMenuList). "Pause or resume one platform" swaps to a second page: one item per platform whose
+/// title says what a click does ("Pause TikTok" / "Resume X (paused)"). Every change is undoable (toast · ⌘Z).
 struct EngineMenu: View {
   @Bindable var model: AppModel
   var close: () -> Void
@@ -174,19 +207,21 @@ struct EngineMenu: View {
   var body: some View {
     if platforms {
       DSMenuList(items: [DSMenuItem(title: "Back", icon: "chevron.left") { platforms = false }, .separator,
-                         .label("Pause one platform — checked = paused")]
+                         .label("One platform (the others keep posting)")]
         + model.settings.activePlatforms.map { p in
           let paused = model.settings.pausedPlatforms.contains(p)
-          return DSMenuItem(title: p.displayName, icon: p.dsSymbol, isChecked: paused) { model.setPlatformPaused(p, !paused) }
+          return DSMenuItem(title: paused ? "Resume \(p.displayName) (paused)" : "Pause \(p.displayName)", icon: p.dsSymbol) {
+            model.setPlatformPaused(p, !paused)
+          }
         })
     } else {
       let paused = model.settings.paused
       DSMenuList(items: [
         .label(model.engineLine.text),
         paused
-          ? DSMenuItem(title: "Resume posting", icon: "play.circle") { close(); model.setPaused(false) }
-          : DSMenuItem(title: "Pause posting…", icon: "pause.circle") { close(); model.confirmPause = true },
-        DSMenuItem(title: "Pause one platform", icon: "pause", shortcut: "›") { platforms = true },
+          ? DSMenuItem(title: "Resume all posting", icon: "play.circle") { close(); model.setPaused(false) }
+          : DSMenuItem(title: "Pause all posting…", icon: "pause.circle") { close(); model.confirmPause = true },
+        DSMenuItem(title: "Pause or resume one platform", icon: "pause", shortcut: "›") { platforms = true },
         .separator,
         DSMenuItem(title: "Open Health", icon: "heart") { close(); model.screen = .health },
       ])

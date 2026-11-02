@@ -139,7 +139,7 @@ struct DSVideoPreview: View {
         }
         .buttonStyle(.plain)
         .padding(8)
-        .dsTooltip(audible ? "Mute" : "Unmute", edge: .bottom)
+        .dsTooltip(audible ? "Mute this preview" : "Play this preview's sound", side: .bottom)
         .transition(.opacity)
       }
     }
@@ -179,6 +179,7 @@ struct DSVideoPreview: View {
       .gesture(DragGesture(minimumDistance: 0).onChanged { v in progress.seek(min(1, max(0, v.location.x / max(1, g.size.width)))) })
     }
     .frame(height: 16)
+    .dsTooltip("Drag to scrub through the preview")
     .accessibilityLabel("Playback position")
   }
 }

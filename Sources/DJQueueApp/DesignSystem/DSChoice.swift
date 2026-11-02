@@ -17,8 +17,12 @@ struct DSChip: View {
   @State private var hovering = false
   @Environment(\.dsForcedState) private var forced
 
+  /// What the chip does when the title alone doesn't say (shown on hover; the reason replaces it when disabled).
+  var tooltip: String? = nil
+
   init(_ title: String, icon: String? = nil, isSelected: Bool, tone: DSTone? = nil, count: Int? = nil, showsCheck: Bool = true,
-       disabledReason: String? = nil, size: DSButtonSize = .md, action: @escaping () -> Void) {
+       disabledReason: String? = nil, size: DSButtonSize = .md, tooltip: String? = nil, action: @escaping () -> Void) {
+    self.tooltip = tooltip
     self.title = title
     self.icon = icon
     self.isSelected = isSelected
@@ -63,7 +67,7 @@ struct DSChip: View {
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
     .dsFocusRing(s == .focused, radius: h / 2)
-    .dsTooltip(disabledReason)
+    .dsTooltip(tooltip ?? (disabledReason == nil ? nil : title), disabledReason: disabledReason)
     .dsAnimation(DS.motion.hover, value: s)
     .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
   }
@@ -96,7 +100,8 @@ struct DSChipGroup<Value: Hashable>: View {
         DSChip(noneTitle, isSelected: selection.isEmpty, size: size) { selection = [] }
       }
       ForEach(options) { o in
-        DSChip(o.title, icon: o.icon, isSelected: selection.contains(o.value), disabledReason: o.disabledReason, size: size) {
+        DSChip(o.title, icon: o.icon, isSelected: selection.contains(o.value), disabledReason: o.disabledReason, size: size,
+               tooltip: o.tooltip) {
           if allowsMultiple {
             if selection.contains(o.value) { selection.remove(o.value) } else { selection.insert(o.value) }
           } else {
@@ -113,6 +118,8 @@ struct DSChipOption<Value: Hashable>: Identifiable {
   let title: String
   var icon: String? = nil
   var disabledReason: String? = nil
+  /// What choosing it does, when the title alone doesn't say.
+  var tooltip: String? = nil
   var id: Value { value }
 }
 
@@ -217,7 +224,7 @@ private struct DSSegmentButton<Value: Hashable>: View {
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
-    .dsTooltip(seg.title == nil ? seg.tooltip : nil)
+    .dsTooltip(seg.tooltip)
     .accessibilityLabel(seg.title ?? seg.tooltip ?? "")
     .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
   }
@@ -315,10 +322,10 @@ enum DSViewMode: String, CaseIterable, Codable, Sendable, Identifiable {
 
   var help: String {
     switch self {
-    case .grid: "Grid"
-    case .single: "Single"
-    case .list: "List"
-    case .wide: "Cards"
+    case .grid: "Show clips as a grid of tiles"
+    case .single: "Show one clip at a time, large"
+    case .list: "Show clips as a compact list"
+    case .wide: "Show clips as cards"
     }
   }
 }

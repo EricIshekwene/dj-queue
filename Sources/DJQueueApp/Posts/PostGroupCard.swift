@@ -77,7 +77,7 @@ struct PostGroupCard: View {
     HStack(alignment: .center, spacing: DS.space.sm) {
       DSCheckbox(isOn: allSelected, size: 20, shape: .circle) { toggleGroup(ids, allSelected) }
         .opacity(hovering || allSelected || someSelected ? 1 : 0.0001)
-        .help(allSelected ? "Deselect these \(ids.count) posts" : "Select these \(ids.count) posts")
+        .dsTooltip(allSelected ? "Deselect these \(ids.count) posts" : "Select these \(ids.count) posts")
       BrowsePoster(model: model, video: video, width: 36, height: 64)
       VStack(alignment: .leading, spacing: 2) {
         Text(title).font(DS.type.calloutMedium).foregroundStyle(DS.color.text).lineLimit(1)
@@ -100,11 +100,12 @@ struct PostGroupCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(DSButtonStyle(variant: .ghost, size: .sm, iconOnly: true))
-        .help(open ? "Hide platforms" : "Show platforms")
+        .dsTooltip(open ? "Hide the per-platform rows" : "Show each platform's time and actions")
         .accessibilityLabel(open ? "Hide platforms" : "Show platforms")
       }
     }
     .contentShape(Rectangle())
+    .dsTooltip(problems ? nil : open ? "Click to hide the platforms" : "Click to show each platform")
     .onTapGesture {
       guard !problems else { return }
       dsWithAnimation { if open { state.expanded.remove(group.id) } else { state.expanded.insert(group.id) } }
@@ -161,7 +162,7 @@ struct PostGroupCard: View {
           .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(shown ? "Hide the platforms without a problem" : "Show the platforms without a problem that day")
+        .dsTooltip(shown ? "Hide the platforms without a problem" : "Show the platforms that posted fine")
         .padding(.leading, DS.space.xs)
         if shown { rows(others) }
       }
@@ -179,7 +180,8 @@ struct PostPlatformChip: View {
     let s = PostText.pill(post)
     let label = post.platform.shortName + (showsKind && post.kind != .regular ? " · \(post.kind == .retry ? "retry" : "repost")" : "")
     DSBadge(label, style: s.style, icon: post.platform.dsSymbol)
-      .help("\(post.platform.displayName) · \(s.text) · \(PostText.date(post, model: model))"
+      .contentShape(Capsule())
+      .dsTooltip("\(post.platform.displayName) · \(s.text) · \(PostText.date(post, model: model))"
             + (post.kind == .regular ? "" : " · \(PostText.attempt(post))"))
   }
 }
@@ -199,7 +201,7 @@ struct PostGroupRow: View {
     HStack(spacing: DS.space.sm) {
       DSCheckbox(isOn: selected, size: 18, shape: .circle) { model.toggleSelection(post.id, screen: .posts) }
         .opacity(hovering || selected || !model.selected(.posts).isEmpty ? 1 : 0.0001)
-        .help(selected ? "Deselect" : "Select")
+        .dsTooltip(selected ? "Deselect" : "Select")
       DSPlatformIcon(platform: post.platform, size: 22, showsLabel: !compact)
         .frame(width: compact ? 24 : 130, alignment: .leading)
       // The card already says the day: rows show the time (posted rows: when it went out).
@@ -208,23 +210,23 @@ struct PostGroupRow: View {
         .lineLimit(1)
       if post.versionNo != 1 {
         Text("v\(post.versionNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
-          .help("Version \(post.versionNo)")
+          .dsTooltip("Version \(post.versionNo)")
       }
       if post.attemptNo != 1 {
         Text("#\(post.attemptNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
-          .help(PostText.attempt(post))
+          .dsTooltip(PostText.attempt(post))
       }
       if post.kind != .regular {
         DSBadge(post.kind == .retry ? "Retry" : "Repost", style: .outline)
-          .help(post.kind == .retry ? "Tried again after a failure, same day" : "Posted again (a new version), same day")
+          .dsTooltip(post.kind == .retry ? "Tried again after a failure, same day" : "Posted again (a new version), same day")
       }
       Spacer(minLength: DS.space.xs)
       PostStatePill(post: post)
       Group {
         if let u = post.url, let url = URL(string: u) {
-          DSIconButton("arrow.up.right.square", tooltip: "Open post · \(u)", size: .sm) { NSWorkspace.shared.open(url) }
+          DSIconButton("arrow.up.right.square", tooltip: "Open the live post · \(u)", size: .sm) { NSWorkspace.shared.open(url) }
         } else {
-          DSIconButton("arrow.up.right.square", tooltip: "Open post", size: .sm, disabledReason: "No link yet — not posted") {}
+          DSIconButton("arrow.up.right.square", tooltip: "Open the live post", size: .sm, disabledReason: "No link yet — not posted") {}
             .opacity(0.5)
         }
       }
@@ -238,6 +240,7 @@ struct PostGroupRow: View {
     .onHover { hovering = $0 }
     .onTapGesture { tap() }
     .contextMenu { PostContextMenu(model: model, post: post) }
+    .dsTooltip("Click for details · ⌘-click to select")
   }
 
   private func tap() {

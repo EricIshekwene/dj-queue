@@ -58,7 +58,7 @@ struct EditorCaptionSection: View {
 
   private func caption(_ r: ResolvedVersion) -> some View {
     EditorField(label: "Caption", isCustom: !r.isDefault("caption"), inheritedFrom: model.source(of: "caption"),
-                resetHelp: "Use the template again", onReset: resetter(["caption"])) {
+                resetHelp: "Delete the typed caption; use the template", onReset: resetter(["caption"])) {
       VStack(alignment: .leading, spacing: DS.space.xs) {
         DSTextArea(placeholder: model.mainCaption,
                    text: Binding(get: { r.caption }, set: { c in model.updateVersion { $0.caption = c } }),
@@ -80,7 +80,7 @@ struct EditorCaptionSection: View {
       Spacer(minLength: 0)
     }
     .contentShape(Rectangle())
-    .help(breakdown)
+    .dsTooltip(breakdownShort)
     .accessibilityElement(children: .combine)
     .accessibilityHint(breakdown)
   }
@@ -93,6 +93,14 @@ struct EditorCaptionSection: View {
       return "\(p.displayName): \(n) / \(model.captionLimit(p))\(own)"
     }
     return lines.isEmpty ? "Not posting anywhere" : lines.joined(separator: "\n")
+  }
+
+  /// Compact one-paragraph form for the hover bubble ("TikTok 182/4000 · Instagram 182/2200 …").
+  private var breakdownShort: String {
+    let items = model.postingPlatforms.map { p in
+      "\(p.editorShortName) \(model.caption(for: p).count)/\(model.captionLimit(p))\(model.resolved.platformCaptions[p] != nil ? " (own)" : "")"
+    }
+    return items.isEmpty ? "Not posting anywhere" : items.joined(separator: " · ")
   }
 
   private func warning(_ w: EditorCaptionWarning) -> some View {
@@ -135,7 +143,7 @@ struct EditorCaptionSection: View {
 
   private func hashtags(_ r: ResolvedVersion) -> some View {
     EditorField(label: "Hashtags", isCustom: !r.isDefault("hashtagSetIds") || !r.isDefault("extraHashtags"),
-                inheritedFrom: model.source(of: "hashtagSetIds"), resetHelp: "Back to the default hashtag sets",
+                inheritedFrom: model.source(of: "hashtagSetIds"), resetHelp: "Back to the default sets; clear extra tags",
                 onReset: resetter(["hashtagSetIds", "extraHashtags"])) {
       VStack(alignment: .leading, spacing: DS.space.xs) {
         ForEach(categories, id: \.self) { cat in
@@ -149,14 +157,16 @@ struct EditorCaptionSection: View {
                   if on { ids.removeAll { $0 == s.id } } else { ids.append(s.id) }
                   model.setHashtagSets(ids)
                 }
-                .help(s.tags.joined(separator: " "))
+                .dsTooltip(s.tags.isEmpty ? "This set has no hashtags yet"
+                           : on ? "Remove \(s.tags.joined(separator: " ")) from this caption"
+                           : "Add \(s.tags.joined(separator: " ")) to this caption")
               }
             }
           }
         }
         DSTextField(placeholder: "Extra hashtags, e.g. #afrohouse", text: $extra, size: .sm, onSubmit: commitExtra)
           .onChange(of: extra) { _, _ in commitExtra() }
-          .help("Added after the sets, separated by spaces")
+          .dsTooltip("Added after the sets, separated by spaces", shortcut: "↩")
         if !model.hashtags.isEmpty {
           Text(model.hashtags.joined(separator: " ")).font(DS.type.caption).foregroundStyle(DS.color.textTertiary).lineLimit(3)
         }
@@ -199,14 +209,14 @@ struct EditorCaptionSection: View {
         HStack(spacing: 6) {
           Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).rotationEffect(.degrees(showOwn ? 90 : 0))
           Text("Captions for one platform").font(DS.type.calloutMedium)
-          if !r.platformCaptions.isEmpty { DSBadge("\(r.platformCaptions.count)", style: .soft(.neutral), size: .sm) }
+          if !r.platformCaptions.isEmpty { DSBadge("\(r.platformCaptions.count)", style: .soft(.neutral), size: .sm, help: r.platformCaptions.count == 1 ? "1 platform has its own caption" : "\(r.platformCaptions.count) platforms have their own caption") }
           Spacer(minLength: 0)
         }
         .foregroundStyle(DS.color.text)
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .help("Give a platform its own caption instead of the shared one")
+      .dsTooltip(showOwn ? "Hide the per-platform captions" : "Give a platform its own caption")
       if showOwn {
         VStack(alignment: .leading, spacing: DS.space.sm) {
           ForEach(model.postingPlatforms) { p in ownRow(p, r) }
@@ -222,7 +232,7 @@ struct EditorCaptionSection: View {
       DSToggle(p.displayName, isOn: Binding(get: { on }, set: { v in
         model.setPlatformCaption(p, v ? model.caption(for: p) : nil)
       }), size: .sm)
-      .help(on ? "\(p.displayName) uses its own caption — turn off to use the shared one" : "Write a caption just for \(p.displayName)")
+      .dsTooltip(on ? "Delete \(p.displayName)'s own caption; use the shared one" : "Write a caption just for \(p.displayName)")
       if on {
         DSTextArea(placeholder: "Caption for \(p.displayName)",
                    text: Binding(get: { model.resolved.platformCaptions[p] ?? "" }, set: { t in model.setPlatformCaption(p, t) }),

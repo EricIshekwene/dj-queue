@@ -22,12 +22,15 @@ struct DSBadge: View {
   var style: DSBadgeStyle = .soft(.neutral)
   var icon: String? = nil
   var size: DSBadgeSize = .md
+  /// Optional hover explanation (what the status means or what to do about it).
+  var help: String? = nil
 
-  init(_ text: String, style: DSBadgeStyle = .soft(.neutral), icon: String? = nil, size: DSBadgeSize = .md) {
+  init(_ text: String, style: DSBadgeStyle = .soft(.neutral), icon: String? = nil, size: DSBadgeSize = .md, help: String? = nil) {
     self.text = text
     self.style = style
     self.icon = icon
     self.size = size
+    self.help = help
   }
 
   var body: some View {
@@ -43,6 +46,7 @@ struct DSBadge: View {
     .overlay { if case .outline = style { Capsule().strokeBorder(DS.color.borderStrong) } }
     .fixedSize()
     .accessibilityElement(children: .combine)
+    .dsTooltip(help)
   }
 
   private var fg: Color {

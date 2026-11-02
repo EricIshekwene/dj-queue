@@ -43,7 +43,8 @@ struct PostInspector: View {
         DSPlatformIcon(platform: post.platform, state: AppModel.platformState(post.state), size: 26)
         Text(post.platform.displayName).font(DS.type.headline).foregroundStyle(DS.color.text)
         Spacer(minLength: 0)
-        DSIconButton("xmark", tooltip: "Close inspector", size: .sm, shortcut: "esc") {
+        // No esc here: the inspector never holds focus, and esc already clears the bulk selection / closes dialogs.
+        DSIconButton("xmark", tooltip: "Close details", size: .sm) {
           dsWithAnimation { model.postsSelection = nil }
         }
       }
@@ -89,7 +90,7 @@ struct PostInspector: View {
       row("Publisher") { Text(post.publisher.capitalized) }
       row("Link") {
         if let u = post.url, let url = URL(string: u) {
-          Link(destination: url) { Text(u).lineLimit(1).truncationMode(.middle) }.foregroundStyle(DS.color.accent).dsTooltip(u)
+          Link(destination: url) { Text(u).lineLimit(1).truncationMode(.middle) }.foregroundStyle(DS.color.accent).dsTooltip("Open the live post")
         } else {
           Text("Not posted yet").foregroundStyle(DS.color.textTertiary)
         }
@@ -98,7 +99,7 @@ struct PostInspector: View {
         if let rid = post.renderId, let r = try? model.store.render(id: rid), let path = r.outputPath {
           Button((path as NSString).lastPathComponent) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
             .buttonStyle(.plain).foregroundStyle(DS.color.accent).lineLimit(1).truncationMode(.middle)
-            .dsTooltip("Reveal in Finder")
+            .dsTooltip("Show the rendered file in Finder")
         } else {
           Text("Not rendered yet").foregroundStyle(DS.color.textTertiary)
         }
@@ -110,7 +111,7 @@ struct PostInspector: View {
 
   private var problem: some View {
     VStack(alignment: .leading, spacing: 6) {
-      DSBadge(PostText.problemType(post), style: .soft(.danger))
+      DSBadge(PostText.problemType(post), style: .soft(.danger), help: "What went wrong with this post")
       if let m = post.errorMessage, !m.isEmpty {
         Text(m).font(DS.type.callout).foregroundStyle(DS.color.text).fixedSize(horizontal: false, vertical: true)
       }
@@ -210,15 +211,17 @@ struct PostInspector: View {
                disabledReason: post.state.isTerminal && post.state != .posted ? "Already \(post.state.displayName.lowercased())" : nil) {
         model.reportTarget = post
       }
-      DSButton("Reset", variant: .ghost, size: .sm, disabledReason: fixes.resetReason) { model.reset(post) }
-      DSButton("Skip", variant: .ghost, size: .sm, disabledReason: fixes.skipReason) { model.skip(post) }
+      DSButton("Reset", variant: .ghost, size: .sm, disabledReason: fixes.resetReason,
+               tooltip: "Back to Planned, error cleared") { model.reset(post) }
+      DSButton("Skip \(post.platform.dsxCompactName)", variant: .ghost, size: .sm, disabledReason: fixes.skipReason,
+               tooltip: "Don't post this clip on \(post.platform.displayName)") { model.skip(post) }
       DSButton("Open editor", variant: .ghost, size: .sm) { model.openEditor(post.videoId) }
     }
   }
 }
 
-/// Confirmation for bulk post actions (#11): lists what changes, applies through PostActions, then a toast.
-/// PostActions has no batch journal, so there is no Undo; the dialog says so.
+/// Confirmation for bulk post actions (#11): lists what changes, applies through PostActions as one journaled step
+/// (AppModel.undoable), then a "… · Undo" toast (⌘Z).
 struct PostBulkDialog: View {
   @Bindable var model: AppModel
   let bulk: PostBulk
@@ -254,7 +257,7 @@ struct PostBulkDialog: View {
     let left = posts.count - ok.count
     DSDialog("\(verb) \(ok.count) post\(ok.count == 1 ? "" : "s")?",
              description: (left > 0 ? "\(left) of the selected can't be \(verb.lowercased())\(bulk.op == .retry ? "ied" : bulk.op == .skip ? "ped" : "") and stay as they are. " : "")
-               + "This can't be undone with ⌘Z.",
+               + "You can undo this.",
              icon: "paperplane", onClose: close) {
       ScrollView {
         DSChangeList(changes: ok.prefix(12).map { p in
@@ -277,7 +280,8 @@ struct PostBulkDialog: View {
     let op = bulk.op
     let n = ok.count
     let done = op == .reset ? "Reset" : op == .skip ? "Skipped" : "Retrying"
-    model.perform("\(done) \(n) post\(n == 1 ? "" : "s")") {
+    let vids = Array(Set(ok.map(\.videoId))).sorted()
+    model.undoable("\(done) \(n) post\(n == 1 ? "" : "s")", "posts-\(verb.lowercased())", ids: vids, plan: true) {
       for p in ok {
         switch op {
         case .reset: try pa.reset(postId: p.id)

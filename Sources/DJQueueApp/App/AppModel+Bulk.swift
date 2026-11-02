@@ -68,6 +68,7 @@ extension AppModel {
   func cancelPendingBulk() { pendingBulk = nil }
 
   func apply(_ r: BulkRequest, then: (() -> Void)? = nil) {
+    splitEditorSession()
     let run = r.run
     let screen = self.screen
     Task.detached(priority: .userInitiated) {
@@ -79,7 +80,6 @@ extension AppModel {
         case .failure(let e):
           self.show(e.localizedDescription, error: true)
         case .success(let res):
-          if let b = res.batchId { self.lastBatchId = b }
           let n = res.changed.count
           if n == 0 {
             self.show(DSToastModel(message: "Nothing changed",
@@ -89,6 +89,7 @@ extension AppModel {
           if r.clearsSelection { self.clearSelection(screen) }
           let custom = r.doneText?(res)
           let msg = custom?.0 ?? r.doneMessage ?? res.outlook.map { Self.outlookMessage($0, changed: n) } ?? "Updated \(n) clip\(n == 1 ? "" : "s")"
+          if let b = res.batchId { self.undoHistory.push(b, label: msg) }
           let skipped = res.skipped.count
           let allReady = res.outlook.map { $0.needTitle.isEmpty && $0.other.isEmpty } ?? true
           let detail = [custom?.1, skipped > 0 ? "\(skipped) skipped" : nil].compactMap { $0 }.joined(separator: " · ")
@@ -136,17 +137,22 @@ extension AppModel {
     }
   }
 
-  /// Undoes one batch (toast "Undone", or why not). Clips changed again since are skipped by BulkActions.
+  /// Undoes one batch (toast "Undone: <what>", or why not). Clips changed again since are skipped by BulkActions.
   func undo(batch id: String) {
-    let b = bulk
-    Task.detached(priority: .userInitiated) {
-      let out: Result<BulkResult, Error> = Result { try b.undo(id) }
-      await MainActor.run {
-        if self.lastBatchId == id { self.lastBatchId = nil }
+    splitEditorSession()
+    let label = undoHistory.entries.first { $0.batchId == id }?.label
+    undoHistory.remove(id)
+    // UndoRunner is serial: ⌘Z⌘Z restores newest-first even when pressed faster than an undo takes.
+    undoRunner.undo(id) { out in
+      DispatchQueue.main.async {
         self.refresh()
         switch out {
         case .success(let r):
-          self.show(DSToastModel(message: "Undone", detail: r.skipped.isEmpty ? nil : "\(r.skipped.count) skipped · changed since",
+          // An undo from a toast while the editor is open: the session restarts after it (its edits so far were
+          // journaled by the split above), so closing the editor never re-applies what was just undone.
+          if let s = self.editorSession { self.editorSession = (try? self.bulk.begin(s.action, ids: s.ids)) ?? s }
+          self.show(DSToastModel(message: label.map { "Undone: \($0)" } ?? "Undone",
+                                 detail: r.skipped.isEmpty ? nil : "\(r.skipped.count) skipped · changed since",
                                  tone: .neutral, duration: 4))
         case .failure(let e):
           self.show("Couldn't undo: \(e.localizedDescription)", error: true)
@@ -155,10 +161,11 @@ extension AppModel {
     }
   }
 
-  /// ⌘Z (when no text field is focused): undo the last batch applied in this session.
+  /// ⌘Z (when no text field is focused and the editor is closed): undo the MOST RECENT undoable action of this
+  /// session — bulk batch or single action alike (UndoHistory). Again for the one before.
   func undoLast() {
-    guard let id = lastBatchId else { show("Nothing to undo"); return }
-    undo(batch: id)
+    guard let e = undoHistory.top else { show("Nothing to undo"); return }
+    undo(batch: e.batchId)
   }
 
   /// Sets a clip's Title from a suggestion chip (undoable like any batch).

@@ -21,7 +21,8 @@ struct ScoreView: View {
     let mode: DSViewMode = model.viewMode(.score) == .grid ? .grid : .single
     let sel = model.selectedIds(.score)
     ScreenScaffold(model: model, screen: .score, subtitle: list.isEmpty ? nil : "\(list.count) to score") {
-      DSViewModeSwitcher(mode: Binding(get: { mode }, set: { model.setViewMode($0, for: .score) }), modes: [.single, .grid])
+      PipelineViewModeSwitcher(mode: Binding(get: { mode }, set: { model.setViewMode($0, for: .score) }), modes: [.single, .grid],
+                               tips: [.single: "Score one clip at a time by keyboard", .grid: "Score many clips, typing under each"])
     } content: {
       if !model.loaded {
         Color.clear
@@ -98,19 +99,19 @@ private struct ScoreBulkBar: View {
           try b.setExcluded(ids, true, dryRun: dry)
         }
       }
-      .dsTooltip("Leave the selected clips out (find them in Library → Excluded)")
+      .dsTooltip("Never post these (Library → Excluded)")
     } more: {
+      // Nudges the typed (unsaved) scores of the selected tiles; disabled items say why in their title.
       ForEach([1, -1, 10, -10], id: \.self) { d in
-        Button("\(d > 0 ? "+" : "−")\(abs(d)) on typed scores") { adjust(d, typedSelected) }
-          .disabled(typedSelected.isEmpty)
-      }
-      if typedSelected.isEmpty {
-        Text("Type scores under the tiles first")
+        Button("\(d > 0 ? "+" : "−")\(abs(d)) on typed scores\(typedSelected.isEmpty ? " — type scores under the tiles first" : "")") {
+          adjust(d, typedSelected)
+        }
+        .disabled(typedSelected.isEmpty)
       }
     } primary: {
       if !typed.isEmpty {
         DSButton(typed.count == 1 ? "Save score" : "Save scores", variant: .primary, size: .sm,
-                 tooltip: "Save the \(typed.count == 1 ? "score" : "\(typed.count) scores") typed under the tiles") {
+                 tooltip: "Save \(typed.count == 1 ? "the score" : "all \(typed.count) scores") typed under the tiles") {
           let t = typed
           ui.typedScores = [:]
           model.clearSelection(.score)

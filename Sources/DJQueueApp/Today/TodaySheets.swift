@@ -85,6 +85,7 @@ struct ReportProblemSheet: View {
           DSFlowLayout(spacing: 6) {
             ForEach(ErrorType.allCases, id: \.self) { t in
               DSChip(t.displayName, isSelected: type == t, tone: type == t && t.postState.isCopyright ? .danger : nil, size: .sm) { type = t }
+                .dsTooltip(t.postState.isCopyright ? "Copyright: stops this platform, no retry" : nil)
             }
           }
         }
@@ -101,7 +102,7 @@ struct ReportProblemSheet: View {
       }
     } footer: {
       DSButton("Cancel", variant: .ghost, action: close).keyboardShortcut(.cancelAction)
-      DSButton("Save problem", variant: .primary) {
+      DSButton("Save problem", variant: .primary, tooltip: "Mark the post failed with this problem", shortcut: "↩") {
         let m = message.trimmingCharacters(in: .whitespacesAndNewlines)
         model.reportProblem(post, type: type, message: m.isEmpty ? type.displayName : m, raw: raw.isEmpty ? nil : raw)
         close()
@@ -150,15 +151,26 @@ struct ReuploadMenu: View {
   var body: some View {
     let versions = max(1, model.versionCounts[post.videoId] ?? 1)
     let held = model.heldReason(post.videoId)
-    DSXMenuLabelButton(title: "Re-upload anyway", variant: .ghost, size: .sm, tooltip: held ?? "Upload again despite the copyright claim") {
-      Button("Same version (v\(post.versionNo))") { model.reupload(post, version: post.versionNo) }
-      ForEach(Array(stride(from: post.versionNo + 1, through: versions, by: 1)), id: \.self) { n in
-        Button("v\(n)") { model.reupload(post, version: n) }
-      }
-      Divider()
-      Button("New version (v\(versions + 1))…") { model.reupload(post, version: nil, newVersion: true) }
+    DSXMenuLabelButton(title: "Re-upload anyway", variant: .ghost, size: .sm, tooltip: "Upload again despite the claim; pick a version",
+                       disabledReason: held) {
+      ReuploadItems(model: model, post: post, versions: versions)
     }
-    .disabled(held != nil)
+  }
+}
+
+/// The version choices for "Re-upload anyway" (Today row + Posts problem card). Each item is undoable (toast + ⌘Z).
+struct ReuploadItems: View {
+  @Bindable var model: AppModel
+  let post: PlatformPost
+  let versions: Int
+
+  var body: some View {
+    Button("Same version (v\(post.versionNo)) on the next day's slot") { model.reuploadAnyway(post, version: post.versionNo) }
+    ForEach(Array(stride(from: post.versionNo + 1, through: versions, by: 1)), id: \.self) { n in
+      Button("v\(n) on the next day's slot") { model.reuploadAnyway(post, version: n) }
+    }
+    Divider()
+    Button("New version (v\(versions + 1)), then open the editor…") { model.reuploadAnyway(post, version: nil, newVersion: true) }
   }
 }
 

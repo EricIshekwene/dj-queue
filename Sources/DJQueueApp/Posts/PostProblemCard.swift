@@ -67,7 +67,8 @@ struct PostProblemCard: View {
               .dsTooltip(Fmt.day(post.updatedAt, tz: model.tz, style: "EEE d MMM, h:mm a"))
           }
           HStack(spacing: 6) {
-            DSBadge(PostText.problemType(post), style: .soft(tone), icon: post.state.isCopyright ? "c.circle" : nil)
+            DSBadge(PostText.problemType(post), style: .soft(tone), icon: post.state.isCopyright ? "c.circle" : nil,
+                    help: post.state.isCopyright ? "The platform flagged the audio — copyright blocks are never retried automatically" : "What went wrong — the actions on the right fix it")
             if post.versionNo != 1 || post.attemptNo != 1 || post.kind != .regular {
               Text("v\(post.versionNo) · \(PostText.attempt(post))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
             }
@@ -98,26 +99,27 @@ struct PostProblemCard: View {
       }
       .contentShape(Rectangle())
       .onTapGesture { dsWithAnimation { model.postsSelection = model.postsSelection == post.id ? nil : post.id } }
+      .dsTooltip("Click for details and attempt history")
       HStack(spacing: DS.space.xs) {
         if post.state == .overdue {
           // A missed slot has nothing to edit: its two real fixes take the first places.
           DSButton("Post now", icon: "bolt", variant: .outline, size: .sm, disabledReason: fixes.heldReason,
-                   tooltip: "Make it due now on today's \(post.platform.displayName) slot") { model.postNow(post) }
+                   tooltip: "Make it due now and open Today") { model.postNow(post) }
           DSButton("Shift plan", icon: "calendar.badge.clock", variant: .ghost, size: .sm, disabledReason: fixes.heldReason,
                    tooltip: "Move it to the next free \(post.platform.displayName) slot") { model.shiftPlan(post) }
         } else {
           DSButton("Fix in editor", icon: "slider.horizontal.below.rectangle", variant: isPrimary ? .primary : .outline, size: .sm,
-                   disabledReason: fixes.fixReason, tooltip: "Open the editor; when you close it the post is tried again") {
+                   disabledReason: fixes.fixReason, tooltip: "Edit it; closing the editor re-queues it") {
             model.openEditor(post.videoId, fixPostId: post.id)
           }
           reupload(fixes)
         }
-        DSButton("Skip platform", variant: .ghost, size: .sm, disabledReason: fixes.skipReason,
+        DSButton("Skip \(post.platform.dsxCompactName)", variant: .ghost, size: .sm, disabledReason: fixes.skipReason,
                  tooltip: "Don't post this clip on \(post.platform.displayName)") { model.skip(post) }
-        DSButton("Accept", variant: .ghost, size: .sm, disabledReason: fixes.acceptReason,
-                 tooltip: "Leave it as it is (e.g. muted audio is fine)") { model.resolve(post, .accept) }
+        DSButton("Accept claim", variant: .ghost, size: .sm, disabledReason: fixes.acceptReason,
+                 tooltip: "Leave the post as it is (e.g. muted)") { model.resolve(post, .accept) }
         DSButton("Reset", variant: .ghost, size: .sm, disabledReason: fixes.resetReason,
-                 tooltip: "Back to planned, error cleared") { model.reset(post) }
+                 tooltip: "Back to Planned, error cleared") { model.reset(post) }
         Spacer(minLength: 0)
         PostMoreMenu(model: model, post: post)
       }
@@ -146,12 +148,7 @@ struct PostProblemCard: View {
     } else {
       let versions = max(1, model.versionCounts[post.videoId] ?? 1)
       Menu {
-        Button("Same version (v\(post.versionNo))") { model.reupload(post, version: post.versionNo) }
-        ForEach(Array(stride(from: post.versionNo + 1, through: versions, by: 1)), id: \.self) { n in
-          Button("v\(n)") { model.reupload(post, version: n) }
-        }
-        Divider()
-        Button("New version (v\(versions + 1))…") { model.reupload(post, version: nil, newVersion: true) }
+        ReuploadItems(model: model, post: post, versions: versions)
       } label: {
         HStack(spacing: 6) {
           Text("Re-upload anyway")
@@ -162,7 +159,7 @@ struct PostProblemCard: View {
       .buttonStyle(DSButtonStyle(variant: .outline, size: .sm))
       .menuIndicator(.hidden)
       .fixedSize()
-      .dsTooltip("Try again on the next day: same version, a later one, or a new one")
+      .dsTooltip("Upload again despite the claim; pick a version")
     }
   }
 }
@@ -175,15 +172,18 @@ struct PostMoreMenu: View {
   var body: some View {
     Menu {
       if PostFixes.canRetry(post) {
-        Button("Try again on the next slot", systemImage: "arrow.clockwise") { model.fixed(post.id) }
-          .disabled(model.heldReason(post.videoId) != nil)
-          .help(model.heldReason(post.videoId) ?? "A new attempt on the platform's next slot")
+        // Disabled native menu items can't show a tooltip: the reason goes in the title.
+        let held = model.heldReason(post.videoId) != nil
+        Button(held ? "Try again on the next slot — sent back to Edit" : "Try again on the next slot", systemImage: "arrow.clockwise") {
+          model.fixed(post.id)
+        }
+        .disabled(held)
       }
       if !post.state.isTerminal { Button("Mark posted…", systemImage: "checkmark.circle") { model.markPostedTarget = post } }
       if !post.state.isTerminal || post.state == .posted {
         Button("Report problem…", systemImage: "exclamationmark.bubble") { model.reportTarget = post }
       }
-      Button("Copy details", systemImage: "doc.on.doc") {
+      Button("Copy details (platform, error, raw response)", systemImage: "doc.on.doc") {
         model.copy("\(post.platform.displayName) · \(PostText.problemType(post))\n\(post.errorMessage ?? "")\n\(post.rawResponse ?? "")")
         model.show("Details copied")
       }
@@ -196,6 +196,7 @@ struct PostMoreMenu: View {
     .buttonStyle(DSButtonStyle(variant: .ghost, size: .sm, iconOnly: true))
     .menuIndicator(.hidden)
     .fixedSize()
-    .dsTooltip("More actions")
+    .dsTooltip("Retry, mark posted, report or copy details")
+    .accessibilityLabel("More post actions")
   }
 }

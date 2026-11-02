@@ -89,6 +89,8 @@ struct MainWindowView: View {
     if let v = model.longformTarget {
       ModalHost(onDismiss: { model.longformTarget = nil }) { LongformPostedSheet(model: model, video: v).id(v.id) }
     }
+    // F8: "Are you sure?" for destructive / plan-wide actions — above everything, the editor included.
+    ConfirmDialogHost(model: model)
   }
 }
 
@@ -118,12 +120,12 @@ struct LaunchAgentOffer: View {
              icon: "menubar.rectangle") {
       EmptyView()
     } footer: {
-      DSButton("Not now", variant: .ghost) {
+      DSButton("Not now", variant: .ghost, tooltip: "Run only while this window is open; ask again from Settings › Engine") {
         UserDefaults.standard.set(true, forKey: "djq.askedLaunchAgent")
         dismiss()
       }
       .keyboardShortcut(.cancelAction)
-      DSButton("Run at login", variant: .primary) {
+      DSButton("Run at login", variant: .primary, tooltip: "Install the background engine; DJ Queue restarts once") {
         dismiss()
         AppHost.shared.installLaunchAgent()
       }
@@ -148,7 +150,9 @@ struct ShortcutButtons: View {
       }
       Button("") { model.showPalette.toggle() }.keyboardShortcut("k", modifiers: .command)
       Button("") { model.showShortcuts.toggle() }.keyboardShortcut("/", modifiers: .command)
-      Button("") { if let v = model.focusedVideo { model.openEditor(v.id, in: model.selectedVideoIds) } }
+      Button("") {
+        if let v = model.focusedVideo { model.openEditor(v.id, in: model.selectedVideoIds) } else { model.show("Select one clip to open it in the editor") }
+      }
         .keyboardShortcut("e", modifiers: .command)
       Button("") { model.refresh() }.keyboardShortcut("r", modifiers: .command)
       Button("") {
@@ -159,10 +163,14 @@ struct ShortcutButtons: View {
         }
       }
       .keyboardShortcut("a", modifiers: .command)
-      Button("") {
-        if Self.textFieldIsEditing || model.editor != nil { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) } else { model.undoLast() }
+      // ⌘Z: typing → the text field's own undo; the editor binds its own ⌘Z/⇧⌘Z (EditorUndoShortcuts, field-level
+      // edit history); otherwise the most recent undoable app action (UndoHistory).
+      if model.editor == nil {
+        Button("") {
+          if Self.textFieldIsEditing { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) } else { model.undoLast() }
+        }
+        .keyboardShortcut("z", modifiers: .command)
       }
-      .keyboardShortcut("z", modifiers: .command)
       if !model.selected(model.screen).isEmpty && !anyOverlay {
         Button("") { model.clearSelection(model.screen) }.keyboardShortcut(.escape, modifiers: [])
       }
@@ -193,18 +201,22 @@ struct ShortcutSheet: View {
 
   private let groups: [(String, [(String, String)])] = [
     ("Everywhere", [("⌘K", "Search clips and commands"), ("⌘/", "This cheat sheet"), ("⌘1 – ⌘8", "Score · Edit · Queue · Week · Today · Library · Posts · Health"),
-                    ("⌘,", "Settings"), ("⌘R", "Refresh")]),
+                    ("⌘,", "Settings"), ("⌘R", "Refresh"), ("⌘0", "Open the DJ Queue window (menu bar)"),
+                    ("⌘Z", "Undo the most recent change (again for the one before)")]),
     ("Selecting clips", [("Click circle", "Select a clip"), ("⇧ Click", "Select a range"), ("⌘ Click", "Add or remove one"),
-                         ("⌘A", "Select every clip on the screen"), ("Esc", "Clear the selection"), ("⌘Z", "Undo the last bulk change")]),
-    ("Clips", [("⌘E", "Open the selected clip in the editor"), ("← / →", "Previous / next clip (Single view)")]),
+                         ("⌘A", "Select every clip on the screen"), ("Esc", "Clear the selection")]),
+    ("Clips", [("⌘E", "Open the selected clip in the editor"), ("← / →", "Previous / next clip (Single view)"),
+               ("0–9", "Type a score for the selected clips (Queue, Library)"), ("⌘⌫", "Exclude the clip (Score)")]),
     ("Week", [("⌘↩", "Approve week"), ("Drag", "Move or swap days")]),
+    ("Editor", [("⌘Z / ⇧⌘Z", "Undo / redo the last change to this clip"), ("⌘[ / ⌘]", "Previous / next clip"), ("⌘↩", "Done"),
+                ("Space", "Play / pause"), ("I / O", "Set the trim start / end at the playhead")]),
   ]
 
   var body: some View {
     DSDialog("Keyboard shortcuts", width: 720, onClose: { model.showShortcuts = false }) {
       HStack(alignment: .top, spacing: DS.space.xxl) {
         VStack(alignment: .leading, spacing: DS.space.lg) { group(groups[0]); group(groups[3]) }
-        VStack(alignment: .leading, spacing: DS.space.lg) { group(groups[1]); group(groups[2]) }
+        VStack(alignment: .leading, spacing: DS.space.lg) { group(groups[1]); group(groups[2]); group(groups[4]) }
       }
     } footer: {
       DSButton("Done", variant: .primary) { model.showShortcuts = false }.keyboardShortcut(.defaultAction)

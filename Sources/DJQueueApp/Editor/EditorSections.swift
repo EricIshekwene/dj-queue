@@ -23,7 +23,7 @@ struct EditorFrameSection: View {
 
   private var crop: some View {
     EditorField(label: "Crop", help: "Which part of the wide recording is shown", isCustom: model.cropIsSet,
-                resetHelp: "Back to the default framing (\(model.defaults.cropAnchor.displayName)) — it then needs confirming again",
+                resetHelp: "Back to the \(model.defaults.cropAnchor.displayName) framing (confirm again)",
                 onReset: { model.resetEdit(.crop) }) {
       VStack(alignment: .leading, spacing: DS.space.sm) {
         if !model.cropIsSet {
@@ -37,7 +37,7 @@ struct EditorFrameSection: View {
         }
         DSSlider(label: "Zoom", value: Binding(get: { model.zoom }, set: { model.setZoom($0) }),
                  range: 1...EditorGeometry.maxZoom, step: 0.05, format: { String(format: "%.2f×", $0) })
-          .help("Zoom into the recording (scroll or pinch on the Frame view)")
+          .dsTooltip("Zoom in; or scroll/pinch on the Frame view")
         HStack(spacing: 6) {
           Text("Place").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
           DSButton("Left", variant: .outline, size: .sm, tooltip: "Centre the crop on the left third") { model.placeCrop(atX: 1.0 / 3) }
@@ -48,7 +48,7 @@ struct EditorFrameSection: View {
         HStack(spacing: 6) {
           if model.upscale > 1.01 {
             DSBadge(String(format: "Upscaled %.1f×", model.upscale), style: .soft(.warning), icon: "exclamationmark.triangle.fill")
-              .help("The crop has fewer pixels than the 1080-wide output, so it will look softer")
+              .dsTooltip("The crop is under 1080 px wide, so it looks softer")
           }
           Text("\(Int(model.crop.w)) × \(Int(model.crop.h)) px").font(DS.type.mono).foregroundStyle(DS.color.textTertiary)
           Spacer(minLength: 0)
@@ -66,7 +66,7 @@ struct EditorFrameSection: View {
     let t = model.trim
     let hasMarkers = model.video?.markerIn != nil && model.video?.markerOut != nil
     return EditorField(label: "Trim", help: "Which seconds of the clip file are posted", isCustom: !model.trimIsDefault,
-                       resetHelp: hasMarkers ? "Trim to markers" : "Use the whole file",
+                       resetHelp: hasMarkers ? "Reset the trim to your in/out markers" : "Reset the trim to the whole file",
                        onReset: { model.resetEdit(.trimIn, .trimOut); model.commitTrim() }) {
       VStack(alignment: .leading, spacing: 4) {
         HStack(spacing: 6) {
@@ -116,31 +116,35 @@ struct EditorTextSection: View {
             }
             DSToggle("No text", description: nil, isOn: Binding(get: { r.noText }, set: { v in model.setNoText(v) }),
                      size: .sm)
-              .help("Post this clip without any text on the video")
+              .dsTooltip("Post this clip without any text on the video")
           }
         }
         EditorField(label: "Style", isCustom: !r.isDefault("style"), inheritedFrom: model.source(of: "style"),
+                    resetHelp: "Back to the default style (\(model.defaults.textStyle.displayName))",
                     onReset: resetter(["style"])) {
           HStack(spacing: DS.space.xs) {
-            ForEach(TextStyle.allCases, id: \.self) { s in styleTile(s, selected: r.style == s) }
+            ForEach(TextStyle.allCases, id: \.self) { s in styleTile(s, selected: r.style == s, noText: r.noText) }
           }
         }
-        .disabled(r.noText)
         EditorField(label: "Size", value: "\(Self.sizeName(r.size)) · \(Int(r.size))", isCustom: !r.isDefault("size"), inheritedFrom: model.source(of: "size"),
-                    onReset: resetter(["size"])) {
+                    resetHelp: "Back to the default size (\(Int(model.defaults.textSize)))", onReset: resetter(["size"])) {
           DSSlider(value: Binding(get: { r.size }, set: { v in model.setVersionField(\.size, \.size, v.rounded()) }),
                    range: 40...110, step: 1, format: { "\(Self.sizeName($0)) · \(Int($0))" }, showsValue: false,
-                   disabledReason: r.noText ? "No text on this clip" : nil, accessibilityName: "Text size")
+                   disabledReason: r.noText ? noTextReason : nil, accessibilityName: "Text size")
         }
         EditorField(label: "Alignment", isCustom: !r.isDefault("align"), inheritedFrom: model.source(of: "align"),
+                    resetHelp: "Back to the default alignment (\(Self.alignName(model.defaults.textAlign)))",
                     onReset: resetter(["align"])) {
           DSSegmented(selection: Binding(get: { r.align }, set: { a in model.setVersionField(\.align, \.align, a) }),
                       segments: [DSSegment(value: TextAlign.left, title: "Left", icon: "text.alignleft"),
                                  DSSegment(value: TextAlign.center, title: "Centre", icon: "text.aligncenter"),
                                  DSSegment(value: TextAlign.right, title: "Right", icon: "text.alignright")],
                       size: .sm, fullWidth: true)
+            .disabled(r.noText)
+            .opacity(r.noText ? 0.55 : 1)
+            // On the wrapper (outside .disabled) so the reason still shows on hover.
+            .dsTooltip(nil, disabledReason: r.noText ? noTextReason : nil)
         }
-        .disabled(r.noText)
         EditorField(label: "Position", isCustom: !r.isDefault("posX") || !r.isDefault("posY"),
                     inheritedFrom: model.source(of: "posY"), resetHelp: "Back to the default position",
                     onReset: resetter(["posX", "posY"])) {
@@ -188,9 +192,13 @@ struct EditorTextSection: View {
   }
 
   static func sizeName(_ s: Double) -> String { s < 54 ? "Small" : s <= 76 ? "Medium" : "Large" }
+  static func alignName(_ a: TextAlign) -> String { a == .left ? "Left" : a == .right ? "Right" : "Centre" }
 
-  private func styleTile(_ s: TextStyle, selected: Bool) -> some View {
-    Button { model.setVersionField(\.style, \.style, s) } label: {
+  private let noTextReason = "No text is on; turn off No text to style it"
+
+  /// Soft-disabled while No text is on (dimmed, ignores clicks, the tooltip says why).
+  private func styleTile(_ s: TextStyle, selected: Bool, noText: Bool) -> some View {
+    Button { if !noText { model.setVersionField(\.style, \.style, s) } } label: {
       VStack(spacing: 5) {
         ZStack {
           RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous)
@@ -207,7 +215,8 @@ struct EditorTextSection: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(EditorPressStyle())
-    .help("Text style: \(s.displayName)")
+    .opacity(noText ? 0.55 : 1)
+    .dsTooltip(selected ? "This is the text style" : "Use the \(s.displayName) text style", disabledReason: noText ? noTextReason : nil)
   }
 
   @ViewBuilder private func sample(_ s: TextStyle) -> some View {
@@ -265,11 +274,12 @@ struct EditorCoverSection: View {
             filmstrip
           }
         }
-        EditorField(label: "Cover text", isCustom: !model.isDefault(.coverIncludesText), resetHelp: "Back to the default",
+        EditorField(label: "Cover text", isCustom: !model.isDefault(.coverIncludesText),
+                    resetHelp: "Back to the default (\(model.defaults.coverIncludesText ? "with" : "without") text)",
                     onReset: { model.resetEdit(.coverIncludesText) }) {
           DSToggle("Include text on the cover", isOn: Binding(get: { model.resolvedEdit.coverIncludesText },
                                                                set: { model.setCoverIncludesText($0) }), size: .sm)
-            .help("Draw the overlay text on the cover image too")
+            .dsTooltip("Draw the overlay text on the cover image too")
         }
       }
     }
@@ -292,7 +302,7 @@ struct EditorCoverSection: View {
             .strokeBorder(sel ? DS.color.text : .clear, lineWidth: 2))
           .contentShape(Rectangle())
           .onTapGesture { set(f.time) }
-          .help("Use the frame at \(EditorGeometry.time(f.time, tenths: true))")
+          .dsTooltip("Use the frame at \(EditorGeometry.time(f.time, tenths: true)) as the cover")
       }
       if strip.frames.isEmpty {
         RoundedRectangle(cornerRadius: DS.radius.xs).fill(DS.color.surfaceSunken).frame(height: 54)
@@ -340,8 +350,7 @@ struct EditorPlatformsSection: View {
                      disabledReason: enabled ? nil : "\(p.displayName) is turned off in Settings → Platforms", size: .sm) {
                 model.setPosting(p, !model.posting(p))
               }
-              .help(enabled ? (model.posting(p) ? "Posting on \(p.displayName) — click to skip it for this clip"
-                                                : "Not posting on \(p.displayName) — click to post here") : "")
+              .dsTooltip(enabled ? (model.posting(p) ? "Skip \(p.displayName) for this clip" : "Post this clip on \(p.displayName) too") : nil)
             }
           }
         }
@@ -371,7 +380,9 @@ struct EditorPlatformsSection: View {
                          tooltip: "Add a \(p.displayName)-only trim lane on the timeline") { model.addPlatformTrim(p) }
               } else {
                 DSButton("Remove \(p.displayName) trim", variant: .ghost, size: .sm,
-                         tooltip: "Use the main trim on \(p.displayName) too") { model.updateEdit { $0.platformTrims[p] = nil } }
+                         tooltip: "Delete the \(p.displayName)-only trim; use the main one") {
+                  model.updateEdit { $0.platformTrims[p] = nil }
+                }
               }
               if over {
                 DSButton("Skip \(p.displayName)", variant: .ghost, size: .sm,

@@ -8,11 +8,11 @@ extension SnapshotShots {
     [
       c.main("00-shell-queue") { m in m.screen = .queue },
       c.main("01-shell-paused-attention") { m in
-        m.update { $0.paused = true }
+        m.update { $0.paused = true }; m.toast = nil  // setup, not an action shown in the shot
         m.screen = .edit
       },
       c.main("02-shell-bulk-bar") { m in
-        m.update { $0.paused = false }
+        m.update { $0.paused = false }; m.toast = nil  // setup, not an action shown in the shot
         m.screen = .edit
         m.visibleIds[.edit] = m.editList.map(\.id)
         m.setSelection(m.editList.prefix(3).map(\.id), screen: .edit)

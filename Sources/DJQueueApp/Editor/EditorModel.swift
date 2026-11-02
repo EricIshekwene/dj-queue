@@ -95,6 +95,16 @@ final class EditorModel: ObservableObject {
   private var overlayKey: OverlayKey?
   private var toastTask: Task<Void, Never>?
   private static let saveQueue = DispatchQueue(label: "com.djlovd.queue.editor.save", qos: .userInitiated)
+
+  /// Blocks until every queued editor write has landed (the app journals the session after it).
+  static func waitForSaves() { saveQueue.sync {} }
+  /// The editor on screen (not snapshot copies): a journaled action flushes its debounced save first (review r4 L6).
+  static weak var live: EditorModel?
+  /// Writes the on-screen editor's pending (debounced) changes and waits for every save to land.
+  static func flushLiveAndWait() {
+    live?.flush()
+    waitForSaves()
+  }
   nonisolated(unsafe) static var defaults = UserDefaults.standard
 
   init(store: Store, videoId: String, snapshotMode: Bool = false) {
@@ -102,6 +112,7 @@ final class EditorModel: ObservableObject {
     self.videoId = videoId
     self.snapshotMode = snapshotMode
     canvasMode = Self.defaults.string(forKey: "editor.canvasMode").flatMap(EditorCanvasMode.init) ?? .zones
+    if !snapshotMode { Self.live = self }
     load(videoId)
   }
 
@@ -166,6 +177,7 @@ final class EditorModel: ObservableObject {
     openPlatformCaption = nil
     titleDraft = nil
     loading = true
+    clearUndo()
     playback.unload()
     let store = store
     if snapshotMode {
@@ -430,6 +442,7 @@ final class EditorModel: ObservableObject {
     var e = edit
     f(&e)
     guard e != edit else { return }
+    markUndo()
     let oldTrim = trim
     edit = e
     pendingEdit = true
@@ -525,6 +538,7 @@ final class EditorModel: ObservableObject {
 
   func setKind(_ k: Kind) {
     guard var v = video, v.kind != k, !readOnly else { return }
+    markUndo(coalesce: false)
     v.kind = k
     video = v
     refreshOverlay()
@@ -543,6 +557,7 @@ final class EditorModel: ObservableObject {
     let clean = t?.trimmingCharacters(in: .whitespacesAndNewlines)
     let value = (clean?.isEmpty ?? true) ? nil : clean
     guard value != v.titleText || tracks != v.titleTracks else { return }
+    markUndo(coalesce: false)
     v.title = value
     v.titleTracks = value == nil ? nil : tracks
     v.titleSource = value == nil ? nil : source
@@ -612,6 +627,7 @@ final class EditorModel: ObservableObject {
     var v = all[i]
     f(&v)
     guard v != all[i] || inserted else { return }
+    markUndo()
     if inserted { pendingVersions.insert(1) }
     all[i] = v
     versions = all.sorted { $0.number < $1.number }
@@ -745,6 +761,7 @@ final class EditorModel: ObservableObject {
   func newVersion(copying source: Int?) {
     guard !readOnly else { return }
     flush()
+    markUndo(coalesce: false)
     let n = (versions.map(\.number).max() ?? 1) + 1
     var v = Version(number: n)
     if let s = source, s != versions.map(\.number).max() ?? 1 {
@@ -773,6 +790,7 @@ final class EditorModel: ObservableObject {
   func deleteVersion(_ n: Int) {
     guard n > 1, !readOnly else { return }
     flush()
+    markUndo(coalesce: false)
     versions.removeAll { $0.number == n }
     if versionNo == n { versionNo = versions.map(\.number).filter { $0 < n }.max() ?? 1 }
     let store = store, id = videoId
@@ -785,6 +803,93 @@ final class EditorModel: ObservableObject {
 
   func selectVersion(_ n: Int) {
     versionNo = n
+    refreshOverlay()
+  }
+
+  // MARK: Undo (round 3, F8) — the editor's own history, separate from the app's ⌘Z
+
+  /// Everything an editor change can touch. ⌘Z restores the one before the last change (and saves it).
+  struct UndoState: Equatable {
+    var edit: Edit
+    var versions: [Version]
+    var versionNo: Int
+    var title: String?
+    var titleTracks: [Track]?
+    var titleSource: String?
+    var kind: Kind?
+  }
+
+  private var undoStack: [UndoState] = []
+  private var redoStack: [UndoState] = []
+  private var lastUndoMark = Date.distantPast
+  private var restoringUndo = false
+  @Published private(set) var canUndo = false
+  @Published private(set) var canRedo = false
+
+  private var undoState: UndoState {
+    UndoState(edit: edit, versions: versions, versionNo: versionNo, title: video?.title, titleTracks: video?.titleTracks,
+              titleSource: video?.titleSource, kind: video?.kind)
+  }
+
+  /// Called just BEFORE a change. Changes less than 0.8 s apart (a drag, a typed word, a slider) form one step.
+  private func markUndo(coalesce: Bool = true) {
+    guard !restoringUndo, !readOnly, video != nil else { return }
+    let now = Date()
+    defer { lastUndoMark = coalesce ? now : .distantPast }
+    if coalesce && now.timeIntervalSince(lastUndoMark) < 0.8 { return }
+    undoStack.append(undoState)
+    if undoStack.count > 200 { undoStack.removeFirst(undoStack.count - 200) }
+    redoStack.removeAll()
+    canUndo = true
+    canRedo = false
+  }
+
+  private func clearUndo() {
+    undoStack = []
+    redoStack = []
+    lastUndoMark = .distantPast
+    canUndo = false
+    canRedo = false
+  }
+
+  func undo() {
+    guard !readOnly, let s = undoStack.popLast() else { show("Nothing to undo in this clip"); return }
+    redoStack.append(undoState)
+    restoreUndo(s)
+    show("Undone")
+  }
+
+  func redo() {
+    guard !readOnly, let s = redoStack.popLast() else { show("Nothing to redo"); return }
+    undoStack.append(undoState)
+    restoreUndo(s)
+    show("Redone")
+  }
+
+  private func restoreUndo(_ s: UndoState) {
+    restoringUndo = true
+    defer {
+      restoringUndo = false
+      lastUndoMark = .distantPast
+      canUndo = !undoStack.isEmpty
+      canRedo = !redoStack.isEmpty
+    }
+    let gone = Set(versions.map(\.number)).subtracting(s.versions.map(\.number)).filter { $0 > 1 }
+    edit = s.edit
+    pendingEdit = true
+    versions = s.versions
+    pendingVersions.formUnion(s.versions.map(\.number))
+    versionNo = s.versions.contains { $0.number == s.versionNo } ? s.versionNo : 1
+    if !gone.isEmpty {
+      let store = store, id = videoId
+      Self.saveQueue.async {
+        for n in gone { try? store.deleteVersion(videoId: id, number: n) }
+        ChangeSignal.post()
+      }
+    }
+    if s.title != video?.title || s.titleTracks != video?.titleTracks { setTitle(s.title, tracks: s.titleTracks, source: s.titleSource ?? "app") }
+    if let k = s.kind, k != video?.kind { setKind(k) }
+    scheduleSave()
     refreshOverlay()
   }
 

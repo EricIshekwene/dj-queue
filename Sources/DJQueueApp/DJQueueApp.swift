@@ -153,7 +153,12 @@ final class AppHost {
     case .postNow, .shiftPlan, .skip:
       guard let postId else { break }
       do {
-        try model.postActions.perform(act!, postId: postId)
+        // Journaled like an in-app click, so ⌘Z in the window can undo it (F8).
+        model.splitEditorSession()
+        let r = try model.bulk.record("notification-\(action)", ids: post.map { [$0.videoId] } ?? [], plan: true) {
+          try model.postActions.perform(act!, postId: postId)
+        }
+        if let b = r.batchId { model.undoHistory.push(b, label: "\(post?.platform.displayName ?? "Post"): \(action.replacingOccurrences(of: "_", with: " "))") }
         ChangeSignal.post()
         model.refresh()
         if act == .postNow {
@@ -169,7 +174,11 @@ final class AppHost {
       let url = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
       do {
         guard !url.isEmpty else { throw EditorlessError("Paste the post URL") }
-        try model.postActions.markPosted(postId: post.id, url: url, at: Date())
+        model.splitEditorSession()
+        let r = try model.bulk.record("mark-posted", ids: [post.videoId], plan: true) {
+          try model.postActions.markPosted(postId: post.id, url: url, at: Date())
+        }
+        if let b = r.batchId { model.undoHistory.push(b, label: "\(post.platform.displayName) marked posted") }
         ChangeSignal.post()
         model.refresh()
       } catch {

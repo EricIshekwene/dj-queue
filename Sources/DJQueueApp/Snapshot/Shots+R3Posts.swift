@@ -12,7 +12,7 @@ extension SnapshotShots {
       cards.expanded = []
       cards.fineShown = []
       m.postsSelection = nil
-      m.update { $0.paused = false }
+      m.update { $0.paused = false }; m.toast = nil  // setup, not an action shown in the shot
       ui.postsTab = tab
       m.screen = .posts
     }
@@ -30,10 +30,10 @@ extension SnapshotShots {
       c.main("posts-all") { m in posts(m, .all) },
       c.main("posts-paused-banner") { m in
         posts(m, .scheduled)
-        m.update { $0.paused = true }
+        m.update { $0.paused = true }; m.toast = nil  // setup, not an action shown in the shot
       },
       c.main("sidebar-paused-edit-no-banner") { m in
-        m.update { $0.paused = true }
+        m.update { $0.paused = true }; m.toast = nil  // setup, not an action shown in the shot
         m.screen = .edit
       },
       c.view("sidebar-status-menu-paused", width: 300) {
@@ -50,7 +50,7 @@ extension SnapshotShots {
       },
       c.view("grid-edit-hover", width: 760) {
         let m = c.model
-        m.update { $0.paused = false }
+        m.update { $0.paused = false }; m.toast = nil  // setup, not an action shown in the shot
         let vids = Array((m.editList.isEmpty ? m.queueList : m.editList).prefix(4))
         m.requestProxies(vids.map(\.id))
         return AnyView(HStack(alignment: .top, spacing: DS.space.md) {

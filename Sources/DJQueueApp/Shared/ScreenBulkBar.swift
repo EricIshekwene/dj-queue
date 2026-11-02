@@ -44,13 +44,17 @@ struct ScreenBulkBar<Actions: View, More: View, Primary: View>: View {
         Menu {
           more
         } label: {
-          Label("More", systemImage: "chevron.down")
+          HStack(spacing: 6) {
+            Text("More")
+            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).opacity(0.6)
+          }
         }
         .menuStyle(.button)
         .buttonStyle(DSBulkActionStyle())
         .menuIndicator(.hidden)
         .fixedSize()
-        .dsTooltip("More bulk actions")
+        .dsTooltip("More actions for the selected clips")
+        .dsTooltip("More actions for the selected clips")
       }
       if Primary.self != EmptyView.self {
         primary.padding(.leading, 2)

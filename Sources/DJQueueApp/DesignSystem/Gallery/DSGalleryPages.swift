@@ -178,7 +178,7 @@ struct GalleryButtons: View {
         }
       }
       HStack(alignment: .top, spacing: DS.space.xxxl) {
-        GSection("Tooltip", note: "native .help on hover · styled bubble shown for reference") {
+        GSection("Tooltip", note: "floating panel on hover · drawn in place here · see Tooltips page") {
           HStack(spacing: DS.space.xxxl) {
             DSTooltipDemo(text: "Add to week", shortcut: "⌘W") {
               DSIconButton("calendar.badge.plus", tooltip: "Add to week", variant: .outline) {}

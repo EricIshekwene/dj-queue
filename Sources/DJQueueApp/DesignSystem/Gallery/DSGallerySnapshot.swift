@@ -9,6 +9,8 @@ import SwiftUI
 @MainActor
 enum DSGallerySnapshot {
   static func run(outputDir: String) async -> Int32 {
+    if ProcessInfo.processInfo.environment["DJQ_TOOLTIP_PROBE"] != nil { return await DSTooltipProbe.run(outputDir: outputDir) }
+    if ProcessInfo.processInfo.environment["DJQ_TOOLTIP_PASS"] != nil { return await DSTooltipPass.run(outputDir: outputDir) }
     let out = URL(fileURLWithPath: outputDir)
     do {
       try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)

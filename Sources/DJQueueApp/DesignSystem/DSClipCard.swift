@@ -8,6 +8,8 @@ struct DSClipTag: Identifiable, Hashable {
   var text: String
   var style: DSBadgeStyle = .outline
   var icon: String? = nil
+  /// What the tag means (hover). Every tag on a card should explain itself.
+  var tooltip: String? = nil
   var id: String { text }
 }
 
@@ -108,7 +110,7 @@ struct DSClipCard<Actions: View>: View {
     self.actions = actions()
   }
 
-  private var hot: Bool { forced == .hover || forced == .pressed || hovering }
+  private var hot: Bool { forced == .hover || forced == .pressed || hovering || DSClipCardDebug.hoverIds.contains(clip.id) }
   private var showCheck: Bool { onToggleSelect != nil && mode != .single && (config.selectionMode || isSelected || hot) }
   private var autoplay: Bool { config.autoplay && !clip.isMissing }
 
@@ -161,15 +163,15 @@ struct DSClipCard<Actions: View>: View {
   /// 20 pt circle (DESIGN-v2 §4).
   private func selectCircle(onMedia: Bool) -> some View {
     DSCheckbox(isOn: isSelected, size: 20, shape: .circle, onMedia: onMedia) { onToggleSelect?() }
-      .dsTooltip(isSelected ? "Deselect" : "Select", edge: .bottom)
+      .dsTooltip(isSelected ? "Deselect" : "Select for bulk actions", shortcut: isSelected ? nil : "⌘-click", side: .bottom)
   }
 
   private var scoreText: some View {
     Group {
       if let s = clip.score {
-        Text("\(s)").font(DS.type.score).foregroundStyle(DS.color.text)
+        Text("\(s)").font(DS.type.score).foregroundStyle(DS.color.text).dsTooltip("Score \(s) — it sets the posting order")
       } else {
-        Text("—").font(DS.type.score).foregroundStyle(DS.color.textTertiary).dsTooltip("Not scored")
+        Text("—").font(DS.type.score).foregroundStyle(DS.color.textTertiary).dsTooltip("Not scored yet — score it in Score")
       }
     }
   }
@@ -180,6 +182,7 @@ struct DSClipCard<Actions: View>: View {
         Text(d).font(DS.type.micro.monospacedDigit()).foregroundStyle(.white)
           .padding(.horizontal, 6).frame(height: 18)
           .background(Color.black.opacity(0.63), in: Capsule())
+          .dsTooltip("Length \(d)")
       }
     }
   }
@@ -196,7 +199,7 @@ struct DSClipCard<Actions: View>: View {
         .padding(.horizontal, 10).frame(height: 26)
         .overlay(Capsule().strokeBorder(none ? DS.color.border : DS.color.borderStrong))
         .fixedSize()
-        .dsTooltip(clip.isPinned ? "Pinned to this date" : none ? "Not in the plan yet" : "Next post")
+        .dsTooltip(clip.isPinned ? "Pinned to this day — the plan works around it" : none ? "Not in the plan yet" : "Next planned post")
       }
     }
   }
@@ -209,14 +212,17 @@ struct DSClipCard<Actions: View>: View {
 
   private var chipItems: [AnyView] {
     var out: [AnyView] = []
-    if clip.isMissing { out.append(AnyView(DSBadge("File missing · Relink", style: .soft(.danger), icon: "exclamationmark"))) }
-    out += clip.blocks.map { AnyView(DSBadge($0, style: .soft(.danger))) }
-    out += clip.issues.map { AnyView(DSBadge($0, style: .soft(.warning))) }
+    if clip.isMissing {
+      out.append(AnyView(DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark",
+                                 help: "The source file moved or was deleted — Health › Doctor relinks it")))
+    }
+    out += clip.blocks.map { AnyView(DSBadge($0, style: .soft(.danger), help: "Blocks posting until fixed in the editor")) }
+    out += clip.issues.map { AnyView(DSBadge($0, style: .soft(.warning), help: "Still needed before it's ready — open the editor")) }
     out += clip.suggestions.prefix(3).map { s in
       AnyView(DSSuggestionChip(suggestion: s) { onAcceptSuggestion?(s) })
     }
-    if let st = clip.status { out.append(AnyView(DSBadge(st.text, style: st.style, icon: st.icon))) }
-    out += clip.tags.map { t in AnyView(DSBadge(t.text, style: t.style, icon: t.icon)) }
+    if let st = clip.status { out.append(AnyView(DSBadge(st.text, style: st.style, icon: st.icon, help: st.tooltip))) }
+    out += clip.tags.map { t in AnyView(DSBadge(t.text, style: t.style, icon: t.icon, help: t.tooltip)) }
     return out
   }
 
@@ -232,13 +238,14 @@ struct DSClipCard<Actions: View>: View {
     HStack(spacing: DS.space.sm) {
       if config.showsDragHandle {
         Image(systemName: "line.3.horizontal").font(.system(size: 12, weight: .medium)).foregroundStyle(DS.color.textTertiary)
-          .frame(width: 14).opacity(hot ? 1 : 0).dsTooltip(hot ? "Drag to reorder" : nil)
+          .frame(width: 14).opacity(hot ? 1 : 0).dsTooltip(hot ? "Drag to change the posting order" : nil)
       }
       if onToggleSelect != nil {
         selectCircle(onMedia: false).opacity(showCheck ? 1 : 0).allowsHitTesting(showCheck)
       }
       if let p = clip.position {
         Text("\(p)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary).frame(minWidth: 16, alignment: .trailing)
+          .dsTooltip("Number \(p) in the posting order")
       }
       media(radius: DS.radius.sm, active: autoplay, mute: true, muteAlignment: .bottomTrailing)
         .frame(width: 63, height: 112)
@@ -248,6 +255,7 @@ struct DSClipCard<Actions: View>: View {
             Text(clip.title).font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(1)
             if clip.isPinned && clip.dateText == nil {
               Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(DS.color.textTertiary)
+                .dsTooltip("Pinned to a day")
             }
           }
           if !clip.meta.isEmpty { Text(clip.meta).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1) }
@@ -284,7 +292,8 @@ struct DSClipCard<Actions: View>: View {
         .overlay(alignment: .topTrailing) {
           if let s = clip.score {
             Text("\(s)").font(DS.type.micro.monospacedDigit()).foregroundStyle(.white)
-              .padding(.horizontal, 7).frame(height: 20).background(Color.black.opacity(0.63), in: Capsule()).padding(8)
+              .padding(.horizontal, 7).frame(height: 20).background(Color.black.opacity(0.63), in: Capsule())
+              .dsTooltip("Score \(s)").padding(8)
           }
         }
         .overlay(alignment: .bottomLeading) { durationBadge.padding(8) }
@@ -359,6 +368,7 @@ struct DSClipCard<Actions: View>: View {
       }
       if let p = clip.position {
         Text("\(p)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary).frame(minWidth: 16, alignment: .trailing)
+          .dsTooltip("Number \(p) in the posting order")
       }
       media(radius: DS.radius.xs, active: false, mute: false).frame(width: 24, height: 42)
       VStack(alignment: .leading, spacing: 1) {
@@ -367,9 +377,9 @@ struct DSClipCard<Actions: View>: View {
       }
       .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
       if clip.isMissing {
-        DSBadge("File missing", style: .soft(.danger), size: .sm)
+        DSBadge("File missing", style: .soft(.danger), size: .sm, help: "The source file moved or was deleted — Health › Doctor relinks it")
       } else if let k = clip.kind {
-        DSBadge(k, style: .outline, size: .sm)
+        DSBadge(k, style: .outline, size: .sm, help: "Kind: \(k) (Talking clips start with no text)")
       }
       Group {
         if let s = clip.score { Text("\(s)").foregroundStyle(DS.color.text) } else { Text("—").foregroundStyle(DS.color.textTertiary) }
@@ -422,19 +432,36 @@ struct DSSuggestionChip: View {
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
     .fixedSize()
-    .dsTooltip("Use as title")
+    .dsTooltip("Set the Title to “\(suggestion.text)”")
   }
 }
 
-/// Small round buttons floating on media (grid tile hover actions).
+/// Small round buttons floating on media (grid tile hover actions). The label shows only its icon, so its title
+/// becomes the tooltip automatically — an icon-only action can't be left unexplained (round 3, F5).
 struct DSMediaActionStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .labelStyle(.iconOnly)
+      .labelStyle(DSIconWithTitleTooltip())
       .font(.system(size: 12, weight: .semibold))
       .foregroundStyle(.white)
       .frame(width: 28, height: 28)
       .background(Color.black.opacity(configuration.isPressed ? 0.75 : 0.55), in: Circle())
       .contentShape(Circle())
   }
+}
+
+/// Icon only, with the label's title as the tooltip (DSMediaActionStyle).
+struct DSIconWithTitleTooltip: LabelStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.icon
+      .frame(width: 28, height: 28)
+      .contentShape(Circle())
+      .dsTooltip(view: configuration.title)
+  }
+}
+
+/// Evidence runs only (DSTooltipProbe): clip ids drawn in their hover state, so a real window shows a tile's
+/// hover controls without a pointer.
+enum DSClipCardDebug {
+  nonisolated(unsafe) static var hoverIds: Set<String> = []
 }

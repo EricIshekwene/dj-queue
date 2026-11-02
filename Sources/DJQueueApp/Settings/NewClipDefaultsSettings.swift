@@ -151,7 +151,19 @@ struct NewClipDefaultsSettings: View {
         if sets.isEmpty {
           Text("No hashtag sets yet — add them in Captions & titles.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
         } else {
-          DSChipGroup(options: sets.map { DSChipOption(value: $0.id, title: $0.name, icon: "number") }, selection: hashtagBinding, size: .sm)
+          // One chip per set (DSChip, not DSChipGroup) so each says which tags it adds.
+          DSFlowLayout(spacing: 6) {
+            ForEach(sets) { s in
+              let on = d.hashtagSetIds.contains(s.id)
+              DSChip(s.name, icon: "number", isSelected: on, size: .sm) {
+                var ids = Set(d.hashtagSetIds)
+                if on { ids.remove(s.id) } else { ids.insert(s.id) }
+                hashtagBinding.wrappedValue = ids
+              }
+              .dsTooltip(s.tags.isEmpty ? "This set has no hashtags yet"
+                         : "\(on ? "Stop adding" : "Add") \(s.tags.joined(separator: " ")) to new clips")
+            }
+          }
         }
       }
       SettingsRow("Extra hashtags", description: "Added after the sets, separated by spaces.", stacked: true) {
@@ -201,14 +213,17 @@ struct NewClipDefaultsSettings: View {
       DSSeparator()
       HStack(spacing: DS.space.xs) {
         DSButton("Reset to built-in defaults", icon: "arrow.counterclockwise", variant: .ghost, size: .sm,
-                 disabledReason: saved == NewClipDefaults() && !dirty ? "Already the built-in defaults" : nil) { confirmReset() }
+                 disabledReason: saved == NewClipDefaults() && !dirty ? "Already the built-in defaults" : nil,
+                 tooltip: "Put every default back to the built-in value…") { confirmReset() }
         Spacer(minLength: DS.space.xs)
         if dirty {
           Text(changeCount == 1 ? "1 unsaved change" : "\(changeCount) unsaved changes")
             .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
         }
-        DSButton("Cancel", variant: .outline, disabledReason: dirty ? nil : "No changes") { ui.draft = nil }
-        DSButton("Save", variant: .primary, disabledReason: dirty ? nil : "No changes") { save() }
+        DSButton("Discard changes", variant: .outline, disabledReason: dirty ? nil : "No unsaved changes",
+                 tooltip: "Throw away the unsaved default changes") { ui.draft = nil }
+        DSButton("Save", variant: .primary, disabledReason: dirty ? nil : "No unsaved changes",
+                 tooltip: "Save defaults (clips that follow them change)", shortcut: "⌘S") { save() }
           .keyboardShortcut("s", modifiers: .command)
       }
       .padding(.vertical, DS.space.sm)
@@ -225,7 +240,8 @@ struct NewClipDefaultsSettings: View {
 
   private func save() {
     guard let draft = ui.draft else { return }
-    if model.perform("New clip defaults saved", {
+    // Undoable (toast · Undo, ⌘Z): every clip that follows a default changes with it.
+    if model.undoable("New clip defaults saved", "settings", settings: true, {
       var s = model.settings
       s.defaults = draft
       try model.store.save(s)
@@ -237,9 +253,9 @@ struct NewClipDefaultsSettings: View {
   private func confirmReset() {
     ui.confirm = SettingsConfirm(
       title: "Reset new clip defaults?",
-      message: "Every default goes back to the built-in value and is saved now. Clips that follow a default change with it; their own changes stay.",
+      message: "Every default goes back to the built-in value and is saved now. Clips that follow a default change with it; their own changes stay. Undo (⌘Z) puts your defaults back.",
       confirmTitle: "Reset defaults", destructive: true, icon: "arrow.counterclockwise") {
-        if model.perform("New clip defaults reset", {
+        if model.undoable("New clip defaults reset", "settings", settings: true, {
           var s = model.settings
           s.defaults = NewClipDefaults()
           try model.store.save(s)
