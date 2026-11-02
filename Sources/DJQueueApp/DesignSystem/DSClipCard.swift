@@ -243,6 +243,7 @@ struct DSClipCard<Actions: View>: View {
       }
       if let p = clip.position {
         Text("\(p)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary).frame(minWidth: 16, alignment: .trailing)
+          .dsTooltip("Number \(p) in the posting order")
       }
       media(radius: DS.radius.sm, active: autoplay, mute: true, muteAlignment: .bottomTrailing)
         .frame(width: 63, height: 112)
@@ -365,6 +366,7 @@ struct DSClipCard<Actions: View>: View {
       }
       if let p = clip.position {
         Text("\(p)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary).frame(minWidth: 16, alignment: .trailing)
+          .dsTooltip("Number \(p) in the posting order")
       }
       media(radius: DS.radius.xs, active: false, mute: false).frame(width: 24, height: 42)
       VStack(alignment: .leading, spacing: 1) {

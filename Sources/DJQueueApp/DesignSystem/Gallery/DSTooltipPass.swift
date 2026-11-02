@@ -73,7 +73,14 @@ enum DSTooltipPass {
             try await Task.sleep(for: .milliseconds(900))
           }
           w.displayIfNeeded()
-          let anchors = DSTooltipProbe.anchors(in: w).sorted {
+          // A media action's automatic tooltip (its Label title) sits inside the button's own explicit one: list the
+          // explicit text; keep the automatic one only where it is the only tooltip.
+          let found = DSTooltipProbe.anchors(in: w)
+          let explicit = found.filter { $0.content.richLabel == nil }
+          let anchors = found.filter { a in
+            guard a.content.richLabel != nil, let r = a.visibleScreenRect else { return true }
+            return !explicit.contains { $0.visibleScreenRect?.contains(CGPoint(x: r.midX, y: r.midY)) ?? false }
+          }.sorted {
             let a = $0.visibleScreenRect!, b = $1.visibleScreenRect!
             return abs(a.maxY - b.maxY) > 6 ? a.maxY > b.maxY : a.minX < b.minX
           }
@@ -118,7 +125,7 @@ enum DSTooltipPass {
 
   static func legendText(_ a: DSTooltipAnchorView) -> String {
     let c = a.content
-    var t = c.label ?? (c.richLabel != nil ? "‹label title›" : "")
+    var t = c.label ?? (c.richLabel != nil ? "(the action's own label, shown as its tooltip)" : "")
     if let k = c.shortcut, !k.isEmpty, c.disabledReason == nil { t += "  [\(k)]" }
     if let r = c.disabledReason, !r.isEmpty { t += t.isEmpty ? r : " — disabled: \(r)" }
     return t

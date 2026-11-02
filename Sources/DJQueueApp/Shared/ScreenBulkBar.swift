@@ -54,6 +54,7 @@ struct ScreenBulkBar<Actions: View, More: View, Primary: View>: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .dsTooltip("More actions for the selected clips")
+        .dsTooltip("More actions for the selected clips")
       }
       if Primary.self != EmptyView.self {
         primary.padding(.leading, 2)

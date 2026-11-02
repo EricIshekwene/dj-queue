@@ -82,3 +82,15 @@ Eric delegated these calls. Each decision gives a one-line reason. The component
 31. **Native help tags are pushed out of reach (`NSInitialToolTipDelay` 1 h) after every `.help()` became `.dsTooltip()`.** Why: no screen can show two bubbles, even from a stray `.help`.
 32. **Disabled native menu items carry their reason in the title ("Back to Queue — already posted on TikTok").** Why: macOS menus can't show hover tooltips.
 33. **`DSBadge(help:)`, `DSChip(tooltip:)` and `DSChipOption.tooltip` let status chips explain themselves.** The clip card's "File missing · Relink" became "File missing", with a tooltip pointing to Health › Doctor. Why: it said "Relink" but couldn't be clicked.
+34. **Eric's acceptance rule is enforced in code. Every icon-only `Button`/`Menu` needs a tooltip:**
+    - `scripts/check-icon-tooltips.py` is a small Swift-aware parser of labels and modifier chains. `IconTooltipLintTests` runs it inside `swift test`, so a new offender fails the build check.
+    - `DSIconButton`'s tooltip is required at compile time.
+    - Grid-tile hover actions (`DSMediaActionStyle`) render the Label's own title as the tooltip (`dsTooltip(view:)`), so the most common icon-only case can't be unexplained even if a screen forgets it.
+    - Why: the lint can't see a label style applied by a container, so the DS closes that gap itself.
+35. **Tile overlay badges speak plainly: "Score 28", "Length 2:23", "Number 3 in the posting order", "Select for bulk actions · ⌘-click".** Why: Eric's Edit-grid example. Each badge says what the number is.
+36. **Page-pass evidence comes from the real window, not mock-ups (`DJQ_TOOLTIP_PASS=1`).** Each screen, view mode and overlay is drawn in light and dark, with the first tile in its hover state (`DSClipCardDebug.hoverIds`). Every tooltip anchor is numbered from the live view tree, with a legend of what it says, and one real tooltip panel is shown. It runs in the background: no focus change, no cursor moves.
+37. **Real-pointer hover was not exercised, because Eric was at the Mac** (HID idle 0–1 s every time it was checked). Proven:
+    - Placement, flip and shift, the panel, light and dark, Esc, and the delay-group timing in the real window (`DJQ_TOOLTIP_PROBE`). The probe drives the same `hoverBegan`/`hoverEnded` that `.onHover` calls.
+    - Every anchor's text (`DJQ_TOOLTIP_PASS`).
+
+    Not proven: that SwiftUI's `.onHover` delivers enter/exit to those calls under a physical pointer. That is standard SwiftUI behaviour, but Eric's first hover is the real test.

@@ -120,12 +120,12 @@ struct LaunchAgentOffer: View {
              icon: "menubar.rectangle") {
       EmptyView()
     } footer: {
-      DSButton("Not now", variant: .ghost) {
+      DSButton("Not now", variant: .ghost, tooltip: "Run only while this window is open; ask again from Settings › Engine") {
         UserDefaults.standard.set(true, forKey: "djq.askedLaunchAgent")
         dismiss()
       }
       .keyboardShortcut(.cancelAction)
-      DSButton("Run at login", variant: .primary) {
+      DSButton("Run at login", variant: .primary, tooltip: "Install the background engine; DJ Queue restarts once") {
         dismiss()
         AppHost.shared.installLaunchAgent()
       }
@@ -208,7 +208,8 @@ struct ShortcutSheet: View {
     ("Clips", [("⌘E", "Open the selected clip in the editor"), ("← / →", "Previous / next clip (Single view)"),
                ("0–9", "Type a score for the selected clips (Queue, Library)"), ("⌘⌫", "Exclude the clip (Score)")]),
     ("Week", [("⌘↩", "Approve week"), ("Drag", "Move or swap days")]),
-    ("Editor", [("⌘Z / ⇧⌘Z", "Undo / redo the last change to this clip"), ("⌘[ / ⌘]", "Previous / next clip"), ("⌘↩", "Done")]),
+    ("Editor", [("⌘Z / ⇧⌘Z", "Undo / redo the last change to this clip"), ("⌘[ / ⌘]", "Previous / next clip"), ("⌘↩", "Done"),
+                ("Space", "Play / pause"), ("I / O", "Set the trim start / end at the playhead")]),
   ]
 
   var body: some View {

@@ -22,6 +22,26 @@ Rows that repeat across screens (the shared clip and post context menus, the ⌘
 - **Proposed tooltip:** sentence case, starts with a verb, says the consequence, ≤ 45 characters. The shortcut is a keycap, never part of the text. "label is enough" means no tooltip is needed. "Disabled: …" is the `disabledReason`.
 - **Risk / fix:** `ok (confirm)` / `ok (undo)` / `⚠️ RISKY: <what changes>` → the proposed fix. Use an Undo toast for reversible single-item changes, and a confirm sheet for destructive, irreversible, many-item or plan-wide changes.
 
+## Phase B status (round 3)
+
+| | Rows |
+|---|---|
+| ✅ fixed (tooltip, clearer label, disabled reason, Undo or confirm) | 416 |
+| ➖ no change needed (label already says it) | 319 |
+| ⏭ deferred (reason in the row) | 14 |
+| **Total, including the round-3 controls added in Phase B** | **749** |
+
+- **Icon-only lint:** `scripts/check-icon-tooltips.py` (and `IconTooltipLintTests` in `swift test`) finds every `Button`/`Menu` whose label is only an image, or is drawn `.labelStyle(.iconOnly)`, and has no `.dsTooltip`. On `main` before the pass it found 2. Now it finds 0. `DSIconButton` requires its tooltip at compile time. Media actions on grid tiles take their Label title as the tooltip automatically.
+- **`.help(`:** 0 left; native help tags are disabled app-wide.
+- **Undo/confirm:**
+  - Every one-click data change is journaled and shows "· Undo".
+  - ⌘Z always undoes the most recent change.
+  - The editor has its own ⌘Z/⇧⌘Z history.
+  - Plan-wide and destructive actions ask first.
+
+  Cross-cutting findings 1–8 below are done, except: "Keep posting it", the caption template/hashtag-set deletes and the long-form URL are confirmed instead of undoable, because they aren't in the journal.
+- **Evidence:** a per-screen pass is written to `DJQ_TOOLTIP_PASS=1` captures. For every screen, view mode and overlay, the real window shows the first tile hovered, every tooltip anchor numbered, and a legend.
+
 ## Cross-cutting findings (fix once, in core or DS, before the page pass)
 
 1. **`AppModel.perform(…)` has no Undo, and ⌘Z then undoes the wrong thing.** `perform` is used by kind, score, exclude, pin, post today, skip next, swap/move, approve/propose/rebuild week, push plan, repost, duplicate version, post reset/skip/post-now/shift, platform pause and every immediate setting. It shows a plain toast and doesn't touch `lastBatchId`, so ⌘Z (`undoLast`, `AppModel+Bulk.swift:149`) silently reverts an older, unrelated bulk batch. **Fix:**
@@ -66,13 +86,13 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 |---|---|---|---|---|---|---|
 | ✅ ⌘1 – ⌘8 (go to screen) | shortcut | MainWindowView.swift:146 | ⚠️ only visible in compact-sidebar tooltips | — | Expanded and compact sidebar rows: "<purpose> · <count meaning>" + ⌘1–⌘8 keycaps | — |
 | ➖ ⌘K palette | shortcut | MainWindowView.swift:148 | ✅ | (sidebar hint "⌘K") | — | — |
-| ⏭ ⌘/ cheat sheet | shortcut | MainWindowView.swift:149 | ⚠️ not advertised anywhere in chrome | — | Add "Keyboard shortcuts ⌘/" to sidebar footer or ⌘K (exists in ⌘K) | Advertise ⌘/ in cheat sheet/sidebar: MainWindowView/ShortcutSheet is parent-owned — change listed in agent A report (⌘K "Keyboard shortcuts ⌘/" already exists) |
-| ⏭ ⌘E open editor | shortcut | MainWindowView.swift:150 | ⚠️ silently does nothing unless exactly 1 clip selected | — | Toast "Select one clip to open it" when 0/many | Toast "Select one clip to open it": MainWindowView/ShortcutSheet is parent-owned — change listed in agent A report |
+| ✅ ⌘/ cheat sheet | shortcut | MainWindowView.swift:149 | ⚠️ not advertised anywhere in chrome | — | Add "Keyboard shortcuts ⌘/" to sidebar footer or ⌘K (exists in ⌘K) | ⌘/ is in ⌘K and the cheat sheet itself; ⌘Z/⌘0/digits/⌘⌫/editor keys added to the sheet (parent) |
+| ✅ ⌘E open editor | shortcut | MainWindowView.swift:150 | ⚠️ silently does nothing unless exactly 1 clip selected | — | Toast "Select one clip to open it" when 0/many | ⌘E with nothing selected now says "Select one clip to open it in the editor" (parent) |
 | ➖ ⌘R refresh | shortcut | MainWindowView.swift:152 | ✅ (cheat sheet) | — | — | — |
 | ➖ ⌘A select all on screen | shortcut | MainWindowView.swift:160 | ✅ | — | — | — |
 | ✅ ⌘Z undo last bulk change | shortcut | MainWindowView.swift:161-164 | ⚠️ undoes last *batch*, not last action | — | Cheat sheet: "Undo the last change that offered Undo" | Fixed centrally (F8 core): every action is journaled, ⌘Z undoes the most recent. Cheat-sheet text "⌘Z undoes the most recent change": MainWindowView/ShortcutSheet is parent-owned — change listed in agent A report |
 | ➖ Esc clear selection | shortcut | MainWindowView.swift:166 | ✅ | — | — | — |
-| ⏭ ⌘0 Open DJ Queue | menu item | DJQueueApp.swift:27 | ⚠️ missing from cheat sheet | — | Add to cheat sheet · ⌘0 | Add ⌘0 to cheat sheet: MainWindowView/ShortcutSheet is parent-owned — change listed in agent A report; menu bar "Open DJ Queue" now shows ⌘0 |
+| ✅ ⌘0 Open DJ Queue | menu item | DJQueueApp.swift:27 | ⚠️ missing from cheat sheet | — | Add to cheat sheet · ⌘0 | ⌘0 added to the cheat sheet (parent) |
 | ➖ Settings… ⌘, | menu item | DJQueueApp.swift:24 | ✅ | — | label is enough · ⌘, | — |
 
 ### Overlays & sheets
@@ -81,10 +101,10 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 | ➖ Scrim click (any ModalHost) | gesture | MainWindowView.swift:101 | ⚠️ silently cancels open dialog | — | — (Esc also closes) | — |
 | ➖ Pause all posting (confirm dialog) | text button | MainWindowView.swift:27 | ✅ | — | label is enough | ok (confirm) |
 | ➖ Cancel (pause dialog) | text button | MainWindowView.swift:28 | ✅ | — | label is enough | — |
-| ⏭ Not now (run at login) | text button | MainWindowView.swift:120 | ✅ | — | Don't ask again; run only while open · esc | MainWindowView/ShortcutSheet is parent-owned — change listed in agent A report |
-| ⏭ Run at login | text button | MainWindowView.swift:125 | ⚠️ also quits & relaunches app | — | Install background engine; app restarts · ↩ | MainWindowView/ShortcutSheet is parent-owned — change listed in agent A report |
+| ✅ Not now (run at login) | text button | MainWindowView.swift:120 | ✅ | — | Don't ask again; run only while open · esc | tooltip: Run only while this window is open; ask again from Settings › Engine (parent) |
+| ✅ Run at login | text button | MainWindowView.swift:125 | ⚠️ also quits & relaunches app | — | Install background engine; app restarts · ↩ | tooltip: Install the background engine; DJ Queue restarts once (parent) |
 | ➖ `xmark` Close (cheat sheet) | icon | MainWindowView.swift:203 (DSOverlays.swift:159) | ✅ | "Close  esc" | — | — |
-| ⏭ Done (cheat sheet) | text button | MainWindowView.swift:209 | ✅ | — | label is enough · ↩ | MainWindowView/ShortcutSheet is parent-owned — change listed in agent A report |
+| ➖ Done (cheat sheet) | text button | MainWindowView.swift:209 | ✅ | — | label is enough · ↩ | label is enough |
 | ✅ Close (quick look) | text button | ClipPreviewSheet.swift:33 | ✅ | — | Close · esc | — |
 | ✅ Open editor (quick look) | text button | ClipPreviewSheet.swift:34 | ✅ | — | Edit crop, text, caption and cover | — |
 | ➖ Score field (⌘K Set score…) | field | CommandPalette.swift:534 | ✅ | error text | — | — |
@@ -97,8 +117,8 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 ### Toast
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| ⏭ Undo | text button | DSOverlays.swift:239 | ✅ | — | Revert this change · ⌘Z | DS component (parent-owned) — not changed here (DSOverlays toast) |
-| ⏭ `xmark` | icon | DSOverlays.swift:243 | ✅ | "Dismiss" | Hide this message | DS component (parent-owned) — not changed here (DSOverlays toast) |
+| ➖ Undo | text button | DSOverlays.swift:239 | ✅ | — | Revert this change · ⌘Z | toast Undo is labelled; ⌘Z does the same (most recent change) |
+| ➖ `xmark` | icon | DSOverlays.swift:243 | ✅ | "Dismiss" | Hide this message | "Dismiss" tooltip (DS) |
 
 ## Shell — Sidebar (Shell/Sidebar.swift)
 
@@ -137,12 +157,12 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 ### Attention cards (ScreenScaffold.swift:99-101, items AppModel+Shell.swift:22-46)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| ⏭ Review (problems) | text button | AppModel+Shell.swift:28 | ✅ | — | Open Posts filtered to problems | Attention cards: DSAttentionCard (DS) + items in AppModel+Shell (parent) — no tooltip slot |
+| ➖ Review (problems) | text button | AppModel+Shell.swift:28 | ✅ | — | Open Posts filtered to problems | labelled text button; the card's title says what it opens |
 | ✅ Resume (paused) | text button | AppModel+Shell.swift:32 | ✅ | — | Resume posting now | ok (undo): Resume calls `setPaused(false)`, journaled centrally (tooltip: DS card, no slot) |
 | ➖ Open Health (engine / load error) | text button | AppModel+Shell.swift:22, 37 | ✅ | — | label is enough | — |
 | ⏭ Open Week (approved runway) | text button | AppModel+Shell.swift:41 | ⚠️ goes to *next* week | — | Open next week to approve it | Attention card label lives in AppModel+Shell (parent): suggest "Open next week" |
 | ⏭ (Total runway card has no action) | — | AppModel+Shell.swift:45 | ⚠️ "Record a new set" not actionable | — | — | Design follow-up (no action exists); AppModel+Shell is parent-owned |
-| ⏭ `xmark` hide card | icon | DSOverlays.swift:529 | ⚠️ only on warnings, comes back | "Hide for 24 hours" | Hide this warning for 24 hours | DS component (parent-owned) — not changed here (DSAttentionCard) |
+| ➖ `xmark` hide card | icon | DSOverlays.swift:529 | ⚠️ only on warnings, comes back | "Hide for 24 hours" | Hide this warning for 24 hours | DS tooltip "Hide for 24 hours" |
 
 ### Bulk bar (ScreenBulkBar.swift / DSBulkBar)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
@@ -164,17 +184,17 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 ### Clip collection (ClipCollection.swift, DSClipCard.swift) — shared by Edit/Queue
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| ⏭ Select circle | toggle | DSClipCard.swift:163-164 | ✅ | "Select" / "Deselect" | Select · ⇧-click range · ⌘-click add | DS component (parent-owned) — not changed here (DSClipCard select circle) |
+| ✅ Select circle | toggle | DSClipCard.swift:163-164 | ✅ | "Select" / "Deselect" | Select · ⇧-click range · ⌘-click add | DS: Select for bulk actions · ⌘-click |
 | ➖ Card body click | gesture | ClipCollection.swift:197-200 | ⚠️ opens editor when nothing selected, toggles when something is | — | (cursor/hover hint) "Click to open in editor" | — |
 | ➖ `chevron.left` (Single) | icon | ClipCollection.swift:141 | ✅ | "Previous clip  ←"; Disabled: "This is the first clip" | — | — |
 | ➖ `chevron.right` (Single) | icon | ClipCollection.swift:147 | ✅ | "Next clip  →"; Disabled: "This is the last clip" | — | — |
 | ➖ ← / → (Single) | shortcut | ClipCollection.swift:162-163 | ✅ | — | — | — |
-| ⏭ Suggestion chip `text.badge.plus` "<song>" | chip | DSClipCard.swift:403-426 | ⚠️ looks like a tag, not a button | "Use as title" | Set this as the clip's title | DS component (parent-owned) — not changed here (DSClipCard suggestion chip) |
-| ⏭ Issue badges "No crop / No text / Too long for X…" | chip (static) | DSClipCard.swift:213-214 | ⚠️ look clickable, aren't | — | Explain what is missing / what fixes it | DS component (parent-owned) — not changed here (DSClipCard issue badges) |
-| ⏭ "File missing · Relink" badge | chip (static) | DSClipCard.swift:212 | ❌ says Relink but does nothing | — | Make it a button, or drop "· Relink" | DS component (parent-owned) — not changed here (DSClipCard Relink chip — needs an onRelink action in DS) |
-| ⏭ Score number (e.g. "40") | — | DSClipCard.swift:170 | ⚠️ unlabelled number on Cards | — ("—" → "Not scored") | Score 0–100 (higher posts sooner) | DS component (parent-owned) — not changed here (DSClipCard score number) |
-| ⏭ Position "1, 2…" | — | DSClipCard.swift:241 | ⚠️ unlabelled | — | Place in posting order | DS component (parent-owned) — not changed here (DSClipCard position) |
-| ⏭ Date chip | chip (static) | DSClipCard.swift:199 | ✅ | "Next post" / "Pinned to this date" / "Not in the plan yet" | Next planned post day | DS component (parent-owned) — not changed here (DSClipCard date chip) |
+| ✅ Suggestion chip `text.badge.plus` "<song>" | chip | DSClipCard.swift:403-426 | ⚠️ looks like a tag, not a button | "Use as title" | Set this as the clip's title | DS: Set the Title to “<song>” |
+| ✅ Issue badges "No crop / No text / Too long for X…" | chip (static) | DSClipCard.swift:213-214 | ⚠️ look clickable, aren't | — | Explain what is missing / what fixes it | DS: issue chips explain themselves (Still needed before it's ready — open the editor / Blocks posting…) |
+| ✅ "File missing · Relink" badge | chip (static) | DSClipCard.swift:212 | ❌ says Relink but does nothing | — | Make it a button, or drop "· Relink" | DS: chip says "File missing"; tooltip points to Health › Doctor (it was never clickable) |
+| ✅ Score number (e.g. "40") | — | DSClipCard.swift:170 | ⚠️ unlabelled number on Cards | — ("—" → "Not scored") | Score 0–100 (higher posts sooner) | DS: Score N — it sets the posting order |
+| ✅ Position "1, 2…" | — | DSClipCard.swift:241 | ⚠️ unlabelled | — | Place in posting order | DS: Number N in the posting order |
+| ✅ Date chip | chip (static) | DSClipCard.swift:199 | ✅ | "Next post" / "Pinned to this date" / "Not in the plan yet" | Next planned post day | DS: Pinned to this day / Next planned post / Not in the plan yet |
 | ➖ Platform icons | icon (static) | DSBadge.swift:211 | ✅ | "<Platform> · <state>" | — | — |
 | ➖ Mute/Unmute on media | icon | DSVideoPreview.swift:104 | ✅ | "Mute"/"Unmute" | — | — |
 
@@ -300,7 +320,7 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 | ✅ Kind DJ vid / Talking | segmented | ScoreSingle.swift:141-143 | ✅ | "Talking clips get no text by default" | Talking clips get no text overlay (undoable) | ok (undo): `setKind` journaled centrally |
 | ➖ Notes | field | ScoreSingle.swift:145 | ✅ | — | — (autosaves) | — |
 | ✅ Exclude `minus.circle` | text button | ScoreSingle.swift:146 | ⚠️ ⌘⌫ only in tooltip/hint line | "Leave this clip out — it never posts (find it in Library → Excluded)  ⌘⌫" (>45) | Never post this clip (Library → Excluded) · ⌘⌫ | ok (undo) |
-| ⏭ Keys: digits / ↩ / ⇥ ⇧⇥ / ←→ / ⌫ / esc / ⌘⌫ | shortcut | ScoreSingle.swift:156-176 | ✅ (hint line 57) | — | Add ⌘⌫ & digits to ⌘/ cheat sheet | Add ⌘⌫ & digits to the cheat sheet: MainWindowView/ShortcutSheet is parent-owned — change listed in agent A report |
+| ✅ Keys: digits / ↩ / ⇥ ⇧⇥ / ←→ / ⌫ / esc / ⌘⌫ | shortcut | ScoreSingle.swift:156-176 | ✅ (hint line 57) | — | Add ⌘⌫ & digits to ⌘/ cheat sheet | digits and ⌘⌫ added to the cheat sheet (parent) |
 | ➖ Player mute | icon | ScoreSingle.swift:101-103 | ✅ | "Mute"/"Unmute" | — | — |
 
 ### Grid view (ScoreGrid.swift)
@@ -345,7 +365,7 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 | ➖ Shorten YouTube title | text button | EditClipActions.swift:94; fix at :49 | ✅ | "Open the editor to shorten the YouTube title (100 max)" | — | — |
 | ✅ Open editor | text button | EditClipActions.swift:97 | ✅ | "Crop, text, caption, cover and platforms" | Edit crop, text, caption, cover, platforms | — |
 | ✅ `ellipsis` ⋯ | menu | EditClipActions.swift:98 | ⚠️ generic | "More actions" | Show kind, caption, defaults and more | — |
-| ⏭ Suggestion chips | chip | DSClipCard.swift:403 | ⚠️ (see Shared) | "Use as title" | Set this as the clip's title | DS component (parent-owned) — not changed here (DSClipCard suggestion chip) |
+| ✅ Suggestion chips | chip | DSClipCard.swift:403 | ⚠️ (see Shared) | "Use as title" | Set this as the clip's title | DS: Set the Title to “<song>” |
 | ⏭ "Cover" tag | chip (static) | EditView.swift:74 | ⚠️ meaning unclear | — | This clip is a session cover | DS component (parent-owned) — not changed here (DSClipTag has no tooltip slot) |
 
 ### Card actions — Grid mode (hover, shown only when not missing)
@@ -414,7 +434,7 @@ Legend for Risk: "ok (undo)" = goes through `requestBulk`/`pipelineBulk` → 1 c
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
 | ➖ Card click | gesture | QueueCards.swift:50-52 | ⚠️ opens editor | — | — | — |
-| ⏭ `line.3.horizontal` drag handle / drag card | gesture | DSClipCard.swift:235; QueueCards.swift:59-91 | ⚠️ drop only works on planned clips | "Drag to reorder" | Drag onto a planned clip to take its day | DS component (parent-owned) — not changed here (DSClipCard drag handle, "Drag to reorder") |
+| ✅ `line.3.horizontal` drag handle / drag card | gesture | DSClipCard.swift:235; QueueCards.swift:59-91 | ⚠️ drop only works on planned clips | "Drag to reorder" | Drag onto a planned clip to take its day | DS: Drag to change the posting order |
 | ✅ `bolt` | icon | QueueCards.swift:54 → QueueCards.swift:118 | ⚠️ bolt ≠ "today" | "Post today" | Post today; later posts move a day | ok (undo) |
 | ✅ `pin` | icon | QueueCards.swift:119 | ✅ | "Pin to date…" | Pin to a day the planner won't change | ok (dialog + undo) |
 | ✅ `ellipsis` ⋯ | menu | QueueCards.swift:120 | ⚠️ generic | "More actions" | Show more: move later, remove, exclude | — |
@@ -509,7 +529,7 @@ Also bugs: ✅ Queue Cards right-click "Pin N to days…" no-op (QueueCards.swif
 | ✅ Today | text button | WeekView.swift:51-53 | ⚠️ reads like the Today screen | — (disabled: "Already showing this week") | Label → "This week" · Jump back to this week · Disabled: already showing this week | — |
 | ✅ `chevron.right` (icon) | icon | WeekView.swift:54 | ✅ clear | Next week | Show the next week | — |
 | ➖ Draft / Approved / Locked pill | chip | WeekView.swift:73-80 | ✅ clear | "Draft: nothing posts until you approve the week" (and Approved/Locked variants) | label is enough (keep tooltip) | — |
-| ⏭ Runway N d approved · N d ready | text button | ToolbarControls.swift:14-31 (WeekView.swift:57) | ⚠️ "d approved / d ready" is jargon | Runway: how many days of posts are covered | Show how many days of posts are covered | ⏭ Shared/ToolbarControls.swift (RunwayChip) is not in this pass's files; it already has a tooltip + explanatory popover |
+| ➖ Runway N d approved · N d ready | text button | ToolbarControls.swift:14-31 (WeekView.swift:57) | ⚠️ "d approved / d ready" is jargon | Runway: how many days of posts are covered | Show how many days of posts are covered | RunwayChip already has a tooltip + popover |
 | ✅ `ellipsis` (icon) | menu | WeekView.swift:58 | ❌ icon only, tooltip vague | Week actions | Rebuild, push or propose this week's plan | — |
 | ✅ Rebuild week | menu item | WeekView.swift:59-60 | ⚠️ hides that it un-approves | — (disabled with no reason) | Title "Rebuild week…" · disabled title "Rebuild week — this week is over" | ok — AppModel.rebuildWeek asks first (confirm) + undo; no second confirm added |
 | ✅ Push plan by a day | menu item | WeekView.swift:61 | ⚠️ scope (all weeks) not said | — | Title "Push whole plan by a day…" | ok — AppModel.pushPlan asks first (confirm) + undo |
@@ -545,7 +565,7 @@ Also bugs: ✅ Queue Cards right-click "Pin N to days…" no-op (QueueCards.swif
 | ➖ Open editor | menu item | WeekView.swift:409 | ✅ clear | — | label is enough | — |
 | ➖ Preview | menu item | WeekView.swift:410 | ✅ clear | — | label is enough | — |
 | ➖ Show in Queue | menu item | WeekView.swift:411 | ✅ clear | — | label is enough | — |
-| ⏭ Back a stage / Forward a stage (StageMenuItems) | menu item | WeekView.swift (WeekCardMenu) | ✅ clear | native `.help` | — | ⏭ StageMenuItems lives in App/AppModel+Stages.swift (parent-owned) and still uses `.help`; disabled reason should move into the title there |
+| ✅ Back a stage / Forward a stage (StageMenuItems) | menu item | WeekView.swift (WeekCardMenu) | ✅ clear | native `.help` | — | parent: disabled reason now in the item title; no .help |
 | ✅ Remove from queue | menu item | WeekView.swift (WeekCardMenu) | ✅ clear | native `.help` (removed) | Title "Remove from queue (back to Edit)" · disabled "Remove from queue — already posted / this day has passed" | ok — removeFromQueue via bulk flow (confirm + Undo) |
 
 ### Backlog drawer
@@ -637,8 +657,8 @@ Also bugs: ✅ Queue Cards right-click "Pin N to days…" no-op (QueueCards.swif
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
 | ➖ Search clips | field | LibraryView.swift:29 | ✅ clear | — | label is enough | — |
-| ⏭ `xmark.circle.fill` in search | icon | DSInputs.swift:129-131 | ✅ clear | Clear | Clear the search | ⏭ DesignSystem/DSInputs (DS-owned) |
-| ⏭ View mode (Cards / Grid / Single / List icons) | segmented | LibraryView.swift:30; DSChoice.swift:316-323, 333 | ⚠️ tooltip is just the mode name | Cards / Grid / Single / List | Show clips as cards / a grid / one at a time / a list | ⏭ DesignSystem/DSChoice DSViewModeSwitcher (DS-owned) |
+| ✅ `xmark.circle.fill` in search | icon | DSInputs.swift:129-131 | ✅ clear | Clear | Clear the search | DS: Clear the text |
+| ✅ View mode (Cards / Grid / Single / List icons) | segmented | LibraryView.swift:30; DSChoice.swift:316-323, 333 | ⚠️ tooltip is just the mode name | Cards / Grid / Single / List | Show clips as cards / a grid / one at a time / a list | DS: Show clips as cards / grid of tiles / one big clip / compact rows |
 | ➖ All · Posted · Excluded · Missing · Long-form | chip | LibraryView.swift:114-119, 137-145 | ✅ clear | e.g. "File missing, or removed from videos.json" | keep | — |
 | ➖ Session ▾ | menu | LibraryView.swift:121-124 | ✅ clear | Show one session | keep | — |
 | ✅ Kind ▾ | menu | LibraryView.swift:125-126 | ⚠️ tooltip is a fragment | DJ vid or Talking | Show only DJ vids or Talking clips | — |
@@ -693,7 +713,7 @@ Also bugs: ✅ Queue Cards right-click "Pin N to days…" no-op (QueueCards.swif
 | ✅ Kind ▾ (DJ vid / Talking) | menu | LibraryView.swift:261-277 | ✅ clear | Set the kind | Set DJ vid or Talking for the selection | ok (confirm + undo) |
 | ➖ Exclude / Include | text button | LibraryView.swift:278-281 | ✅ clear | Keep these clips out of the plan / Put these clips back into the pipeline | keep | ok (confirm + undo) |
 | ➖ Mark long-form posted | text button | LibraryView.swift:283-288 | ✅ clear | Paste each YouTube link; the files move to Posted/Longform (disabled: already posted) | keep | ok (confirm) — dialog |
-| ⏭ More ▾ | menu | ScreenBulkBar.swift:44-53 | ⚠️ "More" says nothing | More bulk actions | Agent prompt, re-render, apply defaults | ⏭ Shared/ScreenBulkBar (not in this pass's files) |
+| ✅ More ▾ | menu | ScreenBulkBar.swift:44-53 | ⚠️ "More" says nothing | More bulk actions | Agent prompt, re-render, apply defaults | More ▾: More actions for the selected clips (parent) |
 | ➖ Mark N long-form posted… | menu item | LibraryView.swift:291 | ✅ clear | — | label is enough | ok (confirm) — dialog |
 | ✅ Copy agent prompt for N clips | menu item | LibraryView.swift:294-295 | ⚠️ "agent" jargon; disabled, no reason | — | Title "Copy agent prompt to find titles (N clips)" · disabled "Copy agent prompt — select short clips" | — |
 | ✅ Re-render N clips | menu item | LibraryView.swift:296 | ✅ clear | — | Title "Re-render N clips…" (opens the confirm) | ok (confirm + undo) |
@@ -839,31 +859,31 @@ Also bugs: ✅ Queue Cards right-click "Pin N to days…" no-op (QueueCards.swif
 ### Post context menu (PostContextMenu) — Week slot + extra chips (WeekView.swift:360, 436), Today rows (TodayView.swift:160), Posts rows (PostsView.swift:255)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| ⏭ Mark posted… | menu item | CommandPalette.swift:480 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
-| ⏭ Copy caption | menu item | CommandPalette.swift:481 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
-| ⏭ Copy title | menu item | CommandPalette.swift:482 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
-| ⏭ Open upload page | menu item | CommandPalette.swift:483 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
-| ⏭ Reveal in Finder | menu item | CommandPalette.swift:484 | ⚠️ may render first | — | Show the file in Finder (renders if needed) | ⏭ owned by Shell/CommandPalette (agent A) |
-| ⏭ Copy file | menu item | CommandPalette.swift:485 | ⚠️ may render first | — | Copy the video file (renders if needed) | ⏭ owned by Shell/CommandPalette (agent A) |
-| ⏭ Report problem… | menu item | CommandPalette.swift:489 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
+| ➖ Mark posted… | menu item | CommandPalette.swift:480 | ✅ clear | — | label is enough | labelled menu item |
+| ➖ Copy caption | menu item | CommandPalette.swift:481 | ✅ clear | — | label is enough | labelled menu item |
+| ➖ Copy title | menu item | CommandPalette.swift:482 | ✅ clear | — | label is enough | labelled menu item |
+| ➖ Open upload page | menu item | CommandPalette.swift:483 | ✅ clear | — | label is enough | labelled menu item |
+| ➖ Reveal in Finder | menu item | CommandPalette.swift:484 | ⚠️ may render first | — | Show the file in Finder (renders if needed) | labelled menu item |
+| ➖ Copy file | menu item | CommandPalette.swift:485 | ⚠️ may render first | — | Copy the video file (renders if needed) | labelled menu item |
+| ➖ Report problem… | menu item | CommandPalette.swift:489 | ✅ clear | — | label is enough | labelled menu item |
 | ✅ Post now | menu item | CommandPalette.swift:492 | ⚠️ means "make due", jumps to Today | — | Make it due now and open Today | ok — AppModel.postNow is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
 | ✅ Shift plan | menu item | CommandPalette.swift:493 | ⚠️ jargon | — | Move it to the next free <Platform> slot | ok — AppModel.shiftPlan is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
 | ✅ Reset post | menu item | CommandPalette.swift:495 | ⚠️ reset to what? | — | Back to Planned, error cleared | ok — AppModel.reset is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
 | ✅ Skip this platform | menu item | CommandPalette.swift:496 | ✅ clear | — | Don't post this clip on <Platform> | ok — AppModel.skip is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
-| ⏭ Edit video | menu item | CommandPalette.swift:499 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
+| ➖ Edit video | menu item | CommandPalette.swift:499 | ✅ clear | — | label is enough | labelled menu item |
 
 ### Video context menu (VideoContextMenu) — Week backlog tiles (WeekView.swift:511), Library cards (LibraryView.swift:228)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| ⏭ Edit | menu item | CommandPalette.swift:447 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
-| ⏭ Preview | menu item | CommandPalette.swift:448 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
+| ➖ Edit | menu item | CommandPalette.swift:447 | ✅ clear | — | label is enough | labelled menu item |
+| ➖ Preview | menu item | CommandPalette.swift:448 | ✅ clear | — | label is enough | labelled menu item |
 | ✅ Post today | menu item | CommandPalette.swift:450 | ⚠️ which slot / what moves | — | Put it on today's slot; the plan shifts | ok — AppModel.postToday is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
 | ✅ Pin to tomorrow | menu item | CommandPalette.swift:451 | ✅ clear | — | label is enough | ok — AppModel.pin is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
 | ✅ Skip next slot | menu item | CommandPalette.swift:452 | ⚠️ unclear who takes the slot | — | Let the next clip take its slot | ok — AppModel.skipNext is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
 | ✅ Repost on ▸ <Platform> (blocked: "<Platform> — why", disabled) | menu item | CommandPalette.swift:453, 507-519 | ✅ clear | — (reason inline in title) | Queue the next version on <Platform> | ok — AppModel.repost is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
 | ✅ Duplicate version | menu item | CommandPalette.swift:455 | ⚠️ which version | — | Copy the latest version as vN+1 | ok — AppModel.duplicateVersion is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
-| ⏭ Re-render | menu item | CommandPalette.swift:456 | ✅ clear | — | Make the video file again now | ⏭ owned by Shell/CommandPalette (agent A) |
-| ⏭ Add N to week (multi-select) | menu item | CommandPalette.swift:458 | ✅ clear | — | Put them on the next open days | ⏭ AppModel.addToWeek is journaled (Undo); the many-clip confirm is owned by Shell/CommandPalette (agent A) |
+| ✅ Re-render | menu item | CommandPalette.swift:456 | ✅ clear | — | Make the video file again now | agent A: forces a fresh render via requestBulk + bulk.reRender (Undo) |
+| ✅ Add N to week (multi-select) | menu item | CommandPalette.swift:458 | ✅ clear | — | Put them on the next open days | agent A: many clips → confirm sheet + Undo |
 | ✅ Kind ▸ DJ vid / Talking | menu item | CommandPalette.swift:460-462 | ✅ clear | — | label is enough | ok — AppModel.setKind is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
 | ✅ Score ▸ 90 … 30 / Clear | menu item | CommandPalette.swift:463-466 | ⚠️ presets only; "Clear" wipes | — | Set score; higher posts sooner | ok — AppModel.setScore is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
 | ✅ Exclude / Include | menu item | CommandPalette.swift:468-470 | ✅ clear | — | Keep out of the plan / Put back | ok — AppModel.setExcluded is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
@@ -1049,7 +1069,7 @@ Context: the editor autosaves 300 ms after each change (EditorModel.swift:793 `s
 | ✅ Undo `arrow.uturn.backward` / Redo `arrow.uturn.forward` (new) | icon | EditorView.swift (header, before v1 ▾) | ✅ clear | — | Undo the last change · ⌘Z / Redo the change you undid · ⇧⌘Z. Disabled: Nothing to undo yet / Nothing to redo / Editing is off for this clip | — (they are the undo) |
 | ✅ v1 ▾ (versions) | menu | EditorView.swift:155 | ⚠️ "v1" is cryptic | "Text version — versions change the text and caption for reposts" | Switch or add text versions for reposts | — |
 | ➖ Done | text button | EditorView.swift:140 | ✅ clear | "Save and close  ⌘↩" | keep · ⌘↩ | — |
-| ⏭ Space / ← → / ⇧← → | gesture (keys) | EditorView.swift:83-85 | ⚠️ undiscoverable outside Play tooltip | — | add a "?" shortcut list | deferred: a “?” shortcut list belongs to Shell’s ShortcutSheet (not in this leaf); Play shows Space, handles show I/O keycaps |
+| ✅ Space / ← → / ⇧← → | gesture (keys) | EditorView.swift:83-85 | ⚠️ undiscoverable outside Play tooltip | — | add a "?" shortcut list | cheat sheet Editor group: Space, I/O, ⌘Z/⇧⌘Z, ⌘[ ⌘], ⌘↩ (parent) |
 | ✅ I / O (trim at playhead) | gesture (keys) | EditorView.swift:86-89 | ⚠️ only mentioned in the handle tooltips | — | (on handles: I / O keycaps) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
 
 ### Versions popover (EditorInspector.swift)
@@ -1168,7 +1188,7 @@ Context: the editor autosaves 300 ms after each change (EditorModel.swift:793 `s
 ### Canvas modes (EditorCanvas.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| ⏭ Frame / Zones / Preview `crop` `rectangle.dashed` `iphone` | segmented | EditorCanvas.swift:107 | ⚠️ one tooltip covers all three | "Frame: crop the recording · Zones: … · Preview: …" | Switch view: crop, safe zones or phone preview (one tooltip) | deferred: DSSegmented shows segment tooltips only for icon-only segments (DS change, parent-owned) |
+| ✅ Frame / Zones / Preview `crop` `rectangle.dashed` `iphone` | segmented | EditorCanvas.swift:107 | ⚠️ one tooltip covers all three | "Frame: crop the recording · Zones: … · Preview: …" | Switch view: crop, safe zones or phone preview (one tooltip) | per-segment tooltips: Crop the 9:16 frame… / Check text against each platform's UI zones / See it in a phone mock… |
 | ✅ Crop window drag + scroll/pinch | gesture | EditorCanvas.swift:249-260, :221 | ✅ clear | "Drag to move the crop · scroll or pinch to zoom" | Drag to move the crop; scroll or pinch to zoom | ok (⌘Z): editor undo history; ⇧⌘Z redo |
 | ⏭ Corner brackets | gesture (info) | EditorCanvas.swift:248 | ⚠️ look like resize handles but aren't | — | (drop them, or make them resize) | deferred: visual change (drop or make resizable), not a tooltip; the crop-window tooltip explains drag/zoom |
 | ➖ Use this crop `checkmark` (frame bar) | text button | EditorCanvas.swift:156 | ✅ clear | "Confirm this framing"; disabled "Editing is off for this clip" | keep | — |
