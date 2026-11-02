@@ -47,6 +47,9 @@ struct DSClip: Identifiable {
   var isUpdatingPreview = false
   /// `AppModel.previewStamp` of what this card shows. Key preview tasks on it (`.task(id: clip.previewStamp)`).
   var previewStamp = ""
+  /// Text exists but its overlay image was evicted; `reloadOverlay` draws it again (called only while playing).
+  var overlayMissing = false
+  var reloadOverlay: (() -> Void)? = nil
   /// "0:42".
   var durationText: String? = nil
   /// "DJ vid" / "Talking".
@@ -168,7 +171,7 @@ struct DSClipCard<Actions: View>: View {
                    loopRange: clip.loopRange, unmuteOnHover: config.unmuteOnHover, isHovered: hot, showsMuteButton: mute,
                    muteAlignment: muteAlignment, showsScrubber: scrubber, cornerRadius: radius,
                    overlay: clip.overlay, textWindow: clip.textWindow, isUpdating: clip.isUpdatingPreview && !clip.isMissing,
-                   updatingStyle: updating)
+                   updatingStyle: updating, needsOverlay: clip.overlayMissing, onNeedsOverlay: clip.reloadOverlay)
       .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.color.border) }
   }
 

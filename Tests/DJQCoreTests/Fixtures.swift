@@ -73,6 +73,7 @@ final class Fixture {
     try d.write(to: sessionDir.appendingPathComponent(rel))
   }
 
+  @discardableResult
   func intake() throws -> IntakeReport { try Intake(store: store).run() }
 
   deinit { try? FileManager.default.removeItem(at: dir) }

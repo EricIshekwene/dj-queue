@@ -28,6 +28,11 @@ struct ClipPreview {
   var isRenderCover = false
   /// Width ÷ height of the clip as posted (9:16 unless its edit says otherwise).
   var aspectRatio: Double = Aspect.r9x16.ratio
+  /// The clip has text but its overlay image was evicted from the cache: a PLAYING preview calls
+  /// `model.reloadOverlay(videoId, version:)` (DSVideoPreview's `onNeedsOverlay`). The cover already carries the text.
+  var overlayMissing = false
+  /// The text version this preview shows.
+  var version = 1
 }
 
 /// Resolved, per (clip, version, stamp): what the overlay and its timing need. Loaded off the main thread.
@@ -120,16 +125,13 @@ extension AppModel {
     let proxy = v.missing || v.type != .short ? nil : proxyURLs[v.id]
     var p = ClipPreview(stamp: stamp, proxyURL: proxy, cover: version == 1 ? poster(v) : poster(v, version: version),
                         overlay: nil, textWindow: nil, loopRange: nil,
-                        isUpdating: proxy == nil && previewUpdating.contains(v.id))
+                        isUpdating: proxy == nil && previewUpdating.contains(v.id), version: version)
     if v.type == .short, let info = previewInfo[Self.infoKey(v.id, version)], info.stamp == stamp {
       p.aspectRatio = info.aspect.ratio
       guard info.textKey != "none" else { return p }
       p.overlay = Self.overlayCache.value(info.overlayKey)
-      // Evicted from the LRU while still on screen (review L2): draw it again (throttled per key) when it can play.
-      if p.overlay == nil, proxy != nil, Date().timeIntervalSince(overlayReloadedAt[info.overlayKey] ?? .distantPast) > 2 {
-        overlayReloadedAt[info.overlayKey] = Date()
-        Task { @MainActor in self.requestPreviewInfo(v, version: version) }
-      }
+      // Evicted from the LRU while still on screen (review L2): only a playing tile (≤4) asks for it again.
+      p.overlayMissing = p.overlay == nil
       let offset = playback.loop == .wholeFile ? info.trimIn : 0
       p.textWindow = info.textWindow.map { ($0.lowerBound + offset)...($0.upperBound + offset) }
     }
@@ -194,6 +196,14 @@ extension AppModel {
             FileManager.default.fileExists(atPath: path) else { return nil }
       return URL(fileURLWithPath: path)
     }.value
+  }
+
+  /// Draws an evicted overlay again for a preview that is playing now (throttled to once per 2 s per text).
+  func reloadOverlay(_ videoId: String, version: Int = 1) {
+    guard let v = videoById[videoId], let info = previewInfo[Self.infoKey(videoId, version)] else { return }
+    guard Date().timeIntervalSince(overlayReloadedAt[info.overlayKey] ?? .distantPast) > 2 else { return }
+    overlayReloadedAt[info.overlayKey] = Date()
+    requestPreviewInfo(v, version: version)
   }
 
   /// Loads (or refreshes after a cache eviction) the overlay + timing of `v` at `version`.

@@ -59,6 +59,9 @@ extension AppModel {
     c.loopRange = p.loopRange
     c.isUpdatingPreview = p.isUpdating
     c.previewStamp = p.stamp
+    c.overlayMissing = p.overlayMissing
+    let id = c.id, version = p.version
+    c.reloadOverlay = p.overlayMissing ? { [weak self] in self?.reloadOverlay(id, version: version) } : nil
   }
 
   /// Length shown on cards: Eric's markers when set (the default trim), else the clip file.
