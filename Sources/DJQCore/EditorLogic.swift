@@ -139,6 +139,43 @@ public enum EditorLogic {
     }
   }
 
+  // MARK: Round 2 — overrides on top of New clip defaults
+
+  /// An edited value that equals its default is stored as nil ("follows the default"), so the editor's "Custom"
+  /// tag only appears for real changes.
+  public static func override(_ value: Double, default d: Double, tolerance: Double = 0.01) -> Double? {
+    abs(value - d) < tolerance ? nil : value
+  }
+
+  /// Turns posting on/off for one platform as an override on top of `defaults.platforms`
+  /// (skip a default platform, or include one the defaults leave out).
+  public static func setPosting(_ e: inout Edit, _ p: Platform, _ on: Bool, defaults: NewClipDefaults) {
+    if on {
+      e.skippedPlatforms.remove(p)
+      if !defaults.platforms.contains(p) { e.includedPlatforms.insert(p) }
+    } else {
+      e.includedPlatforms.remove(p)
+      if defaults.platforms.contains(p) { e.skippedPlatforms.insert(p) }
+    }
+  }
+
+  public enum LengthLevel: Sendable, Equatable { case ok, near, over }
+
+  /// Caption length against a platform limit: near from 90 %, over past the limit (the editor warns only then).
+  public static func lengthLevel(count: Int, limit: Int) -> LengthLevel {
+    if count > limit { return .over }
+    return Double(count) >= Double(limit) * 0.9 ? .near : .ok
+  }
+
+  /// Grace zones on the timeline: the seconds the clip file keeps before the in marker and after the out marker.
+  /// Empty for a side without a marker or with no grace.
+  public static func graceZones(duration: Double, markerIn: Double?, markerOut: Double?) -> [TrimRange] {
+    var out: [TrimRange] = []
+    if let a = markerIn, a > 0.01 { out.append(TrimRange(start: 0, end: min(a, duration))) }
+    if let b = markerOut, b < duration - 0.01 { out.append(TrimRange(start: max(0, b), end: duration)) }
+    return out
+  }
+
   // MARK: Formatting
 
   public static func time(_ s: Double, tenths: Bool = false) -> String {
