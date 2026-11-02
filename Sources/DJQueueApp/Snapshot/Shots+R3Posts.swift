@@ -81,7 +81,7 @@ extension SnapshotShots {
   @MainActor static func gridConfig(_ m: AppModel, hovered: Bool) -> DSClipCardConfig {
     var cfg = DSClipCardConfig()
     cfg.autoplay = PreviewPlayback.plays(m.playback, layout: .grid, hovered: hovered, focused: false)
-    cfg.unmuteOnHover = m.playback.unmuteOnHover
+    cfg.unmuteOnHover = m.playback.hoverSound
     return cfg
   }
 }

@@ -33,7 +33,7 @@ public enum Validation {
     var out: [ValidationIssue] = []
     if v.missing { out.append(.init(kind: .missingFile, platform: nil, message: "File missing")) }
     guard v.type == .short else { return out }
-    if v.heldInEdit {
+    if try store.isHeld(v) {
       out.append(.init(kind: .heldInEdit, platform: nil, message: "Sent back from Queue — Send to queue when it's ready"))
     }
     let settings = try store.settings()

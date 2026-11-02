@@ -21,6 +21,10 @@ public struct PlaybackPrefs: Codable, Equatable, Sendable {
 
   public init() {}
 
+  /// Hover plays with sound only while Autoplay is on (Settings disables "Unmute on hover" when Autoplay is off,
+  /// so with Autoplay off hovering does nothing). Every preview reads this, never `unmuteOnHover` directly.
+  public var hoverSound: Bool { autoplay && unmuteOnHover }
+
   enum CodingKeys: String, CodingKey {
     case autoplay, unmuteOnHover, unmuteOnHoverChosen, focusOnly, loop, gridHoverOnly, gridHoverOnlyChosen
   }

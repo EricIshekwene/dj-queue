@@ -75,11 +75,7 @@ extension BulkActions {
     switch (st, direction) {
     case (.score, .back): return "Score is the first stage"
     case (.score, .forward): return "Give it a score on Score first"
-    case (.scheduled, .back):
-      if let p = try store.posts(where: "video_id=? AND kind='regular' AND state='posted'", [v.id]).first {
-        return "Already posted on \(p.platform.displayName) — it can't leave the plan; skip or reset its posts in Posts"
-      }
-      return nil
+    case (.scheduled, .back): return try postedBlocker(v)
     case (.scheduled, .forward): return "Mark it posted on Today once it's up"
     case (.posted, .back): return "Posted — use Repost (next version) or Reset a wrongly marked post in Posts"
     case (.posted, .forward): return "Posted is the last stage"

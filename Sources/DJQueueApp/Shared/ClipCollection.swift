@@ -177,7 +177,7 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
     var cfg = DSClipCardConfig()
     let p = model.playback
     cfg.autoplay = PreviewPlayback.plays(p, layout: mode.playbackLayout, hovered: hovered == v.id, focused: focused)
-    cfg.unmuteOnHover = p.unmuteOnHover
+    cfg.unmuteOnHover = p.hoverSound
     cfg.selectionMode = !sel.isEmpty && mode != .single
     cfg.showsDragHandle = showsDragHandle && mode == .wide
     return DSClipCard(c, mode: mode, isSelected: sel.contains(v.id), isFocused: focused && mode != .single, config: cfg,

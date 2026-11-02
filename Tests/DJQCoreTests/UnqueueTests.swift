@@ -63,33 +63,53 @@ import Testing
     #expect(dry.unplanned?[thu.videoId]?.first?.platforms.count == 6)
     #expect(try planState(f) == before)
 
+    let monPosts = try f.store.slotPosts(mon.id), tuePosts = try f.store.slotPosts(tue.id)
     let r = try b.removeFromQueue([thu.videoId, mon.videoId, tue.videoId])
-    #expect(Set(r.changed) == [thu.videoId, mon.videoId, tue.videoId])
+    #expect(r.changed == [thu.videoId])
     // Thursday: slot + its 6 posts gone; the other days keep their clips and dates (no reshuffle).
     #expect(try f.store.planSlot(id: thu.id) == nil)
     #expect(try f.store.posts(where: "video_id=?", [thu.videoId]).isEmpty)
     #expect(try f.store.planSlots().map(\.date) == ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-06", "2026-11-07"])
     for s in before.slots where s.id != thu.id { #expect(try f.store.planSlot(id: s.id) == s) }
-    // Monday: everything posted stays, untouched.
-    #expect(try f.store.slotPosts(mon.id).count == 6 && f.store.slotPosts(mon.id).allSatisfy { $0.state == .posted })
-    // Tuesday: posted TikTok stays (and so does its slot); the 5 in-flight posts are gone.
-    #expect(try f.store.slotPosts(tue.id).map(\.platform) == [.tiktok])
-    #expect(try f.store.post(id: tueTikTok.id)?.state == .posted)
-    for id in [thu.videoId, mon.videoId, tue.videoId] {
+    // Monday (fully posted) and Tuesday (posted on TikTok, 5 in flight) are refused: nothing deleted, not held.
+    #expect(r.skipped[mon.videoId]?.hasPrefix("Already posted on") == true)
+    #expect(r.skipped[tue.videoId] == "Already posted on TikTok — it can't leave the plan; skip or reset its posts in Posts")
+    #expect(try f.store.slotPosts(mon.id) == monPosts && f.store.slotPosts(tue.id) == tuePosts)
+    for id in [mon.videoId, tue.videoId] {
       let v = try #require(try f.store.video(id: id))
-      #expect(v.heldInEdit && v.state == .needsEdit)
-      #expect(try f.store.events(videoId: id).contains { $0.kind == "bulk" && $0.message.hasPrefix("unqueue") })
+      #expect(!v.heldInEdit && v.state != .needsEdit)
     }
+    #expect(try f.store.video(id: mon.videoId)?.state == .posted && f.store.video(id: tue.videoId)?.state == .posting)
+    let held = try #require(try f.store.video(id: thu.videoId))
+    #expect(held.heldInEdit && held.state == .needsEdit)
+    #expect(try f.store.events(videoId: thu.videoId).contains { $0.kind == "bulk" && $0.message.hasPrefix("unqueue") })
     #expect(try f.doublePosts().isEmpty)
-    // History is kept: the deleted posts leave a "deleted" history row; posted ones keep theirs.
-    #expect(try f.store.history(postId: tueTikTok.id).last?.toState == "posted")
+    // Send to queue has nothing to do on the refused clips (they were never held).
+    let s = try b.sendToQueue([mon.videoId, tue.videoId])
+    #expect(s.changed.isEmpty && s.batchId == nil)
+    // Stage back gives the same reason.
+    #expect(try b.blocker(try #require(try f.store.video(id: tue.videoId)), .back) == r.skipped[tue.videoId])
 
     // One undo puts the flag, slots, weeks and posts back exactly.
     try b.undo(try #require(r.batchId))
     #expect(try planState(f) == before)
-    for id in [thu.videoId, mon.videoId, tue.videoId] { #expect(try f.store.video(id: id)?.heldInEdit == false) }
+    #expect(try f.store.video(id: thu.videoId)?.heldInEdit == false)
     #expect(try f.store.video(id: thu.videoId)?.state == .planned)
     #expect(try f.doublePosts().isEmpty)
+  }
+
+  /// A clip held before this rule (or via the raw flag) that has a posted post keeps its real posted state.
+  @Test func heldFlagNeverMasksPostedState() throws {
+    let f = try Fixture.engine(2)
+    try Planner(store: f.store).approveWeek(f.week)
+    let mon = try slot(f, "2026-11-02")
+    let tiktok = try #require(try f.store.slotPosts(mon.id).first { $0.platform == .tiktok })
+    f.setTime("2026-11-02", "20:00")
+    try PostActions(store: f.store).markPosted(postId: tiktok.id, url: Fixture.postURLs[.tiktok]!)
+    try f.store.setHeldInEdit(mon.videoId, true)
+    let v = try #require(try f.store.video(id: mon.videoId))
+    #expect(v.state == .posting)
+    #expect(try !Validation.issues(video: v, store: f.store).contains { $0.kind == .heldInEdit })
   }
 
   @Test func removingAPinnedClipRemovesItsPin() throws {
@@ -232,7 +252,14 @@ import Testing
     #expect(dup.skipped["clip-0"]?.contains("proposed week") == true)
     try Planner(store: f.store).approveWeek(f.week)
     let s1 = try b.forward(["clip-1"])
-    #expect(s1.moves?["clip-1"]?.to == .scheduled || s1.skipped["clip-1"] != nil)
+    let m1 = try #require(s1.moves?["clip-1"])
+    #expect(m1.from == .queue && m1.to == .scheduled && m1.note.hasPrefix("Scheduled for "))
+    let slot1 = try #require(try f.store.planSlots(where: "video_id='clip-1'").first)
+    #expect(slot1.pinned && slot1.date >= "2026-11-02" && slot1.date <= "2026-11-08")
+    #expect(try f.store.week(slot1.weekStart)?.state == .approved)
+    let posts1 = try f.store.posts(where: "video_id='clip-1' AND kind='regular'")
+    #expect(posts1.count == 6 && Set(posts1.map(\.platform)).count == 6 && posts1.allSatisfy { $0.planSlotId == slot1.id })
+    #expect(try f.store.video(id: "clip-1")?.state == .planned)
     #expect(try f.doublePosts().isEmpty)
     // Scheduled → Posted only via Today.
     #expect(try b.forward(["clip-0"]).skipped["clip-0"]?.contains("Today") == true)

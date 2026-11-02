@@ -16,11 +16,7 @@ extension AppModel {
     }
     switch (st, direction) {
     case (.score, .back): return "Score is the first stage"
-    case (.scheduled, .back):
-      if let p = (postsByVideo[v.id] ?? []).first(where: { $0.kind == .regular && $0.state == .posted }) {
-        return "Already posted on \(p.platform.displayName) — it can't leave the plan; skip or reset its posts in Posts"
-      }
-      return nil
+    case (.scheduled, .back): return removeFromQueueBlocker(v)
     case (.posted, .back): return "Posted — use Repost (next version) or Reset a wrongly marked post in Posts"
     case (.posted, .forward): return "Posted is the last stage"
     case (.scheduled, .forward):
@@ -50,6 +46,27 @@ extension AppModel {
   }
 
   static let removeFromQueueHelp = "Send back to Edit — unposted slots are removed"
+
+  /// Why `v` can't leave the plan (Remove from queue / Back to Queue): it already posted somewhere, or every platform
+  /// finished. Mirrors `BulkActions.postedBlocker` from the loaded data.
+  func removeFromQueueBlocker(_ v: Video) -> String? {
+    if let p = (postsByVideo[v.id] ?? []).filter({ ($0.kind == .regular || $0.kind == .retry) && $0.state == .posted })
+      .min(by: { ($0.postedAt ?? .distantFuture) < ($1.postedAt ?? .distantFuture) }) {
+      return "Already posted on \(p.platform.displayName) — it can't leave the plan; skip or reset its posts in Posts"
+    }
+    if [.posting, .posted, .partial].contains(v.state) {
+      return "Already \(v.state.displayName.lowercased()) — it can't leave the plan; skip or reset its posts in Posts"
+    }
+    return nil
+  }
+
+  /// Remove-from-queue blocker for a menu acting on `targets`: the reason when NONE of them can go (one clip: its
+  /// reason); nil when at least one can (the rest are skipped with their reason in the confirmation).
+  func removeFromQueueBlocker(_ targets: [String]) -> String? {
+    let reasons = targets.compactMap(video).map(removeFromQueueBlocker)
+    guard !reasons.isEmpty, reasons.allSatisfy({ $0 != nil }) else { return nil }
+    return targets.count == 1 ? reasons[0] : "Every selected clip already posted somewhere — they can't leave the plan"
+  }
 
   /// "Score it" · "Send to queue" · "Schedule" · "Mark posted".
   func stageForwardTitle(_ v: Video) -> String {
@@ -102,6 +119,7 @@ extension AppModel {
   /// Queue "Remove from queue" (F1): back to Edit, held there until "Send to queue". Asks first (listing the days)
   /// when it would remove scheduled days, or for several clips.
   func removeFromQueue(_ ids: [String]) {
+    if let why = removeFromQueueBlocker(ids) { show(why, error: true); return }
     let b = bulk
     let n = AppModel.pipelineClips(ids.count)
     requestBulk(BulkRequest(

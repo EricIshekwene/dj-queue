@@ -564,11 +564,19 @@ public final class Store: @unchecked Sendable {
     }
   }
 
+  /// The held flag counts only for a short clip with nothing posted (regular/retry).
+  public func isHeld(_ v: Video) throws -> Bool {
+    guard v.heldInEdit, v.type == .short else { return false }
+    return try db.one("SELECT 1 AS x FROM platform_posts WHERE video_id=? AND kind IN ('regular','retry') AND state='posted'",
+                      [v.id]) == nil
+  }
+
   public func computeState(_ v: Video) throws -> VideoState {
     if v.missing { return .missingFile }
     if v.excluded { return .excluded }
     // Sent back from Queue: Edit until Eric sends it to the queue again (its future slots/posts were removed).
-    if v.heldInEdit && v.type == .short { return .needsEdit }
+    // Never masks a clip that already posted somewhere (Remove from queue refuses those).
+    if try isHeld(v) { return .needsEdit }
     // Latest attempt per platform; a retry (fix) supersedes the failed regular post. Reposts don't change state.
     let posts = try self.posts(where: "video_id=? AND kind IN ('regular','retry')", [v.id])
     if !posts.isEmpty {

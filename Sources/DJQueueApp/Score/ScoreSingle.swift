@@ -99,7 +99,7 @@ struct ScoreSingleView: View {
   private func player(_ v: Video) -> some View {
     let pb = model.playback
     return DSVideoPreview(url: model.proxyURLs[v.id], poster: model.poster(v), isActive: pb.autoplay, isPriority: true,
-                          unmuteOnHover: pb.unmuteOnHover, showsMuteButton: true, muteAlignment: .topTrailing,
+                          unmuteOnHover: pb.hoverSound, showsMuteButton: true, muteAlignment: .topTrailing,
                           showsScrubber: true, cornerRadius: DS.radius.xl)
       .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.xl, style: .continuous))
       .overlay { RoundedRectangle(cornerRadius: DS.radius.xl, style: .continuous).strokeBorder(DS.color.border) }

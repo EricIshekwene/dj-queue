@@ -41,7 +41,7 @@ struct QueueCardList: View {
     var cfg = DSClipCardConfig()
     let p = model.playback
     cfg.autoplay = p.autoplay && (!p.focusOnly || hovered == v.id)
-    cfg.unmuteOnHover = p.unmuteOnHover
+    cfg.unmuteOnHover = p.hoverSound
     cfg.selectionMode = !sel.isEmpty
     cfg.showsDragHandle = true
     let hot = hovered == v.id || SnapshotHover.id == v.id
@@ -164,7 +164,8 @@ struct QueueClipMenu: View {
     Button(targets.count == 1 ? "Remove from queue" : "Remove \(n) from queue", systemImage: "arrow.uturn.backward") {
       model.removeFromQueue(targets)
     }
-    .help(AppModel.removeFromQueueHelp)
+    .disabled(model.removeFromQueueBlocker(targets) != nil)
+    .help(model.removeFromQueueBlocker(targets) ?? AppModel.removeFromQueueHelp)
     if targets.count == 1 && ClipStage.of(video) != .queue {
       StageMenuItems(model: model, video: video, targets: targets)
     } else {

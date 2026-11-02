@@ -285,7 +285,7 @@ struct WeekDayCard: View {
     let p = model.playback
     VStack(alignment: .leading, spacing: 0) {
       DSVideoPreview(url: video.missing ? nil : model.proxyURLs[video.id], poster: model.poster(video),
-                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), unmuteOnHover: p.unmuteOnHover && !isPast,
+                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), unmuteOnHover: p.hoverSound && !isPast,
                      isHovered: hovering, muteAlignment: .bottomTrailing)
         .frame(width: width, height: width * 16 / 9)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: DS.radius.md, topTrailingRadius: DS.radius.md, style: .continuous))
@@ -414,8 +414,8 @@ struct WeekCardMenu: View {
     Divider()
     StageMenuItems(model: model, video: video, targets: [video.id])
     Button("Remove from queue", systemImage: "arrow.uturn.backward") { model.removeFromQueue([video.id]) }
-      .disabled(isPast)
-      .help(AppModel.removeFromQueueHelp)
+      .disabled(isPast || model.removeFromQueueBlocker(video) != nil)
+      .help(model.removeFromQueueBlocker(video) ?? (isPast ? "This day has passed" : AppModel.removeFromQueueHelp))
     Divider()
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }
     Button("Preview", systemImage: "play.rectangle") { model.previewVideo = video }

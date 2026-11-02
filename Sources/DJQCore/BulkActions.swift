@@ -356,6 +356,7 @@ public final class BulkActions: @unchecked Sendable {
       if v.excluded { return .skipped("excluded — it isn't in the queue") }
       if v.score == nil { return .skipped("not scored yet — it isn't in the queue") }
       if v.heldInEdit { return .unchanged }
+      if let why = try postedBlocker(v) { return .skipped(why) }
       let items = try hold(v, planner: planner)
       if !items.isEmpty { removed[v.id] = items }
       return .changed
@@ -367,6 +368,18 @@ public final class BulkActions: @unchecked Sendable {
       r.summary += " · \(n) scheduled day\(n == 1 ? "" : "s") removed"
     }
     return r
+  }
+
+  /// Why a clip can't leave the plan (Remove from queue, Scheduled → Queue): something already posted, or every
+  /// platform finished. nil = it can.
+  public func postedBlocker(_ v: Video) throws -> String? {
+    if let p = try store.posts(where: "video_id=? AND kind IN ('regular','retry') AND state='posted'", [v.id], order: "posted_at").first {
+      return "Already posted on \(p.platform.displayName) — it can't leave the plan; skip or reset its posts in Posts"
+    }
+    if [.posting, .posted, .partial].contains(v.state) {
+      return "Already \(v.state.displayName.lowercased()) — it can't leave the plan; skip or reset its posts in Posts"
+    }
+    return nil
   }
 
   /// Remove-from-queue's per-clip step: out of the plan, then held in Edit.

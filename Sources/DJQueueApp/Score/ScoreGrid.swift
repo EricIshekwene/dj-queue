@@ -40,7 +40,7 @@ struct ScoreGridView: View {
     var cfg = DSClipCardConfig()
     let p = model.playback
     cfg.autoplay = PreviewPlayback.plays(p, layout: .grid, hovered: hovered == v.id, focused: focus == v.id)
-    cfg.unmuteOnHover = p.unmuteOnHover
+    cfg.unmuteOnHover = p.hoverSound
     cfg.selectionMode = !sel.isEmpty
     return VStack(alignment: .leading, spacing: DS.space.xs) {
       DSClipCard(c, mode: .grid, isSelected: sel.contains(v.id), isFocused: focus == v.id, config: cfg,

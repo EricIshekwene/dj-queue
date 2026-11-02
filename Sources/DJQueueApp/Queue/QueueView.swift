@@ -124,7 +124,8 @@ private struct QueueBulkBar: View {
       .dsTooltip("Put the selected clips on today (clips beyond today's free slots are skipped)")
     } more: {
       Button("Remove from queue", systemImage: "arrow.uturn.backward") { model.removeFromQueue(ids) }
-        .help(AppModel.removeFromQueueHelp)
+        .disabled(model.removeFromQueueBlocker(ids) != nil)
+        .help(model.removeFromQueueBlocker(ids) ?? AppModel.removeFromQueueHelp + " (clips that already posted are skipped)")
       Button("Back a stage", systemImage: "chevron.left") { model.stageBack(ids) }
         .help("Planned clips go back to the Queue (unposted days removed); ready ones go back to Edit")
       Button("Forward a stage", systemImage: "chevron.right") { model.stageForward(ids) }
