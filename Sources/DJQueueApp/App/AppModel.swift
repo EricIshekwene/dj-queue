@@ -233,7 +233,7 @@ final class AppModel {
   func reupload(_ post: PlatformPost, version: Int?, newVersion: Bool = false) {
     if newVersion {
       var made = 0
-      guard perform(nil, {
+      guard undoable("Re-upload as a new version", "reupload-new-version", ids: [post.videoId], plan: true, {
         let vs = try store.versions(videoId: post.videoId)
         var v = vs.last ?? Version(number: 1)
         v.number = (vs.map(\.number).max() ?? 0) + 1
@@ -244,7 +244,7 @@ final class AppModel {
       show("Re-uploading as v\(made) — edit it now")
       openEditor(post.videoId)
     } else {
-      perform("Re-upload queued\(version.map { " (v\($0))" } ?? "")") {
+      undoable("Re-upload queued\(version.map { " (v\($0))" } ?? "")", "reupload", ids: [post.videoId], plan: true) {
         try postActions.resolveCopyright(postId: post.id, .reuploadAnyway(versionNo: version))
       }
     }
