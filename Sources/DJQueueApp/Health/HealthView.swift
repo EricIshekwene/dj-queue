@@ -9,6 +9,11 @@ struct HealthView: View {
   @State private var lastBackup: Date?
 
   var body: some View {
+    // FOUNDATION: round-1 body inside the shared scaffold until the Browse leaf rewrites this screen.
+    ScreenScaffold(model: model, screen: .health, content: { legacyBody })
+  }
+
+  @ViewBuilder private var legacyBody: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
         tiles

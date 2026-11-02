@@ -42,15 +42,16 @@ struct LibraryView: View {
   }
 
   var body: some View {
+    // FOUNDATION: round-1 body inside the shared scaffold until the Browse leaf rewrites this screen.
+    ScreenScaffold(model: model, screen: .library, content: { legacyBody })
+  }
+
+  @ViewBuilder private var legacyBody: some View {
     HStack(spacing: 0) {
       SessionList(model: model).frame(width: 200)
       Divider()
       VStack(spacing: 0) {
-        if model.librarySelection.count > 1 {
-          BulkBar(model: model, ids: Array(model.librarySelection), onClear: { model.librarySelection = [] })
-        } else {
-          toolbar
-        }
+        toolbar
         Divider()
         if !model.loaded {
           SkeletonRows()
@@ -65,19 +66,6 @@ struct LibraryView: View {
           table
         }
       }
-    }
-    .inspector(isPresented: $model.showInspector) {
-      Group {
-        if model.librarySelection.count == 1, let v = model.video(model.librarySelection.first!) {
-          VStack(spacing: 0) {
-            if !v.inManifest && !model.keptRemoved.contains(v.id) { removedNotice(v) }
-            VideoInspector(model: model, video: v)
-          }
-        } else {
-          EmptyState(symbol: "sidebar.right", title: model.librarySelection.count > 1 ? "\(model.librarySelection.count) selected" : "No selection")
-        }
-      }
-      .inspectorColumnWidth(min: 280, ideal: DS.inspectorWidth, max: 380)
     }
   }
 
@@ -141,7 +129,7 @@ struct LibraryView: View {
       TableColumn("Audio", value: \.audio) { r in Text(r.audio).foregroundStyle(.secondary).lineLimit(1) }.width(58)
       TableColumn("Score", value: \.scoreSort) { r in
         if r.video.type == .short {
-          ScoreField(score: r.video.score, width: 34) { model.setScore([r.id], $0) }
+          Text(r.video.score.map(String.init) ?? "—").font(DS.Font.mono)
         }
       }
       .width(52)
@@ -245,7 +233,7 @@ struct LibraryRow: Identifiable {
 
   @MainActor init(model: AppModel, video: Video) {
     self.video = video
-    name = model.title(video)
+    name = model.displayName(video)
     order = String(format: "%@-%03d-%08.1f", model.sessionById[video.sessionId]?.date ?? "", video.part ?? 0, video.start ?? 0)
     let posted = Set(model.latestPosts(video.id).values.filter { $0.state == .posted }.map(\.platform)).union(video.alreadyPostedOn)
     postedPlatforms = posted.sorted()
@@ -296,5 +284,13 @@ struct SessionList: View {
       .font(DS.Font.secondary).foregroundStyle(.secondary)
     }
     .padding(.vertical, 3)
+  }
+}
+
+/// FOUNDATION compile shim for the round-1 Library (selection now lives in `AppModel.selection`).
+extension AppModel {
+  var librarySelection: Set<String> {
+    get { selection[.library] ?? [] }
+    set { selection[.library] = newValue }
   }
 }

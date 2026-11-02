@@ -26,7 +26,7 @@ extension AppModel {
     })
 
     if let v = focusedVideo {
-      let name = title(v)
+      let name = displayName(v)
       c.append(.init(id: "video.edit", title: "Edit “\(name)”", symbol: "slider.horizontal.below.rectangle", hint: "⌘E") { [weak self] in
         self?.openEditor(v.id, in: self?.selectedVideoIds)
       })
@@ -67,7 +67,6 @@ extension AppModel {
         c.append(.init(id: "video.longform", title: "Mark long-form posted…", symbol: "checkmark.circle") { [weak self] in self?.longformTarget = v })
       }
     }
-    c.append(.init(id: "queue.scoreMode", title: "Score mode", symbol: "number", hint: "⇧⌘S") { [weak self] in self?.scoreMode = true })
 
     let thisWeek = planner.weekStart(for: now)
     let nextWeek = dm.addDays(thisWeek, 7)
@@ -91,7 +90,7 @@ extension AppModel {
 
     let post = postsSelection.flatMap { id in posts.first { $0.id == id } } ?? highlightPostId.flatMap { id in posts.first { $0.id == id } }
     if let post {
-      let n = "\(post.platform.shortName) · \(video(post.videoId).map(title) ?? "")"
+      let n = "\(post.platform.shortName) · \(video(post.videoId).map(displayName) ?? "")"
       if !post.state.isTerminal {
         c.append(.init(id: "post.markPosted", title: "Mark posted… (\(n))", symbol: "checkmark.circle") { [weak self] in self?.markPostedTarget = post })
       }
@@ -354,7 +353,7 @@ struct ScorePromptSheet: View {
   @Environment(\.dismiss) private var dismiss
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("Score “\(model.title(video))”").font(DS.Font.title)
+      Text("Score “\(model.displayName(video))”").font(DS.Font.title)
       TextField("0–100", text: $text)
         .font(.system(size: 34, weight: .semibold, design: .rounded).monospacedDigit())
         .textFieldStyle(.roundedBorder)
@@ -385,7 +384,7 @@ struct PinPromptSheet: View {
   @Environment(\.dismiss) private var dismiss
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("Pin “\(model.title(video))”").font(DS.Font.title)
+      Text("Pin “\(model.displayName(video))”").font(DS.Font.title)
       DatePicker("Date", selection: $date, in: model.now..., displayedComponents: .date).datePickerStyle(.graphical).labelsHidden()
       HStack {
         Spacer()

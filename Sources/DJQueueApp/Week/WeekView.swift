@@ -12,6 +12,11 @@ struct WeekView: View {
   private var state: WeekState? { model.weekStates[ws] }
 
   var body: some View {
+    // FOUNDATION: round-1 body inside the shared scaffold until the Planning leaf rewrites this screen.
+    ScreenScaffold(model: model, screen: .week, content: { legacyBody })
+  }
+
+  @ViewBuilder private var legacyBody: some View {
     let slots = self.slots
     VStack(spacing: 0) {
       header(slots)
@@ -32,7 +37,7 @@ struct WeekView: View {
       }
       Button("Cancel", role: .cancel) { model.pendingReplace = nil }
     } message: {
-      Text("“\(model.pendingReplace.map { r in model.video(r.replaced).map(model.title) ?? "" } ?? "")” goes back to the backlog.")
+      Text("“\(model.pendingReplace.map { r in model.video(r.replaced).map(model.displayName) ?? "" } ?? "")” goes back to the backlog.")
     }
   }
 
@@ -249,7 +254,7 @@ struct WeekCard: View {
       HStack(alignment: .top, spacing: 8) {
         CoverThumb(video: video, width: 54, height: 96)
         VStack(alignment: .leading, spacing: 4) {
-          Text(model.title(video)).font(.system(size: 12, weight: .semibold)).lineLimit(3)
+          Text(model.displayName(video)).font(.system(size: 12, weight: .semibold)).lineLimit(3)
           HStack(spacing: 4) {
             Text(video.score.map(String.init) ?? "–").font(DS.Font.score)
             Text("v\(posts.values.map(\.versionNo).max() ?? 1)").font(DS.Font.secondary).foregroundStyle(.secondary)
@@ -285,7 +290,7 @@ struct WeekCard: View {
     // Locked: past days are fixed; only future slots can be swapped, removed or pinned.
     Menu("Swap with") {
       ForEach(otherSlots.filter { $0.id != slot.id && $0.date >= model.todayKey }) { o in
-        Button("\(Fmt.day(model.dm.date(o.date), tz: model.tz, style: "EEE d")) · \(model.video(o.videoId).map(model.title) ?? "")") {
+        Button("\(Fmt.day(model.dm.date(o.date), tz: model.tz, style: "EEE d")) · \(model.video(o.videoId).map(model.displayName) ?? "")") {
           model.swap(slot.id, o.id)
         }
       }
@@ -302,7 +307,7 @@ struct WeekCard: View {
     .disabled(!approved)
     Divider()
     Button("Edit", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }
-    Button("Show in Queue") { model.queueSelection = [video.id]; model.screen = .queue }
+    Button("Show in Queue") { model.setSelection([video.id], screen: .queue); model.screen = .queue }
   }
 }
 
@@ -399,7 +404,7 @@ struct BacklogDrawer: View {
             ForEach(backlog.prefix(30)) { v in
               VStack(alignment: .leading, spacing: 4) {
                 CoverThumb(video: v, width: 54, height: 96)
-                Text(model.title(v)).font(.system(size: 11, weight: .medium)).lineLimit(1).frame(width: 80, alignment: .leading)
+                Text(model.displayName(v)).font(.system(size: 11, weight: .medium)).lineLimit(1).frame(width: 80, alignment: .leading)
                 Text(v.score.map(String.init) ?? "–").font(DS.Font.secondary.monospacedDigit()).foregroundStyle(.secondary)
               }
               .draggable("video:\(v.id)") { CoverThumb(video: v, width: 54, height: 96) }

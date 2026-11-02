@@ -3,10 +3,15 @@ import DJQCore
 import SwiftUI
 
 /// `DJQueueApp --snapshot <dir>`: copies the database from `Paths.standard` (DJQ_ROOT/DJQ_HOME) into a throwaway
-/// folder, seeds sample data there, then renders every screen at 1440×900 in light and dark to PNG.
+/// folder, seeds sample data there, then renders every shot at 1440×900 in light and dark to PNG.
 ///
-/// Rendering uses real AppKit windows (NSHostingController + `cacheDisplay`) instead of `ImageRenderer`, because
-/// ImageRenderer can't draw AppKit-backed controls (lists, tables, toggles, pickers, text fields).
+/// Shots come from one static func per leaf (`SnapshotShots.shell/pipeline/planning/browse/settings`, each in its
+/// own `Shots+<Leaf>.swift` file) so parallel leaves never edit the same file. Name prefixes: shell 0x,
+/// pipeline 1x, planning 2x, browse 3x, settings 4x. `DJQ_SNAPSHOT_ONLY=<substring>` limits the run.
+/// `DJQ_SNAPSHOT_GALLERY=1` renders the design-system gallery instead (DSGallerySnapshot).
+///
+/// Rendering uses real AppKit windows (NSHostingController + window capture / `cacheDisplay`) instead of
+/// `ImageRenderer`, because ImageRenderer can't draw AppKit-backed controls.
 @MainActor
 enum SnapshotRunner {
   static func run(outputDir: String) async -> Int32 {
@@ -28,15 +33,13 @@ enum SnapshotRunner {
         let source = try Store(paths: src)
         try source.db.backup(to: paths.database.path)
       }
-      var settings = AppSettings()
-      let dm = DayMath(settings: settings)
+      let dm = DayMath(settings: AppSettings())
       let now = dm.at(dm.key(Date()), minutes: 16 * 60 + 10)
       let clock = FixedClock(now)
       let store = try Store(paths: paths, clock: clock)
       if try store.videos().isEmpty { try Intake(store: store).run() }
       try SampleData.seed(store: store, clock: clock, now: now)
       clock.set(now)
-      settings = try store.settings()
 
       let model = AppModel(store: store)
       model.frozen = true
@@ -62,73 +65,12 @@ enum SnapshotRunner {
       ThumbCache.shared.store = store
       model.refreshNow()
 
-      var shots: [Shot] = []
-      func main(_ name: String, _ m: AppModel = model, _ setup: @escaping (AppModel) -> Void) {
-        shots.append(Shot(name: name, kind: .main(m, setup)))
-      }
-      let firstPlanned = model.upcomingSlots.first?.videoId
-      main("01-queue") { m in m.screen = .queue; m.queueTab = .ready; m.queueSelection = Set(firstPlanned.map { [$0] } ?? []) }
-      main("02-queue-to-score") { m in m.queueTab = .toScore; m.queueSelection = Set([m.toScore.first?.id].compactMap { $0 }) }
-      main("03-queue-bulk") { m in m.queueTab = .ready; m.queueSelection = Set(m.ordered.suffix(3).map(\.id)) }
-      main("04-score-mode") { m in m.queueSelection = []; m.scoreMode = true }
-      main("05-week") { m in m.scoreMode = false; m.screen = .week; m.weekStart = m.planner.weekStart(for: m.now) }
-      main("06-week-next-draft") { m in m.weekStart = m.dm.addDays(m.planner.weekStart(for: m.now), 7); m.weekBacklogExpanded = true }
-      main("07-today") { m in m.weekBacklogExpanded = false; m.screen = .today }
-      main("08-library") { m in m.screen = .library; m.librarySelection = Set([m.videos.first { $0.type == .long }?.id].compactMap { $0 }) }
-      main("09-library-grid") { m in m.libraryGrid = true; m.librarySelection = [] }
-      main("10-posts") { m in
-        m.libraryGrid = false; m.screen = .posts; m.postsFilter = .all
-        m.postsSelection = m.problems.first { $0.state.isCopyright }?.id ?? m.problems.first?.id
-      }
-      main("11-health") { m in m.screen = .health; m.doctorReport = Doctor(store: m.store).run() }
-      main("12-command-palette") { m in m.screen = .queue; m.queueSelection = Set(firstPlanned.map { [$0] } ?? []); m.showPalette = true }
-      main("13-banners-paused") { m in
-        m.showPalette = false
-        m.update { $0.paused = true }
-        m.screen = .today
-      }
-      let editId = model.ordered.first?.id ?? model.videos.first { $0.type == .short }?.id
-      main("14-editor") { m in
-        m.update { $0.paused = false }
-        if let editId { m.openEditor(editId, in: m.ordered.map(\.id)) }
-      }
-      main("15-queue-after-editor") { m in m.editor = nil; m.screen = .queue; m.loaded = true }
-      main("16-loading-skeleton") { m in m.editor = nil; m.screen = .today; m.loaded = false }
-      main("17-week-locked") { m in m.loaded = true; m.screen = .week; m.weekStart = m.planner.weekStart(for: m.now) }
-      main("20-empty-queue", empty) { m in m.screen = .queue }
-      main("21-empty-week", empty) { m in m.screen = .week }
-      main("22-empty-today", empty) { m in m.screen = .today }
-      main("23-empty-posts", empty) { m in m.screen = .posts }
-      main("24-empty-library", empty) { m in m.screen = .library }
-      for s in SettingsSection.allCases {
-        shots.append(Shot(name: "30-settings-\(s.rawValue)", kind: .settings(model, s)))
-      }
-      shots.append(Shot(name: "40-menubar", kind: .view(CGSize(width: 320, height: 0)) {
-        model.update { $0.paused = false }
-        return AnyView(MenuBarView(model: model).background(.background))
-      }))
-      shots.append(Shot(name: "41-menubar-engine-off", kind: .view(CGSize(width: 320, height: 0)) {
-        AnyView(MenuBarView(model: empty).background(.background))
-      }))
-      let due = model.dueToday.first { $0.state == .due }
-      if let due {
-        shots.append(Shot(name: "42-sheet-mark-posted", kind: .view(CGSize(width: 480, height: 0)) {
-          AnyView(MarkPostedSheet(model: model, post: due).background(.background))
-        }))
-        shots.append(Shot(name: "43-sheet-report-problem", kind: .view(CGSize(width: 520, height: 0)) {
-          AnyView(ReportProblemSheet(model: model, post: due).background(.background))
-        }))
-      }
-      shots.append(Shot(name: "44-sheet-shortcuts", kind: .view(CGSize(width: 680, height: 0)) {
-        AnyView(ShortcutSheet(model: model).background(.background))
-      }))
-      shots.append(Shot(name: "45-menubar-icons", kind: .view(CGSize(width: 360, height: 0)) {
-        AnyView(MenuBarIconSheet().background(.background))
-      }))
+      let ctx = SnapshotContext(model: model, empty: empty, store: store, now: now)
+      var shots = SnapshotShots.shell(ctx) + SnapshotShots.pipeline(ctx) + SnapshotShots.planning(ctx)
+        + SnapshotShots.browse(ctx) + SnapshotShots.settings(ctx)
       if let only = ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_ONLY"] {
         shots = shots.filter { $0.name.contains(only) }
       }
-
       for shot in shots {
         try await shot.render(to: out)
         print("snapshot: \(shot.name)")
@@ -142,11 +84,61 @@ enum SnapshotRunner {
   }
 }
 
+/// Namespace for the per-leaf shot lists (one `static func <leaf>(_ c: SnapshotContext) -> [Shot]` per file).
+@MainActor
+enum SnapshotShots {}
+
+/// What every shot list gets: the seeded sample model, an empty-state model, the frozen `now`, and helpers.
+///
+/// Main-window shots share `model`; before each one the UI state is reset (`resetUI`), so shots don't depend on
+/// order. DATA changes a setup makes (scores, pause, …) persist in the throwaway DB — undo them in your own
+/// shots if later shots of yours care.
+@MainActor
+struct SnapshotContext {
+  let model: AppModel
+  let empty: AppModel
+  let store: Store
+  let now: Date
+
+  /// The first clip in the upcoming plan (Queue/Week shots).
+  var firstPlannedId: String? { model.upcomingSlots.first?.videoId }
+
+  /// The main window (1440×900) on `m` (default: the sample model) after `setup` ran on a reset UI state.
+  /// Setup may open overlays: `m.showSettings = true`, `m.showPalette = true`, `m.requestBulk(…)` (confirmation
+  /// sheet), `m.show(DSToastModel(…))` (toast), `m.previewVideo = v`, `m.openEditor(id)`.
+  func main(_ name: String, _ m: AppModel? = nil, setup: @escaping (AppModel) -> Void) -> Shot {
+    Shot(name: name, kind: .main(m ?? model, setup))
+  }
+
+  /// A standalone view `width` wide; `height` nil = fitting height. Drawn on `DS.color.background`.
+  func view(_ name: String, width: CGFloat, height: CGFloat? = nil, _ make: @escaping () -> AnyView) -> Shot {
+    Shot(name: name, kind: .view(CGSize(width: width, height: height ?? 0), make))
+  }
+
+  /// UI state every main shot starts from: Score screen, nothing selected or open, loaded, this week.
+  static func resetUI(_ m: AppModel) {
+    m.editor = nil
+    m.showPalette = false
+    m.showSettings = false
+    m.showShortcuts = false
+    m.pendingBulk = nil
+    m.previewVideo = nil
+    m.toast = nil
+    m.selection = [:]
+    m.selectionAnchor = [:]
+    m.sidebarCollapsed = false
+    m.loaded = true
+    m.screen = .score
+    m.weekStart = m.planner.weekStart(for: m.now)
+  }
+}
+
 @MainActor
 struct Shot {
   enum Kind {
+    /// Main window 1440×900; the closure sets up the UI (after `SnapshotContext.resetUI`).
     case main(AppModel, (AppModel) -> Void)
-    case settings(AppModel, SettingsSection)
+    /// Standalone view of this size (height 0 = fitting height).
     case view(CGSize, () -> AnyView)
   }
 
@@ -157,17 +149,16 @@ struct Shot {
     let window: NSWindow
     switch kind {
     case .main(let m, let setup):
+      SnapshotContext.resetUI(m)
       setup(m)
-      m.toast = nil
       window = WindowManager.makeMainWindow(model: m, make: SnapshotWindow.make)
       window.setContentSize(NSSize(width: 1440, height: 900))
-    case .settings(let m, let s):
-      window = WindowManager.makeSettingsWindow(model: m, section: s, make: SnapshotWindow.make)
-      window.setContentSize(NSSize(width: 900, height: 640))
     case .view(let size, let make):
-      let hv = NSHostingView(rootView: make().frame(width: size.width).modifier(SnapshotActive(on: true)))
+      let root = make().frame(width: size.width, height: size.height > 0 ? size.height : nil)
+        .background(DS.color.background).modifier(SnapshotActive(on: true))
+      let hv = NSHostingView(rootView: root)
       let fit = hv.fittingSize
-      hv.frame = NSRect(origin: .zero, size: NSSize(width: size.width, height: max(fit.height, 40)))
+      hv.frame = NSRect(origin: .zero, size: NSSize(width: size.width, height: size.height > 0 ? size.height : max(fit.height, 40)))
       window = SnapshotWindow.make(hv.frame, [.borderless])
       window.contentView = hv
     }
@@ -178,7 +169,10 @@ struct Shot {
       window.orderBack(nil)
       try await Task.sleep(for: .milliseconds(suffix == "light" ? 1600 : 800))
       window.displayIfNeeded()
-      let png = WindowCapture.png(window) ?? cachedDisplay(window, dark: appearance == .darkAqua)
+      // Default: AppKit draws the view tree (deterministic, works with the display asleep; no AVPlayer frames).
+      // DJQ_SNAPSHOT_WINDOW=1 uses the window-server capture instead (playing video; needs an awake display).
+      let useWindow = ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_WINDOW"] != nil
+      let png = (useWindow ? WindowCapture.png(window) : nil) ?? cachedDisplay(window, dark: appearance == .darkAqua)
       try png?.write(to: dir.appendingPathComponent("\(name)-\(suffix).png"))
     }
     window.orderOut(nil)
@@ -226,28 +220,5 @@ enum WindowCapture {
     guard let fn, let img = fn(.null, includingWindow, UInt32(w.windowNumber), ignoreFraming | nominal)?.takeRetainedValue(),
           img.width > 10 else { return nil }
     return NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])
-  }
-}
-
-/// MB.ICON states side by side (the real status item lives in the system menu bar).
-struct MenuBarIconSheet: View {
-  var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Eyebrow("Menu-bar icon states")
-      row("Normal", MenuBarIcon.image(days: 5, errors: 0, engineOn: true, paused: false))
-      row("Errors", MenuBarIcon.image(days: 5, errors: 2, engineOn: true, paused: false))
-      row("Paused", MenuBarIcon.image(days: 5, errors: 0, engineOn: true, paused: true))
-      row("Engine stopped", MenuBarIcon.image(days: 1, errors: 0, engineOn: false, paused: false))
-    }
-    .padding(16)
-  }
-
-  private func row(_ t: String, _ img: NSImage) -> some View {
-    HStack {
-      Text(t).font(DS.Font.body).frame(width: 120, alignment: .leading)
-      Image(nsImage: img).renderingMode(img.isTemplate ? .template : .original).foregroundStyle(.primary)
-        .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
-    }
   }
 }

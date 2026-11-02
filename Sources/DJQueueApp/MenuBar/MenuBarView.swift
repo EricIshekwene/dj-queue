@@ -129,7 +129,7 @@ struct MenuBarView: View {
       ForEach(model.problems.prefix(3)) { p in
         HStack(spacing: 8) {
           PlatformGlyph(platform: p.platform, tint: .red, size: 18)
-          Text(model.video(p.videoId).map(model.title) ?? "").font(DS.Font.body).lineLimit(1)
+          Text(model.video(p.videoId).map(model.displayName) ?? "").font(DS.Font.body).lineLimit(1)
           Spacer()
           StatusPill(text: p.errorType?.displayName ?? p.state.displayName, tint: .red)
         }
@@ -142,7 +142,7 @@ struct MenuBarView: View {
       Eyebrow("Next")
       Text(Fmt.shortTime(p.scheduledAt, tz: model.tz)).font(DS.Font.mono)
       PlatformGlyph(platform: p.platform, size: 16)
-      Text(model.video(p.videoId).map(model.title) ?? "").font(DS.Font.body).lineLimit(1)
+      Text(model.video(p.videoId).map(model.displayName) ?? "").font(DS.Font.body).lineLimit(1)
       Spacer()
       Text(model.dm.key(p.scheduledAt) == model.todayKey ? Fmt.relative(p.scheduledAt, now: model.now) : Fmt.day(p.scheduledAt, tz: model.tz, style: "EEE"))
         .font(DS.Font.secondary).foregroundStyle(.secondary)
@@ -159,7 +159,7 @@ struct MenuBarView: View {
             HStack(spacing: 8) {
               PlatformGlyph(platform: p.platform, size: 20)
               VStack(alignment: .leading, spacing: 0) {
-                Text(model.video(p.videoId).map(model.title) ?? "").font(DS.Font.bodyStrong).lineLimit(1)
+                Text(model.video(p.videoId).map(model.displayName) ?? "").font(DS.Font.bodyStrong).lineLimit(1)
                 Text(Fmt.shortTime(p.scheduledAt, tz: model.tz) + (p.scheduledAt < model.now ? " · \(Fmt.relative(p.scheduledAt, now: model.now))" : ""))
                   .font(DS.Font.secondary).foregroundStyle(p.state == .overdue ? Color.orange : .secondary)
               }

@@ -137,7 +137,10 @@ final class AppHost {
     }
   }
 
-  func stop() { engineHost?.stop() }
+  func stop() {
+    engineHost?.stop()
+    model?.proxies.stop()
+  }
 
   /// Notification action routing (APP.N). Post now / Shift plan / Skip go through `PostActions.perform`
   /// (the engine already shifted the platform's plan when it marked the post missed).
@@ -171,7 +174,7 @@ final class AppHost {
         model.refresh()
       } catch {
         // Invalid or missing URL: open the sheet with what was typed and the error visible.
-        model.markPostedPrefill = url
+        model.markPostedDraftURL = url
         model.markPostedTarget = post
         WindowManager.shared.showMain(screen: .today)
       }
@@ -187,8 +190,8 @@ final class AppHost {
         screen = .posts
         model.postsSelection = postId
       } else if key.hasPrefix("invalid:"), let videoId {
-        screen = .queue
-        model.queueSelection = [videoId]
+        screen = .edit
+        model.setSelection([videoId], screen: .edit)
       } else {
         screen = .today
       }
@@ -234,15 +237,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 }
 
-/// Main window and settings window are AppKit-managed hosting windows so the process can switch between
-/// `.accessory` (menu bar only) and `.regular` (Dock + menu) as windows open and close.
+/// The main window is an AppKit-managed hosting window so the process can switch between `.accessory` (menu bar
+/// only) and `.regular` (Dock + menu) as it opens and closes. Settings is an in-window modal (DESIGN-v2 §6.9).
 @MainActor
 final class WindowManager: NSObject, NSWindowDelegate {
   static let shared = WindowManager()
   private var main: NSWindow?
-  private var settings: NSWindow?
 
-  var anyVisible: Bool { [main, settings].contains { $0?.isVisible == true && $0?.occlusionState.contains(.visible) == true } }
+  var anyVisible: Bool { main?.isVisible == true && main?.occlusionState.contains(.visible) == true }
 
   func showMain(screen: Screen? = nil) {
     guard let model = AppHost.shared.model else {
@@ -261,27 +263,24 @@ final class WindowManager: NSObject, NSWindowDelegate {
     NSApp.activate()
   }
 
+  /// Opens the main window with the Settings modal on top (⌘,, sidebar Settings row, ⌘K, menu bar).
   func showSettings(section: SettingsSection? = nil) {
     guard let model = AppHost.shared.model else { return }
-    if settings == nil {
-      let w = Self.makeSettingsWindow(model: model, section: section ?? .platforms)
-      w.delegate = self
-      w.setFrameAutosaveName("DJQueueSettings")
-      settings = w
-    }
-    NSApp.setActivationPolicy(.regular)
-    settings?.makeKeyAndOrderFront(nil)
-    NSApp.activate()
+    if let section { model.settingsSection = section }
+    model.showSettings = true
+    showMain()
   }
 
   static func makeMainWindow(model: AppModel, make: @MainActor (NSRect, NSWindow.StyleMask) -> NSWindow = WindowManager.plainWindow) -> NSWindow {
     let hc = NSHostingController(rootView: MainWindowView(model: model).modifier(SnapshotActive(on: model.frozen)))
-    hc.sceneBridgingOptions = [.toolbars, .title]
+    hc.sceneBridgingOptions = []
     let w = make(NSRect(x: 0, y: 0, width: 1440, height: 900), [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView])
     w.contentViewController = hc
     w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
     w.title = "DJ Queue"
-    w.toolbarStyle = .unified
+    // Hidden, transparent title bar: the sidebar and each screen's 52 pt toolbar run to the top edge.
+    w.titleVisibility = .hidden
+    w.titlebarAppearsTransparent = true
     w.minSize = NSSize(width: 1100, height: 700)
     w.setContentSize(NSSize(width: 1440, height: 900))
     w.isReleasedWhenClosed = false
@@ -293,22 +292,6 @@ final class WindowManager: NSObject, NSWindowDelegate {
     NSWindow(contentRect: r, styleMask: style, backing: .buffered, defer: false)
   }
 
-  static func makeSettingsWindow(model: AppModel, section: SettingsSection,
-                                 make: @MainActor (NSRect, NSWindow.StyleMask) -> NSWindow = WindowManager.plainWindow) -> NSWindow {
-    let hc = NSHostingController(rootView: SettingsView(model: model, initial: section).modifier(SnapshotActive(on: model.frozen)))
-    hc.sceneBridgingOptions = [.toolbars, .title]
-    let w = make(NSRect(x: 0, y: 0, width: 900, height: 640), [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView])
-    w.contentViewController = hc
-    w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-    w.title = "Settings"
-    w.toolbarStyle = .unified
-    w.setContentSize(NSSize(width: 900, height: 640))
-    w.minSize = NSSize(width: 760, height: 520)
-    w.isReleasedWhenClosed = false
-    w.center()
-    return w
-  }
-
   private func showStartupError() {
     let a = NSAlert()
     a.messageText = "DJ Queue can't start"
@@ -318,7 +301,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
 
   func windowWillClose(_ notification: Notification) {
     DispatchQueue.main.async {
-      let open = [self.main, self.settings].compactMap { $0 }.contains { $0.isVisible }
+      let open = self.main?.isVisible == true
       if !open, case .snapshot = AppHost.shared.mode {} else if !open { NSApp.setActivationPolicy(.accessory) }
     }
   }

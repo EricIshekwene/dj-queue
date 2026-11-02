@@ -7,6 +7,11 @@ struct TodayView: View {
   @Bindable var model: AppModel
 
   var body: some View {
+    // FOUNDATION: round-1 body inside the shared scaffold until the Planning leaf rewrites this screen.
+    ScreenScaffold(model: model, screen: .today, content: { legacyBody })
+  }
+
+  @ViewBuilder private var legacyBody: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
         header.padding(.bottom, 18)
@@ -67,7 +72,7 @@ struct TodayView: View {
   private func nextLine(_ p: PlatformPost) -> some View {
     HStack(spacing: 6) {
       Image(systemName: "arrow.turn.down.right").foregroundStyle(.tertiary)
-      Text("Next: \(Fmt.day(p.scheduledAt, tz: model.tz, style: "EEE")) \(Fmt.shortTime(p.scheduledAt, tz: model.tz)) · \(p.platform.displayName) · \(model.video(p.videoId).map(model.title) ?? "")")
+      Text("Next: \(Fmt.day(p.scheduledAt, tz: model.tz, style: "EEE")) \(Fmt.shortTime(p.scheduledAt, tz: model.tz)) · \(p.platform.displayName) · \(model.video(p.videoId).map(model.displayName) ?? "")")
         .font(DS.Font.secondary).foregroundStyle(.secondary)
     }
   }
@@ -97,7 +102,7 @@ struct TodayRow: View {
       PlatformGlyph(platform: post.platform, tint: post.state == .posted ? .green : .primary, size: 22)
       CoverThumb(video: video, width: 30, height: 53)
       VStack(alignment: .leading, spacing: 2) {
-        Text(video.map(model.title) ?? "Missing video").font(DS.Font.bodyStrong).lineLimit(1)
+        Text(video.map(model.displayName) ?? "Missing video").font(DS.Font.bodyStrong).lineLimit(1)
         Text("v\(post.versionNo) · \(post.platform.displayName)\(post.attemptNo > 1 ? " · attempt \(post.attemptNo)" : "")")
           .font(DS.Font.secondary).foregroundStyle(.secondary)
       }
@@ -300,7 +305,7 @@ struct MarkPostedSheet: View {
         Spacer()
         Button { dismiss() } label: { Image(systemName: "xmark") }.buttonStyle(.plain).keyboardShortcut(.cancelAction)
       }
-      Text("Paste the \(post.platform.displayName) post URL for “\(model.video(post.videoId).map(model.title) ?? "")”.")
+      Text("Paste the \(post.platform.displayName) post URL for “\(model.video(post.videoId).map(model.displayName) ?? "")”.")
         .font(DS.Font.body).foregroundStyle(.secondary)
       TextField("https://\(post.platform.urlHosts[0])/…", text: $url)
         .textFieldStyle(.roundedBorder)
@@ -327,9 +332,9 @@ struct MarkPostedSheet: View {
     .frame(width: 480)
     .onAppear {
       postedAt = model.frozen ? model.now : Date()
-      if let pre = model.markPostedPrefill {
+      if let pre = model.markPostedDraftURL {
         url = pre
-        model.markPostedPrefill = nil
+        model.markPostedDraftURL = nil
       } else if let s = NSPasteboard.general.string(forType: .string), (try? PostActions.validate(url: s, for: post.platform)) != nil {
         url = s
       }
@@ -403,7 +408,7 @@ struct LongformPostedSheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       Text("Mark long-form posted").font(DS.Font.title)
-      Text("Paste the YouTube URL for “\(model.title(video))”. The file moves from Ready to Post to Posted.")
+      Text("Paste the YouTube URL for “\(model.displayName(video))”. The file moves from Ready to Post to Posted.")
         .font(DS.Font.body).foregroundStyle(.secondary)
       TextField("https://youtube.com/watch?v=…", text: $url).textFieldStyle(.roundedBorder).controlSize(.large)
       HStack {

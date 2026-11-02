@@ -23,12 +23,17 @@ struct PostsView: View {
       }
       .filter { platform == nil || $0.platform == platform }
       .filter { since == nil || $0.scheduledAt >= since! }
-      .filter { search.isEmpty || (model.video($0.videoId).map { model.title($0).localizedCaseInsensitiveContains(search) } ?? false) }
+      .filter { search.isEmpty || (model.video($0.videoId).map { model.displayName($0).localizedCaseInsensitiveContains(search) } ?? false) }
       .map { PostRow(model: model, post: $0) }
       .sorted(using: sortOrder)
   }
 
   var body: some View {
+    // FOUNDATION: round-1 body inside the shared scaffold until the Browse leaf rewrites this screen.
+    ScreenScaffold(model: model, screen: .posts, content: { legacyBody })
+  }
+
+  @ViewBuilder private var legacyBody: some View {
     VStack(spacing: 0) {
       if !model.problems.isEmpty {
         VStack(spacing: 8) {
@@ -141,7 +146,7 @@ struct PostRow: Identifiable {
 
   @MainActor init(model: AppModel, post: PlatformPost) {
     self.post = post
-    videoName = model.video(post.videoId).map(model.title) ?? post.videoId
+    videoName = model.video(post.videoId).map(model.displayName) ?? post.videoId
   }
 }
 
@@ -159,7 +164,7 @@ struct ErrorCard: View {
         PlatformGlyph(platform: post.platform, tint: .red, size: 28)
         VStack(alignment: .leading, spacing: 6) {
           HStack(spacing: 8) {
-            Text("\(post.platform.displayName) · \(model.video(post.videoId).map(model.title) ?? "")").font(DS.Font.bodyStrong)
+            Text("\(post.platform.displayName) · \(model.video(post.videoId).map(model.displayName) ?? "")").font(DS.Font.bodyStrong)
             StatusPill(text: post.errorType?.displayName ?? post.state.displayName, tint: .red, icon: post.state.symbol, loud: true)
             Text(Fmt.relative(post.updatedAt, now: model.now)).font(DS.Font.secondary).foregroundStyle(.secondary)
           }
@@ -233,7 +238,7 @@ struct PostDetail: View {
           Eyebrow("Post details")
           HStack(spacing: 8) {
             PlatformGlyph(platform: post.platform, tint: post.state.tint, size: 24)
-            Text("\(post.platform.displayName) · \(model.video(post.videoId).map(model.title) ?? "")").font(DS.Font.title).lineLimit(2)
+            Text("\(post.platform.displayName) · \(model.video(post.videoId).map(model.displayName) ?? "")").font(DS.Font.title).lineLimit(2)
           }
           StatusPill(post: post, now: model.now)
         }
