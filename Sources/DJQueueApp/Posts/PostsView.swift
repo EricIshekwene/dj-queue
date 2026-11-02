@@ -107,6 +107,8 @@ struct PostsView: View {
           DSTab(value: .posted, title: "Posted"),
           DSTab(value: .all, title: "All"),
         ])
+        // DSTabs has no per-tab tooltip: one quiet line says what the open tab holds (e.g. Scheduled leaves out missed).
+        Text(tab.blurb).font(DS.type.caption).foregroundStyle(DS.color.textTertiary).padding(.leading, DS.space.xs)
       }
       if !model.loaded {
         Color.clear
@@ -151,22 +153,25 @@ struct PostsView: View {
     let skippable = posts.filter(model.canSkip).count
     let retryable = posts.filter(PostFixes.canRetry).count
     return ScreenBulkBar(model: model, screen: .posts) {
-      bulkButton("Reset", icon: "arrow.counterclockwise", n: resettable, why: "None of these can be reset (planned, or their time passed)") {
+      bulkButton("Reset", icon: "arrow.counterclockwise", n: resettable, tooltip: "Back to Planned, errors cleared",
+                 why: "None of these can be reset (planned, or their time passed)") {
         ui.pendingPostBulk = PostBulk(op: .reset, postIds: sel)
       }
-      bulkButton("Skip", icon: "forward", n: skippable, why: "These are already finished") {
+      bulkButton("Skip", icon: "forward", n: skippable, tooltip: "Don't post these on their platforms", why: "These are already finished") {
         ui.pendingPostBulk = PostBulk(op: .skip, postIds: sel)
       }
-      bulkButton("Retry", icon: "arrow.clockwise", n: retryable, why: "Only failed posts can be retried") {
+      bulkButton("Retry", icon: "arrow.clockwise", n: retryable, tooltip: "Try failed posts again on the next slot",
+                 why: "Only failed posts can be retried") {
         ui.pendingPostBulk = PostBulk(op: .retry, postIds: sel)
       }
     }
   }
 
-  private func bulkButton(_ title: String, icon: String, n: Int, why: String, action: @escaping () -> Void) -> some View {
+  private func bulkButton(_ title: String, icon: String, n: Int, tooltip: String, why: String, action: @escaping () -> Void) -> some View {
     Button(n > 0 && n < model.selected(.posts).count ? "\(title) \(n)" : title, systemImage: icon, action: action)
       .disabled(n == 0)
-      .browseHelp(n == 0 ? why : nil)
+      .contentShape(Rectangle())
+      .dsTooltip(tooltip, disabledReason: n == 0 ? why : nil)
   }
 }
 
@@ -232,9 +237,9 @@ struct PostRowView: View {
         .lineLimit(1).frame(width: 104, alignment: .leading)
       Group {
         if let u = post.url, let url = URL(string: u) {
-          DSIconButton("arrow.up.right.square", tooltip: "Open post · \(u)", size: .sm) { NSWorkspace.shared.open(url) }
+          DSIconButton("arrow.up.right.square", tooltip: "Open the live post · \(u)", size: .sm) { NSWorkspace.shared.open(url) }
         } else {
-          DSIconButton("arrow.up.right.square", tooltip: "Open post", size: .sm, disabledReason: "No link yet — not posted") {}
+          DSIconButton("arrow.up.right.square", tooltip: "Open the live post", size: .sm, disabledReason: "No link yet — not posted") {}
             .opacity(0.5)
         }
       }
@@ -272,6 +277,18 @@ struct PostStatePill: View {
   var body: some View {
     let s = PostText.pill(post)
     DSBadge(s.text, style: s.style, icon: s.icon)
+  }
+}
+
+extension PostsTab {
+  /// What the tab holds, in one line (shown under the tabs).
+  var blurb: String {
+    switch self {
+    case .problems: "Failed, missed or copyright posts that need you"
+    case .scheduled: "Posts still to go out (missed ones are in Problems)"
+    case .posted: "Posts that went live"
+    case .all: "Every attempt on every platform"
+    }
   }
 }
 

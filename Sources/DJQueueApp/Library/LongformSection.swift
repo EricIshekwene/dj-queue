@@ -114,6 +114,7 @@ struct LongformTile: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { longformTap(model, video, ordered: ordered, onOpen: onOpen) }
+        .dsTooltip("Click for quick look · ⌘-click to select")
       VStack(alignment: .leading, spacing: 4) {
         Text(model.displayName(video)).font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).lineLimit(1)
         Text(meta).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
@@ -163,6 +164,7 @@ struct LongformRow: View {
     .onHover { hovering = $0 }
     .onTapGesture { longformTap(model, video, ordered: ordered, onOpen: onOpen) }
     .contextMenu { LongformMenu(model: model, video: video, onOpen: onOpen) }
+    .dsTooltip("Click for quick look · ⌘-click to select")
   }
 }
 
@@ -180,7 +182,8 @@ private struct LongformMenu: View {
       Button("Mark posted…", systemImage: "checkmark.circle") { BrowseUI.shared.longformTargets = [video] }
     }
     Divider()
-    Button(video.excluded ? "Include" : "Exclude", systemImage: video.excluded ? "plus.circle" : "minus.circle") {
+    // AppModel.setExcluded is journaled (toast · Undo, ⌘Z).
+    Button(video.excluded ? "Include (post it again)" : "Exclude (stop posting it)", systemImage: video.excluded ? "plus.circle" : "minus.circle") {
       model.setExcluded([video.id], !video.excluded)
     }
   }

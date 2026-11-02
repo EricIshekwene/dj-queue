@@ -47,21 +47,26 @@ struct WeekView: View {
     let status = model.weekStatus(ws)
     let past = model.dm.addDays(ws, 6) < model.todayKey
     HStack(spacing: 2) {
-      DSIconButton("chevron.left", tooltip: "Previous week", size: .sm) { model.weekStart = model.dm.addDays(ws, -7) }
-      DSButton("Today", variant: .ghost, size: .sm, disabledReason: ws == model.thisWeek ? "Already showing this week" : nil) {
+      DSIconButton("chevron.left", tooltip: "Show the previous week", size: .sm) { model.weekStart = model.dm.addDays(ws, -7) }
+      DSButton("This week", variant: .ghost, size: .sm, disabledReason: ws == model.thisWeek ? "Already showing this week" : nil,
+               tooltip: "Jump back to this week") {
         model.weekStart = model.thisWeek
       }
-      DSIconButton("chevron.right", tooltip: "Next week", size: .sm) { model.weekStart = model.dm.addDays(ws, 7) }
+      DSIconButton("chevron.right", tooltip: "Show the next week", size: .sm) { model.weekStart = model.dm.addDays(ws, 7) }
     }
     if !slots.isEmpty, let status { statusPill(status) }
     RunwayChip(model: model)
-    DSXMenuButton(tooltip: "Week actions") {
-      Button("Rebuild week", systemImage: "arrow.clockwise") { model.rebuildWeek(ws) }
+    let proposeBlocker: String? = past ? "this week is over" : (status == .approved || status == .locked) ? "week already approved" : nil
+    DSXMenuButton(tooltip: "Rebuild, push or propose this week's plan") {
+      // Rebuild and Push ask first inside AppModel (and are undoable); disabled items carry the reason in the title.
+      Button(past ? "Rebuild week — this week is over" : "Rebuild week…", systemImage: "arrow.clockwise") { model.rebuildWeek(ws) }
         .disabled(past)
-      Button("Push plan by a day", systemImage: "calendar.badge.clock") { model.pushPlan(days: 1) }
+      Button("Push whole plan by a day…", systemImage: "calendar.badge.clock") { model.pushPlan(days: 1) }
       Divider()
-      Button("Propose week", systemImage: "square.grid.3x1.below.line.grid.1x2") { model.proposeWeek(ws) }
-        .disabled(status == .approved || status == .locked || past)
+      Button(proposeBlocker.map { "Propose week — \($0)" } ?? "Propose week (fill empty days)", systemImage: "square.grid.3x1.below.line.grid.1x2") {
+        model.proposeWeek(ws)
+      }
+      .disabled(proposeBlocker != nil)
     }
     DSButton("Approve week", icon: "checkmark", variant: .primary, disabledReason: approveBlocker(slots, status: status, past: past),
              tooltip: "Approve: the engine prepares these posts", shortcut: "⌘↩") {
@@ -229,7 +234,7 @@ struct WeekDayColumn: View {
       if !isPast {
         DSButton("Add from queue", variant: .ghost, size: .sm,
                  disabledReason: backlog.isEmpty ? "Nothing ready in the queue" : nil,
-                 tooltip: backlog.first.map { "Puts “\(model.displayName($0))” on this day" }) {
+                 tooltip: backlog.first.map { "Pin “\(model.displayName($0))” here (next in queue)" }) {
           if let v = backlog.first { model.pin(v.id, dayKey: day) }
         }
       }
@@ -303,16 +308,22 @@ struct WeekDayCard: View {
             if slot.pinned {
               Image(systemName: "pin.fill").font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
                 .frame(width: 20, height: 20).background(Color.black.opacity(0.55), in: Circle())
-                .dsTooltip("Pinned to this day")
+                .dsTooltip("Pinned: stays here when the week is rebuilt")
             }
-            if hasProblem { DSBadge("Needs you", style: .soft(.danger), icon: "exclamationmark", size: .sm).background(DS.color.surface, in: Capsule()) }
+            if hasProblem {
+              DSBadge("Needs you", style: .soft(.danger), icon: "exclamationmark", size: .sm).background(DS.color.surface, in: Capsule())
+                .contentShape(Capsule())
+                .onTapGesture { model.screen = .posts }
+                .dsTooltip("Open Posts: a post failed or is late")
+                .accessibilityAddTraits(.isButton)
+            }
           }
           .padding(DS.space.xs)
         }
         .overlay(alignment: .bottomLeading) {
           if (hovering || SnapshotHover.id == video.id) && !isPast {
             HStack(spacing: 4) {
-              DSXMenuButton(tooltip: "Clip actions", size: .sm, variant: .secondary) { WeekCardMenu(model: model, slot: slot, video: video,
+              DSXMenuButton(tooltip: "Swap, remove, pin or skip this clip", size: .sm, variant: .secondary) { WeekCardMenu(model: model, slot: slot, video: video,
                                                                                                   approved: approved, isPast: isPast,
                                                                                                   weekSlots: weekSlots, posts: posts) }
               Spacer(minLength: 0)
@@ -344,7 +355,7 @@ struct WeekDayCard: View {
     .onTapGesture(count: 2) { model.openEditor(video.id) }
     .modifier(SlotDrag(enabled: !isPast && !anyPosted, id: slot.id, poster: model.poster(video)))
     .contextMenu { WeekCardMenu(model: model, slot: slot, video: video, approved: approved, isPast: isPast, weekSlots: weekSlots, posts: posts) }
-    .dsTooltip("Double-click to edit · drag to another day to swap")
+    .dsTooltip(isPast || anyPosted ? "Double-click to edit" : "Double-click to edit · drag to swap days")
     .accessibilityElement(children: .contain)
     .accessibilityLabel("\(model.displayName(video)), score \(video.score.map(String.init) ?? "none")")
   }
@@ -362,7 +373,7 @@ struct WeekDayCard: View {
       ?? AppModel.clockText(model.dm.at(slot.date, minutes: model.settings.slot(for: pl) + slot.position * model.settings.secondPostOffsetMinutes),
                             tz: model.tz)
     let status: DSXPostStatus = post.map { model.postStatus($0) } ?? (approved ? .planned : .draft)
-    return DSXSlotChip(platform: pl, time: time, status: status, paused: model.settings.pausedPlatforms.contains(pl))
+    return DSXSlotChip(platform: pl, time: time, status: status, paused: model.settings.pausedPlatforms.contains(pl), hasActions: post != nil)
       .contextMenu { if let post { PostContextMenu(model: model, post: post) } }
   }
 }
@@ -394,7 +405,7 @@ struct WeekCardMenu: View {
   let posts: [Platform: PlatformPost]
 
   var body: some View {
-    Menu("Swap with") {
+    Menu(isPast ? "Swap with — past days are fixed" : "Swap with") {
       ForEach(weekSlots.filter { $0.id != slot.id && $0.date >= model.todayKey }) { o in
         Button("\(Fmt.day(model.dm.date(o.date), tz: model.tz, style: "EEE d")) · \(model.video(o.videoId).map(model.displayName) ?? "")") {
           model.swap(slot.id, o.id)
@@ -402,20 +413,27 @@ struct WeekCardMenu: View {
       }
     }
     .disabled(isPast)
-    Button("Remove from week", systemImage: "minus.circle") { model.removeSlot(slot.id) }.disabled(isPast)
-    Button(slot.pinned ? "Pinned to this day" : "Pin to this day", systemImage: "pin") { model.pin(video.id, dayKey: slot.date) }
+    Button(isPast ? "Remove from week — past days are fixed" : "Remove from week (day stays empty)", systemImage: "minus.circle") {
+      model.removeSlot(slot.id)
+    }
+    .disabled(isPast)
+    Button(slot.pinned ? "Pinned to this day" : isPast ? "Pin to this day — past days are fixed" : "Pin to this day (keeps it on rebuild)",
+           systemImage: "pin") { model.pin(video.id, dayKey: slot.date) }
       .disabled(slot.pinned || isPast)
-    Menu("Skip platform") {
-      ForEach(posts.values.filter { !$0.state.isTerminal }.sorted { $0.platform < $1.platform }) { p in
-        Button(p.platform.displayName) { model.skip(p) }
+    let skippable = posts.values.filter { !$0.state.isTerminal }
+    Menu(!approved ? "Skip platform — approve the week first" : skippable.isEmpty ? "Skip platform — nothing left to skip" : "Skip platform") {
+      ForEach(skippable.sorted { $0.platform < $1.platform }) { p in
+        Button("Skip \(p.platform.displayName)") { model.skip(p) }
       }
     }
-    .disabled(!approved)
+    .disabled(!approved || skippable.isEmpty)
     Divider()
     StageMenuItems(model: model, video: video, targets: [video.id])
-    Button("Remove from queue", systemImage: "arrow.uturn.backward") { model.removeFromQueue([video.id]) }
-      .disabled(isPast || model.removeFromQueueBlocker(video) != nil)
-      .help(model.removeFromQueueBlocker(video) ?? (isPast ? "This day has passed" : AppModel.removeFromQueueHelp))
+    let removeBlocker = isPast ? "this day has passed" : model.removeFromQueueBlocker(video).map { _ in "already posted" }
+    Button(removeBlocker.map { "Remove from queue — \($0)" } ?? "Remove from queue (back to Edit)", systemImage: "arrow.uturn.backward") {
+      model.removeFromQueue([video.id])
+    }
+    .disabled(removeBlocker != nil)
     Divider()
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }
     Button("Preview", systemImage: "play.rectangle") { model.previewVideo = video }
@@ -520,7 +538,7 @@ struct BacklogTile: View {
     .contentShape(Rectangle())
     .draggable("video:\(video.id)") { DSXThumb(model: model, video: video, width: 54) }
     .contextMenu { VideoContextMenu(model: model, video: video) }
-    .dsTooltip("Drag onto a day")
+    .dsTooltip("Drag onto a day to plan it")
   }
 }
 
