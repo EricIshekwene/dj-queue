@@ -89,6 +89,8 @@ struct MainWindowView: View {
     if let v = model.longformTarget {
       ModalHost(onDismiss: { model.longformTarget = nil }) { LongformPostedSheet(model: model, video: v).id(v.id) }
     }
+    // F8: "Are you sure?" for destructive / plan-wide actions — above everything, the editor included.
+    ConfirmDialogHost(model: model)
   }
 }
 
@@ -159,10 +161,14 @@ struct ShortcutButtons: View {
         }
       }
       .keyboardShortcut("a", modifiers: .command)
-      Button("") {
-        if Self.textFieldIsEditing || model.editor != nil { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) } else { model.undoLast() }
+      // ⌘Z: typing → the text field's own undo; the editor binds its own ⌘Z/⇧⌘Z (EditorUndoShortcuts, field-level
+      // edit history); otherwise the most recent undoable app action (UndoHistory).
+      if model.editor == nil {
+        Button("") {
+          if Self.textFieldIsEditing { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) } else { model.undoLast() }
+        }
+        .keyboardShortcut("z", modifiers: .command)
       }
-      .keyboardShortcut("z", modifiers: .command)
       if !model.selected(model.screen).isEmpty && !anyOverlay {
         Button("") { model.clearSelection(model.screen) }.keyboardShortcut(.escape, modifiers: [])
       }

@@ -102,7 +102,7 @@ extension AppModel {
       await MainActor.run {
         self.refresh()
         if let failure = fail { self.show(failure, error: true); return }
-        if let last = all.last { self.lastBatchId = last }
+        for id in all { self.undoHistory.push(id, label: "Saved \(done) score\(done == 1 ? "" : "s")") }
         self.show(DSToastModel(message: "Saved \(done) score\(done == 1 ? "" : "s")", tone: .success,
                                actionTitle: all.isEmpty ? nil : "Undo",
                                action: all.isEmpty ? nil : { for id in all.reversed() { self.undo(batch: id) } }, duration: 6))

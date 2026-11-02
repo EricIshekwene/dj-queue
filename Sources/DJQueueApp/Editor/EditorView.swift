@@ -38,6 +38,7 @@ struct EditorView: View {
   var body: some View {
     VStack(spacing: 0) {
       EditorHeader(model: model, videoIds: videoIds, done: done, accessory: headerAccessory)
+        .background(EditorUndoShortcuts(model: model))
       DSSeparator()
       HStack(alignment: .top, spacing: 0) {
         VStack(spacing: DS.space.sm) {

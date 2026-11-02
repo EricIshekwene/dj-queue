@@ -118,7 +118,7 @@ private struct DSTooltipModifier: ViewModifier {
           if inside { DSTooltipController.shared.debugHoverEvents += 1; DSTooltipController.shared.hoverBegan(a) } else { DSTooltipController.shared.hoverEnded(a) }
         }
         .overlay(alignment: side.overlayAlignment) {
-          if forceVisible { staticBubble }
+          if forceVisible || DSTooltipController.forcedLabels.contains(content.label ?? content.disabledReason ?? "") { staticBubble }
         }
         .accessibilityHint(Text(content.spoken))
     }
@@ -249,6 +249,8 @@ private final class DSTooltipPanel: NSPanel {
 @MainActor
 final class DSTooltipController {
   static let shared = DSTooltipController()
+  /// Snapshots only: tooltips whose label is listed draw in place (set before the window is built).
+  nonisolated(unsafe) static var forcedLabels: Set<String> = []
 
   var group = TooltipDelayGroup(delay: 0.5, timeout: 0.4)
   /// Offset between trigger and bubble (shadcn sideOffset 4–8; Base UI collisionPadding 5).
