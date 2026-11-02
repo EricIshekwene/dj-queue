@@ -46,8 +46,8 @@ extension Media {
   /// main thread (`ProxyService` does). Older proxies of the same clip and range are removed.
   @discardableResult
   public static func ensureProxy(store: Store, video: Video, range: ProxyRange = .trim) throws -> URL {
-    let url = try proxyURL(store: store, video: video, range: range)
     let fm = FileManager.default
+    let url = try proxyURL(store: store, video: video, range: range)
     if fm.fileExists(atPath: url.path) { return url }
     guard let ffmpeg = Tools.ffmpeg else { throw MediaError("ffmpeg not found (install with Homebrew)") }
     guard let src = try store.fileURL(for: video), fm.fileExists(atPath: src.path) else {
@@ -88,9 +88,8 @@ extension Media {
   }
 
   static func proxyGeometry(store: Store, video: Video, range: ProxyRange) throws -> (CropRect?, Aspect, TrimRange) {
-    let re = try store.resolvedEdit(videoId: video.id, sourceSize: video.sourceWidth.flatMap { w in
-      video.sourceHeight.map { CGSize(width: w, height: $0) }
-    })
+    // The default crop needs the source size: use the cached one, else probe once (then it is cached).
+    let re = try store.resolvedEdit(videoId: video.id, sourceSize: sourceSize(store: store, video: video))
     let trim = range == .trim ? re.trim() : TrimRange(start: 0, end: video.duration)
     return (re.crop, re.aspect, trim)
   }

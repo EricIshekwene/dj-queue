@@ -199,8 +199,8 @@ public enum PlatformUI {
     var a = aspect.ratio
     if let c = s.cardCrop, a < c.ratio { a = c.ratio }  // portrait cropped to the card's limit
     // Screen-normalised → physical: width × 9, height × 19.5.
-    let w = Double(box.width), hPhys = w * 9 / a
-    let h = min(Double(box.height), hPhys / 19.5)
+    var w = Double(box.width), h = w * 9 / a / 19.5
+    if h > Double(box.height) { h = Double(box.height); w = h * 19.5 * a / 9 }
     return CGRect(x: box.minX, y: box.minY, width: w, height: h)
   }
 
