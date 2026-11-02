@@ -49,8 +49,20 @@ public enum AutoUpdateWatcher {
 
   /// Writes the plist (and loads it when `load`). Refused in dev environments and for a `djq` outside the
   /// installed app, like the engine LaunchAgent: a dev build must never install itself over the real app.
+  /// Takes the run lock first: (re)loading the watcher would kill a run mid-install.
   public static func install(_ au: AutoUpdatePaths, repo: String, branch: String, load: Bool,
                              environment: [String: String] = ProcessInfo.processInfo.environment) throws {
+    for k in ["DJQ_HOME", "DJQ_ROOT"] where !(environment[k] ?? "").isEmpty {
+      throw EngineError("Won't install the auto-update watcher while \(k) is set (dev environment). Use `djq autoupdate run` to run it by hand.")
+    }
+    guard let lock = AutoUpdateLock.acquire(au.lock) else { throw busy }
+    defer { lock.release() }
+    try installHoldingLock(au, repo: repo, branch: branch, load: load, environment: environment)
+  }
+
+  static let busy = EngineError("An update is running right now; try again when `djq autoupdate status` says idle (stopping the watcher mid-install could leave the app half-installed).")
+
+  static func installHoldingLock(_ au: AutoUpdatePaths, repo: String, branch: String, load: Bool, environment: [String: String]) throws {
     for k in ["DJQ_HOME", "DJQ_ROOT"] where !(environment[k] ?? "").isEmpty {
       throw EngineError("Won't install the auto-update watcher while \(k) is set (dev environment). Use `djq autoupdate run` to run it by hand.")
     }
@@ -73,9 +85,23 @@ public enum AutoUpdateWatcher {
     }
   }
 
+  /// Takes the run lock first, like `install`.
   public static func uninstall(_ au: AutoUpdatePaths, unload: Bool) throws {
+    guard let lock = AutoUpdateLock.acquire(au.lock) else { throw busy }
+    defer { lock.release() }
+    try uninstallHoldingLock(au, unload: unload)
+  }
+
+  /// Only for code that already holds the run lock (the rollback).
+  static func uninstallHoldingLock(_ au: AutoUpdatePaths, unload: Bool) throws {
     if unload { _ = LaunchAgent.run("/bin/launchctl", ["bootout", "gui/\(getuid())/\(AutoUpdate.watcherLabel)"]) }
     if FileManager.default.fileExists(atPath: au.watcherPlist.path) { try FileManager.default.removeItem(at: au.watcherPlist) }
+  }
+
+  /// True when these paths point at the real ~/Library/LaunchAgents (tests and dev runs use scratch folders).
+  static func isRealLaunchAgentsFolder(_ au: AutoUpdatePaths) -> Bool {
+    au.launchAgents.standardizedFileURL.path
+      == URL(fileURLWithPath: LaunchAgent.realHome).appendingPathComponent("Library/LaunchAgents").standardizedFileURL.path
   }
 
   public static func isInstalled(_ au: AutoUpdatePaths) -> Bool { FileManager.default.fileExists(atPath: au.watcherPlist.path) }
@@ -105,12 +131,25 @@ public enum AutoUpdateClient {
   static func kick(_ files: AutoUpdateStore, djq: URL?, trigger: String) {
     if AutoUpdateWatcher.isInstalled(files.paths), AutoUpdateWatcher.isLoaded() { return }
     guard let djq, FileManager.default.isExecutableFile(atPath: djq.path) else { return }
-    let p = Process()
-    p.executableURL = djq
-    p.arguments = ["autoupdate", "run", "--trigger", trigger]
-    p.standardOutput = FileHandle.nullDevice
-    p.standardError = FileHandle.nullDevice
-    p.standardInput = FileHandle.nullDevice
-    try? p.run()
+    spawnDetached(djq.path, ["autoupdate", "run", "--trigger", trigger])
+  }
+
+  /// Starts a process in its own session, so restarting the app (or its launchd job) never kills the runner
+  /// mid-install. Output goes to /dev/null; the runner logs to autoupdate.log.
+  static func spawnDetached(_ tool: String, _ args: [String]) {
+    var attr: posix_spawnattr_t?
+    posix_spawnattr_init(&attr)
+    defer { posix_spawnattr_destroy(&attr) }
+    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID))
+    var actions: posix_spawn_file_actions_t?
+    posix_spawn_file_actions_init(&actions)
+    defer { posix_spawn_file_actions_destroy(&actions) }
+    for fd in [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO] {
+      posix_spawn_file_actions_addopen(&actions, fd, "/dev/null", fd == STDIN_FILENO ? O_RDONLY : O_WRONLY, 0)
+    }
+    let argv: [UnsafeMutablePointer<CChar>?] = ([tool] + args).map { strdup($0) } + [nil]
+    defer { argv.forEach { free($0) } }
+    var pid: pid_t = 0
+    _ = posix_spawn(&pid, tool, &actions, &attr, argv, environ)
   }
 }
