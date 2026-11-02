@@ -1,0 +1,35 @@
+# R2-SCREENS decisions
+
+## PLANNING (Week, Today, menu bar)
+
+- **Week toolbar = title "Week of 2 Nov" + context line ("This week" / "Next week"), then ‹ Today › · status pill · Runway · ⋯ · Approve week.** Why: ScreenScaffold's title is a plain string; chevrons around the title would mean editing the shared scaffold, and this keeps navigation one glance away.
+- **Approve week stays the primary but is disabled with a reason when the week is approved/locked, over, or has nothing planned from today on.** Propose week lives in ⋯ (also disabled once approved). Why: spec §6.4; an empty week is filled by dragging, "Add from queue" or Propose, never by a surprise approve.
+- **Status pill: Draft = warning tint, Approved = success tint, Locked = neutral with a lock (approved and started).** Why: status is a chip; Locked explains why past days can't change.
+- **No multi-select on Week cards; every action is per card (context menu + hover ⋯).** Why: BulkActions has no remove-from-week / swap batch op, so a "bulk" there would bypass the confirm + undo contract (#11).
+- **Slot → slot drag swaps (or moves to an empty day) without asking; a backlog clip dropped on a planned day asks first ("Replace the planned clip?").** Why: a swap loses nothing; a replace sends a clip back to the backlog (round-1 behaviour kept).
+- **The replace confirmation is an in-screen DSDialog over the scrim (content area only).** Why: renders in snapshots and stays in Week's own file (no shell edit).
+- **Day card = cover at full column width (9:16), score capsule on the cover, title (2 lines), then one slot chip per platform; pinned = pin capsule on the cover; "Needs you" danger badge on the cover when a post failed/late/©.** Why: DESIGN-v2 §6.4 + the §4 grid tile rule (score top-right on the cover); version never shown.
+- **Slot chips use the compact platform name ("YouTube" for YouTube Shorts) at 10.5 pt (DSBadge sm size, `DS.type.microCompact` DSX token).** Why: "YouTube Shorts 3:00 PM" can't fit a 150 pt column; still a name, never a code.
+- **Chip dot colours: draft = hollow, planned/rendering/ready = info, due = near-black, late = warning tint row, failed/© = danger tint row, posted = success, skipped/paused = struck through.** Why: DESIGN-v2 status palette; problems get a tinted row so they read at a glance.
+- **Retry/repost posts without a plan slot show as small capsules under the day card (↻ / ↪ icon, tooltip says which).** Why: keeps round-1 W.S5 visible without a sentence.
+- **Past days 50 % and their covers don't autoplay; future/today cards autoplay muted from proxies under the global playback prefs (focus-only = hovered card).** Why: the 4-player budget goes to what Eric still decides on.
+- **Mac-off periods = the hatched part of a 4 pt awake strip under each past/today day header.** Why: round-1 W.S4 kept, drawn with DS tokens.
+- **Empty day = dashed r.md placeholder "Drop a clip" + ghost "Add from queue" (pins the next backlog clip); past empty day says "Nothing posted".** Why: spec; one quiet action per empty day.
+- **Backlog drawer = hairline + "Next up · N" bar (no material), expanded = 66 pt 9:16 tiles with score and title, draggable onto days.** Why: spec §6.4, flat ChatGPT surfaces.
+- **Whole-app empty (no slots, nothing ready) = DSEmptyState "Nothing ready to plan" + Go to Edit.** Why: §6.11.
+- **Today: toolbar "Today · Sun 1 Nov" with the progress ring + "2 of 6 posted" on the right; content is a centred 720 column.** Why: the toolbar already carries the title; repeating it in the column would duplicate it.
+- **Next-up card = the first post due now (overdue first), else the next one to come; its rows stay in the list too.** Why: the Lyssna alt ref repeats the next session in the list; the row list stays a complete checklist.
+- **The only filled button on Today is the Next-up card's Mark posted, and only while it's due (outline otherwise).** Why: one primary per screen; marking early is still allowed.
+- **Row actions are icon-only ghost buttons with tooltips (Copy caption, Copy title for YouTube, Copy file, Reveal, Mark posted, ⋯); problem rows switch to labelled actions (Re-upload anyway ▾ / Skip platform / Accept; Fix… / Re-queue); posted rows show Open post + Metrics.** Why: a 720 column can't hold six labelled buttons; problem actions need words.
+- **Status pills: Rendering n % (info) · Ready (outline) · Due now (solid near-black) · Late 2 h (warning) · Posted (success) · Failed / © (danger) · Skipped / resolution (neutral).** Why: spec §6.5 vocabulary; one pill, never a sentence.
+- **The thumb is the drag-out handle; a small move badge appears once the rendered file exists.** Why: spec ("file drag-out handle sits on the thumb"); replaces the round-1 "Drag file" chip.
+- **Mark posted / Report problem / Long-form posted are DSDialogs presented in-window over the scrim (MainWindowView overlays) instead of `.sheet`.** Why: same pattern as the bulk sheet; they render in snapshots. (Shared-file edit, 3 lines moved.)
+- **Mark posted URL starts empty; the clipboard is no longer read.** The only prefill is `markPostedDraftURL` (what Eric typed in a notification), shown with its validation error. Why: brief — no prefilled text.
+- **Copy toasts on Today/menu bar say the platform name ("TikTok caption copied") via `copyCaptionNamed`/`copyTitleNamed`.** Why: AppModel's own copy toasts use codes ("TT"); a planning-owned wrapper avoids editing the shared model.
+- **Menu bar window: "Next post"/"Post now" caption + countdown (display) or "Due now"/"Late 22 h", the clip row, [Copy caption] [Mark posted] (primary only when due), "Also due" ≤ 3 rows, danger row "N need attention › Review", grey row "Engine stopped · ticked 3h ago › Health", footer Open DJ Queue · Pause posting switch · ⋯ (Pause one platform, Open Health, Quit).** Why: §6.10; the round-1 runway numbers moved to the icon only (calm), quit/pause-one-platform kept behind ⋯.
+- **Mark posted in the menu bar stays inline (URL field + Save, validated).** Why: the main window may be closed; round-1 behaviour.
+- **Pause posting asks inline ("Pause all posting? Cancel / Pause"); resume doesn't ask.** Why: the shell's confirm dialog lives on the main window; resuming is harmless.
+- **The window reads its data through `MenuBarState(model:)`; snapshots build variants (normal / due now / problems / engine off) from the real sample posts.** Why: deterministic shots without mutating shared sample data.
+- **Menu-bar icon: errors are a red dot (was a red count badge); template otherwise; 40 % ink when the engine is off; pause glyph while paused.** Why: §6.10 "red dot on errors".
+- **Snapshot states that need different data (next week approved, nothing due today) come from a sandbox copy of the seeded snapshot DB inside the runner's temp folder.** Why: other leaves render from the shared model after us.
+- **Kept names other files call: WeekView, TodayView, MarkPostedSheet, ReportProblemSheet, LongformPostedSheet, ReuploadMenu (Posts), SkeletonRows (Library), MenuBarRoot/MenuBarLabel/MenuBarIcon (DJQueueApp).** Why: no caller changes needed besides the sheet presentation.

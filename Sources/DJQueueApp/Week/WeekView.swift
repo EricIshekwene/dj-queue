@@ -1,182 +1,256 @@
 import DJQCore
 import SwiftUI
 
-/// W.L: header (week picker, Draft/Approved, Approve week) · 7-column grid · backlog drawer.
+/// Week (DESIGN-v2 §6.4, `R2.WEEK` Hootsuite week with media cards). Job: check and approve the next week.
+///
+/// ```
+/// ┌ Week of 2 Nov · Next week ········ ‹ Today › · Draft · Runway · ⋯ · [Approve week ⌘↩] ┐
+/// │ Mon 2   Tue 3   Wed 4   Thu 5   Fri 6   Sat 7   Sun 8        (today = near-black pill) │
+/// │ ┌────┐  ┌────┐  ┌────┐  ┌╌╌╌╌┐ …  one day card: 9:16 cover, title, score, slot chips  │
+/// │ └────┘  └────┘  └────┘  └╌╌╌╌┘     empty day = dashed "Drop a clip" / Add from queue   │
+/// │ ˄ Next up · 6                                       backlog drawer (drag onto a day)   │
+/// └────────────────────────────────────────────────────────────────────────────────────────┘
+/// ```
+/// Drag a day card onto another day to swap (or move to an empty day); drop a backlog clip on a planned day to
+/// replace it (asks first). Past days are 50 % and fixed. Hidden: captions, editor controls, history.
 struct WeekView: View {
   @Bindable var model: AppModel
 
-  private var ws: String { model.weekStart.isEmpty ? model.planner.weekStart(for: model.now) : model.weekStart }
+  private var ws: String { model.shownWeek }
   private var days: [String] { model.dm.weekDays(ws) }
   /// Loaded off-main by the model's refresh for `model.weekStart` (no DB work in body).
   private var slots: [PlanSlot] { model.weekSlots.filter { $0.weekStart == ws } }
-  private var state: WeekState? { model.weekStates[ws] }
 
   var body: some View {
-    // FOUNDATION: round-1 body inside the shared scaffold until the Planning leaf rewrites this screen.
-    ScreenScaffold(model: model, screen: .week, content: { legacyBody })
-  }
-
-  @ViewBuilder private var legacyBody: some View {
     let slots = self.slots
-    VStack(spacing: 0) {
-      header(slots)
-      Divider()
-      if slots.isEmpty && model.ordered.isEmpty {
-        EmptyState(symbol: "calendar.badge.exclamationmark", title: "Nothing ready to plan",
-                   subtitle: "Edit and score videos to make them ready.", buttonTitle: "Open Queue") { model.screen = .queue }
-      } else {
-        grid(slots)
-      }
-      BacklogDrawer(model: model, expanded: $model.weekBacklogExpanded, weekDays: days)
-    }
-    .confirmationDialog("Replace the planned video?", isPresented: Binding(get: { model.pendingReplace != nil },
-                                                                          set: { if !$0 { model.pendingReplace = nil } })) {
-      Button("Replace") {
-        if let r = model.pendingReplace { model.pin(r.videoId, dayKey: r.day) }
-        model.pendingReplace = nil
-      }
-      Button("Cancel", role: .cancel) { model.pendingReplace = nil }
-    } message: {
-      Text("“\(model.pendingReplace.map { r in model.video(r.replaced).map(model.displayName) ?? "" } ?? "")” goes back to the backlog.")
-    }
-  }
-
-  // MARK: W.S1 header (Assembly ref)
-
-  private func header(_ slots: [PlanSlot]) -> some View {
-    let start = model.dm.date(ws), end = model.dm.date(model.dm.addDays(ws, 6))
-    let thisWeek = model.planner.weekStart(for: model.now)
-    let label = ws == thisWeek ? "This week" : (ws == model.dm.addDays(thisWeek, 7) ? "Next week" : (ws < thisWeek ? "Past week" : "Later"))
-    return HStack(spacing: 10) {
-      HStack(spacing: 2) {
-        Button { model.weekStart = model.dm.addDays(ws, -7) } label: { Image(systemName: "chevron.left") }
-        Button("Today") { model.weekStart = thisWeek }
-        Button { model.weekStart = model.dm.addDays(ws, 7) } label: { Image(systemName: "chevron.right") }
-      }
-      .buttonStyle(.borderless)
-      Text("\(Fmt.day(start, tz: model.tz, style: "d MMM")) – \(Fmt.day(end, tz: model.tz, style: "d MMM"))")
-        .font(.system(size: 17, weight: .semibold))
-      Text(label).font(DS.Font.body).foregroundStyle(.secondary)
-      if !slots.isEmpty, let l = model.weekLabel(ws) {
-        StatusPill(text: l.text, tint: l.tint, icon: l.icon)
-          .help(l.text == "Locked" ? "The week has started: past days are fixed; future days can still change." : "")
-      }
-      if model.settings.paused { StatusPill(text: "Paused", tint: .orange, icon: "pause.fill") }
-      Spacer()
-      Menu {
-        Button("Propose open days", systemImage: "wand.and.stars") { model.proposeWeek(ws) }
-          .disabled(state == .approved || ws < thisWeek)
-        Button("Rebuild week", systemImage: "arrow.clockwise") { model.rebuildWeek(ws) }
-        Button("Push plan by a day", systemImage: "calendar.badge.clock") { model.pushPlan(days: 1) }
-      } label: { Image(systemName: "ellipsis.circle") }
-        .menuStyle(.borderlessButton).fixedSize().help("Rebuild · Push a day")
-      if slots.isEmpty && ws >= thisWeek {
-        Button("Propose week") { model.proposeWeek(ws) }
-          .buttonStyle(.borderedProminent).controlSize(.large)
-      } else if state != .approved {
-        Button {
-          model.approveWeek(ws)
-        } label: { Label("Approve week", systemImage: "checkmark.seal") }
-          .buttonStyle(.borderedProminent).controlSize(.large)
-          .keyboardShortcut(.return, modifiers: .command)
-          .disabled(slots.isEmpty)
-          .help("⌘↩")
-      }
-    }
-    .padding(.horizontal, DS.Space.l)
-    .frame(height: 56)
-  }
-
-  // MARK: W.S2 grid (Hootsuite ref)
-
-  private func grid(_ slots: [PlanSlot]) -> some View {
-    let bySlotDate = Dictionary(grouping: slots, by: \.date)
-    let awake = model.weekAwake
-    return GeometryReader { g in
-      let colW = (g.size.width - 6) / 7
-      ScrollView {
-        HStack(alignment: .top, spacing: 0) {
-          ForEach(Array(days.enumerated()), id: \.element) { i, day in
-            DayColumn(model: model, day: day, slots: (bySlotDate[day] ?? []).sorted { $0.position < $1.position },
-                      approved: state == .approved, awake: awake, otherSlots: slots)
-              .frame(width: colW)
-              .frame(minHeight: g.size.height, alignment: .top)
-            if i < 6 { Divider() }
-          }
+    ScreenScaffold(model: model, screen: .week, title: model.weekTitle(ws), subtitle: model.weekContext(ws)) {
+      toolbar(slots)
+    } content: {
+      VStack(spacing: 0) {
+        if !model.loaded {
+          WeekSkeleton()
+        } else if slots.isEmpty && model.ordered.isEmpty && model.upcomingSlots.isEmpty {
+          DSEmptyState(icon: "calendar", title: "Nothing ready to plan", message: "Clips show up here once they're scored and edited.",
+                       actionTitle: "Go to Edit") { model.screen = .edit }
+        } else {
+          WeekGrid(model: model, days: days, slots: slots, approved: model.weekStates[ws] == .approved)
+          BacklogDrawer(model: model, expanded: $model.weekBacklogExpanded)
         }
+      }
+      .overlay { replaceDialog }
+    }
+  }
+
+  // MARK: Toolbar
+
+  @ViewBuilder private func toolbar(_ slots: [PlanSlot]) -> some View {
+    let status = model.weekStatus(ws)
+    let past = model.dm.addDays(ws, 6) < model.todayKey
+    HStack(spacing: 2) {
+      DSIconButton("chevron.left", tooltip: "Previous week", size: .sm) { model.weekStart = model.dm.addDays(ws, -7) }
+      DSButton("Today", variant: .ghost, size: .sm, disabledReason: ws == model.thisWeek ? "Already showing this week" : nil) {
+        model.weekStart = model.thisWeek
+      }
+      DSIconButton("chevron.right", tooltip: "Next week", size: .sm) { model.weekStart = model.dm.addDays(ws, 7) }
+    }
+    if !slots.isEmpty, let status { statusPill(status) }
+    RunwayChip(model: model)
+    DSXMenuButton(tooltip: "Week actions") {
+      Button("Rebuild week", systemImage: "arrow.clockwise") { model.rebuildWeek(ws) }
+        .disabled(past)
+      Button("Push plan by a day", systemImage: "calendar.badge.clock") { model.pushPlan(days: 1) }
+      Divider()
+      Button("Propose week", systemImage: "square.grid.3x1.below.line.grid.1x2") { model.proposeWeek(ws) }
+        .disabled(status == .approved || status == .locked || past)
+    }
+    DSButton("Approve week", icon: "checkmark", variant: .primary, disabledReason: approveBlocker(slots, status: status, past: past),
+             tooltip: "Approve: the engine prepares these posts", shortcut: "⌘↩") {
+      model.approveWeek(ws)
+    }
+    .keyboardShortcut(.return, modifiers: .command)
+  }
+
+  private func statusPill(_ s: AppModel.WeekStatus) -> some View {
+    let (text, style, icon, help): (String, DSBadgeStyle, String, String) = switch s {
+    case .draft: ("Draft", .soft(.warning), "pencil", "Draft: nothing posts until you approve the week")
+    case .approved: ("Approved", .soft(.success), "checkmark.seal", "Approved: these posts will be prepared and handed to you")
+    case .locked: ("Locked", .soft(.neutral), "lock", "The week has started: past days are fixed; future days can still change")
+    }
+    return DSBadge(text, style: style, icon: icon).dsTooltip(help)
+  }
+
+  private func approveBlocker(_ slots: [PlanSlot], status: AppModel.WeekStatus?, past: Bool) -> String? {
+    if past { return "This week is over" }
+    if status == .approved || status == .locked { return "This week is already approved" }
+    if !slots.contains(where: { $0.date >= model.todayKey }) {
+      return "Nothing planned yet — drop clips on days or use ⋯ → Propose week"
+    }
+    return nil
+  }
+
+  // MARK: Replace confirmation (backlog clip dropped on a planned day)
+
+  @ViewBuilder private var replaceDialog: some View {
+    if let r = model.pendingReplace {
+      let replaced = model.video(r.replaced).map(model.displayName) ?? "the planned clip"
+      let incoming = model.video(r.videoId).map(model.displayName) ?? "this clip"
+      ModalHost(onDismiss: { model.pendingReplace = nil }) {
+        DSDialog("Replace the planned clip?",
+                 description: "“\(incoming)” takes \(Fmt.day(model.dm.date(r.day), tz: model.tz, style: "EEE d MMM")). “\(replaced)” goes back to the backlog.",
+                 icon: "arrow.left.arrow.right", onClose: { model.pendingReplace = nil }) {
+          EmptyView()
+        } footer: {
+          DSButton("Cancel", variant: .ghost) { model.pendingReplace = nil }
+            .keyboardShortcut(.cancelAction)
+          DSButton("Replace", variant: .primary) {
+            model.pin(r.videoId, dayKey: r.day)
+            model.pendingReplace = nil
+          }
+          .keyboardShortcut(.defaultAction)
+        }
+        .dsFloatingSurface(radius: DS.radius.lg, elevation: DS.elevation.e3)
       }
     }
   }
 }
 
-struct DayColumn: View {
+// MARK: - Grid
+
+/// 7 equal columns, 12 pt gaps, screen gutters. Day headers stay put; the cards scroll.
+struct WeekGrid: View {
+  @Bindable var model: AppModel
+  let days: [String]
+  let slots: [PlanSlot]
+  let approved: Bool
+  @Environment(\.screenGutter) private var gutter
+
+  var body: some View {
+    let bySlotDate = Dictionary(grouping: slots, by: \.date)
+    let ids = slots.map(\.videoId)
+    GeometryReader { g in
+      let colW = max(96, (g.size.width - 2 * gutter - 6 * DS.space.sm) / 7)
+      VStack(spacing: 0) {
+        HStack(spacing: DS.space.sm) {
+          ForEach(days, id: \.self) { d in WeekDayHeader(model: model, day: d).frame(width: colW) }
+        }
+        .padding(.horizontal, gutter)
+        .padding(.bottom, DS.space.sm)
+        ScrollView {
+          HStack(alignment: .top, spacing: DS.space.sm) {
+            ForEach(days, id: \.self) { day in
+              WeekDayColumn(model: model, day: day, slots: (bySlotDate[day] ?? []).sorted { $0.position < $1.position },
+                            approved: approved, weekSlots: slots, width: colW)
+                .frame(width: colW)
+            }
+          }
+          .padding(.horizontal, gutter)
+          .padding(.bottom, DS.space.xl)
+        }
+        .scrollIndicators(.automatic)
+      }
+    }
+    .task(id: ids.joined(separator: ",") + "|\(model.playback.autoplay)|\(model.playback.loop.rawValue)") {
+      for id in ids { if let v = model.video(id) { model.requestPoster(v) } }
+      guard model.playback.autoplay else { return }
+      model.requestProxies(ids)
+    }
+  }
+}
+
+/// "Thu 5" (callout semibold); today in a near-black capsule; awake strip under past days and today.
+struct WeekDayHeader: View {
+  @Bindable var model: AppModel
+  let day: String
+
+  var body: some View {
+    let isToday = day == model.todayKey
+    let isPast = day < model.todayKey
+    let text = Fmt.day(model.dm.date(day), tz: model.tz, style: "EEE d")
+    VStack(alignment: .leading, spacing: 6) {
+      Text(text)
+        .font(DS.type.calloutSemibold.monospacedDigit())
+        .foregroundStyle(isToday ? DS.color.primaryText : isPast ? DS.color.textTertiary : DS.color.text)
+        .padding(.horizontal, isToday ? 10 : 0)
+        .frame(height: 24)
+        .background(isToday ? DS.color.primary : .clear, in: Capsule())
+      if isPast || isToday {
+        AwakeStrip(model: model, day: day, awake: model.weekAwake)
+      } else {
+        Color.clear.frame(height: 4)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(isToday ? "Today, \(text)" : text)
+  }
+}
+
+/// One day: its card(s), reposts/retries, or the dashed drop placeholder. Drops: a day card swaps (or moves to an
+/// empty day); a backlog clip pins (asks before replacing a planned clip). Past days refuse drops.
+struct WeekDayColumn: View {
   @Bindable var model: AppModel
   let day: String
   let slots: [PlanSlot]
   let approved: Bool
-  let awake: [DateInterval]
-  let otherSlots: [PlanSlot]
+  let weekSlots: [PlanSlot]
+  let width: CGFloat
   @State private var targeted = false
 
-  private var isToday: Bool { day == model.todayKey }
   private var isPast: Bool { day < model.todayKey }
 
+  /// Reposts and re-queued attempts that land on this day (no plan slot).
+  private var extraPosts: [PlatformPost] {
+    model.posts.filter { $0.planSlotId == nil && model.dm.key($0.scheduledAt) == day }.sorted { $0.scheduledAt < $1.scheduledAt }
+  }
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      dayHeader
+    VStack(alignment: .leading, spacing: DS.space.xs) {
       ForEach(slots) { s in
         if let v = model.video(s.videoId) {
-          WeekCard(model: model, slot: s, video: v, approved: approved, isPast: isPast, otherSlots: otherSlots)
+          WeekDayCard(model: model, slot: s, video: v, approved: approved, isPast: isPast, weekSlots: weekSlots, width: width)
         }
       }
-      ForEach(extraPosts) { p in ExtraChip(model: model, post: p) }
-      if slots.isEmpty && !isPast {
-        RoundedRectangle(cornerRadius: DS.Radius.card)
-          .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-          .foregroundStyle(targeted ? Color.accentColor : Color.primary.opacity(0.15))
-          .frame(height: 120)
-          .overlay(Text("Drop a video").font(DS.Font.secondary).foregroundStyle(.tertiary))
-      }
-      Spacer(minLength: 0)
+      ForEach(extraPosts) { p in ExtraPostChip(model: model, post: p) }
+      if slots.isEmpty { placeholder }
     }
-    .padding(10)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    .background(isPast ? Color.primary.opacity(0.035) : (targeted ? Color.accentColor.opacity(0.06) : .clear))
-    .overlay(alignment: .top) { if isToday { Rectangle().fill(Color.accentColor).frame(height: 2) } }
+    .opacity(isPast ? 0.5 : 1)
+    .frame(maxWidth: .infinity, alignment: .top)
     .dropDestination(for: String.self) { items, _ in
       guard let item = items.first else { return false }
       return drop(item)
     } isTargeted: { targeted = $0 && !isPast }
   }
 
-  /// Reposts and re-queued failures that land on this day (W.S5).
-  private var extraPosts: [PlatformPost] {
-    model.posts.filter { $0.planSlotId == nil && model.dm.key($0.scheduledAt) == day }
-  }
-
-  private var dayHeader: some View {
-    let d = model.dm.date(day)
-    return VStack(alignment: .leading, spacing: 4) {
-      HStack(alignment: .firstTextBaseline) {
-        Text(Fmt.day(d, tz: model.tz, style: "EEE").uppercased()).font(DS.Font.eyebrow).foregroundStyle(isToday ? Color.accentColor : .secondary)
-        Spacer()
-        Text(Fmt.day(d, tz: model.tz, style: "d"))
-          .font(.system(size: 15, weight: .semibold).monospacedDigit())
-          .foregroundStyle(isToday ? Color.white : (isPast ? Color.secondary : Color.primary))
-          .frame(width: 26, height: 26)
-          .background(isToday ? Color.accentColor : .clear, in: Circle())
+  @ViewBuilder private var placeholder: some View {
+    let backlog = model.weekBacklog
+    VStack(spacing: DS.space.xs) {
+      Image(systemName: "plus").font(.system(size: 13, weight: .medium)).foregroundStyle(DS.color.textTertiary)
+      Text(isPast ? "Nothing posted" : "Drop a clip").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+      if !isPast {
+        DSButton("Add from queue", variant: .ghost, size: .sm,
+                 disabledReason: backlog.isEmpty ? "Nothing ready in the queue" : nil,
+                 tooltip: backlog.first.map { "Puts “\(model.displayName($0))” on this day" }) {
+          if let v = backlog.first { model.pin(v.id, dayKey: day) }
+        }
       }
-      if isPast || isToday { AwakeStrip(model: model, day: day, awake: awake).frame(height: 4) }
+    }
+    .frame(maxWidth: .infinity)
+    .frame(height: width * 16 / 9)
+    .background(targeted ? DS.color.hover : .clear, in: RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
+    .overlay {
+      RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous)
+        .strokeBorder(targeted ? DS.color.text.opacity(0.5) : DS.color.borderStrong, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
     }
   }
 
-  /// Same-day and past-day drops are refused; a backlog video dropped on a planned day asks before replacing.
+  /// Same-day and past-day drops are refused; a backlog clip dropped on a planned day asks before replacing.
   private func drop(_ item: String) -> Bool {
     guard !isPast else { model.show("Past days can't be changed", error: true); return false }
     if item.hasPrefix("slot:") {
       let id = String(item.dropFirst(5))
-      guard let src = otherSlots.first(where: { $0.id == id }), src.date != day else { return false }
-      guard src.date >= model.todayKey else { model.show("That video already went out", error: true); return false }
+      guard let src = weekSlots.first(where: { $0.id == id }) ?? model.upcomingSlots.first(where: { $0.id == id }), src.date != day
+      else { return false }
+      guard src.date >= model.todayKey else { model.show("That clip already went out", error: true); return false }
       if let target = slots.first { model.swap(id, target.id) } else { model.move(id, to: day) }
     } else if item.hasPrefix("video:") {
       let vid = String(item.dropFirst(6))
@@ -191,105 +265,131 @@ struct DayColumn: View {
   }
 }
 
-/// Thin 24 h bar: green awake, hatched grey asleep / Mac off (W.S4).
-struct AwakeStrip: View {
-  @Bindable var model: AppModel
-  let day: String
-  let awake: [DateInterval]
-
-  var body: some View {
-    GeometryReader { g in
-      let start = model.dm.date(day)
-      let end = min(model.dm.date(model.dm.addDays(day, 1)), model.now)
-      let total = 86400.0
-      ZStack(alignment: .leading) {
-        Hatch().fill(Color.secondary.opacity(0.35))
-          .frame(width: g.size.width * max(0, end.timeIntervalSince(start)) / total)
-        ForEach(Array(awake.enumerated()), id: \.offset) { _, iv in
-          let a = max(iv.start, start), b = min(iv.end, end)
-          if b > a {
-            Rectangle().fill(Color.green.opacity(0.7))
-              .frame(width: max(1, g.size.width * b.timeIntervalSince(a) / total))
-              .offset(x: g.size.width * a.timeIntervalSince(start) / total)
-          }
-        }
-      }
-      .clipShape(Capsule())
-    }
-    .help("Mac awake (green) / off or asleep (hatched)")
-  }
-}
-
-struct Hatch: Shape {
-  func path(in r: CGRect) -> Path {
-    var p = Path()
-    var x = r.minX - r.height
-    while x < r.maxX {
-      p.move(to: CGPoint(x: x, y: r.maxY))
-      p.addLine(to: CGPoint(x: x + r.height, y: r.minY))
-      p.addLine(to: CGPoint(x: x + r.height + 1.5, y: r.minY))
-      p.addLine(to: CGPoint(x: x + 1.5, y: r.maxY))
-      p.closeSubpath()
-      x += 4
-    }
-    return p
-  }
-}
-
-/// W.S2.a video card + W.S2.b slot chips.
-struct WeekCard: View {
+/// The day card (r.md, e1): 9:16 cover at full column width (muted autoplay from the proxy, poster fallback),
+/// score capsule on the cover, title, then one slot chip per platform.
+struct WeekDayCard: View {
   @Bindable var model: AppModel
   let slot: PlanSlot
   let video: Video
   let approved: Bool
   let isPast: Bool
-  let otherSlots: [PlanSlot]
+  let weekSlots: [PlanSlot]
+  let width: CGFloat
+  @State private var hovering = false
 
-  private var posts: [Platform: PlatformPost] {
-    Dictionary((model.postsBySlot[slot.id] ?? []).map { ($0.platform, $0) }, uniquingKeysWith: { a, b in a.attemptNo > b.attemptNo ? a : b })
-  }
+  private var posts: [Platform: PlatformPost] { model.slotPosts(slot.id) }
+  private var hasProblem: Bool { posts.values.contains { model.postStatus($0).isProblem } }
+  private var anyPosted: Bool { posts.values.contains { $0.state == .posted } }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .top, spacing: 8) {
-        CoverThumb(video: video, width: 54, height: 96)
-        VStack(alignment: .leading, spacing: 4) {
-          Text(model.displayName(video)).font(.system(size: 12, weight: .semibold)).lineLimit(3)
-          HStack(spacing: 4) {
-            Text(video.score.map(String.init) ?? "–").font(DS.Font.score)
-            Text("v\(posts.values.map(\.versionNo).max() ?? 1)").font(DS.Font.secondary).foregroundStyle(.secondary)
-            if slot.pinned { Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(.secondary) }
+    let p = model.playback
+    VStack(alignment: .leading, spacing: 0) {
+      DSVideoPreview(url: video.missing ? nil : model.proxyURLs[video.id], poster: model.poster(video),
+                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), unmuteOnHover: p.unmuteOnHover,
+                     muteAlignment: .bottomTrailing)
+        .frame(width: width, height: width * 16 / 9)
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: DS.radius.md, topTrailingRadius: DS.radius.md, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+          if let s = video.score {
+            Text("\(s)").font(DS.type.micro.monospacedDigit()).foregroundStyle(.white)
+              .padding(.horizontal, 7).frame(height: 20)
+              .background(Color.black.opacity(0.55), in: Capsule())
+              .padding(DS.space.xs)
+              .dsTooltip("Score \(s)")
           }
-          if hasProblem { StatusPill(text: "Needs you", tint: .red, icon: "exclamationmark.triangle.fill") }
+        }
+        .overlay(alignment: .topLeading) {
+          HStack(spacing: 4) {
+            if slot.pinned {
+              Image(systemName: "pin.fill").font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 20, height: 20).background(Color.black.opacity(0.55), in: Circle())
+                .dsTooltip("Pinned to this day")
+            }
+            if hasProblem { DSBadge("Needs you", style: .soft(.danger), icon: "exclamationmark", size: .sm).background(DS.color.surface, in: Capsule()) }
+          }
+          .padding(DS.space.xs)
+        }
+        .overlay(alignment: .bottomLeading) {
+          if hovering && !isPast {
+            DSXMenuButton(tooltip: "Clip actions", size: .sm, variant: .secondary) { WeekCardMenu(model: model, slot: slot, video: video,
+                                                                                                approved: approved, isPast: isPast,
+                                                                                                weekSlots: weekSlots, posts: posts) }
+              .padding(DS.space.xs)
+              .transition(.opacity)
+          }
+        }
+      VStack(alignment: .leading, spacing: DS.space.xs) {
+        Text(model.displayName(video))
+          .font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+          .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 2) {
+          ForEach(chipPlatforms, id: \.self) { pl in chip(pl) }
         }
       }
-      VStack(spacing: 3) {
-        ForEach(model.settings.activePlatforms) { p in
-          SlotChip(model: model, platform: p, post: posts[p], date: slot.date, position: slot.position, approved: approved)
-        }
-      }
+      .padding(.horizontal, 6)
+      .padding(.vertical, DS.space.xs)
     }
-    .padding(8)
-    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.card))
-    .overlay {
-      RoundedRectangle(cornerRadius: DS.Radius.card)
-        .strokeBorder(hasProblem ? Color.red.opacity(0.7) : Color.primary.opacity(approved ? 0.12 : 0.25),
-                      style: StrokeStyle(lineWidth: hasProblem ? 1.5 : 1, dash: approved ? [] : [4, 3]))
-    }
-    .opacity(isPast ? 0.8 : 1)
-    .draggable("slot:\(slot.id)") {
-      CoverThumb(video: video, width: 54, height: 96)
-    }
-    .contextMenu { menu }
+    .background(DS.color.surface, in: RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
+    .overlay(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous).strokeBorder(DS.color.border))
+    .dsElevation(DS.elevation.e1)
+    .contentShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
+    .onHover { h in dsWithAnimation(DS.motion.hover) { hovering = h } }
     .onTapGesture(count: 2) { model.openEditor(video.id) }
+    .modifier(SlotDrag(enabled: !isPast && !anyPosted, id: slot.id, poster: model.poster(video)))
+    .contextMenu { WeekCardMenu(model: model, slot: slot, video: video, approved: approved, isPast: isPast, weekSlots: weekSlots, posts: posts) }
+    .dsTooltip("Double-click to edit · drag to another day to swap")
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("\(model.displayName(video)), score \(video.score.map(String.init) ?? "none")")
   }
 
-  private var hasProblem: Bool { posts.values.contains { $0.state.isProblem && $0.resolution == nil } }
+  /// Platforms with a post (approved), else the platforms the draft would post to.
+  private var chipPlatforms: [Platform] {
+    let withPosts = Set(posts.keys)
+    let active = model.settings.activePlatforms
+    return withPosts.isEmpty ? active : active.filter(withPosts.contains) + withPosts.subtracting(active).sorted()
+  }
 
-  @ViewBuilder private var menu: some View {
-    // Locked: past days are fixed; only future slots can be swapped, removed or pinned.
+  private func chip(_ pl: Platform) -> some View {
+    let post = posts[pl]
+    let time = post.map { AppModel.clockText($0.scheduledAt, tz: model.tz) }
+      ?? AppModel.clockText(model.dm.at(slot.date, minutes: model.settings.slot(for: pl) + slot.position * model.settings.secondPostOffsetMinutes),
+                            tz: model.tz)
+    let status: DSXPostStatus = post.map { model.postStatus($0) } ?? (approved ? .planned : .draft)
+    return DSXSlotChip(platform: pl, time: time, status: status, paused: model.settings.pausedPlatforms.contains(pl))
+      .contextMenu { if let post { PostContextMenu(model: model, post: post) } }
+  }
+}
+
+/// Drag source for a day card (only future, not-yet-posted slots).
+private struct SlotDrag: ViewModifier {
+  let enabled: Bool
+  let id: String
+  let poster: NSImage?
+  func body(content: Content) -> some View {
+    if enabled {
+      content.draggable("slot:\(id)") {
+        DSVideoPreview(url: nil, poster: poster, showsMuteButton: false, cornerRadius: DS.radius.sm).frame(width: 54, height: 96)
+      }
+    } else {
+      content
+    }
+  }
+}
+
+/// Day card actions (context menu + hover ⋯). Past days are fixed: swap/remove/pin only on future slots.
+struct WeekCardMenu: View {
+  @Bindable var model: AppModel
+  let slot: PlanSlot
+  let video: Video
+  let approved: Bool
+  let isPast: Bool
+  let weekSlots: [PlanSlot]
+  let posts: [Platform: PlatformPost]
+
+  var body: some View {
     Menu("Swap with") {
-      ForEach(otherSlots.filter { $0.id != slot.id && $0.date >= model.todayKey }) { o in
+      ForEach(weekSlots.filter { $0.id != slot.id && $0.date >= model.todayKey }) { o in
         Button("\(Fmt.day(model.dm.date(o.date), tz: model.tz, style: "EEE d")) · \(model.video(o.videoId).map(model.displayName) ?? "")") {
           model.swap(slot.id, o.id)
         }
@@ -306,117 +406,130 @@ struct WeekCard: View {
     }
     .disabled(!approved)
     Divider()
-    Button("Edit", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }
-    Button("Show in Queue") { model.setSelection([video.id], screen: .queue); model.screen = .queue }
+    Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }
+    Button("Preview", systemImage: "play.rectangle") { model.previewVideo = video }
+    Button("Show in Queue", systemImage: "list.bullet") { model.setSelection([video.id], screen: .queue); model.screen = .queue }
   }
 }
 
-/// "TT 7:00p ●" chip coloured by post state (planned/rendered/due/posted/failed/©/overdue/missed/skipped).
-struct SlotChip: View {
-  @Bindable var model: AppModel
-  let platform: Platform
-  let post: PlatformPost?
-  let date: String
-  let position: Int
-  let approved: Bool
-
-  var body: some View {
-    let time = post.map { Fmt.compactTime($0.scheduledAt, tz: model.tz) }
-      ?? Fmt.compactMinutes(model.settings.slot(for: platform) + position * model.settings.secondPostOffsetMinutes)
-    let tint: Color = post?.state.tint ?? (approved ? DS.Status.planned : Color.secondary)
-    let paused = model.settings.pausedPlatforms.contains(platform)
-    HStack(spacing: 5) {
-      Text(platform.shortName).font(.system(size: 9, weight: .heavy, design: .rounded)).frame(width: 16, alignment: .leading)
-      Text(time).font(.system(size: 10.5).monospacedDigit())
-      Spacer(minLength: 2)
-      if let s = post?.state, s.isProblem || s == .posted || s == .skipped {
-        Text(s == .overdue ? "Missed" : s.displayName).font(.system(size: 9.5, weight: .semibold)).lineLimit(1)
-      }
-      if let s = post?.state, s.isCopyright {
-        Image(systemName: "c.circle.fill").font(.system(size: 9))
-      } else {
-        StateDot(tint: tint, filled: post != nil, size: 6)
-      }
-    }
-    .foregroundStyle(post?.state.isProblem == true ? tint : Color.primary.opacity(post?.state == .skipped ? 0.4 : 0.85))
-    .strikethrough(post?.state == .skipped || paused)
-    .padding(.horizontal, 5)
-    .frame(height: 18)
-    .background(tint.opacity(post == nil ? 0.05 : 0.12), in: RoundedRectangle(cornerRadius: 4))
-    .help("\(platform.displayName) · \(post?.state.displayName ?? (approved ? "Planned" : "Draft"))\(paused ? " · platform paused" : "")")
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel("\(platform.displayName): \(post?.state.displayName.lowercased() ?? (approved ? "planned" : "draft")), \(time)")
-    .contextMenu { if let post { PostContextMenu(model: model, post: post) } }
-  }
-}
-
-/// Retry / repost chips that aren't part of a plan slot.
-struct ExtraChip: View {
+/// Repost / retry that isn't part of a plan slot: "↻ X 8:00 PM · Retry ●".
+struct ExtraPostChip: View {
   @Bindable var model: AppModel
   let post: PlatformPost
+
   var body: some View {
-    HStack(spacing: 4) {
-      Image(systemName: post.kind == .repost ? "arrow.uturn.forward" : "arrow.clockwise").font(.system(size: 9, weight: .bold))
-      Text(post.platform.shortName).font(.system(size: 9, weight: .heavy, design: .rounded))
-      Text(Fmt.compactTime(post.scheduledAt, tz: model.tz)).font(.system(size: 10).monospacedDigit())
-      Text(post.kind == .repost ? "Repost v\(post.versionNo)" : "Retry").font(.system(size: 10)).lineLimit(1)
-      Spacer(minLength: 0)
-      StateDot(tint: post.state.tint, size: 6)
+    let status = model.postStatus(post)
+    HStack(spacing: 5) {
+      Image(systemName: post.kind == .repost ? "arrow.uturn.forward" : "arrow.clockwise")
+        .font(.system(size: 9, weight: .semibold)).foregroundStyle(DS.color.textSecondary)
+      Image(systemName: post.platform.dsSymbol).font(.system(size: 9.5, weight: .medium)).foregroundStyle(DS.color.textSecondary)
+      Text("\(post.platform.dsxCompactName) \(AppModel.clockText(post.scheduledAt, tz: model.tz))")
+        .font(DS.type.microCompact).foregroundStyle(DS.color.text).lineLimit(1).minimumScaleFactor(0.9)
+      Spacer(minLength: 2)
+      if let dot = status.dot { Circle().fill(dot).frame(width: 6, height: 6) }
     }
     .padding(.horizontal, 6)
-    .frame(height: 20)
-    .background(post.state.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
-    .help(post.kind == .repost ? "Repost (v\(post.versionNo))" : "Re-queued attempt #\(post.attemptNo)")
+    .frame(height: 22)
+    .background(DS.color.surfaceSunken, in: Capsule())
+    .dsTooltip(post.kind == .repost ? "Repost of \(model.video(post.videoId).map(model.displayName) ?? "a clip") (new version)"
+               : "Re-queued attempt #\(post.attemptNo) of \(model.video(post.videoId).map(model.displayName) ?? "a clip")")
     .contextMenu { PostContextMenu(model: model, post: post) }
   }
 }
 
-/// W.S3 backlog drawer (collapsed by default): next ready videos in sort order, drag into a day.
+// MARK: - Backlog drawer
+
+/// Collapsed bar at the bottom ("Next up · 6"); expanded = the next ready clips (queue order), draggable onto a day.
 struct BacklogDrawer: View {
   @Bindable var model: AppModel
   @Binding var expanded: Bool
-  let weekDays: [String]
-
-  private var backlog: [Video] {
-    let planned = Set(model.upcomingSlots.map(\.videoId))
-    return model.ordered.filter { !planned.contains($0.id) }
-  }
+  @Environment(\.screenGutter) private var gutter
 
   var body: some View {
+    let backlog = model.weekBacklog
     VStack(spacing: 0) {
-      Divider()
-      Button { withAnimation(.snappy) { expanded.toggle() } } label: {
-        HStack(spacing: 8) {
-          Image(systemName: expanded ? "chevron.down" : "chevron.up").font(.system(size: 10, weight: .bold))
-          Text("Backlog").font(DS.Font.bodyStrong)
-          Text("\(backlog.count) ready").font(DS.Font.body).foregroundStyle(.secondary)
+      DSSeparator()
+      Button { dsWithAnimation { expanded.toggle() } } label: {
+        HStack(spacing: DS.space.xs) {
+          Image(systemName: expanded ? "chevron.down" : "chevron.up")
+            .font(.system(size: 10, weight: .semibold)).foregroundStyle(DS.color.textSecondary).frame(width: 14)
+          Text("Next up").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+          Text("\(backlog.count)").font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
           Spacer()
-          if expanded { Text("Drag a video onto a day").font(DS.Font.secondary).foregroundStyle(.tertiary) }
+          if expanded { Text("Drag a clip onto a day").font(DS.type.caption).foregroundStyle(DS.color.textTertiary) }
         }
-        .padding(.horizontal, DS.Space.l)
-        .frame(height: 34)
+        .padding(.horizontal, gutter)
+        .frame(height: 44)
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .dsTooltip(expanded ? "Hide the backlog" : "Show the next ready clips")
+      .accessibilityLabel("Next up, \(backlog.count) ready clips")
       if expanded {
-        ScrollView(.horizontal) {
-          HStack(spacing: 10) {
-            ForEach(backlog.prefix(30)) { v in
-              VStack(alignment: .leading, spacing: 4) {
-                CoverThumb(video: v, width: 54, height: 96)
-                Text(model.displayName(v)).font(.system(size: 11, weight: .medium)).lineLimit(1).frame(width: 80, alignment: .leading)
-                Text(v.score.map(String.init) ?? "–").font(DS.Font.secondary.monospacedDigit()).foregroundStyle(.secondary)
-              }
-              .draggable("video:\(v.id)") { CoverThumb(video: v, width: 54, height: 96) }
-              .contextMenu { VideoContextMenu(model: model, video: v) }
+        if backlog.isEmpty {
+          Text("Nothing ready in the queue").font(DS.type.callout).foregroundStyle(DS.color.textTertiary)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, gutter).frame(height: 60)
+        } else {
+          ScrollView(.horizontal) {
+            LazyHStack(alignment: .top, spacing: DS.space.md) {
+              ForEach(backlog.prefix(40)) { v in BacklogTile(model: model, video: v) }
             }
+            .padding(.horizontal, gutter)
+            .padding(.bottom, DS.space.md)
           }
-          .padding(.horizontal, DS.Space.l)
-          .padding(.bottom, 12)
+          .scrollIndicators(.never)
+          .frame(height: 176)
+          .transition(.dsMove(.bottom))
         }
-        .frame(height: 150)
       }
     }
-    .background(.bar)
+    .background(DS.color.background)
+  }
+}
+
+struct BacklogTile: View {
+  @Bindable var model: AppModel
+  let video: Video
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      ZStack(alignment: .topTrailing) {
+        DSXThumb(model: model, video: video, width: 66)
+        if let s = video.score {
+          Text("\(s)").font(DS.type.micro.monospacedDigit()).foregroundStyle(.white)
+            .padding(.horizontal, 5).frame(height: 16)
+            .background(Color.black.opacity(0.55), in: Capsule())
+            .padding(4)
+        }
+      }
+      Text(model.displayName(video)).font(DS.type.caption).foregroundStyle(DS.color.text).lineLimit(2)
+        .frame(width: 92, alignment: .leading)
+    }
+    .frame(width: 92, alignment: .leading)
+    .contentShape(Rectangle())
+    .draggable("video:\(video.id)") { DSXThumb(model: model, video: video, width: 54) }
+    .contextMenu { VideoContextMenu(model: model, video: video) }
+    .dsTooltip("Drag onto a day")
+  }
+}
+
+/// Loading placeholder shaped like the grid.
+struct WeekSkeleton: View {
+  @Environment(\.screenGutter) private var gutter
+  var body: some View {
+    GeometryReader { g in
+      let colW = max(96, (g.size.width - 2 * gutter - 6 * DS.space.sm) / 7)
+      HStack(alignment: .top, spacing: DS.space.sm) {
+        ForEach(0..<7, id: \.self) { _ in
+          VStack(alignment: .leading, spacing: DS.space.xs) {
+            DSSkeleton(width: 48, height: 14)
+            DSSkeleton(width: colW, height: colW * 16 / 9, radius: DS.radius.md)
+            DSSkeleton(width: colW * 0.7, height: 12)
+          }
+        }
+      }
+      .padding(.horizontal, gutter)
+    }
+    .accessibilityLabel("Loading the week")
   }
 }

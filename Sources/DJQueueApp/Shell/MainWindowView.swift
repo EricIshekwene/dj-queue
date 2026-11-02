@@ -20,9 +20,6 @@ struct MainWindowView: View {
     }
     .dsToast($model.toast)
     .background { ShortcutButtons(model: model) }
-    .sheet(item: $model.markPostedTarget) { p in MarkPostedSheet(model: model, post: p) }
-    .sheet(item: $model.reportTarget) { p in ReportProblemSheet(model: model, post: p) }
-    .sheet(item: $model.longformTarget) { v in LongformPostedSheet(model: model, video: v) }
     .sheet(isPresented: $model.offerLaunchAgent) { LaunchAgentOffer(model: model) }
     .sheet(item: $model.scorePrompt) { v in ScorePromptSheet(model: model, video: v) }
     .sheet(item: $model.pinPrompt) { v in PinPromptSheet(model: model, video: v) }
@@ -79,6 +76,16 @@ struct MainWindowView: View {
     }
     if let p = model.pendingBulk {
       ModalHost(onDismiss: { model.cancelPendingBulk() }) { BulkConfirmSheet(model: model, pending: p) }
+    }
+    // PLANNING: post dialogs in-window (DSDialog over the scrim; they also render in snapshots).
+    if let p = model.markPostedTarget {
+      ModalHost(onDismiss: { model.markPostedTarget = nil }) { MarkPostedSheet(model: model, post: p).id(p.id) }
+    }
+    if let p = model.reportTarget {
+      ModalHost(onDismiss: { model.reportTarget = nil }) { ReportProblemSheet(model: model, post: p).id(p.id) }
+    }
+    if let v = model.longformTarget {
+      ModalHost(onDismiss: { model.longformTarget = nil }) { LongformPostedSheet(model: model, video: v).id(v.id) }
     }
   }
 }
