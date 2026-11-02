@@ -122,7 +122,9 @@ struct PipelineClipFeed: ViewModifier {
       .onAppear { register(ids) }
       .onChange(of: ids) { _, new in register(new) }
       .task(id: playIds.joined(separator: ",") + "|\(model.playback.autoplay)|\(model.playback.loop.rawValue)"
-            + "|\(model.playback.gridHoverOnly)|\(hovered ?? "")") {
+            + "|\(model.playback.gridHoverOnly)|\(hovered ?? "")"
+            // Edits change preview stamps: visible clips re-ask for their new proxies (round 4 S6).
+            + "|" + playIds.map { model.previewStamp($0) }.joined(separator: ",")) {
         try? await Task.sleep(for: .milliseconds(model.frozen ? 0 : 250))
         guard !Task.isCancelled, model.playback.autoplay else { return }
         let t = PreviewPlayback.proxyTargets(model.playback, layout: layout, visible: playIds, hovered: hovered)

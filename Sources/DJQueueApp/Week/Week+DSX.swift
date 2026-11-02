@@ -227,16 +227,21 @@ struct AwakeStrip: View {
   }
 }
 
-/// Small 9:16 poster with a rounded corner (Today rows, backlog, menu bar).
+/// Small 9:16 poster with a rounded corner (Today rows, backlog, menu bar): the edited cover (round 4 S6) — a post's
+/// own version (and its render's cover when current) when `post` is given, else version 1.
 struct DSXThumb: View {
   @Bindable var model: AppModel
   let video: Video?
   var width: CGFloat = 30
+  var post: PlatformPost? = nil
 
   var body: some View {
     let h = width * 16 / 9
+    let postCover = post.flatMap { model.clipPreview(post: $0)?.cover }
     Group {
-      if let v = video, let img = model.poster(v) {
+      if let img = postCover {
+        Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+      } else if let v = video, let img = model.poster(v) {
         Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
       } else {
         DSPosterPlaceholder()
@@ -245,6 +250,13 @@ struct DSXThumb: View {
     .frame(width: width, height: h)
     .clipShape(RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
     .overlay(RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous).strokeBorder(DS.color.border))
-    .onAppear { if let video { model.requestPoster(video) } }
+    .onAppear { request() }
+    .task(id: post.map { model.previewStamp($0.videoId, version: $0.versionNo) } ?? video.map { model.previewStamp($0.id) } ?? "") {
+      request()
+    }
+  }
+
+  private func request() {
+    if let post { model.requestPreview(post: post) } else if let video { model.requestPoster(video) }
   }
 }

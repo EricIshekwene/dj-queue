@@ -98,9 +98,12 @@ struct ScoreSingleView: View {
 
   private func player(_ v: Video) -> some View {
     let pb = model.playback
-    return DSVideoPreview(url: model.proxyURLs[v.id], poster: model.poster(v), isActive: pb.autoplay, isPriority: true,
-                          unmuteOnHover: pb.hoverSound, showsMuteButton: true, muteAlignment: .topTrailing,
-                          showsScrubber: true, cornerRadius: DS.radius.xl)
+    // The clip as it will post (round 4 S6): edited cover, proxy (crop/aspect/trim) + live text in its window.
+    let p = model.clipPreview(v)
+    return DSVideoPreview(url: p.proxyURL, poster: p.cover, isActive: pb.autoplay, isPriority: true,
+                          loopRange: p.loopRange, unmuteOnHover: pb.hoverSound, showsMuteButton: true, muteAlignment: .topTrailing,
+                          showsScrubber: true, cornerRadius: DS.radius.xl, overlay: p.overlay, textWindow: p.textWindow,
+                          isUpdating: p.isUpdating)
       .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.xl, style: .continuous))
       .overlay { RoundedRectangle(cornerRadius: DS.radius.xl, style: .continuous).strokeBorder(DS.color.border) }
       .overlay(alignment: .bottomLeading) {
@@ -110,6 +113,7 @@ struct ScoreSingleView: View {
           .padding(12)
       }
       .onAppear { model.requestPoster(v) }
+      .task(id: p.stamp) { model.requestPoster(v) }
       .accessibilityLabel("Clip preview: \(model.displayName(v))")
   }
 

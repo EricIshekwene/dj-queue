@@ -283,15 +283,25 @@ struct WeekDayCard: View {
   @State private var hovering = false
 
   private var posts: [Platform: PlatformPost] { model.slotPosts(slot.id) }
+  /// The slot's post decides the version shown (all platforms of a slot share it); no post yet → version 1.
+  private var firstPost: PlatformPost? { posts.values.min { $0.platform.rawValue < $1.platform.rawValue } }
+  private var preview: ClipPreview { firstPost.flatMap { model.clipPreview(post: $0) } ?? model.clipPreview(video) }
+  private func requestPreview() {
+    if let p = firstPost { model.requestPreview(post: p) } else { model.requestPreview(video) }
+  }
   private var hasProblem: Bool { posts.values.contains { model.postStatus($0).isProblem } }
   private var anyPosted: Bool { posts.values.contains { $0.state == .posted } }
 
   var body: some View {
     let p = model.playback
+    // The post's version as it will post (round 4 S6): its text, and the render's cover when the render is current.
+    let pv = preview
     VStack(alignment: .leading, spacing: 0) {
-      DSVideoPreview(url: video.missing ? nil : model.proxyURLs[video.id], poster: model.poster(video),
-                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), unmuteOnHover: p.hoverSound && !isPast,
-                     isHovered: hovering, muteAlignment: .bottomTrailing)
+      DSVideoPreview(url: pv.proxyURL, poster: pv.cover,
+                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), loopRange: pv.loopRange,
+                     unmuteOnHover: p.hoverSound && !isPast, isHovered: hovering, muteAlignment: .bottomTrailing,
+                     overlay: pv.overlay, textWindow: pv.textWindow, isUpdating: pv.isUpdating, updatingStyle: .label)
+        .task(id: pv.stamp) { requestPreview() }
         .frame(width: width, height: width * 16 / 9)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: DS.radius.md, topTrailingRadius: DS.radius.md, style: .continuous))
         .overlay(alignment: .topTrailing) {

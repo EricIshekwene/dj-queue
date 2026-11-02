@@ -246,7 +246,7 @@ struct PostRowView: View {
       DSCheckbox(isOn: selected, size: 20, shape: .circle) { model.toggleSelection(post.id, screen: .posts) }
         .opacity(showCheck ? 1 : 0.0001)
         .dsTooltip(selected ? "Deselect" : "Select")
-      BrowsePoster(model: model, video: v, width: 24, height: 42)
+      BrowsePoster(model: model, video: v, width: 24, height: 42, post: post)
       VStack(alignment: .leading, spacing: 1) {
         Text(v.map(model.displayName) ?? post.videoId).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(1)
         if let v { Text(model.sessionName(v)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1) }
@@ -284,7 +284,7 @@ struct PostRowView: View {
     .onHover { hovering = $0 }
     .onTapGesture { tap() }
     .contextMenu { PostContextMenu(model: model, post: post) }
-    .onAppear { if let v { model.requestPoster(v) } }
+    .onAppear { model.requestPreview(post: post) }
   }
 
   private func tap() {

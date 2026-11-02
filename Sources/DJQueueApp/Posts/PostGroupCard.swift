@@ -62,7 +62,7 @@ struct PostGroupCard: View {
       if group.posts.count == 1, let p = group.posts.first { PostContextMenu(model: model, post: p) }
       Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(group.videoId) }
     }
-    .onAppear { if let v = model.video(group.videoId) { model.requestPoster(v) } }
+    .onAppear { if let p = group.posts.first { model.requestPreview(post: p) } }
     .accessibilityElement(children: .contain)
     .accessibilityLabel("\(title), \(dayText), \(group.summary)")
   }
@@ -78,7 +78,7 @@ struct PostGroupCard: View {
       DSCheckbox(isOn: allSelected, size: 20, shape: .circle) { toggleGroup(ids, allSelected) }
         .opacity(hovering || allSelected || someSelected ? 1 : 0.0001)
         .dsTooltip(allSelected ? "Deselect these \(ids.count) posts" : "Select these \(ids.count) posts")
-      BrowsePoster(model: model, video: video, width: 36, height: 64)
+      BrowsePoster(model: model, video: video, width: 36, height: 64, post: group.posts.first)
       VStack(alignment: .leading, spacing: 2) {
         Text(title).font(DS.type.calloutMedium).foregroundStyle(DS.color.text).lineLimit(1)
         if let v = video, !model.sessionName(v).isEmpty {

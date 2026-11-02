@@ -57,6 +57,7 @@ struct ScoreGridView: View {
       visible.insert(v.id)
       model.requestPoster(v)
     }
+    .task(id: c.previewStamp) { if visible.contains(v.id) { model.requestPoster(v) } }
     .onDisappear { visible.remove(v.id) }
   }
 }

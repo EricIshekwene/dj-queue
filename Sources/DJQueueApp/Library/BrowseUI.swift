@@ -110,7 +110,8 @@ final class BrowseUI {
 // MARK: - Shared small views
 
 /// A clip's cover as a rounded thumbnail (poster only), loading it on appear. Fixed `width`×`height`, or pass
-/// `aspect` (no size) to fill the available width at that aspect ratio.
+/// `aspect` (no size) to fill the available width at that aspect ratio. The cover is the edited one (round 4 S6):
+/// for `post`, that post's version (and its render's cover when current), else version 1.
 struct BrowsePoster: View {
   @Bindable var model: AppModel
   let video: Video?
@@ -118,13 +119,17 @@ struct BrowsePoster: View {
   var height: CGFloat? = nil
   var aspect: CGFloat? = nil
   var radius: CGFloat = DS.radius.xs
+  var post: PlatformPost? = nil
 
   var body: some View {
+    let postCover = post.flatMap { model.clipPreview(post: $0)?.cover }
     Color.clear
       .frame(width: width, height: height)
       .aspectRatio(aspect, contentMode: .fit)
       .overlay {
-        if let v = video, let img = model.poster(v) {
+        if let img = postCover {
+          Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+        } else if let v = video, let img = model.poster(v) {
           Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
         } else {
           DSPosterPlaceholder()
@@ -132,7 +137,14 @@ struct BrowsePoster: View {
       }
       .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
       .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.color.border) }
-      .onAppear { if let v = video { model.requestPoster(v) } }
+      .onAppear { request() }
+      .task(id: post.map { model.previewStamp($0.videoId, version: $0.versionNo) } ?? video.map { model.previewStamp($0.id) } ?? "") {
+        request()
+      }
+  }
+
+  private func request() {
+    if let post { model.requestPreview(post: post) } else if let v = video { model.requestPoster(v) }
   }
 }
 

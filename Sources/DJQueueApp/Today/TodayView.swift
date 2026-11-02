@@ -260,7 +260,7 @@ struct FileDragThumb: View {
 
   var body: some View {
     let ready = model.preparedPost(post.id)
-    DSXThumb(model: model, video: model.video(post.videoId), width: width)
+    DSXThumb(model: model, video: model.video(post.videoId), width: width, post: post)
       .overlay(alignment: .bottomTrailing) {
         if ready != nil {
           Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
