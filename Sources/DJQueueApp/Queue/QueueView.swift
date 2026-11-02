@@ -81,6 +81,8 @@ struct QueueView: View {
       }
     }
     .dsAnimation(DS.motion.popover, value: pinTarget)
+    .onChange(of: pinTarget == nil, initial: true) { _, closed in ListPrefs.shared.screenDialogOpen = !closed }
+    .onDisappear { ListPrefs.shared.screenDialogOpen = false }
   }
 
   /// Has a day in the plan (an approved or a draft week): the card's date chip shows it.

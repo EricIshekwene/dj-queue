@@ -116,6 +116,7 @@ struct ScreenScaffold<Trailing: View, SubToolbar: View, Header: View, Content: V
         .accessibilityHidden(true)
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    .onChange(of: model.screen) { ListPrefs.shared.cancelPendingFocus() }
   }
 }
 

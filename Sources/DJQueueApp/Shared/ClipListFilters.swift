@@ -198,9 +198,15 @@ extension AppModel {
     dsWithAnimation { ListPrefs.shared.clearFilters(page) }
   }
 
-  /// ⌘F: focus the current screen's search (Week: open the backlog drawer first).
+  /// ⌘F: focus the current screen's search (Week: open the backlog drawer first). Nothing while a dialog, sheet or
+  /// in-window overlay is up (native popovers are their own window and never see it).
   func focusListSearch() {
-    guard editor == nil, !showSettings, !showPalette, let page = ListPage.of(screen) else { return }
+    guard editor == nil, !showSettings, !showPalette, !showShortcuts, pendingBulk == nil, pendingConfirm == nil,
+          previewVideo == nil, markPostedTarget == nil, reportTarget == nil, longformTarget == nil, scorePrompt == nil,
+          pinPrompt == nil, pendingReplace == nil, !ListPrefs.shared.screenDialogOpen,
+          BrowseUI.shared.quickLook == nil, BrowseUI.shared.longformTargets.isEmpty, BrowseUI.shared.scoreTargets.isEmpty,
+          BrowseUI.shared.pendingPostBulk == nil,
+          let page = ListPage.of(screen) else { return }
     if page == .backlog && !weekBacklogExpanded { dsWithAnimation { weekBacklogExpanded = true } }
     ListPrefs.shared.focusSearch(page)
   }

@@ -104,10 +104,25 @@ final class ListPrefs {
   /// A ⌘F that hasn't reached a search field yet (Week: the drawer's field appears after the drawer opens).
   private(set) var pendingFocus: ListPage?
 
+  /// A screen-scoped dialog is open (Queue's pin dialog): ⌘F does nothing.
+  var screenDialogOpen = false
+  @ObservationIgnored private var pendingSerial = 0
+
   func focusSearch(_ p: ListPage) {
     pendingFocus = p
     focusTokens[p, default: 0] += 1
+    // A pending ⌘F expires after a second, so a field that appears later (an empty list filling up) never grabs focus.
+    pendingSerial += 1
+    let serial = pendingSerial
+    Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .seconds(1))
+      guard let self, self.pendingSerial == serial else { return }
+      self.pendingFocus = nil
+    }
   }
+
+  /// Drops a pending ⌘F (screen change).
+  func cancelPendingFocus() { pendingFocus = nil }
 
   /// The page's search field took focus (clears the pending ⌘F).
   func searchFocused(_ p: ListPage) { if pendingFocus == p { pendingFocus = nil } }
