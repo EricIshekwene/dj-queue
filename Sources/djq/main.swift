@@ -227,7 +227,7 @@ func run() throws -> Int32 {
     if flag("--json") {
       let since = dm.date(dm.addDays(dm.key(store.clock.now), -7))
       let problems = flag("--problems")
-      printJSON(try AgentAPI.posts(store: store, problems: problems, since: problems ? nil : since))
+      try printJSON(try AgentAPI.posts(store: store, problems: problems, since: problems ? nil : since))
       return 0
     }
     if flag("--problems") {
@@ -245,12 +245,12 @@ func run() throws -> Int32 {
     if propose { try planner.proposeWeek(week); wrote = true }
     if rebuild { try planner.rebuildWeek(week); wrote = true }
     if approve { try planner.approveWeek(week); wrote = true }
-    if json { printJSON(try AgentAPI.week(week, store: store)) } else { try printWeek(store, week) }
+    if json { try printJSON(try AgentAPI.week(week, store: store)) } else { try printWeek(store, week) }
 
   case "videos":
     let state = option("--state")
     let list = try AgentAPI.videos(store: store, filter: state)
-    if flag("--json") { printJSON(list); return 0 }
+    if flag("--json") { try printJSON(list); return 0 }
     for v in list {
       print("  \(short(v.id))  \(pad(v.state, 11)) \(pad(v.score.map(String.init) ?? "–", 4))\(v.display_name)"
             + (v.title == nil ? "" : "  (tag: \(v.raw_tag))") + (v.suggestion_count > 0 ? "  [\(v.suggestion_count) suggestion(s)]" : ""))
@@ -260,7 +260,7 @@ func run() throws -> Int32 {
   case "video":
     let v = try resolveVideo(store, try arg(0, "video id"))
     let d = try AgentAPI.video(v.id, store: store)
-    if flag("--json") { printJSON(d); return 0 }
+    if flag("--json") { try printJSON(d); return 0 }
     print("\(d.video.display_name)  [\(v.id)]")
     print("  tag \(d.video.raw_tag) · \(d.video.kind) · \(d.video.state) · score \(d.video.score.map(String.init) ?? "–")")
     print("  title \(d.video.title.map { "\"\($0)\" (\(d.video.title_source ?? "?"))" } ?? "none")")
@@ -273,7 +273,7 @@ func run() throws -> Int32 {
     for i in d.issues { print("  issue  \(i.message)") }
 
   case "defaults":
-    if flag("--json") { printJSON(settings.defaults); return 0 }
+    if flag("--json") { try printJSON(settings.defaults); return 0 }
     print(String(decoding: try AgentAPI.encoder.encode(settings.defaults), as: UTF8.self))
 
   case "title":
@@ -572,8 +572,9 @@ func run() throws -> Int32 {
   return 0
 }
 
-func printJSON<T: Encodable>(_ v: T) {
-  print(String(decoding: (try? AgentAPI.encoder.encode(v)) ?? Data("null".utf8), as: UTF8.self))
+/// Prints JSON; an encoding failure throws (→ "djq: …" on stderr, exit 1), never a silent `null`.
+func printJSON<T: Encodable>(_ v: T) throws {
+  print(String(decoding: try AgentAPI.encoder.encode(v), as: UTF8.self))
 }
 
 func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
@@ -583,7 +584,7 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   args.removeFirst()
   if action == "batches" {
     let list = try bulk.batches()
-    if json { printJSON(list); return 0 }
+    if json { try printJSON(list); return 0 }
     for b in list {
       print("  \(short(b.id))  \(fmt(b.createdAt, try store.settings()))  \(pad(b.action, 16)) \(b.summary)\(b.undoneAt != nil ? "  (undone)" : "")")
     }
@@ -595,7 +596,7 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
     guard m.count == 1 else { throw CLIError(m.isEmpty ? "no batch \(raw)" : "\(raw) matches \(m.count) batches") }
     let r = try bulk.undo(m[0].id, force: force, dryRun: dry)
     wrote = !dry && !r.changed.isEmpty
-    if json { printJSON(r) } else { printBulk(r) }
+    if json { try printJSON(r) } else { printBulk(r) }
     return 0
   }
   let ids: [String]
@@ -646,7 +647,7 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   default: throw CLIError("unknown bulk action \(action)\n\n\(usage)")
   }
   wrote = !dry && !r.changed.isEmpty
-  if json { printJSON(r) } else { printBulk(r) }
+  if json { try printJSON(r) } else { printBulk(r) }
   return 0
 }
 

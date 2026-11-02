@@ -40,7 +40,10 @@ public struct BatchRecord: Codable, Sendable, Identifiable, Hashable {
   public var videoIds: [String]
   public var summary: String
   public var createdAt: Date
+  /// Set only when everything in the batch was restored.
   public var undoneAt: Date?
+  /// Clip ids (and "#plan") already restored by a partial undo.
+  public var restored: [String] = []
 }
 
 /// Bulk editing (round 2 #11). Every action runs in ONE transaction, logs a per-clip event, and records a batch
@@ -303,6 +306,8 @@ public final class BulkActions: @unchecked Sendable {
     try store.db.query("SELECT * FROM batches ORDER BY created_at DESC, rowid DESC LIMIT ?", [limit]).map(Self.batch)
   }
 
+  static let planMarker = "#plan"
+
   public func batch(id: String) throws -> BatchRecord? {
     try store.db.one("SELECT * FROM batches WHERE id=?", [id]).map(Self.batch)
   }
@@ -324,18 +329,22 @@ public final class BulkActions: @unchecked Sendable {
     do {
       try store.db.transaction {
         let afterById = Dictionary(uniqueKeysWithValues: after.clips.map { ($0.id, $0) })
-        for b in before.clips {
+        // A partial undo (clips skipped as changed again) leaves the batch open; `restored` remembers what's done
+        // so a later undo (e.g. with force) handles only the rest.
+        var restored = Set(rec.restored)
+        for b in before.clips where !restored.contains(b.id) {
           let cur = try clipSnapshot(b.id, renders: b.renders != nil)
           if let a = afterById[b.id], cur != a, !force {
             result.skipped[b.id] = "changed again since the batch (use force to overwrite)"
             continue
           }
+          restored.insert(b.id)
           if cur == b { continue }
           try restore(b)
           result.changed.append(b.id)
         }
         var touched = Set(result.changed)
-        if let bp = before.plan, let ap = after.plan {
+        if let bp = before.plan, let ap = after.plan, !restored.contains(Self.planMarker) {
           let cp = try planSnapshot()
           if !force, let why = planConflict(before: bp, after: ap, current: cp) {
             throw EngineError("Can't undo the plan part of \(rec.action): \(why). Use force to overwrite.")
@@ -343,13 +352,17 @@ public final class BulkActions: @unchecked Sendable {
           try restorePlan(bp, current: cp, note: "undo \(rec.action) (batch \(id.prefix(8)))")
           touched.formUnion(bp.slots.map(\.videoId) + ap.slots.map(\.videoId) + bp.posts.map(\.videoId) + ap.posts.map(\.videoId))
           result.changed = Array(Set(result.changed).union(rec.videoIds.filter { touched.contains($0) })).sorted()
+          restored.insert(Self.planMarker)
         }
         for v in touched { try store.refreshState(videoId: v) }
         for v in result.changed {
           try store.logEvent("bulk", "Undid \(rec.action) (batch \(id.prefix(8)))", videoId: v)
         }
-        try store.db.run("UPDATE batches SET undone_at=? WHERE id=?", [store.clock.now, id])
-        result.summary = "undid \(rec.action): \(result.changed.count) restored" + (result.skipped.isEmpty ? "" : ", \(result.skipped.count) skipped")
+        let complete = result.skipped.isEmpty
+        try store.db.run("UPDATE batches SET restored=?, undone_at=? WHERE id=?",
+                         [JSONCoding.string(restored.sorted()), complete ? store.clock.now : nil, id])
+        result.summary = "undid \(rec.action): \(result.changed.count) restored"
+          + (complete ? "" : ", \(result.skipped.count) skipped — batch stays open; undo again with force to restore them")
         if dryRun { throw DryRun(result: result) }
       }
     } catch let d as DryRun {
@@ -565,6 +578,6 @@ public final class BulkActions: @unchecked Sendable {
   static func batch(_ r: Row) -> BatchRecord {
     BatchRecord(id: r.string("id")!, action: r.string("action")!, params: r.json("params") ?? [:],
                 videoIds: r.json("video_ids") ?? [], summary: r.string("summary") ?? "", createdAt: r.date("created_at")!,
-                undoneAt: r.date("undone_at"))
+                undoneAt: r.date("undone_at"), restored: r.json("restored") ?? [])
   }
 }
