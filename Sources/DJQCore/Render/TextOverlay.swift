@@ -28,6 +28,26 @@ public enum TextOverlay {
     return layout.draw()
   }
 
+  /// `image(for:aspect:)` scaled down to at most `maxWidth` pixels wide (aspect kept, high-quality interpolation) —
+  /// the same pixels, smaller, for list previews (S6). Nil when the version has no text.
+  public static func image(for v: ResolvedVersion, aspect: Aspect, maxWidth: Int) -> CGImage? {
+    guard let full = image(for: v, aspect: aspect) else { return nil }
+    return scaled(full, maxWidth: maxWidth)
+  }
+
+  /// `img` scaled to at most `maxWidth` wide (returned as is when already that small).
+  public static func scaled(_ img: CGImage, maxWidth: Int) -> CGImage? {
+    guard maxWidth > 0, img.width > maxWidth else { return img }
+    let w = maxWidth, h = max(1, Int((Double(img.height) * Double(maxWidth) / Double(img.width)).rounded()))
+    guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
+          let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: cs,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return nil }
+    ctx.interpolationQuality = .high
+    ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+    return ctx.makeImage()
+  }
+
   /// PNG bytes of `image(for:aspect:)` (deterministic: same input → identical bytes).
   public static func png(for v: ResolvedVersion, aspect: Aspect) -> Data? {
     guard let img = image(for: v, aspect: aspect) else { return nil }

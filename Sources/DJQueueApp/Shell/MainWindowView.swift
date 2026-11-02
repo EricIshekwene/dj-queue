@@ -186,7 +186,10 @@ struct ShortcutButtons: View {
   }
 
   private func go(_ s: Screen) {
-    model.editor = nil
+    // Leaving the editor by sidebar / ⌘-number / ⌘K: `editor = nil` runs the same close path as Done
+    // (`AppModel.editorDidClose`: saves land, changed covers + proxies refresh, the session is journaled), without
+    // Done's "mark the post fixed".
+    if model.editor != nil { model.editor = nil }
     model.showSettings = false
     model.screen = s
   }

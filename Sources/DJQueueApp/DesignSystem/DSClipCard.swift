@@ -35,9 +35,18 @@ struct DSClip: Identifiable {
   /// Session name (meta line).
   var subtitle: String? = nil
   var poster: NSImage? = nil
-  /// 540×960 proxy for autoplay (nil = poster only).
+  /// 540×960 proxy for autoplay (nil = poster only). Crop + aspect + trim already applied (S6).
   var proxyURL: URL? = nil
+  /// Part of the proxy that loops (nil = the whole proxy).
   var loopRange: ClosedRange<Double>? = nil
+  /// On-video text drawn over the playing proxy during `textWindow` (S6: the clip as it will post).
+  var overlay: CGImage? = nil
+  /// When `overlay` shows, in seconds of the proxy's timeline.
+  var textWindow: ClosedRange<Double>? = nil
+  /// The edit changed and its new proxy is being made: the (new) poster shows with a quiet "Updating preview".
+  var isUpdatingPreview = false
+  /// `AppModel.previewStamp` of what this card shows. Key preview tasks on it (`.task(id: clip.previewStamp)`).
+  var previewStamp = ""
   /// "0:42".
   var durationText: String? = nil
   /// "DJ vid" / "Talking".
@@ -147,16 +156,19 @@ struct DSClipCard<Actions: View>: View {
     if let st = clip.status?.text { parts.append(st) }
     if let d = clip.dateText { parts.append(d) }
     if clip.isMissing { parts.append("file missing") }
+    if clip.isUpdatingPreview && !clip.isMissing { parts.append("updating preview") }
     return parts.joined(separator: ", ")
   }
 
   // MARK: Shared pieces
 
   private func media(radius: CGFloat, active: Bool, mute: Bool = true, muteAlignment: Alignment = .bottomTrailing,
-                     scrubber: Bool = false) -> some View {
+                     scrubber: Bool = false, updating: DSPreviewUpdatingStyle = .label) -> some View {
     DSVideoPreview(url: clip.isMissing ? nil : clip.proxyURL, poster: clip.poster, isActive: active, isPriority: isFocused,
                    loopRange: clip.loopRange, unmuteOnHover: config.unmuteOnHover, isHovered: hot, showsMuteButton: mute,
-                   muteAlignment: muteAlignment, showsScrubber: scrubber, cornerRadius: radius)
+                   muteAlignment: muteAlignment, showsScrubber: scrubber, cornerRadius: radius,
+                   overlay: clip.overlay, textWindow: clip.textWindow, isUpdating: clip.isUpdatingPreview && !clip.isMissing,
+                   updatingStyle: updating)
       .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.color.border) }
   }
 
@@ -247,7 +259,7 @@ struct DSClipCard<Actions: View>: View {
         Text("\(p)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary).frame(minWidth: 16, alignment: .trailing)
           .dsTooltip("Number \(p) in the posting order")
       }
-      media(radius: DS.radius.sm, active: autoplay, mute: true, muteAlignment: .bottomTrailing)
+      media(radius: DS.radius.sm, active: autoplay, mute: true, muteAlignment: .bottomTrailing, updating: .icon)
         .frame(width: 63, height: 112)
       VStack(alignment: .leading, spacing: 8) {
         VStack(alignment: .leading, spacing: 3) {
@@ -370,7 +382,7 @@ struct DSClipCard<Actions: View>: View {
         Text("\(p)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary).frame(minWidth: 16, alignment: .trailing)
           .dsTooltip("Number \(p) in the posting order")
       }
-      media(radius: DS.radius.xs, active: false, mute: false).frame(width: 24, height: 42)
+      media(radius: DS.radius.xs, active: false, mute: false, updating: .none).frame(width: 24, height: 42)
       VStack(alignment: .leading, spacing: 1) {
         Text(clip.title).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(1)
         if let s = clip.subtitle { Text(s).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1) }
