@@ -21,7 +21,10 @@ print "*" > build/.gitignore   # keep build output out of git
 cp "$BIN" "$APP/Contents/MacOS/DJQueue"
 cp "$BINDIR/djq" "$APP/Contents/MacOS/djq"
 
-VERSION="0.1.0"
+# Version = latest git tag (v0.3.0 → 0.3.0); commits since the tag append "-dev.N" so an untagged build is obvious.
+TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
+AHEAD="$(git rev-list --count "$TAG"..HEAD 2>/dev/null || echo 0)"
+VERSION="${TAG#v}"; [[ "$AHEAD" != "0" ]] && VERSION="$VERSION-dev.$AHEAD"
 BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" Resources/Info.plist > "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
