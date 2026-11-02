@@ -79,6 +79,8 @@ final class EditorModel: ObservableObject {
   @Published var focusTitle = 0
   /// True while a clip's data is being read (the canvas shows a spinner, not "not found").
   @Published private(set) var loading = false
+  /// Incremented per load; only the latest load's result is applied.
+  private var loadToken = 0
   /// A typed Title that hasn't been committed yet (nil = not editing). Saved on ↩, blur, clip switch and Done.
   @Published var titleDraft: String?
   /// True while a trim handle is being dragged (expensive derived work waits for the drag end).
@@ -146,7 +148,10 @@ final class EditorModel: ObservableObject {
   /// Switches to a clip. Pending edits (and a typed, uncommitted Title) are saved first; the store is read on the
   /// save queue — never on the main thread — except in snapshot mode, which renders synchronously.
   func load(_ id: String) {
-    flush()  // commits the title draft too; queued before the read below on the same serial queue
+    commitTitleDraft()  // switching clips is an explicit commit point for a typed Title
+    flush()  // queued before the read below on the same serial queue
+    loadToken &+= 1
+    let token = loadToken
     videoId = id
     versionNo = 1
     loadError = nil
@@ -164,17 +169,17 @@ final class EditorModel: ObservableObject {
     playback.unload()
     let store = store
     if snapshotMode {
-      apply(Self.saveQueue.sync { Self.read(store, id) }, id: id)
+      apply(Self.saveQueue.sync { Self.read(store, id) }, token: token)
     } else {
       Self.saveQueue.async { [weak self] in
         let l = Self.read(store, id)
-        DispatchQueue.main.async { self?.apply(l, id: id) }
+        DispatchQueue.main.async { self?.apply(l, token: token) }
       }
     }
   }
 
-  private func apply(_ l: Loaded, id: String) {
-    guard videoId == id else { return }  // a newer load won
+  private func apply(_ l: Loaded, token: Int) {
+    guard token == loadToken else { return }  // a newer load won (also A → B → A)
     loading = false
     settings = l.settings; sets = l.sets; templates = l.templates; lastCrop = l.lastCrop
     video = l.video; sessionName = l.sessionName; fileURL = l.fileURL; fileMissing = l.fileMissing
@@ -797,7 +802,6 @@ final class EditorModel: ObservableObject {
 
   /// Writes pending changes now (still off the main thread) — used before switching videos and on Done.
   func flush() {
-    commitTitleDraft()
     saveTask?.cancel()
     guard pendingEdit || !pendingVersions.isEmpty, let video else { saving = false; return }
     let store = store, id = videoId, e = pendingEdit ? edit : nil
@@ -827,6 +831,7 @@ final class EditorModel: ObservableObject {
 
   /// Blocks until queued writes are done (Done / window close).
   func flushAndWait() {
+    commitTitleDraft()  // Done / ⌘↩ / closing are explicit commit points; the 300 ms autosave isn't
     flush()
     Self.saveQueue.sync {}
   }
