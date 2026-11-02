@@ -1,13 +1,20 @@
+import AppKit
 import DJQCore
 import SwiftUI
 
 // ChatGPT settings-row anatomy (DESIGN-v2 §6.9) built from DS components and tokens. Settings-only helpers; the
 // `DSX…` types are local stand-ins for controls the design system doesn't ship (stepper).
 
-/// Binding into a Settings key path that saves on set (immediate-apply sections).
+/// Binding into a Settings key path that saves on set (immediate-apply sections). Each save is undoable: the toast
+/// says `label(newValue)` with Undo, and ⌘Z undoes it.
 extension AppModel {
-  func binding<T>(_ kp: WritableKeyPath<AppSettings, T>) -> Binding<T> {
-    Binding(get: { self.settings[keyPath: kp] }, set: { v in self.update { $0[keyPath: kp] = v } })
+  func binding<T>(_ kp: WritableKeyPath<AppSettings, T>, _ label: @escaping (T) -> String = { _ in "Setting saved" }) -> Binding<T> {
+    Binding(get: { self.settings[keyPath: kp] }, set: { v in self.update(label(v)) { $0[keyPath: kp] = v } })
+  }
+
+  /// "Post early turned on" / "… turned off".
+  func toggleBinding(_ kp: WritableKeyPath<AppSettings, Bool>, _ name: String) -> Binding<Bool> {
+    binding(kp) { "\(name) turned \($0 ? "on" : "off")" }
   }
 }
 
@@ -129,17 +136,19 @@ struct SettingsSelect<Value: Hashable>: View {
 }
 
 /// −/+ stepper (the DS has none): capsule surface.sunken track, ghost icon buttons, tabular value. Disabled ends
-/// say why.
+/// say why. `less`/`more` replace the default "Decrease/Increase <label>" tooltips when the label is jargon.
 struct DSXStepper: View {
   let label: String
   @Binding var value: Double
   var range: ClosedRange<Double>
   var step: Double = 1
+  var less: String? = nil
+  var more: String? = nil
   var format: (Double) -> String
 
   var body: some View {
     HStack(spacing: 0) {
-      DSIconButton("minus", tooltip: "Decrease \(label.lowercased())", size: .sm,
+      DSIconButton("minus", tooltip: less ?? "Decrease \(label.lowercased())", size: .sm,
                    disabledReason: value <= range.lowerBound ? "Already at the minimum (\(format(range.lowerBound)))" : nil) {
         value = max(range.lowerBound, value - step)
       }
@@ -149,7 +158,7 @@ struct DSXStepper: View {
         .lineLimit(1)
         .frame(minWidth: 72)
         .contentTransition(.numericText())
-      DSIconButton("plus", tooltip: "Increase \(label.lowercased())", size: .sm,
+      DSIconButton("plus", tooltip: more ?? "Increase \(label.lowercased())", size: .sm,
                    disabledReason: value >= range.upperBound ? "Already at the maximum (\(format(range.upperBound)))" : nil) {
         value = min(range.upperBound, value + step)
       }
@@ -169,8 +178,11 @@ struct DSXStepper: View {
 
 extension DSXStepper {
   /// Int convenience.
-  init(label: String, int: Binding<Int>, range: ClosedRange<Int>, step: Int = 1, format: @escaping (Int) -> String) {
+  init(label: String, int: Binding<Int>, range: ClosedRange<Int>, step: Int = 1, less: String? = nil, more: String? = nil,
+       format: @escaping (Int) -> String) {
     self.label = label
+    self.less = less
+    self.more = more
     _value = Binding(get: { Double(int.wrappedValue) }, set: { int.wrappedValue = Int($0.rounded()) })
     self.range = Double(range.lowerBound)...Double(range.upperBound)
     self.step = Double(step)
@@ -208,21 +220,34 @@ enum SettingsFmt {
   }
 }
 
-/// Small numeric field for tables (limits): commits a positive integer, ignores anything else.
+/// Small numeric field for tables (limits): typing only edits the text; a positive integer is saved on ↩ or when
+/// the field loses focus (typing "180" never saves 1, then 18). Anything else snaps back to the saved value.
 struct SettingsNumberField: View {
   let label: String
   let value: Int
+  var tooltip: String? = nil
   let commit: (Int) -> Void
   @State private var text = ""
+  @State private var dirty = false
 
   var body: some View {
     DSTextField(placeholder: "—", text: Binding(get: { text }, set: { t in
       text = t.filter(\.isNumber)
-      if let v = Int(text), v > 0 { commit(v) }
-    }), size: .sm)
+      dirty = Int(text) != value
+    }), size: .sm, onSubmit: save)
     .multilineTextAlignment(.trailing)
+    .dsTooltip(tooltip)
     .accessibilityLabel(label)
     .onAppear { text = String(value) }
-    .onChange(of: value) { _, v in if Int(text) != v { text = String(v) } }
+    .onChange(of: value) { _, v in if !dirty, Int(text) != v { text = String(v) } }
+    // Blur (click elsewhere, Tab) ends editing for whichever field had focus; only the dirty one saves.
+    .onReceive(NotificationCenter.default.publisher(for: NSControl.textDidEndEditingNotification)) { _ in save() }
+    .onDisappear(perform: save)
+  }
+
+  private func save() {
+    guard dirty else { return }
+    dirty = false
+    if let v = Int(text), v > 0, v != value { commit(v) } else { text = String(value) }
   }
 }

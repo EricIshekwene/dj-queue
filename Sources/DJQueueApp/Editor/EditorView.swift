@@ -47,8 +47,11 @@ struct EditorView: View {
           }
           EditorCanvas(model: model, playback: model.playback)
             .allowsHitTesting(!model.readOnly)
+            // Read-only canvas ignores the pointer; this layer only says why on hover.
+            .overlay { if model.readOnly { Color.clear.contentShape(Rectangle()).dsTooltip(nil, disabledReason: Self.readOnlyReason) } }
           EditorTimeline(model: model, playback: model.playback)
             .disabled(model.fileMissing || model.video == nil || model.readOnly)
+            .dsTooltip(nil, disabledReason: timelineOff)
             .background(DS.color.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous))
             .dsBorder(radius: DS.radius.lg)
             .dsElevation(DS.elevation.e1)
@@ -70,6 +73,15 @@ struct EditorView: View {
     // Don't start with the cursor in the Title field (Space should play, not type).
     .onAppear { DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) } }
     .onDisappear { model.flushAndWait(); if !model.snapshotMode { model.playback.unload() } }
+  }
+
+  static let readOnlyReason = "Editing is off: the saved edit can't be read (run Doctor)"
+
+  /// Why the timeline is disabled (shown on hover), nil when it works.
+  private var timelineOff: String? {
+    if model.readOnly { return Self.readOnlyReason }
+    if model.video == nil { return model.loading ? nil : "This clip wasn't found" }
+    return model.fileMissing ? "The clip file is missing; relink it in Health" : nil
   }
 
   private func done() {
@@ -105,6 +117,8 @@ struct EditorHeader: View {
   var done: () -> Void
   var accessory: ((String) -> AnyView)? = nil
   @State private var showVersions = false
+  /// Version waiting for the delete confirmation (asked here, after the popover closes).
+  @State private var pendingDelete: Int?
 
   private var index: Int? { videoIds.firstIndex(of: model.videoId) }
 
@@ -126,12 +140,12 @@ struct EditorHeader: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(EditorPressStyle())
-      .help("Rename — edit the Title")
+      .dsTooltip("Jump to the Title field to rename", side: .bottom)
       HStack(spacing: 2) {
-        DSIconButton("chevron.left", tooltip: "Previous clip", size: .sm, shortcut: "⌘[",
+        DSIconButton("chevron.left", tooltip: "Save and open the previous clip", size: .sm, shortcut: "⌘[",
                      disabledReason: (index ?? 0) <= 0 ? "This is the first clip in the list" : nil) { go(-1) }
           .keyboardShortcut("[", modifiers: .command)
-        DSIconButton("chevron.right", tooltip: "Next clip", size: .sm, shortcut: "⌘]",
+        DSIconButton("chevron.right", tooltip: "Save and open the next clip", size: .sm, shortcut: "⌘]",
                      disabledReason: (index ?? videoIds.count) >= videoIds.count - 1 ? "This is the last clip in the list" : nil) { go(1) }
           .keyboardShortcut("]", modifiers: .command)
         if let i = index, videoIds.count > 1 {
@@ -143,6 +157,7 @@ struct EditorHeader: View {
       if let accessory { accessory(model.videoId) }
       Spacer()
       saveIndicator
+      undoButtons
       versionPicker
       DSButton("Done", variant: .primary, size: .md, tooltip: "Save and close", shortcut: "⌘↩") { done() }
         .keyboardShortcut(.return, modifiers: .command)
@@ -150,6 +165,41 @@ struct EditorHeader: View {
     .padding(.horizontal, DS.space.sm)
     .frame(height: DS.size.toolbar)
     .background(DS.color.background)
+    .confirmationDialog(deleteTitle, isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+                        titleVisibility: .visible) {
+      Button("Delete v\(pendingDelete ?? 0)", role: .destructive) {
+        if let n = pendingDelete { model.deleteVersion(n) }
+        pendingDelete = nil
+      }
+      Button("Cancel", role: .cancel) { pendingDelete = nil }
+    } message: {
+      Text(deleteMessage)
+    }
+  }
+
+  /// The editor's own change history (EditorModel.undo/redo, also ⌘Z / ⇧⌘Z).
+  private var undoButtons: some View {
+    let off = model.readOnly ? "Editing is off for this clip" : nil
+    return HStack(spacing: 0) {
+      DSIconButton("arrow.uturn.backward", tooltip: "Undo the last change", size: .sm, shortcut: "⌘Z",
+                   disabledReason: off ?? (model.canUndo ? nil : "Nothing to undo yet")) { model.undo() }
+      DSIconButton("arrow.uturn.forward", tooltip: "Redo the change you undid", size: .sm, shortcut: "⇧⌘Z",
+                   disabledReason: off ?? (model.canRedo ? nil : "Nothing to redo")) { model.redo() }
+    }
+  }
+
+  private var deleteTitle: String { "Delete v\(pendingDelete ?? 0) of this clip?" }
+
+  /// Says where the version is used, so a posted/planned version isn't deleted by accident.
+  private var deleteMessage: String {
+    guard let n = pendingDelete else { return "" }
+    let u = model.usage(of: n)
+    var parts: [String] = []
+    if !u.posted.isEmpty { parts.append("It's posted on " + u.posted.map(\.displayName).joined(separator: ", ") + ".") }
+    if !u.planned.isEmpty { parts.append("It's planned on " + u.planned.map(\.displayName).joined(separator: ", ") + ".") }
+    if parts.isEmpty { parts.append("It isn't posted or planned anywhere.") }
+    parts.append("Its text and caption are removed. ⌘Z in the editor brings it back.")
+    return parts.joined(separator: " ")
   }
 
   private func go(_ d: Int) {
@@ -166,14 +216,19 @@ struct EditorHeader: View {
       }
     }
     .buttonStyle(DSButtonStyle(variant: .outline, size: .sm))
-    .help("Text version — versions change the text and caption for reposts")
-    .popover(isPresented: $showVersions, arrowEdge: .bottom) { EditorVersionList(model: model) }
+    .dsTooltip("Switch or add text versions for reposts")
+    .popover(isPresented: $showVersions, arrowEdge: .bottom) {
+      EditorVersionList(model: model) { n in
+        showVersions = false
+        DispatchQueue.main.async { pendingDelete = n }
+      }
+    }
   }
 
   @ViewBuilder private var saveIndicator: some View {
     Group {
       if model.readOnly {
-        DSBadge("Read only", style: .soft(.danger), icon: "lock.fill").help("The saved edit can't be read — run Doctor")
+        DSBadge("Read only", style: .soft(.danger), icon: "lock.fill").dsTooltip("The saved edit can't be read; run Doctor")
       } else if model.saving {
         HStack(spacing: 5) { DSSpinner(size: 10); Text("Saving") }
       } else if model.lastSaved != nil {
@@ -184,6 +239,7 @@ struct EditorHeader: View {
     }
     .font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
     .padding(.trailing, 4)
+    .dsTooltip(model.readOnly ? nil : "Every change saves at once; Undo takes it back", shortcut: model.readOnly ? nil : "⌘Z")
   }
 
   @ViewBuilder private var statusChip: some View {
@@ -192,8 +248,9 @@ struct EditorHeader: View {
       EmptyView()
     } else if model.video?.missing == true || model.fileMissing {
       DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark.triangle.fill")
+        .dsTooltip("The clip file is gone; relink it in Health")
     } else if issues.isEmpty {
-      DSBadge("Ready", style: .soft(.success), icon: "checkmark").help("Nothing to fix — this clip can be queued")
+      DSBadge("Ready", style: .soft(.success), icon: "checkmark").dsTooltip("Nothing to fix; this clip can be queued")
     } else {
       Button {
         if let first = issues.first { model.scrollTarget = EditorModel.section(for: first.kind) }
@@ -201,7 +258,8 @@ struct EditorHeader: View {
         DSBadge("\(issues.count) to fix", style: .soft(.warning), icon: "exclamationmark.circle.fill")
       }
       .buttonStyle(EditorPressStyle())
-      .help(issues.map(\.message).joined(separator: "\n") + "\n\nClick to jump to the first one")
+      .dsTooltip(issues.count == 1 ? "Jump to: \(issues[0].message)"
+                 : "Jump to the first of \(issues.count): \(issues[0].message)")
     }
   }
 }

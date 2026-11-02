@@ -894,298 +894,303 @@ Also bugs: ✅ Queue Cards right-click "Pin N to days…" no-op (QueueCards.swif
 
 ## Settings
 
+**Phase B (agent/tooltips-c):** every immediate setting is now undoable with a specific toast (`model.update("Posts per day set to 3")` · Undo, ⌘Z); New clip defaults Save/Reset go through `model.undoable(settings:)`; limits fields save on ↩/blur; deleting a template or hashtag set and turning on / lowering render deletion ask first (`model.confirm`). The paragraph below is the Phase A state.
+
 Context: every section except New clip defaults applies at once through `model.update` → `perform` (App/AppModel.swift:704/509). `perform` only shows a plain toast and has no Undo. Settings has no ⌘Z, and no Default/Custom ↺ tags appear anywhere in Settings (those are editor-only). Shared row helpers: `SettingsRow` adds a tooltip only for `disabledReason` (SettingsRows+DSX.swift:62). `SettingsSelect` adds none (:126). `DSXStepper` −/+ always carry tooltips (:142, :152).
 
 ### Modal shell (SettingsModal.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| `xmark` | icon | SettingsModal.swift:95 | ✅ clear | "Close settings  esc" | Close settings (drafts are kept) · esc | — |
-| Section nav rows ×10 | text button | SettingsModal.swift:175 | ✅ clear | Only "New clip defaults have unsaved changes" when dirty (:192) | label is enough | — |
-| Unsaved dot | gesture (status) | SettingsModal.swift:180 | ⚠️ dot unexplained unless hovered | (row tooltip above) | label is enough | — |
-| Confirm scrim | gesture | SettingsModal.swift:146 | ⚠️ click-outside cancels silently | — | — | — |
-| Confirm: Cancel | text button | SettingsModal.swift:150 | ✅ clear | — | label is enough · esc | — |
-| Confirm: primary | text button | SettingsModal.swift:152 | ✅ clear | — | label is enough · ↩ | — |
+| ✅ `xmark` | icon | SettingsModal.swift:95 | ✅ clear | "Close settings  esc" | Close settings · esc (dirty: “Close settings (unsaved defaults are kept)”) | — |
+| ➖ Section nav rows ×10 | text button | SettingsModal.swift:175 | ✅ clear | Only "New clip defaults have unsaved changes" when dirty (:192) | label is enough | — |
+| ➖ Unsaved dot | gesture (status) | SettingsModal.swift:180 | ⚠️ dot unexplained unless hovered | (row tooltip above) | label is enough | — (dot + row tooltip; click outside = Cancel is standard) |
+| ➖ Confirm scrim | gesture | SettingsModal.swift:146 | ⚠️ click-outside cancels silently | — | — | — (click outside = Cancel, same as esc) |
+| ✅ Confirm: Cancel | text button | SettingsModal.swift:150 | ✅ clear | — | Close without changing anything · esc | — |
+| ✅ Confirm: primary | text button | SettingsModal.swift:152 | ✅ clear | — | label + ↩ keycap | — |
 
 ### General (SettingsSections.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Pause all posting | toggle | SettingsSections.swift:13 | ✅ clear | — | label is enough | — (state visible, banner) |
-| Posts per day −/+ | icon | SettingsSections.swift:17 | ✅ clear | "Decrease/Increase posts per day"; disabled "Already at the minimum (1 per day)" | Post fewer/more clips each day. Disabled: at the limit | — |
-| Time zone | menu | SettingsSections.swift:20 | ✅ clear | — | label is enough | — |
-| Week starts on | menu | SettingsSections.swift:23 | ✅ clear | — | label is enough | — |
+| ➖ Pause all posting | toggle | SettingsSections.swift:13 | ✅ clear | — | label is enough | ok (undo): setPaused toast “Posting paused” · Undo |
+| ✅ Posts per day −/+ | icon | SettingsSections.swift:17 | ✅ clear | "Decrease/Increase posts per day"; disabled "Already at the minimum (1 per day)" | Post fewer clips each day / Post more clips each day. Disabled: at the minimum/maximum | ok (undo): toast “Posts per day set to N” · Undo, ⌘Z |
+| ➖ Time zone | menu | SettingsSections.swift:20 | ✅ clear | — | label is enough | ok (undo): toast “Time zone set to …” · Undo, ⌘Z |
+| ➖ Week starts on | menu | SettingsSections.swift:23 | ✅ clear | — | label is enough | ok (undo): toast “Week now starts on Monday” · Undo, ⌘Z |
 
 ### Platforms
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| On / Paused / Off ×6 | menu | SettingsSections.swift:50 | ✅ clear (note :57) | — | label is enough | ⚠️ RISKY: Off removes the platform from the plan at once → Undo toast |
-| Limits cells (length s / size MB / caption / title) ×≈22 | field | SettingsSections.swift:107-111 (SettingsRows+DSX.swift:219) | ⚠️ only the column header says what it is | — | Set TikTok's maximum clip length (s) | ⚠️ RISKY: saves on every keystroke (typing "180" saves 1, then 18), and Validation re-runs → commit on ↩/blur |
-| "—" (no title limit) | gesture (info) | SettingsSections.swift:113 | ✅ clear | "Only YouTube has a title" | keep | — |
-| Postiz API key | field | SettingsSections.swift:67 | ✅ clear | row: "Not available yet — arrives with automatic posting." | keep | — |
+| ➖ On / Paused / Off ×6 | menu | SettingsSections.swift:50 | ✅ clear (note :57) | — | label is enough | ok (undo): toast “TikTok turned off” · Undo, ⌘Z (also Paused / turned on) |
+| ✅ Limits cells (length s / size MB / caption / title) ×≈22 | field | SettingsSections.swift:107-111 (SettingsRows+DSX.swift:219) | ⚠️ only the column header says what it is | — | Set TikTok's longest clip (seconds) / largest file (MB) / caption limit (characters) / YouTube title limit | fixed: saves only on ↩ or blur (never mid-typing); invalid input snaps back; ok (undo): toast “TikTok length limit set to 180 s” · Undo, ⌘Z |
+| ➖ "—" (no title limit) | gesture (info) | SettingsSections.swift:113 | ✅ clear | "Only YouTube has a title" | keep | — |
+| ➖ Postiz API key | field | SettingsSections.swift:67 | ✅ clear | row: "Not available yet — arrives with automatic posting." | keep | — |
 
 ### Schedule
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Slot time ×active platforms | menu | SettingsSections.swift:150 | ✅ clear | — | label is enough | — |
-| Reset slot times (`arrow.counterclockwise`) | text button | SettingsSections.swift:156 | ⚠️ doesn't say what "built-in" times are | disabled only: "Slot times are already the built-in times" | Put every slot back to its built-in time. Disabled: already built-in | ⚠️ RISKY: overwrites all 6 slot times, no undo → Undo toast |
-| Second post offset −/+ | icon | SettingsSections.swift:166 | ✅ clear | Decrease/Increase…; row: "Only used with 2 or more posts per day (General)." | keep | — |
-| Post early | toggle | SettingsSections.swift:171 | ✅ clear | — | label is enough | — |
-| Late grace −/+ | icon | SettingsSections.swift:174 | ✅ clear | Decrease/Increase late grace | keep | — |
-| Retry stagger −/+ | icon | SettingsSections.swift:177 | ⚠️ "stagger" is jargon | Decrease/Increase retry stagger | Delay re-queued failures by less/more | — |
-| Repost cooldown −/+ | icon | SettingsSections.swift:180 | ✅ clear | Decrease/Increase repost cooldown | keep | — |
+| ➖ Slot time ×active platforms | menu | SettingsSections.swift:150 | ✅ clear | — | label is enough | ok (undo): toast “TikTok slot set to 7:00 PM” · Undo, ⌘Z |
+| ✅ Reset slot times (`arrow.counterclockwise`) | text button | SettingsSections.swift:156 | ⚠️ doesn't say what "built-in" times are | disabled only: "Slot times are already the built-in times" | Put every slot back to its built-in time. Disabled: already built-in | ok (undo): toast “Slot times reset” · Undo, ⌘Z |
+| ➖ Second post offset −/+ | icon | SettingsSections.swift:166 | ✅ clear | Decrease/Increase…; row: "Only used with 2 or more posts per day (General)." | keep | ok (undo): toast “Second post offset set to +2 h” · Undo, ⌘Z |
+| ➖ Post early | toggle | SettingsSections.swift:171 | ✅ clear | — | label is enough | ok (undo): toast “Post early turned on” · Undo, ⌘Z |
+| ➖ Late grace −/+ | icon | SettingsSections.swift:174 | ✅ clear | Decrease/Increase late grace | keep | ok (undo): toast “Late grace set to 3 hours” · Undo, ⌘Z |
+| ✅ Retry stagger −/+ | icon | SettingsSections.swift:177 | ⚠️ "stagger" is jargon | Decrease/Increase retry stagger | Retry failed posts sooner/later after the slot | ok (undo): toast “Retry stagger set to …” · Undo, ⌘Z |
+| ➖ Repost cooldown −/+ | icon | SettingsSections.swift:180 | ✅ clear | Decrease/Increase repost cooldown | keep | ok (undo): toast “Repost cooldown set to …” · Undo, ⌘Z |
 
 ### Queue
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Order | menu | SettingsSections.swift:198 | ✅ clear | — | label is enough | — |
-| Per-platform order ×active | menu | SettingsSections.swift:208 | ✅ clear | — | label is enough | — |
-| Avoid overlapping clips | toggle | SettingsSections.swift:216 | ✅ clear | — | label is enough | — |
-| Keep apart for −/+ | icon | SettingsSections.swift:220 | ✅ clear | Decrease/Increase…; row: "Turn on Avoid overlapping clips first." | keep | — |
+| ➖ Order | menu | SettingsSections.swift:198 | ✅ clear | — | label is enough | ok (undo): toast “Order set to …” · Undo, ⌘Z |
+| ➖ Per-platform order ×active | menu | SettingsSections.swift:208 | ✅ clear | — | label is enough | ok (undo): toast “TikTok order set to …” · Undo, ⌘Z |
+| ➖ Avoid overlapping clips | toggle | SettingsSections.swift:216 | ✅ clear | — | label is enough | ok (undo): toast “Avoid overlapping clips turned on” · Undo, ⌘Z |
+| ➖ Keep apart for −/+ | icon | SettingsSections.swift:220 | ✅ clear | Decrease/Increase…; row: "Turn on Avoid overlapping clips first." | keep | ok (undo): toast “Keep apart for …” · Undo, ⌘Z |
 
 ### Rendering
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Loudness target −/+ (LUFS) | icon | SettingsSections.swift:238 | ⚠️ LUFS jargon (description helps) | Decrease/Increase loudness target | Make renders quieter/louder | — |
-| True peak −/+ (dBTP) | icon | SettingsSections.swift:241 | ⚠️ dBTP jargon | Decrease/Increase true peak | Lower/raise the loudest-sample ceiling | — |
-| Loudness range −/+ (LU) | icon | SettingsSections.swift:244 | ⚠️ LU jargon | Decrease/Increase loudness range | Allow less/more loudness variation | — |
-| Bitrate −/+ | icon | SettingsSections.swift:249 | ✅ clear | Decrease/Increase bitrate | keep | — |
-| Render ahead −/+ | icon | SettingsSections.swift:254 | ✅ clear | Decrease/Increase render ahead | keep | — |
-| Cleanup (Keep forever / Delete after a while) | menu | SettingsSections.swift:259 | ✅ clear | — | label is enough | ⚠️ RISKY: "Delete after" lets the engine delete posted renders (files) → Confirm sheet |
-| Delete after −/+ | icon | SettingsSections.swift:265 | ✅ clear | Decrease/Increase…; row: "Only used when Cleanup deletes renders." | Delete posted renders sooner/later | ⚠️ RISKY: lowering it makes older renders eligible for deletion on the next tick → Confirm when lowered |
+| ✅ Loudness target −/+ (LUFS) | icon | SettingsSections.swift:238 | ⚠️ LUFS jargon (description helps) | Decrease/Increase loudness target | Make renders quieter / Make renders louder | ok (undo): toast “Loudness target set to −14 LUFS” · Undo, ⌘Z |
+| ✅ True peak −/+ (dBTP) | icon | SettingsSections.swift:241 | ⚠️ dBTP jargon | Decrease/Increase true peak | Lower / Raise the loudest-sample ceiling | ok (undo): toast “True peak set to …” · Undo, ⌘Z |
+| ✅ Loudness range −/+ (LU) | icon | SettingsSections.swift:244 | ⚠️ LU jargon | Decrease/Increase loudness range | Allow less / more loudness variation | ok (undo): toast “Loudness range set to …” · Undo, ⌘Z |
+| ➖ Bitrate −/+ | icon | SettingsSections.swift:249 | ✅ clear | Decrease/Increase bitrate | keep | ok (undo): toast “Bitrate set to N Mbps” · Undo, ⌘Z |
+| ➖ Render ahead −/+ | icon | SettingsSections.swift:254 | ✅ clear | Decrease/Increase render ahead | keep | ok (undo): toast “Render ahead set to …” · Undo, ⌘Z |
+| ✅ Cleanup (Keep forever / Delete after a while) | menu | SettingsSections.swift:259 | ✅ clear | — | label is enough | fixed: “Delete after a while” asks first (model.confirm: files deleted, footage never touched, Undo restores the setting not files); Keep forever is undoable |
+| ✅ Delete after −/+ | icon | SettingsSections.swift:265 | ✅ clear | Decrease/Increase…; row: "Only used when Cleanup deletes renders." | Delete posted renders sooner / later | fixed: lowering asks first (older renders go on the next pass); raising is undoable |
 
 ### Playback & autoplay
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Autoplay previews | toggle | SettingsSections.swift:290 | ✅ clear | — | label is enough | — |
-| Unmute on hover | toggle | SettingsSections.swift:294 | ✅ clear | row: "Turn on Autoplay previews first." | keep | — |
-| Which clips play | menu | SettingsSections.swift:297 | ✅ clear | row disabled reason | keep | — |
-| Loop | menu | SettingsSections.swift:303 | ✅ clear | row disabled reason | keep | — |
+| ➖ Autoplay previews | toggle | SettingsSections.swift:290 | ✅ clear | — | label is enough | — |
+| ➖ Unmute on hover | toggle | SettingsSections.swift:294 | ✅ clear | row: "Turn on Autoplay previews first." | keep | — |
+| ➖ Which clips play | menu | SettingsSections.swift:297 | ✅ clear | row disabled reason | keep | — |
+| ➖ Loop | menu | SettingsSections.swift:303 | ✅ clear | row disabled reason | keep | — |
 
 ### Alerts
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Approve next week −/+ | icon | SettingsSections.swift:320 | ⚠️ label reads like an action, not a threshold | Decrease/Increase approve next week | Alert sooner/later when approved runway drops | — |
-| Record a new set −/+ | icon | SettingsSections.swift:323 | ⚠️ label reads like an action | Decrease/Increase record a new set | Alert sooner/later when total runway drops | — |
-| Approval reminder day | menu | SettingsSections.swift:329 | ✅ clear | — | label is enough | — |
-| Approval reminder time | menu | SettingsSections.swift:331 | ✅ clear | — | label is enough | — |
+| ✅ Approve next week −/+ | icon | SettingsSections.swift:320 | ⚠️ label reads like an action, not a threshold | Decrease/Increase approve next week | Alert when fewer / more approved days are left | ok (undo): toast “Approval alert at N days left” · Undo, ⌘Z |
+| ✅ Record a new set −/+ | icon | SettingsSections.swift:323 | ⚠️ label reads like an action | Decrease/Increase record a new set | Alert when fewer / more days of clips are left | ok (undo): toast “New-set alert at N days left” · Undo, ⌘Z |
+| ➖ Approval reminder day | menu | SettingsSections.swift:329 | ✅ clear | — | label is enough | ok (undo): toast “Approval reminder moved to Monday” · Undo, ⌘Z |
+| ➖ Approval reminder time | menu | SettingsSections.swift:331 | ✅ clear | — | label is enough | ok (undo): toast “Approval reminder moved to 9:00 AM” · Undo, ⌘Z |
 
 ### New clip defaults (NewClipDefaultsSettings.swift)
 Edits go into a draft (`ui.draft`) and are committed only by Save. Field rows are "ok (save)".
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Aspect | menu | NewClipDefaultsSettings.swift:63 | ✅ clear | — | label is enough | ok (save) |
-| Crop position | menu | NewClipDefaultsSettings.swift:66 | ✅ clear | — | label is enough | ok (save) |
-| Start and end | menu | NewClipDefaultsSettings.swift:75 | ✅ clear | — | label is enough | ok (save) |
-| Extra seconds before −/+ | icon | NewClipDefaultsSettings.swift:81 | ✅ clear | Decrease/Increase…; row: "Only used when the trim follows the markers." | keep | ok (save) |
-| Extra seconds after −/+ | icon | NewClipDefaultsSettings.swift:84 | ✅ clear | same | keep | ok (save) |
-| Style | menu | NewClipDefaultsSettings.swift:91 | ✅ clear | — | label is enough | ok (save) |
-| Size | menu | NewClipDefaultsSettings.swift:94 | ✅ clear | — | label is enough | ok (save) |
-| Vertical position | menu | NewClipDefaultsSettings.swift:98 | ✅ clear | — | label is enough | ok (save) |
-| Horizontal position | menu | NewClipDefaultsSettings.swift:102 | ✅ clear | — | label is enough | ok (save) |
-| Alignment `text.alignleft/center/right` | segmented | NewClipDefaultsSettings.swift:106-110 | ✅ clear | "Align left" / "Align centre" / "Align right" | keep | ok (save) |
-| Show text | menu | NewClipDefaultsSettings.swift:113 | ✅ clear | — | label is enough | ok (save) |
-| First seconds −/+ | icon | NewClipDefaultsSettings.swift:118 | ✅ clear | Decrease/Increase…; row: "Only used when text shows for the first seconds." | keep | ok (save) |
-| Text comes from | menu | NewClipDefaultsSettings.swift:121 | ✅ clear | — | label is enough | ok (save) |
-| No text for Talking clips | toggle | NewClipDefaultsSettings.swift:125 | ✅ clear | — | label is enough | ok (save) |
-| Include text on cover | toggle | NewClipDefaultsSettings.swift:132 | ✅ clear | — | label is enough | ok (save) |
-| Cover frame | menu | NewClipDefaultsSettings.swift:135 | ✅ clear | — | label is enough | ok (save) |
-| Seconds into the trim −/+ | icon | NewClipDefaultsSettings.swift:140 | ✅ clear | Decrease/Increase…; row disabled reason | keep | ok (save) |
-| Caption template | menu | NewClipDefaultsSettings.swift:148 | ✅ clear | — | label is enough | ok (save) |
-| Hashtag set chips `number` | chip | NewClipDefaultsSettings.swift:154 | ⚠️ shows the set name, not its tags | — | Add #a #b … to new clips' captions | ok (save) |
-| Extra hashtags | field | NewClipDefaultsSettings.swift:158 | ✅ clear | — | label is enough | ok (save) |
-| YouTube title template | field | NewClipDefaultsSettings.swift:165 | ✅ clear | — | label is enough | ok (save) |
-| Per-platform caption template ×6 | menu | NewClipDefaultsSettings.swift:170 | ✅ clear | — | label is enough | ok (save) |
-| Post to chips | chip | NewClipDefaultsSettings.swift:182 | ✅ clear | — | label is enough | ok (save) |
-| Safe zones shown chips (+ None) | chip | NewClipDefaultsSettings.swift:185 | ✅ clear | — | label is enough | ok (save) |
-| Reset to built-in defaults `arrow.counterclockwise` | text button | NewClipDefaultsSettings.swift:203 | ✅ clear | disabled only: "Already the built-in defaults" | Put every default back to the built-in value | ok (confirm :238). Still no undo after confirming → add an Undo toast |
-| Cancel | text button | NewClipDefaultsSettings.swift:210 | ⚠️ discard or close? | disabled only: "No changes" | Discard unsaved default changes. Disabled: no changes | — (discards the draft only) |
-| Save | text button | NewClipDefaultsSettings.swift:211 | ⚠️ consequence (all clips) not stated | disabled only: "No changes" | Save defaults (updates following clips) · ⌘S. Disabled: no changes | ⚠️ RISKY: changes every clip that still follows a default, no undo → Undo toast (show the clip count) |
+| ➖ Aspect | menu | NewClipDefaultsSettings.swift:63 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Crop position | menu | NewClipDefaultsSettings.swift:66 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Start and end | menu | NewClipDefaultsSettings.swift:75 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Extra seconds before −/+ | icon | NewClipDefaultsSettings.swift:81 | ✅ clear | Decrease/Increase…; row: "Only used when the trim follows the markers." | keep | ok (save) |
+| ➖ Extra seconds after −/+ | icon | NewClipDefaultsSettings.swift:84 | ✅ clear | same | keep | ok (save) |
+| ➖ Style | menu | NewClipDefaultsSettings.swift:91 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Size | menu | NewClipDefaultsSettings.swift:94 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Vertical position | menu | NewClipDefaultsSettings.swift:98 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Horizontal position | menu | NewClipDefaultsSettings.swift:102 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Alignment `text.alignleft/center/right` | segmented | NewClipDefaultsSettings.swift:106-110 | ✅ clear | "Align left" / "Align centre" / "Align right" | keep | ok (save) |
+| ➖ Show text | menu | NewClipDefaultsSettings.swift:113 | ✅ clear | — | label is enough | ok (save) |
+| ➖ First seconds −/+ | icon | NewClipDefaultsSettings.swift:118 | ✅ clear | Decrease/Increase…; row: "Only used when text shows for the first seconds." | keep | ok (save) |
+| ➖ Text comes from | menu | NewClipDefaultsSettings.swift:121 | ✅ clear | — | label is enough | ok (save) |
+| ➖ No text for Talking clips | toggle | NewClipDefaultsSettings.swift:125 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Include text on cover | toggle | NewClipDefaultsSettings.swift:132 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Cover frame | menu | NewClipDefaultsSettings.swift:135 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Seconds into the trim −/+ | icon | NewClipDefaultsSettings.swift:140 | ✅ clear | Decrease/Increase…; row disabled reason | keep | ok (save) |
+| ➖ Caption template | menu | NewClipDefaultsSettings.swift:148 | ✅ clear | — | label is enough | ok (save) |
+| ✅ Hashtag set chips `number` | chip | NewClipDefaultsSettings.swift:154 | ⚠️ shows the set name, not its tags | — | Add #a #b to new clips / Stop adding #a #b to new clips (per chip) | ok (save) |
+| ➖ Extra hashtags | field | NewClipDefaultsSettings.swift:158 | ✅ clear | — | label is enough | ok (save) |
+| ➖ YouTube title template | field | NewClipDefaultsSettings.swift:165 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Per-platform caption template ×6 | menu | NewClipDefaultsSettings.swift:170 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Post to chips | chip | NewClipDefaultsSettings.swift:182 | ✅ clear | — | label is enough | ok (save) |
+| ➖ Safe zones shown chips (+ None) | chip | NewClipDefaultsSettings.swift:185 | ✅ clear | — | label is enough | ok (save) |
+| ✅ Reset to built-in defaults `arrow.counterclockwise` | text button | NewClipDefaultsSettings.swift:203 | ✅ clear | disabled only: "Already the built-in defaults" | Put every default back to the built-in value… | ok (confirm), then undoable: model.undoable(settings:) toast “New clip defaults reset” · Undo, ⌘Z |
+| ✅ Cancel | text button | NewClipDefaultsSettings.swift:210 | ⚠️ discard or close? | disabled only: "No changes" | Renamed “Discard changes”: Throw away the unsaved default changes. Disabled: No unsaved changes | — (discards the draft only) |
+| ✅ Save | text button | NewClipDefaultsSettings.swift:211 | ⚠️ consequence (all clips) not stated | disabled only: "No changes" | Save defaults (clips that follow them change) · ⌘S. Disabled: No unsaved changes | fixed: model.undoable(settings:) toast “New clip defaults saved” · Undo, ⌘Z (clip count not shown: no cheap count of followers) |
 
 ### Captions & titles (CaptionsSettings.swift)
 Saved as you type (`store.save` in onChange, :80 / :163).
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Template name | field | CaptionsSettings.swift:66 | ✅ clear | — | label is enough | — |
-| Delete template `trash` | icon | CaptionsSettings.swift:70 | ✅ clear | "Delete template"; disabled "Used by New clip defaults (…) — choose another template there first" | Delete this template for good | ⚠️ RISKY: deletes immediately; toast "Template deleted" (:96) has no Undo; clips that chose it show "Missing template" → Undo toast |
-| Template body | field | CaptionsSettings.swift:75 | ✅ clear | — | label is enough | — |
-| Add template `plus` | text button | CaptionsSettings.swift:20 | ✅ clear | — | label is enough | — |
-| Set name | field | CaptionsSettings.swift:147 | ✅ clear | — | label is enough | — |
-| Set hashtags | field | CaptionsSettings.swift:149 | ✅ clear | — | label is enough | — |
-| Delete set `trash` | icon | CaptionsSettings.swift:156 | ✅ clear | "Delete set"; disabled "Used by New clip defaults — remove it from Hashtag sets there first" | Delete this hashtag set for good | ⚠️ RISKY: deletes immediately; toast (:126) has no Undo; clips that chose it lose those tags → Undo toast |
-| Add set to <category> `plus` | text button | CaptionsSettings.swift:29 | ✅ clear | — | label is enough | — |
-| New category | field | CaptionsSettings.swift:33 | ✅ clear | — | label is enough · ↩ | — |
-| Add category | text button | CaptionsSettings.swift:35 | ⚠️ also creates an empty "New set" | disabled only: "Type a category name first" | Create the category with one empty set | — |
-| Copy prompt for N clips `doc.on.doc` | text button | CaptionsSettings.swift:45 | ✅ clear | disabled only: "Every clip has a title or a confident suggestion" | Copy a song-name prompt for untitled clips | — |
+| ➖ Template name | field | CaptionsSettings.swift:66 | ✅ clear | — | label is enough | — |
+| ✅ Delete template `trash` | icon | CaptionsSettings.swift:70 | ✅ clear | "Delete template"; disabled "Used by New clip defaults (…) — choose another template there first" | Delete this template… (disabled reason kept) | fixed: asks first (model.confirm, names the template; “Missing template” consequence; can’t undo — templates aren’t in the undo journal) |
+| ➖ Template body | field | CaptionsSettings.swift:75 | ✅ clear | — | label is enough | — |
+| ✅ Add template `plus` | text button | CaptionsSettings.swift:20 | ✅ clear | — | Add an empty caption template | — |
+| ➖ Set name | field | CaptionsSettings.swift:147 | ✅ clear | — | label is enough | — |
+| ➖ Set hashtags | field | CaptionsSettings.swift:149 | ✅ clear | — | label is enough | — |
+| ✅ Delete set `trash` | icon | CaptionsSettings.swift:156 | ✅ clear | "Delete set"; disabled "Used by New clip defaults — remove it from Hashtag sets there first" | Delete this hashtag set… (disabled reason kept) | fixed: asks first (model.confirm, lists the tags clips lose; can’t undo — sets aren’t in the undo journal) |
+| ✅ Add set to <category> `plus` | text button | CaptionsSettings.swift:29 | ✅ clear | — | Add an empty hashtag set to <category> | — |
+| ➖ New category | field | CaptionsSettings.swift:33 | ✅ clear | — | label is enough · ↩ | — |
+| ✅ Add category | text button | CaptionsSettings.swift:35 | ⚠️ also creates an empty "New set" | disabled only: "Type a category name first" | Create the category with one empty set · ↩. Disabled: Type a category name first | — |
+| ✅ Copy prompt for N clips `doc.on.doc` | text button | CaptionsSettings.swift:45 | ✅ clear | disabled only: "Every clip has a title or a confident suggestion" | Copy a song-name prompt for untitled clips. Disabled: kept | — |
 
 ### Engine (EngineSettings.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Try again (error card) | text button | EngineSettings.swift:14 | ⚠️ try what? | — | Reinstall the background engine | ok (confirm) |
-| Install… / Reinstall… | text button | EngineSettings.swift:23 | ✅ clear | — | label is enough | ok (confirm :76) |
-| Stop… | text button | EngineSettings.swift:24 | ✅ clear | disabled only: "The background engine isn't loaded." | Stop the engine and remove it from login | ok (confirm :85) |
-| Tick now | text button | EngineSettings.swift:32 | ⚠️ "tick" is jargon | "Run one engine pass now" | Prepare due posts and reminders now | — |
-| Wake before first slot | toggle | EngineSettings.swift:36 | ✅ clear | — | label is enough | — |
-| Open log | text button | EngineSettings.swift:39 | ✅ clear | disabled only: "No log written yet." | keep | — |
-| Reveal ×4 | text button | EngineSettings.swift:96 | ✅ clear | "Show in Finder" | keep | — |
-| Back up now | text button | EngineSettings.swift:53 | ✅ clear | — | label is enough | — |
+| ✅ Try again (error card) | text button | EngineSettings.swift:14 | ⚠️ try what? | — | Label changed to “Reinstall engine…” (DSAttentionCard has no tooltip slot) | ok (confirm) |
+| ✅ Install… / Reinstall… | text button | EngineSettings.swift:23 | ✅ clear | — | Install the engine to run at login / Reinstall and reload the background engine | ok (confirm) |
+| ✅ Stop… | text button | EngineSettings.swift:24 | ✅ clear | disabled only: "The background engine isn't loaded." | Stop the engine and remove it from login. Disabled: kept | ok (confirm) |
+| ✅ Tick now | text button | EngineSettings.swift:32 | ⚠️ "tick" is jargon | "Run one engine pass now" | Prepare due posts and reminders now | — |
+| ➖ Wake before first slot | toggle | EngineSettings.swift:36 | ✅ clear | — | label is enough | ok (undo): toast “Wake before first slot turned on” · Undo, ⌘Z |
+| ➖ Open log | text button | EngineSettings.swift:39 | ✅ clear | disabled only: "No log written yet." | keep | — |
+| ➖ Reveal ×4 | text button | EngineSettings.swift:96 | ✅ clear | "Show in Finder" | keep | — |
+| ✅ Back up now | text button | EngineSettings.swift:53 | ✅ clear | — | Copy the database to Backups now | — |
 
 ## Editor
+
+**Phase B (agent/tooltips-c):** the editor now has its own history (EditorModel.undo/redo, ⌘Z / ⇧⌘Z, header Undo/Redo buttons), so every edit made through EditorModel is "ok (⌘Z)"; all `.help` became `.dsTooltip`; Delete vN asks first. The paragraph below is the Phase A state.
 
 Context: the editor autosaves 300 ms after each change (EditorModel.swift:793 `scheduleSave`). The header only says "Saves as you go" (EditorView.swift:175). It has no undo: ⌘Z inside the editor is sent to the responder chain (MainWindowView.swift:157), which undoes text-field typing only, and EditorModel has no UndoManager. So nothing in the editor is "ok (save)" or "ok (⌘Z)". Below, one-click edits that throw away a value are marked RISKY. Toggles that one more click restores are marked "—". The shared ↺ is `EditorCustomTag` (EditorComponents.swift:25, `arrow.uturn.backward`, default tooltip "Reset to the default").
 
 ### Header / toolbar (EditorView.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Back `chevron.left` | text button | EditorView.swift:107 | ✅ clear | "Save and go back" | keep | — |
-| Clip title / set name | text button | EditorView.swift:109 | ⚠️ looks like static text | "Rename — edit the Title" | Jump to the Title field to rename | — |
-| Previous clip `chevron.left` | icon | EditorView.swift:125 | ✅ clear | "Previous clip  ⌘["; disabled "This is the first clip in the list" | Save and open the previous clip · ⌘[ | — |
-| Next clip `chevron.right` | icon | EditorView.swift:128 | ✅ clear | "Next clip  ⌘]"; disabled "This is the last clip in the list" | Save and open the next clip · ⌘] | — |
-| "N to fix" chip | text button | EditorView.swift:191 | ✅ clear | Issue list + "Click to jump to the first one" | keep | — |
-| Ready / File missing badges | gesture (status) | EditorView.swift:189 / :187 | ⚠️ File missing has no hover text | "Nothing to fix — this clip can be queued" / — | File missing: Relink it in Health/Doctor | — |
-| Saves as you go / Saved | gesture (status) | EditorView.swift:166-176 | ⚠️ doesn't say that nothing can be undone | — | Every change saves at once; no undo yet | — |
-| v1 ▾ (versions) | menu | EditorView.swift:155 | ⚠️ "v1" is cryptic | "Text version — versions change the text and caption for reposts" | Switch or add text versions for reposts | — |
-| Done | text button | EditorView.swift:140 | ✅ clear | "Save and close  ⌘↩" | keep · ⌘↩ | — |
-| Space / ← → / ⇧← → | gesture (keys) | EditorView.swift:83-85 | ⚠️ undiscoverable outside Play tooltip | — | add a "?" shortcut list | — |
-| I / O (trim at playhead) | gesture (keys) | EditorView.swift:86-89 | ⚠️ only mentioned in the handle tooltips | — | (on handles) | ⚠️ RISKY: overwrites the trim, no undo → Undo toast or ⌘Z |
+| ➖ Back `chevron.left` | text button | EditorView.swift:107 | ✅ clear | "Save and go back" | keep | — |
+| ✅ Clip title / set name | text button | EditorView.swift:109 | ⚠️ looks like static text | "Rename — edit the Title" | Jump to the Title field to rename | — |
+| ✅ Previous clip `chevron.left` | icon | EditorView.swift:125 | ✅ clear | "Previous clip  ⌘["; disabled "This is the first clip in the list" | Save and open the previous clip · ⌘[. Disabled: first clip | — |
+| ✅ Next clip `chevron.right` | icon | EditorView.swift:128 | ✅ clear | "Next clip  ⌘]"; disabled "This is the last clip in the list" | Save and open the next clip · ⌘]. Disabled: last clip | — |
+| ✅ "N to fix" chip | text button | EditorView.swift:191 | ✅ clear | Issue list + "Click to jump to the first one" | Jump to: <issue> / Jump to the first of N: <issue> | — |
+| ✅ Ready / File missing badges | gesture (status) | EditorView.swift:189 / :187 | ⚠️ File missing has no hover text | "Nothing to fix — this clip can be queued" / — | Ready: Nothing to fix; this clip can be queued · File missing: The clip file is gone; relink it in Health | — |
+| ✅ Saves as you go / Saved | gesture (status) | EditorView.swift:166-176 | ⚠️ doesn't say that nothing can be undone | — | Every change saves at once; Undo takes it back · ⌘Z | — (editor now has undo; header Undo/Redo buttons added) |
+| ✅ Undo `arrow.uturn.backward` / Redo `arrow.uturn.forward` (new) | icon | EditorView.swift (header, before v1 ▾) | ✅ clear | — | Undo the last change · ⌘Z / Redo the change you undid · ⇧⌘Z. Disabled: Nothing to undo yet / Nothing to redo / Editing is off for this clip | — (they are the undo) |
+| ✅ v1 ▾ (versions) | menu | EditorView.swift:155 | ⚠️ "v1" is cryptic | "Text version — versions change the text and caption for reposts" | Switch or add text versions for reposts | — |
+| ➖ Done | text button | EditorView.swift:140 | ✅ clear | "Save and close  ⌘↩" | keep · ⌘↩ | — |
+| ⏭ Space / ← → / ⇧← → | gesture (keys) | EditorView.swift:83-85 | ⚠️ undiscoverable outside Play tooltip | — | add a "?" shortcut list | deferred: a “?” shortcut list belongs to Shell’s ShortcutSheet (not in this leaf); Play shows Space, handles show I/O keycaps |
+| ✅ I / O (trim at playhead) | gesture (keys) | EditorView.swift:86-89 | ⚠️ only mentioned in the handle tooltips | — | (on handles: I / O keycaps) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
 
 ### Versions popover (EditorInspector.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Version row | gesture | EditorInspector.swift:131 | ✅ clear | "Edit vN" | Edit vN's text and caption | — |
-| `ellipsis` | menu | EditorInspector.swift:121 | ⚠️ icon only | "Actions for vN" | More actions for vN | — |
-| Duplicate as new version | menu item | EditorInspector.swift:122 | ✅ clear | — | label is enough | ⚠️ RISKY: creates vN+1 and switches to it at once → Undo toast |
-| Delete vN | menu item | EditorInspector.swift:123 | ✅ clear | — | label is enough | ⚠️ RISKY: deletes immediately with no confirm, even if posted/planned (EditorModel.swift:773) → Confirm sheet listing usage |
-| New version `plus` | text button | EditorInspector.swift:99 | ⚠️ "version" meaning only in the popover text | disabled only: "Editing is off for this clip" | Start a new text version for a repost | ⚠️ RISKY: creates a version, no undo → Undo toast |
+| ✅ Version row | gesture | EditorInspector.swift:131 | ✅ clear | "Edit vN" | Edit vN's text and caption (none on the selected row) | — |
+| ✅ `ellipsis` | menu | EditorInspector.swift:121 | ⚠️ icon only | "Actions for vN" | More actions for vN | — |
+| ➖ Duplicate as new version | menu item | EditorInspector.swift:122 | ✅ clear | — | label is enough | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Delete vN | menu item | EditorInspector.swift:123 | ✅ clear | — | Delete vN… (menu item; tooltips don’t show in menus) | fixed: header .confirmationDialog says where vN is posted/planned; ⌘Z brings it back |
+| ✅ New version `plus` | text button | EditorInspector.swift:99 | ⚠️ "version" meaning only in the popover text | disabled only: "Editing is off for this clip" | Start a new text version for a repost. Disabled: Editing is off | ok (⌘Z): editor undo history; ⇧⌘Z redo |
 
 ### Inspector mini-index
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Title…Platforms ×6 (+ warning dot) | text button | EditorInspector.swift:64 | ✅ clear | "Jump to X" / "Jump to X — needs attention" | keep | — |
+| ✅ Title…Platforms ×6 (+ warning dot) | text button | EditorInspector.swift:64 | ✅ clear | "Jump to X" / "Jump to X — needs attention" | Jump to X / Jump to X (needs attention) — now DS tooltip, below | — |
 
 ### Title + suggestions (EditorTitleSection.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Custom badge (on Title) | gesture (status) | EditorComponents.swift:23 via :51 | ⚠️ tooltip is wrong for the Title | "Changed from your New clip defaults" | Typed or chosen by you (not the raw tag) | — |
-| Title ↺ `arrow.uturn.backward` | icon | EditorTitleSection.swift:51 | ✅ clear | "Clear the Title (screens show the raw tag again)" | keep | ⚠️ RISKY: wipes the Title → Undo toast |
-| Ask an agent (callout) `doc.on.clipboard` | text button | EditorTitleSection.swift:73 | ✅ clear | "Copies the prompt (clip id, tag, set position, audio) to the clipboard" | keep | — |
-| Suggestion chips | chip | EditorTitleSection.swift:98 | ✅ clear | "Use “X” as the Title (from src)" / "This is the Title" | keep | ⚠️ RISKY: overwrites the current Title in one click → Undo toast |
-| Title field | field | EditorTitleSection.swift:132 | ✅ clear | "The Title feeds the overlay text, caption {text}, YouTube title and the name shown everywhere" | keep · ↩ | — |
-| Set | text button | EditorTitleSection.swift:141 | ✅ clear | "Save this Title (↩)" | keep · ↩ | — |
-| Use raw tag `tag` | text button | EditorTitleSection.swift:20 | ✅ clear | "Set the Title to the marker tag exactly as typed: “…”"; disabled "The Title already is the raw tag" | keep | ⚠️ RISKY: overwrites the Title → Undo toast |
-| Ask an agent (ghost) `doc.on.clipboard` | text button | EditorTitleSection.swift:26 | ✅ clear | "Copy a prompt for your agent to find the song names (it answers with djq suggest)" | keep | — |
-| Kind DJ vid / Talking | segmented | EditorTitleSection.swift:166 | ⚠️ the text-default side effect is hidden | label only: "Talking clips get “No text” by default (Settings → New clip defaults)" (:164) | Mark as talking: no overlay text by default | — (saved at once; one click restores) |
+| ✅ Custom badge (on Title) | gesture (status) | EditorComponents.swift:23 via :51 | ⚠️ tooltip is wrong for the Title | "Changed from your New clip defaults" | Typed or chosen by you (not the raw tag) | — |
+| ✅ Title ↺ `arrow.uturn.backward` | icon | EditorTitleSection.swift:51 | ✅ clear | "Clear the Title (screens show the raw tag again)" | Clear the Title (screens show the raw tag) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Ask an agent (callout) `doc.on.clipboard` | text button | EditorTitleSection.swift:73 | ✅ clear | "Copies the prompt (clip id, tag, set position, audio) to the clipboard" | Copy a song-name prompt for your agent | — |
+| ✅ Suggestion chips | chip | EditorTitleSection.swift:98 | ✅ clear | "Use “X” as the Title (from src)" / "This is the Title" | Use “X” as the Title (from src) / This is the Title | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Title field | field | EditorTitleSection.swift:132 | ✅ clear | "The Title feeds the overlay text, caption {text}, YouTube title and the name shown everywhere" | Rename: text, caption and YouTube title follow · ↩ | — |
+| ✅ Set | text button | EditorTitleSection.swift:141 | ✅ clear | "Save this Title (↩)" | Save this Title · ↩ | — |
+| ✅ Use raw tag `tag` | text button | EditorTitleSection.swift:20 | ✅ clear | "Set the Title to the marker tag exactly as typed: “…”"; disabled "The Title already is the raw tag" | Set the Title to “<tag>” as typed. Disabled: kept | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Ask an agent (ghost) `doc.on.clipboard` | text button | EditorTitleSection.swift:26 | ✅ clear | "Copy a prompt for your agent to find the song names (it answers with djq suggest)" | Copy a song-name prompt for your agent | — |
+| ✅ Kind DJ vid / Talking | segmented | EditorTitleSection.swift:166 | ⚠️ the text-default side effect is hidden | label only: "Talking clips get “No text” by default (Settings → New clip defaults)" (:164) | Set the kind; Talking clips start with no text | ok (⌘Z): editor undo history; ⇧⌘Z redo |
 
 ### Frame / crop (EditorSections.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Aspect 9:16/4:5/1:1/16:9 | segmented | EditorSections.swift:15 | ✅ clear | label: "Output shape of the video" | label is enough | — (crop is rescaled) |
-| Aspect ↺ | icon | EditorSections.swift:14 | ✅ clear | "Back to the default aspect (9:16)" | keep | ⚠️ RISKY: resets aspect and rescales crop → Undo toast |
-| Crop ↺ | icon | EditorSections.swift:27 | ✅ clear | "Back to the default framing (Centre) — it then needs confirming again" | keep | ⚠️ RISKY: throws away the manual crop → Undo toast |
-| Use this crop (inspector) | text button | EditorSections.swift:33 | ✅ clear | "Confirm the framing shown on the canvas"; disabled "The clip file is missing" | keep | — |
-| Zoom | slider | EditorSections.swift:38 | ✅ clear | "Zoom into the recording (scroll or pinch on the Frame view)" | keep · ←/→ when focused | — |
-| Place Left / Centre / Right | text button | EditorSections.swift:43-45 | ⚠️ "Place" is terse | "Centre the crop on the left third" / "Centre the crop" / "…right third" | keep | ⚠️ RISKY: moves a hand-placed crop, no undo → Undo toast |
-| Edit on canvas | text button | EditorSections.swift:56 | ✅ clear | "Show the whole recording to drag the crop" | keep | — |
-| Upscaled badge | gesture (status) | EditorSections.swift:50 | ✅ clear | "The crop has fewer pixels than the 1080-wide output, so it will look softer" | keep | — |
+| ➖ Aspect 9:16/4:5/1:1/16:9 | segmented | EditorSections.swift:15 | ✅ clear | label: "Output shape of the video" | label is enough | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Aspect ↺ | icon | EditorSections.swift:14 | ✅ clear | "Back to the default aspect (9:16)" | Back to the default aspect (9:16) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Crop ↺ | icon | EditorSections.swift:27 | ✅ clear | "Back to the default framing (Centre) — it then needs confirming again" | Back to the Centre framing (confirm again) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ➖ Use this crop (inspector) | text button | EditorSections.swift:33 | ✅ clear | "Confirm the framing shown on the canvas"; disabled "The clip file is missing" | keep | — |
+| ✅ Zoom | slider | EditorSections.swift:38 | ✅ clear | "Zoom into the recording (scroll or pinch on the Frame view)" | Zoom in; or scroll/pinch on the Frame view | — |
+| ✅ Place Left / Centre / Right | text button | EditorSections.swift:43-45 | ⚠️ "Place" is terse | "Centre the crop on the left third" / "Centre the crop" / "…right third" | Centre the crop on the left third / Centre the crop / …right third | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ➖ Edit on canvas | text button | EditorSections.swift:56 | ✅ clear | "Show the whole recording to drag the crop" | keep | — |
+| ✅ Upscaled badge | gesture (status) | EditorSections.swift:50 | ✅ clear | "The crop has fewer pixels than the 1080-wide output, so it will look softer" | The crop is under 1080 px wide, so it looks softer | — |
 
 ### Trim / timeline (EditorSections.swift, EditorTimeline.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Trim ↺ | icon | EditorSections.swift:70 | ⚠️ tooltip is a noun phrase | "Trim to markers" / "Use the whole file" | Reset the trim to your in/out markers | ⚠️ RISKY: throws away the custom trim → Undo toast |
-| Trim to markers (inspector) | text button | EditorSections.swift:78 | ✅ clear | "Back to your in/out markers" | keep | ⚠️ RISKY: same → Undo toast |
-| Trim to markers / Whole file `arrow.uturn.backward` (transport) | text button | EditorTimeline.swift:108 | ⚠️ tooltip mentions markers even on "Whole file" | "Reset the trim to the default (your in/out markers)" | Reset the trim to the markers / whole file | ⚠️ RISKY: same → Undo toast |
-| Custom badge (transport) | gesture (status) | EditorTimeline.swift:102 | ✅ clear | "Trim changed from your markers" | keep | — |
-| `gobackward.5` | icon | EditorTimeline.swift:115 | ⚠️ glyph renders like a timer (screenshots) | "Back 5 seconds" | Jump back 5 seconds | — |
-| `play.fill` / `pause.fill` | icon | EditorTimeline.swift:116 | ✅ clear | "Play the trim" / "Pause"  Space; disabled "The clip isn't loaded" | keep · Space | — |
-| `goforward.5` | icon | EditorTimeline.swift:119 | ⚠️ glyph renders like a timer | "Forward 5 seconds" | Jump forward 5 seconds | — |
-| Gutter `textformat` / `film` | gesture (info) | EditorTimeline.swift:57 / :59 | ✅ clear | "Text: when the overlay text shows" / "The clip file — trim handles, markers, grace zones" | keep | — |
-| Filmstrip scrub | gesture | EditorTimeline.swift:159 | ✅ clear | "Click or drag to move the playhead" | keep · ←/→ ⇧←/→ | — |
-| Trim-in handle (yellow) | gesture | EditorTimeline.swift:174 | ✅ clear | "Trim in (I) — snaps to your markers; drag left into the grace zone to start earlier" | keep · I | — (autosave, no undo) |
-| Trim-out handle (yellow) | gesture | EditorTimeline.swift:181 | ✅ clear | "Trim out (O) — snaps…; drag right into the grace zone to end later" | keep · O | — (autosave, no undo) |
-| Marker ticks `arrowtriangle.down.fill` | gesture (info) | EditorTimeline.swift:202 | ❌ no hit-testing, so no hover text | — | Your in/out marker at 0:03.0 | — |
-| "Grace" striped zone | gesture (info) | EditorTimeline.swift:164 / :218 | ⚠️ jargon, no hit-testing | — | Extra seconds you can drag the trim into | — |
-| Text bar | gesture | EditorTimeline.swift:262 | ✅ clear | "Overlay text — click to edit it" | keep | — |
-| Text bar grips ×2 | gesture | EditorTimeline.swift:265 / :270 (help :295) | ✅ clear | "Drag to set when the text shows" | keep | — (autosave, no undo) |
-| Per-platform lane in/out handles | gesture | EditorTimeline.swift:323 / :329 | ⚠️ noun-only tooltip | "X trim in" / "X trim out — snaps to the 2:20 limit" | Drag to set where X's cut starts/ends | — |
+| ✅ Trim ↺ | icon | EditorSections.swift:70 | ⚠️ tooltip is a noun phrase | "Trim to markers" / "Use the whole file" | Reset the trim to your in/out markers / to the whole file | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Trim to markers (inspector) | text button | EditorSections.swift:78 | ✅ clear | "Back to your in/out markers" | Back to your in/out markers | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Trim to markers / Whole file `arrow.uturn.backward` (transport) | text button | EditorTimeline.swift:108 | ⚠️ tooltip mentions markers even on "Whole file" | "Reset the trim to the default (your in/out markers)" | Reset the trim to your in/out markers / Reset the trim to the whole file | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Custom badge (transport) | gesture (status) | EditorTimeline.swift:102 | ✅ clear | "Trim changed from your markers" | Trim changed from your markers / from the whole file | — |
+| ✅ `gobackward.5` | icon | EditorTimeline.swift:115 | ⚠️ glyph renders like a timer (screenshots) | "Back 5 seconds" | Jump back 5 seconds | — |
+| ➖ `play.fill` / `pause.fill` | icon | EditorTimeline.swift:116 | ✅ clear | "Play the trim" / "Pause"  Space; disabled "The clip isn't loaded" | keep · Space | — |
+| ✅ `goforward.5` | icon | EditorTimeline.swift:119 | ⚠️ glyph renders like a timer | "Forward 5 seconds" | Jump forward 5 seconds | — |
+| ✅ Gutter `textformat` / `film` | gesture (info) | EditorTimeline.swift:57 / :59 | ✅ clear | "Text: when the overlay text shows" / "The clip file — trim handles, markers, grace zones" | Text lane: when the overlay text shows / The clip file: trim, markers, grace (+ lane icons: “X-only trim”) | — |
+| ✅ Filmstrip scrub | gesture | EditorTimeline.swift:159 | ✅ clear | "Click or drag to move the playhead" | Click or drag to move the playhead | — |
+| ✅ Trim-in handle (yellow) | gesture | EditorTimeline.swift:174 | ✅ clear | "Trim in (I) — snaps to your markers; drag left into the grace zone to start earlier" | Drag to set the start; snaps to your markers · I | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Trim-out handle (yellow) | gesture | EditorTimeline.swift:181 | ✅ clear | "Trim out (O) — snaps…; drag right into the grace zone to end later" | Drag to set the end; snaps to your markers · O | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Marker ticks `arrowtriangle.down.fill` | gesture (info) | EditorTimeline.swift:202 | ❌ no hit-testing, so no hover text | — | Your in/out marker at 0:03.0; the trim snaps here | fixed: ticks are hoverable and carry the scrub gesture, so dragging still moves the playhead |
+| ✅ "Grace" striped zone | gesture (info) | EditorTimeline.swift:164 / :218 | ⚠️ jargon, no hit-testing | — | Grace: drag the trim start/end into these seconds | fixed: zones hoverable, scrub like the filmstrip |
+| ✅ Text bar | gesture | EditorTimeline.swift:262 | ✅ clear | "Overlay text — click to edit it" | Edit the overlay text | — |
+| ✅ Text bar grips ×2 | gesture | EditorTimeline.swift:265 / :270 (help :295) | ✅ clear | "Drag to set when the text shows" | Drag to set when the text shows | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Per-platform lane in/out handles | gesture | EditorTimeline.swift:323 / :329 | ⚠️ noun-only tooltip | "X trim in" / "X trim out — snaps to the 2:20 limit" | Drag to set where X's cut starts / ends (snaps to 2:20) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
 
 ### Text (EditorSections.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Text on the video | field | EditorSections.swift:103 | ✅ clear | — (disabled while No text; placeholder says so) | label is enough | — |
-| Text ↺ | icon | EditorSections.swift:101 | ✅ clear | "Back to the Title" / "…raw tag" / "…no text" | keep | ⚠️ RISKY: throws away typed text → Undo toast |
-| Follow the Title | text button | EditorSections.swift:113 | ✅ clear | "Drop the typed text and use the Title again" | keep | ⚠️ RISKY: throws away typed text → Undo toast |
-| No text | toggle | EditorSections.swift:117 | ✅ clear | "Post this clip without any text on the video" | keep | — |
-| Style tiles White box / Outline / Shadow | chip | EditorSections.swift:193 | ✅ clear | "Text style: X"; disabled by No text (:128) with no reason | Use the X text style. Disabled: No text is on | — |
-| Style ↺ | icon | EditorSections.swift:123 | ⚠️ generic tooltip | "Reset to the default" | Back to the default style (X) | ⚠️ RISKY: reset with no undo → Undo toast |
-| Size | slider | EditorSections.swift:131 | ✅ clear | disabled "No text on this clip" | label is enough · ←/→ | — |
-| Size ↺ | icon | EditorSections.swift:130 | ⚠️ generic tooltip | "Reset to the default" | Back to the default size (64) | ⚠️ RISKY: reset with no undo → Undo toast |
-| Alignment Left / Centre / Right | segmented | EditorSections.swift:137 | ✅ clear | — (disabled by No text :143, no reason) | label is enough. Disabled: No text is on | — |
-| Alignment ↺ | icon | EditorSections.swift:136 | ⚠️ generic tooltip | "Reset to the default" | Back to the default alignment | ⚠️ RISKY: reset with no undo → Undo toast |
-| Position ↺ | icon | EditorSections.swift:146 | ✅ clear | "Back to the default position" | keep | ⚠️ RISKY: loses the dragged position → Undo toast |
-| Timing ↺ | icon | EditorSections.swift:156 | ✅ clear | "Back to the default timing" | keep | ⚠️ RISKY: loses the dragged timing → Undo toast |
-| "from vN" badge | gesture (status) | EditorComponents.swift:19 | ✅ clear | "Carried forward from vN — change it here to make this version different" | keep | — |
+| ➖ Text on the video | field | EditorSections.swift:103 | ✅ clear | — (disabled while No text; placeholder says so) | label is enough | — |
+| ✅ Text ↺ | icon | EditorSections.swift:101 | ✅ clear | "Back to the Title" / "…raw tag" / "…no text" | Back to the Title / raw tag / no text | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Follow the Title | text button | EditorSections.swift:113 | ✅ clear | "Drop the typed text and use the Title again" | Drop the typed text and use the Title again | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ No text | toggle | EditorSections.swift:117 | ✅ clear | "Post this clip without any text on the video" | Post this clip without any text on the video | — |
+| ✅ Style tiles White box / Outline / Shadow | chip | EditorSections.swift:193 | ✅ clear | "Text style: X"; disabled by No text (:128) with no reason | Use the X text style / This is the text style. Disabled: No text is on; turn off No text to style it | — |
+| ✅ Style ↺ | icon | EditorSections.swift:123 | ⚠️ generic tooltip | "Reset to the default" | Back to the default style (White box) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Size | slider | EditorSections.swift:131 | ✅ clear | disabled "No text on this clip" | label is enough. Disabled: No text is on; turn off No text to style it | — |
+| ✅ Size ↺ | icon | EditorSections.swift:130 | ⚠️ generic tooltip | "Reset to the default" | Back to the default size (64) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Alignment Left / Centre / Right | segmented | EditorSections.swift:137 | ✅ clear | — (disabled by No text :143, no reason) | label is enough. Disabled: No text is on; turn off No text to style it | — |
+| ✅ Alignment ↺ | icon | EditorSections.swift:136 | ⚠️ generic tooltip | "Reset to the default" | Back to the default alignment (Centre) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Position ↺ | icon | EditorSections.swift:146 | ✅ clear | "Back to the default position" | Back to the default position | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Timing ↺ | icon | EditorSections.swift:156 | ✅ clear | "Back to the default timing" | Back to the default timing | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ "from vN" badge | gesture (status) | EditorComponents.swift:19 | ✅ clear | "Carried forward from vN — change it here to make this version different" | Carried forward from vN; edit it to change this version | — |
 
 ### Caption (EditorCaptionSection.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Template | menu | EditorCaptionSection.swift:50 | ✅ clear | label "Used when no caption is typed below"; disabled "A typed caption is used instead — clear it to use a template" | keep | — |
-| Template ↺ | icon | EditorCaptionSection.swift:49 | ✅ clear | "Back to the default template" | keep | ⚠️ RISKY: reset with no undo → Undo toast |
-| Caption | field | EditorCaptionSection.swift:63 | ✅ clear | — | label is enough | — |
-| Caption ↺ | icon | EditorCaptionSection.swift:61 | ⚠️ doesn't say the typed caption is lost | "Use the template again" | Delete the typed caption; use the template | ⚠️ RISKY: throws away the whole typed caption → Undo toast |
-| "N characters ⓘ" | gesture (info) | EditorCaptionSection.swift:83 | ✅ clear | Per-platform "TikTok: 182 / 4000 …" | keep | — |
-| Drop hashtags for X | text button | EditorCaptionSection.swift:115 | ✅ clear | "Give X the same caption without hashtags (N characters)"; disabled reasons | keep | ⚠️ RISKY: writes X's own caption; the toast (EditorModel.swift:735) has no Undo → add Undo |
-| Write an X caption | text button | EditorCaptionSection.swift:119 | ✅ clear | "Start a caption just for X from this one" | keep | — |
-| Hashtag set chips | chip | EditorCaptionSection.swift:147 | ⚠️ tooltip lists tags, no verb | the tags, e.g. "#amapiano #djlife" | Add #amapiano #djlife … to this caption | — |
-| Hashtags ↺ | icon | EditorCaptionSection.swift:139 | ⚠️ doesn't say it also clears extra hashtags | "Back to the default hashtag sets" | Back to the default sets; clear extra tags | ⚠️ RISKY: loses chosen sets and extra hashtags → Undo toast |
-| Extra hashtags | field | EditorCaptionSection.swift:157 | ✅ clear | "Added after the sets, separated by spaces" | keep · ↩ | — |
-| YouTube title | field | EditorCaptionSection.swift:185 | ✅ clear | label "The Shorts title (YouTube shows it under the handle)" | keep | — |
-| YouTube title ↺ | icon | EditorCaptionSection.swift:183 | ✅ clear | "Back to the template ({text} \| DJ Lovd)" | keep | ⚠️ RISKY: loses the typed title → Undo toast |
-| Captions for one platform `chevron.right` | text button | EditorCaptionSection.swift:198 | ✅ clear | "Give a platform its own caption instead of the shared one" | keep | — |
-| Per-platform caption toggle ×posting | toggle | EditorCaptionSection.swift:222 | ✅ clear | "X uses its own caption — turn off to use the shared one" / "Write a caption just for X" | keep | ⚠️ RISKY: turning it off deletes the typed platform caption → Undo toast |
-| Per-platform caption | field | EditorCaptionSection.swift:227 | ✅ clear | — | label is enough | — |
+| ➖ Template | menu | EditorCaptionSection.swift:50 | ✅ clear | label "Used when no caption is typed below"; disabled "A typed caption is used instead — clear it to use a template" | keep | — |
+| ✅ Template ↺ | icon | EditorCaptionSection.swift:49 | ✅ clear | "Back to the default template" | Back to the default template | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ➖ Caption | field | EditorCaptionSection.swift:63 | ✅ clear | — | label is enough | — |
+| ✅ Caption ↺ | icon | EditorCaptionSection.swift:61 | ⚠️ doesn't say the typed caption is lost | "Use the template again" | Delete the typed caption; use the template | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ "N characters ⓘ" | gesture (info) | EditorCaptionSection.swift:83 | ✅ clear | Per-platform "TikTok: 182 / 4000 …" | TikTok 182/4000 · Instagram 182/2200 … (one paragraph, fits the bubble) | — |
+| ✅ Drop hashtags for X | text button | EditorCaptionSection.swift:115 | ✅ clear | "Give X the same caption without hashtags (N characters)"; disabled reasons | Give X the same caption without hashtags (N characters) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ➖ Write an X caption | text button | EditorCaptionSection.swift:119 | ✅ clear | "Start a caption just for X from this one" | keep | — |
+| ✅ Hashtag set chips | chip | EditorCaptionSection.swift:147 | ⚠️ tooltip lists tags, no verb | the tags, e.g. "#amapiano #djlife" | Add #a #b to this caption / Remove #a #b from this caption | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Hashtags ↺ | icon | EditorCaptionSection.swift:139 | ⚠️ doesn't say it also clears extra hashtags | "Back to the default hashtag sets" | Back to the default sets; clear extra tags | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Extra hashtags | field | EditorCaptionSection.swift:157 | ✅ clear | "Added after the sets, separated by spaces" | Added after the sets, separated by spaces · ↩ | — |
+| ➖ YouTube title | field | EditorCaptionSection.swift:185 | ✅ clear | label "The Shorts title (YouTube shows it under the handle)" | keep | — |
+| ✅ YouTube title ↺ | icon | EditorCaptionSection.swift:183 | ✅ clear | "Back to the template ({text} \| DJ Lovd)" | Back to the template ({text} \| DJ Lovd) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Captions for one platform `chevron.right` | text button | EditorCaptionSection.swift:198 | ✅ clear | "Give a platform its own caption instead of the shared one" | Give a platform its own caption / Hide the per-platform captions | — |
+| ✅ Per-platform caption toggle ×posting | toggle | EditorCaptionSection.swift:222 | ✅ clear | "X uses its own caption — turn off to use the shared one" / "Write a caption just for X" | Write a caption just for X / Delete X's own caption; use the shared one | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ➖ Per-platform caption | field | EditorCaptionSection.swift:227 | ✅ clear | — | label is enough | — |
 
 ### Cover (EditorSections.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Use playhead `scope` | text button | EditorSections.swift:260 | ✅ clear | "Use the frame under the timeline playhead" | keep | — |
-| Filmstrip frames ×8 | gesture | EditorSections.swift:294 | ✅ clear | "Use the frame at 0:03.0" | keep | — |
-| Cover frame ↺ | icon | EditorSections.swift:244 | ✅ clear | "Back to the default cover frame (First frame of the trim)" | keep | ⚠️ RISKY: loses the picked frame → Undo toast |
-| Include text on the cover | toggle | EditorSections.swift:270 | ✅ clear | "Draw the overlay text on the cover image too" | keep | — |
-| Cover text ↺ | icon | EditorSections.swift:269 | ⚠️ generic | "Back to the default" | Back to the default (text on/off) | — (one click restores) |
+| ➖ Use playhead `scope` | text button | EditorSections.swift:260 | ✅ clear | "Use the frame under the timeline playhead" | keep | — |
+| ✅ Filmstrip frames ×8 | gesture | EditorSections.swift:294 | ✅ clear | "Use the frame at 0:03.0" | Use the frame at 0:03.0 as the cover | — |
+| ✅ Cover frame ↺ | icon | EditorSections.swift:244 | ✅ clear | "Back to the default cover frame (First frame of the trim)" | Back to the default cover frame (First frame of the trim) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Include text on the cover | toggle | EditorSections.swift:270 | ✅ clear | "Draw the overlay text on the cover image too" | Draw the overlay text on the cover image too | — |
+| ✅ Cover text ↺ | icon | EditorSections.swift:269 | ⚠️ generic | "Back to the default" | Back to the default (with/without text) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
 
 ### Platforms (EditorSections.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Post to chips ×6 | chip | EditorSections.swift:339 | ✅ clear | "Posting on X — click to skip it for this clip" / "Not posting…"; disabled "X is turned off in Settings → Platforms" | keep | — (one click restores) |
-| Post to ↺ | icon | EditorSections.swift:335 | ✅ clear | "Back to the default platforms" | keep | ⚠️ RISKY: reset with no undo → Undo toast |
-| Trim for X | text button | EditorSections.swift:370 | ✅ clear | "Add a X-only trim lane on the timeline" | keep | — |
-| Remove X trim | text button | EditorSections.swift:373 | ✅ clear | "Use the main trim on X too" | keep | ⚠️ RISKY: deletes the X-only trim → Undo toast |
-| Skip X | text button | EditorSections.swift:377 | ✅ clear | "Don't post this clip on X" | keep | — (chip restores) |
+| ✅ Post to chips ×6 | chip | EditorSections.swift:339 | ✅ clear | "Posting on X — click to skip it for this clip" / "Not posting…"; disabled "X is turned off in Settings → Platforms" | Skip X for this clip / Post this clip on X too. Disabled: kept | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Post to ↺ | icon | EditorSections.swift:335 | ✅ clear | "Back to the default platforms" | Back to the default platforms | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ➖ Trim for X | text button | EditorSections.swift:370 | ✅ clear | "Add a X-only trim lane on the timeline" | keep | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ Remove X trim | text button | EditorSections.swift:373 | ✅ clear | "Use the main trim on X too" | Delete the X-only trim; use the main one | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ➖ Skip X | text button | EditorSections.swift:377 | ✅ clear | "Don't post this clip on X" | keep | ok (⌘Z): editor undo history; ⇧⌘Z redo |
 
 ### Canvas modes (EditorCanvas.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Frame / Zones / Preview `crop` `rectangle.dashed` `iphone` | segmented | EditorCanvas.swift:107 | ⚠️ one tooltip covers all three | "Frame: crop the recording · Zones: … · Preview: …" | one tooltip per segment | — |
-| Crop window drag + scroll/pinch | gesture | EditorCanvas.swift:249-260, :221 | ✅ clear | "Drag to move the crop · scroll or pinch to zoom" | keep | — (autosave, no undo) |
-| Corner brackets | gesture (info) | EditorCanvas.swift:248 | ⚠️ look like resize handles but aren't | — | (drop them, or make them resize) | — |
-| Use this crop `checkmark` (frame bar) | text button | EditorCanvas.swift:156 | ✅ clear | "Confirm this framing"; disabled "Editing is off for this clip" | keep | — |
-| Show folder in Finder | text button | EditorCanvas.swift:171 | ✅ clear | — | label is enough | — |
+| ⏭ Frame / Zones / Preview `crop` `rectangle.dashed` `iphone` | segmented | EditorCanvas.swift:107 | ⚠️ one tooltip covers all three | "Frame: crop the recording · Zones: … · Preview: …" | Switch view: crop, safe zones or phone preview (one tooltip) | deferred: DSSegmented shows segment tooltips only for icon-only segments (DS change, parent-owned) |
+| ✅ Crop window drag + scroll/pinch | gesture | EditorCanvas.swift:249-260, :221 | ✅ clear | "Drag to move the crop · scroll or pinch to zoom" | Drag to move the crop; scroll or pinch to zoom | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ⏭ Corner brackets | gesture (info) | EditorCanvas.swift:248 | ⚠️ look like resize handles but aren't | — | (drop them, or make them resize) | deferred: visual change (drop or make resizable), not a tooltip; the crop-window tooltip explains drag/zoom |
+| ➖ Use this crop `checkmark` (frame bar) | text button | EditorCanvas.swift:156 | ✅ clear | "Confirm this framing"; disabled "Editing is off for this clip" | keep | — |
+| ✅ Show folder in Finder | text button | EditorCanvas.swift:171 | ✅ clear | — | Open the folder where the file should be | — |
 
 ### Safe zones (EditorSafeZones.swift, EditorCanvas.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Text drag box (Zones) | gesture | EditorCanvas.swift:326 | ⚠️ invisible until dragging | "Drag to move the text" | keep; show a hover outline | — (autosave, no undo) |
-| None | chip | EditorSafeZones.swift:108 | ⚠️ "None" of what? | — | Hide all safe-zone overlays | — (view setting, UserDefaults) |
-| Platform zone chips ×6 | chip | EditorSafeZones.swift:110 | ✅ clear | "Show/Hide X's safe zones" | keep | — (view setting) |
-| "Safe zones" label | gesture (info) | EditorSafeZones.swift:107 | ✅ clear | "Show where each app's buttons and text cover the video (…)" | keep | — |
+| ✅ Text drag box (Zones) | gesture | EditorCanvas.swift:326 | ⚠️ invisible until dragging | "Drag to move the text" | Drag to move the text (dashed outline on hover) | ok (⌘Z): editor undo history; ⇧⌘Z redo |
+| ✅ None | chip | EditorSafeZones.swift:108 | ⚠️ "None" of what? | — | Hide all safe-zone overlays (none when already empty) | — (view setting, UserDefaults) |
+| ✅ Platform zone chips ×6 | chip | EditorSafeZones.swift:110 | ✅ clear | "Show/Hide X's safe zones" | Show/Hide X's safe zones | — (view setting) |
+| ✅ "Safe zones" label | gesture (info) | EditorSafeZones.swift:107 | ✅ clear | "Show where each app's buttons and text cover the video (…)" | Where each app's buttons cover the video (per 9:16) | — |
 
 ### Preview / phone mocks (EditorCanvas.swift, EditorPhoneMock.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| `chevron.left` | icon | EditorCanvas.swift:412 | ✅ clear | "Previous platform" | keep | — |
-| Platform chips ×6 | chip | EditorCanvas.swift:414 | ✅ clear | "Preview on X" / "(this clip isn't posting there)" | keep | — |
-| `chevron.right` | icon | EditorCanvas.swift:419 | ✅ clear | "Next platform" | keep | — |
-| One / Compare 3 | segmented | EditorCanvas.swift:421 | ✅ clear | "Show one phone, or three platforms side by side" | keep | — |
-| Phone tap (compare) | gesture | EditorCanvas.swift:399 | ❌ no hint that it's clickable | — | Focus the X preview | — |
-| Mock Follow/Subscribe/rail icons | gesture (decor) | EditorPhoneMock.swift:172-187, :506 | ⚠️ look tappable, are static art | — | (non-interactive; fine) | — |
+| ➖ `chevron.left` | icon | EditorCanvas.swift:412 | ✅ clear | "Previous platform" | keep | — |
+| ✅ Platform chips ×6 | chip | EditorCanvas.swift:414 | ✅ clear | "Preview on X" / "(this clip isn't posting there)" | Preview on X / Preview on X (not posting there) | — |
+| ➖ `chevron.right` | icon | EditorCanvas.swift:419 | ✅ clear | "Next platform" | keep | — |
+| ✅ One / Compare 3 | segmented | EditorCanvas.swift:421 | ✅ clear | "Show one phone, or three platforms side by side" | Show one phone, or three side by side | — |
+| ✅ Phone tap (compare) | gesture | EditorCanvas.swift:399 | ❌ no hint that it's clickable | — | Start the comparison from X | — |
+| ➖ Mock Follow/Subscribe/rail icons | gesture (decor) | EditorPhoneMock.swift:172-187, :506 | ⚠️ look tappable, are static art | — | (non-interactive; fine) | — (static art) |
 
 ## DS components
 

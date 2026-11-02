@@ -109,7 +109,7 @@ struct EditorCanvas: View {
         DSSegment(value: .zones, title: "Zones", icon: "rectangle.dashed"),
         DSSegment(value: .preview, title: "Preview", icon: "iphone"),
       ], size: .sm)
-      .help("Frame: crop the recording · Zones: where each app's buttons cover the video · Preview: the post on a phone")
+      .dsTooltip("Switch view: crop, safe zones or phone preview")
       .padding(.top, DS.space.sm)
 
       Group {
@@ -168,7 +168,7 @@ struct EditorCanvas: View {
       if let u = model.fileURL {
         Text(u.path).font(DS.type.mono).foregroundStyle(DS.color.textSecondary)
           .lineLimit(2).multilineTextAlignment(.center).frame(maxWidth: 420)
-        DSButton("Show folder in Finder", variant: .outline, size: .sm) {
+        DSButton("Show folder in Finder", variant: .outline, size: .sm, tooltip: "Open the folder where the file should be") {
           NSWorkspace.shared.activateFileViewerSelecting([u.deletingLastPathComponent()])
         }
       }
@@ -257,7 +257,7 @@ struct EditorFrameCanvas: View {
           }
           .onEnded { _ in pinchStart = nil })
         .onHover { inside in if inside { NSCursor.openHand.push() } else { NSCursor.pop() } }
-        .help("Drag to move the crop · scroll or pinch to zoom")
+        .dsTooltip("Drag to move the crop; scroll or pinch to zoom")
     }
   }
 
@@ -295,6 +295,8 @@ struct EditorZonesCanvas: View {
   @State private var textDragValue: (x: Double, y: Double)?
   @State private var snapX = false
   @State private var snapY = false
+  /// Pointer over the text: shows the dashed outline so the drag target is visible before dragging.
+  @State private var textHover = false
 
   var body: some View {
     GeometryReader { geo in
@@ -324,13 +326,16 @@ struct EditorZonesCanvas: View {
       let hit = CGRect(x: r.minX + b.minX * r.width + textDrag.width, y: r.minY + b.minY * r.height + textDrag.height,
                        width: b.width * r.width, height: b.height * r.height)
       RoundedRectangle(cornerRadius: 4)
-        .strokeBorder(Color.white.opacity(textDragStart != nil ? 0.95 : 0.0), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+        .strokeBorder(Color.white.opacity(textDragStart != nil ? 0.95 : textHover ? 0.6 : 0.0), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
         .contentShape(Rectangle())
         .frame(width: hit.width, height: hit.height)
         .offset(x: hit.minX, y: hit.minY)
         .gesture(textDragGesture(size: r.size))
-        .onHover { inside in if inside { NSCursor.openHand.push() } else { NSCursor.pop() } }
-        .help("Drag to move the text")
+        .onHover { inside in
+          textHover = inside
+          if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
+        }
+        .dsTooltip("Drag to move the text")
     }
   }
 
@@ -397,6 +402,7 @@ struct EditorPreviewCanvas: View {
             }
           }
           .onTapGesture { if model.compare { model.previewPlatform = p } }
+          .dsTooltip(model.compare && p != model.previewPlatform ? "Start the comparison from \(p.displayName)" : nil)
         }
       }
       .frame(width: geo.size.width, height: geo.size.height)
@@ -414,14 +420,14 @@ struct EditorPreviewBar: View {
         DSChip(p.editorShortName, icon: p == .x ? nil : p.dsSymbol, isSelected: model.previewPlatform == p, showsCheck: false, size: .sm) {
           model.previewPlatform = p
         }
-        .help(model.posting(p) ? "Preview on \(p.displayName)" : "Preview on \(p.displayName) (this clip isn't posting there)")
+        .dsTooltip(model.posting(p) ? "Preview on \(p.displayName)" : "Preview on \(p.displayName) (not posting there)")
       }
       DSIconButton("chevron.right", tooltip: "Next platform", variant: .ghost, size: .sm) { model.stepPreview(1) }
       DSSeparator(vertical: true).frame(height: 18).padding(.horizontal, 4)
       DSSegmented(selection: $model.compare, segments: [
         DSSegment(value: false, title: "One"), DSSegment(value: true, title: "Compare 3"),
       ], size: .sm)
-      .help("Show one phone, or three platforms side by side")
+      .dsTooltip("Show one phone, or three side by side")
     }
   }
 }
