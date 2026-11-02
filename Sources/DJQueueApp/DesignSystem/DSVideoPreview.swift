@@ -80,11 +80,30 @@ final class DSPlaybackProgress {
   func seek(_ f: Double) { view?.seek(fraction: f) }
 }
 
+/// How a preview says "Updating preview" (S6): a labelled capsule (tiles, Single, dialogs), a small icon (cards),
+/// or nothing (tiny list thumbnails).
+enum DSPreviewUpdatingStyle: Sendable { case label, icon, none }
+
+/// Evidence runs only (snapshots): draw the text overlay over the poster too, since a still can't show the playing
+/// preview's text window. `.environment(\.dsPreviewOverlayOnPoster, true)`.
+private struct DSPreviewOverlayOnPosterKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+  var dsPreviewOverlayOnPoster: Bool {
+    get { self[DSPreviewOverlayOnPosterKey.self] }
+    set { self[DSPreviewOverlayOnPosterKey.self] = newValue }
+  }
+}
+
 /// Muted looping preview of a proxy file with poster fallback (DESIGN-v2 §2.6/§4). Plays only while visible,
 /// `isActive` and granted a slot; releases the decoder when scrolled away. The proxy fades in over the poster in
 /// 200 ms. Mute toggle on hover. `unmuteOnHover`: while the pointer is over the preview or its card (`isHovered`) it
 /// plays with sound — starting playback (with a priority slot) when it wasn't playing, e.g. in focus-only mode — and
 /// mutes again on exit; `DSPlaybackBudget` keeps one clip audible at a time.
+///
+/// S6 (the clip as it will post): `overlay` — the on-video text — is drawn over the playing proxy only while the
+/// player time is inside `textWindow` (like the editor and the renderer); never over the poster (the cover already
+/// has the text when "cover includes text" is on). `isUpdating`: the edit changed and the new proxy isn't ready,
+/// so the (new) poster shows with a quiet "Updating preview".
 struct DSVideoPreview: View {
   let url: URL?
   var poster: NSImage? = nil
@@ -102,6 +121,12 @@ struct DSVideoPreview: View {
   /// Thin scrub bar on hover (Single view).
   var showsScrubber = false
   var cornerRadius: CGFloat = 0
+  /// On-video text at the video's aspect (transparent), shown during `textWindow`.
+  var overlay: CGImage? = nil
+  /// Seconds of the proxy's timeline while `overlay` shows (nil with an overlay = the whole time).
+  var textWindow: ClosedRange<Double>? = nil
+  var isUpdating = false
+  var updatingStyle: DSPreviewUpdatingStyle = .label
   var gravity: AVLayerVideoGravity = .resizeAspectFill
 
   @State private var id = UUID()
@@ -109,6 +134,7 @@ struct DSVideoPreview: View {
   @State private var hovering = false
   @State private var ready = false
   @State private var progress = DSPlaybackProgress()
+  @Environment(\.dsPreviewOverlayOnPoster) private var overlayOnPoster
   private var budget: DSPlaybackBudget { .shared }
 
   var body: some View {
@@ -120,12 +146,16 @@ struct DSVideoPreview: View {
     ZStack {
       posterView
       if playing, let url {
-        DSPlayerLayerView(url: url, loopRange: loopRange, muted: !audible, gravity: gravity, progress: progress) { r in ready = r }
+        DSPlayerLayerView(url: url, loopRange: loopRange, muted: !audible, gravity: gravity, overlay: overlay,
+                          textWindow: textWindow, progress: progress) { r in ready = r }
           .opacity(ready ? 1 : 0)
           .animation(DS.motion.fade, value: ready)
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    .overlay(alignment: .topLeading) {
+      if isUpdating && url == nil && updatingStyle != .none { updatingBadge.padding(updatingStyle == .icon ? 4 : 8).transition(.opacity) }
+    }
     .overlay(alignment: muteAlignment) {
       if showsMuteButton && playing && (hovering || audible) {
         Button {
@@ -155,13 +185,35 @@ struct DSVideoPreview: View {
     }
     .onChange(of: priority) { _, p in if wantsPlay { budget.request(id, priority: p) } }
     .onChange(of: hoverSound, initial: true) { _, h in budget.setHover(id, h) }
-    .accessibilityLabel(playing ? (audible ? "Video preview, playing with sound" : "Video preview, playing muted") : "Video cover")
+    .accessibilityLabel(playing ? (audible ? "Video preview, playing with sound" : "Video preview, playing muted")
+                        : isUpdating ? "Video cover, preview updating" : "Video cover")
+  }
+
+  /// Quiet, white-on-dark like the duration badge; explains itself on hover.
+  private var updatingBadge: some View {
+    HStack(spacing: 4) {
+      Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: updatingStyle == .icon ? 8.5 : 9.5, weight: .semibold))
+      if updatingStyle == .label { Text("Updating preview").font(DS.type.micro) }
+    }
+    .foregroundStyle(.white)
+    .padding(.horizontal, updatingStyle == .icon ? 0 : 7)
+    .frame(width: updatingStyle == .icon ? 18 : nil, height: 18)
+    .background(Color.black.opacity(0.63), in: Capsule())
+    .fixedSize()
+    .dsTooltip("The edit changed — its new preview is being made. The cover already shows the edit.")
+    .accessibilityLabel("Updating preview")
   }
 
   @ViewBuilder private var posterView: some View {
     if let poster {
       Image(nsImage: poster).resizable().aspectRatio(contentMode: gravity == .resizeAspect ? .fit : .fill)
         .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+        .overlay {
+          if overlayOnPoster, let overlay {
+            Image(decorative: overlay, scale: 1).resizable().aspectRatio(contentMode: gravity == .resizeAspect ? .fit : .fill)
+              .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+          }
+        }
     } else {
       DSPosterPlaceholder()
     }
@@ -200,6 +252,8 @@ private struct DSPlayerLayerView: NSViewRepresentable {
   let loopRange: ClosedRange<Double>?
   let muted: Bool
   let gravity: AVLayerVideoGravity
+  let overlay: CGImage?
+  let textWindow: ClosedRange<Double>?
   let progress: DSPlaybackProgress
   let onReady: (Bool) -> Void
 
@@ -215,6 +269,7 @@ private struct DSPlayerLayerView: NSViewRepresentable {
     v.progress = progress
     progress.view = v
     v.configure(url: url, loopRange: loopRange, muted: muted, gravity: gravity)
+    v.setOverlay(overlay, window: textWindow, gravity: gravity)
   }
 
   static func dismantleNSView(_ v: DSPlayerNSView, coordinator: ()) { v.teardown() }
@@ -222,6 +277,11 @@ private struct DSPlayerLayerView: NSViewRepresentable {
 
 final class DSPlayerNSView: NSView {
   private let playerLayer = AVPlayerLayer()
+  /// The text overlay, shown only while the time is inside `textWindow` (toggled by `textObs`, no SwiftUI redraws).
+  private let overlayLayer = CALayer()
+  private var textWindow: ClosedRange<Double>?
+  private var overlayImage: CGImage?
+  private var textObs: Any?
   private var player: AVQueuePlayer?
   private var looper: AVPlayerLooper?
   private var key: String?
@@ -236,6 +296,9 @@ final class DSPlayerNSView: NSView {
     wantsLayer = true
     layer = CALayer()
     layer?.addSublayer(playerLayer)
+    overlayLayer.isHidden = true
+    overlayLayer.actions = ["hidden": NSNull(), "contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+    layer?.addSublayer(overlayLayer)
   }
 
   required init?(coder: NSCoder) { fatalError() }
@@ -245,6 +308,7 @@ final class DSPlayerNSView: NSView {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     playerLayer.frame = bounds
+    overlayLayer.frame = bounds
     CATransaction.commit()
   }
 
@@ -281,6 +345,29 @@ final class DSPlayerNSView: NSView {
     player?.isMuted = muted
   }
 
+  /// Sets the overlay image and its time window. Same gravity as the video, so it lands on the same pixels.
+  func setOverlay(_ image: CGImage?, window: ClosedRange<Double>?, gravity: AVLayerVideoGravity) {
+    if overlayImage !== image { overlayImage = image; overlayLayer.contents = image }
+    overlayLayer.contentsGravity = gravity == .resizeAspect ? .resizeAspect : gravity == .resize ? .resize : .resizeAspectFill
+    textWindow = window
+    if image == nil {
+      overlayLayer.isHidden = true
+      if let textObs { player?.removeTimeObserver(textObs) }
+      textObs = nil
+    } else if textObs == nil, let p = player {
+      textObs = p.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] t in
+        MainActor.assumeIsolated { self?.updateText(t.seconds) }
+      }
+      updateText(p.currentTime().seconds)
+    }
+  }
+
+  @MainActor private func updateText(_ t: Double) {
+    guard overlayImage != nil, t.isFinite else { overlayLayer.isHidden = true; return }
+    let on = textWindow.map { t >= $0.lowerBound - 0.01 && t <= $0.upperBound + 0.01 } ?? true
+    if overlayLayer.isHidden == on { overlayLayer.isHidden = !on }
+  }
+
   @MainActor private func report(_ t: CMTime) {
     guard let item = player?.currentItem else { return }
     let start = range?.lowerBound ?? 0
@@ -300,6 +387,9 @@ final class DSPlayerNSView: NSView {
   func teardown() {
     if let timeObs { player?.removeTimeObserver(timeObs) }
     timeObs = nil
+    if let textObs { player?.removeTimeObserver(textObs) }
+    textObs = nil
+    overlayLayer.isHidden = true
     readyObs = nil
     player?.pause()
     looper?.disableLooping()
