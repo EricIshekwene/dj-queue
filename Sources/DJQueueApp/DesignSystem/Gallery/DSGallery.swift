@@ -49,10 +49,14 @@ struct DSGallery: View {
         } trailing: {
           DSIconButton("circle.lefthalf.filled", tooltip: "Follows the system appearance", variant: .ghost) {}
         }
-        ScrollView {
-          pageView.padding(DS.space.xl).frame(maxWidth: .infinity, alignment: .topLeading)
+        // Two-axis scroll anchors oversize pages at top-leading instead of centring them under the sidebar.
+        GeometryReader { g in
+          ScrollView([.vertical, .horizontal]) {
+            pageView.padding(DS.space.xl).frame(minWidth: g.size.width, minHeight: g.size.height, alignment: .topLeading)
+          }
+          .scrollIndicators(.never)
         }
-        .scrollIndicators(.never)
+        .clipped()
       }
       .background(DS.color.background)
     }

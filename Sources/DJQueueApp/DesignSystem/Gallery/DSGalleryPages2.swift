@@ -36,7 +36,6 @@ struct GallerySurfaces: View {
         }
         GSection("Bulk bar", note: "capsule · e2 · ≤4 labelled actions · More · primary") {
           DSBulkBar(count: 4, onClear: {}) {
-            Button {} label: { Label("Pin to days…", systemImage: "pin") }
             Button {} label: { Label("Post today", systemImage: "bolt") }.dsForcedState(.hover)
             Button {} label: { Label("Exclude", systemImage: "eye.slash") }
           } trailing: {

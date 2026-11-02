@@ -185,7 +185,8 @@ struct DSTextArea: View {
       }
       .padding(.horizontal, 9)
       .padding(.vertical, 10)
-      .frame(minHeight: minHeight, maxHeight: maxHeight)
+      .frame(minHeight: minHeight, idealHeight: minHeight, maxHeight: maxHeight)
+      .fixedSize(horizontal: false, vertical: true)
       .modifier(DSFieldBox(focused: isFocused, hovering: forced == .hover || hovering, error: error != nil, disabled: false,
                            radius: DS.radius.lg, fill: DS.color.surfaceRaised))
       .onHover { hovering = $0 }
