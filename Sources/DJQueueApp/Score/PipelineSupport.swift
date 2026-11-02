@@ -131,15 +131,20 @@ struct PipelineClipFeed: ViewModifier {
   let ids: [String]
   /// Clips to preload/play, most important first.
   let playIds: [String]
+  var layout: PreviewPlayback.Layout = .cards
+  /// Hovered (or keyboard-focused) clip — grids with "play on hover only" fetch only it and prefetch its neighbours.
+  var hovered: String? = nil
 
   func body(content: Content) -> some View {
     content
       .onAppear { register(ids) }
       .onChange(of: ids) { _, new in register(new) }
-      .task(id: playIds.joined(separator: ",") + "|\(model.playback.autoplay)|\(model.playback.loop.rawValue)") {
+      .task(id: playIds.joined(separator: ",") + "|\(model.playback.autoplay)|\(model.playback.loop.rawValue)"
+            + "|\(model.playback.gridHoverOnly)|\(hovered ?? "")") {
         try? await Task.sleep(for: .milliseconds(model.frozen ? 0 : 250))
         guard !Task.isCancelled, model.playback.autoplay else { return }
-        model.requestProxies(playIds)
+        let t = PreviewPlayback.proxyTargets(model.playback, layout: layout, visible: playIds, hovered: hovered)
+        model.requestProxies(t.now, prefetch: t.prefetch)
       }
   }
 
@@ -151,8 +156,9 @@ struct PipelineClipFeed: ViewModifier {
 }
 
 extension View {
-  func pipelineClipFeed(_ model: AppModel, _ screen: Screen, ids: [String], play: [String]) -> some View {
-    modifier(PipelineClipFeed(model: model, screen: screen, ids: ids, playIds: play))
+  func pipelineClipFeed(_ model: AppModel, _ screen: Screen, ids: [String], play: [String],
+                        layout: PreviewPlayback.Layout = .cards, hovered: String? = nil) -> some View {
+    modifier(PipelineClipFeed(model: model, screen: screen, ids: ids, playIds: play, layout: layout, hovered: hovered))
   }
 }
 

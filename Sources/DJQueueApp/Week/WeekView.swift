@@ -285,8 +285,8 @@ struct WeekDayCard: View {
     let p = model.playback
     VStack(alignment: .leading, spacing: 0) {
       DSVideoPreview(url: video.missing ? nil : model.proxyURLs[video.id], poster: model.poster(video),
-                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), unmuteOnHover: p.unmuteOnHover,
-                     muteAlignment: .bottomTrailing)
+                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), unmuteOnHover: p.unmuteOnHover && !isPast,
+                     isHovered: hovering, muteAlignment: .bottomTrailing)
         .frame(width: width, height: width * 16 / 9)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: DS.radius.md, topTrailingRadius: DS.radius.md, style: .continuous))
         .overlay(alignment: .topTrailing) {

@@ -153,7 +153,7 @@ struct DSClipCard<Actions: View>: View {
   private func media(radius: CGFloat, active: Bool, mute: Bool = true, muteAlignment: Alignment = .bottomTrailing,
                      scrubber: Bool = false) -> some View {
     DSVideoPreview(url: clip.isMissing ? nil : clip.proxyURL, poster: clip.poster, isActive: active, isPriority: isFocused,
-                   loopRange: clip.loopRange, unmuteOnHover: config.unmuteOnHover, showsMuteButton: mute,
+                   loopRange: clip.loopRange, unmuteOnHover: config.unmuteOnHover, isHovered: hot, showsMuteButton: mute,
                    muteAlignment: muteAlignment, showsScrubber: scrubber, cornerRadius: radius)
       .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.color.border) }
   }
