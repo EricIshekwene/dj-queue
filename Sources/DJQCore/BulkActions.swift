@@ -480,14 +480,21 @@ public final class BulkActions: @unchecked Sendable {
   }
 
   /// Records the batch for an `OpenEntry` (nil `batchId` when nothing changed). Only the clips that changed are
-  /// journaled, so undo leaves the others alone.
+  /// journaled, so undo leaves the others alone; score, excluded and held are left to their own journaled actions.
   @discardableResult
   public func commit(_ e: OpenEntry) throws -> BulkResult {
     var result = BulkResult(batchId: nil, action: e.action, dryRun: false, videoIds: e.ids, changed: [], skipped: [:],
                             remainingIssues: [:], summary: "")
     try store.db.transaction {
       let now = try e.before.clips.map { try clipSnapshot($0.id, renders: false) }
-      let pairs = zip(e.before.clips, now).filter { $0 != $1 }
+      // Only the fields a long interaction owns (kind, title, edit, versions) are journaled here. Score, excluded and
+      // held change only through actions that journal themselves (e.g. a stage move from the editor header), so the
+      // session takes their current values and its undo never reverts or double-counts them.
+      let pairs = zip(e.before.clips, now).map { b, n -> (ClipSnap, ClipSnap) in
+        var b = b
+        b.score = n.score; b.excluded = n.excluded; b.held = n.held
+        return (b, n)
+      }.filter { $0 != $1 }
       guard !pairs.isEmpty else { result.summary = "\(e.action): nothing changed"; return }
       let before = Snapshot(clips: pairs.map(\.0), plan: nil), after = Snapshot(clips: pairs.map(\.1), plan: nil)
       result.changed = pairs.map(\.0.id)

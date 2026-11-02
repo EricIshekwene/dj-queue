@@ -140,6 +140,32 @@ import Testing
     #expect(try b.commit(try b.begin("editor", ids: ["clip-2"])).batchId == nil)
   }
 
+  /// Review r4 M1: a journaled action taken while the editor is open (a stage move, a score) keeps its own entry; the
+  /// editor session doesn't fold it in, so ⌘Z⌘Z undoes the editor change, then that action, both cleanly.
+  @Test func journaledActionInsideEditorSessionStaysSeparate() throws {
+    let f = try Fixture.engine(2)
+    let b = bulk(f)
+    var history = UndoHistory()
+    let score0 = try f.store.video(id: "clip-1")?.score
+    let title0 = try f.store.video(id: "clip-1")?.title
+    let session = try b.begin("editor", ids: ["clip-1"])
+    history.push(try #require(try b.setScore(["clip-1"], 77).batchId), label: "Score 77")
+    try f.store.setTitle("clip-1", "Edited in the editor")
+    let r = try b.commit(session)
+    history.push(try #require(r.batchId), label: "Edits to clip-1")
+    let first = try b.undo(try #require(history.popTop()?.batchId))
+    #expect(first.skipped.isEmpty)
+    #expect(try f.store.video(id: "clip-1")?.title == title0)
+    #expect(try f.store.video(id: "clip-1")?.score == 77)  // the editor undo leaves the score action alone
+    let second = try b.undo(try #require(history.popTop()?.batchId))
+    #expect(second.skipped.isEmpty)
+    #expect(try f.store.video(id: "clip-1")?.score == score0)
+    // A session whose only change was a journaled action leaves no entry of its own.
+    let s2 = try b.begin("editor", ids: ["clip-0"])
+    _ = try b.setScore(["clip-0"], 12)
+    #expect(try b.commit(s2).batchId == nil)
+  }
+
   /// Rapid ⌘Z⌘Z: 10 → 50 → 60, two undos submitted back to back → 10 (the runner keeps them in order).
   @Test func rapidUndosApplyInOrder() throws {
     let f = try Fixture.engine(1)

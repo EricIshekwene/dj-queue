@@ -67,7 +67,7 @@ struct CaptionsSettings: View {
       HStack(spacing: DS.space.xs) {
         DSTextField(placeholder: "Template name", text: t.name, size: .sm).frame(width: 240)
           .accessibilityLabel("Template name")
-        if id == defaults.captionTemplateId { DSBadge("Default", style: .soft(.neutral)) }
+        if id == defaults.captionTemplateId { DSBadge("Default", style: .soft(.neutral), help: "New clips use this template") }
         Spacer(minLength: 0)
         DSIconButton("trash", tooltip: "Delete this template…", size: .sm,
                      disabledReason: usedBy.map { "Used by New clip defaults (\($0)) — choose another template there first" }) {
@@ -166,7 +166,7 @@ private struct HashtagSetRow: View {
         if parsed != set.tags { set.tags = parsed }
       }), size: .sm)
       .accessibilityLabel("Hashtags")
-      if isDefault { DSBadge("Default", style: .soft(.neutral)) }
+      if isDefault { DSBadge("Default", style: .soft(.neutral), help: "New clips use this set") }
       DSIconButton("trash", tooltip: "Delete this hashtag set…", size: .sm,
                    disabledReason: isDefault ? "Used by New clip defaults — remove it from Hashtag sets there first" : nil) {
         onDelete(set)

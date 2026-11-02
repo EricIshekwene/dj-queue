@@ -132,7 +132,7 @@ struct EditorHeader: View {
             Text(model.video?.displayName ?? "Clip").font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(1)
               .frame(maxWidth: 320, alignment: .leading).fixedSize(horizontal: true, vertical: false)
             if model.title == nil && model.video != nil {
-              DSBadge("Raw tag", style: .outline, size: .sm)
+              DSBadge("Raw tag", style: .outline, size: .sm, help: "No Title yet; screens show the marker tag")
             }
           }
           Text(Captions.setName(model.sessionName)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
@@ -255,7 +255,7 @@ struct EditorHeader: View {
       Button {
         if let first = issues.first { model.scrollTarget = EditorModel.section(for: first.kind) }
       } label: {
-        DSBadge("\(issues.count) to fix", style: .soft(.warning), icon: "exclamationmark.circle.fill")
+        DSBadge("\(issues.count) to fix", style: .soft(.warning), icon: "exclamationmark.circle.fill")  // tooltip-on-parent
       }
       .buttonStyle(EditorPressStyle())
       .dsTooltip(issues.count == 1 ? "Jump to: \(issues[0].message)"

@@ -62,7 +62,7 @@ struct PlatformsSettings: View {
 
     SettingsGroupHeader("Publishing")
     SettingsRow("Publisher", description: "You post from the Mac browser; the app prepares the file and caption.") {
-      DSBadge("Manual", style: .outline)
+      DSBadge("Manual", style: .outline, help: "You post each clip yourself; the app prepares the file and caption")
     }
     SettingsRow("Postiz API key", description: "Stored in the Keychain.", disabledReason: "Not available yet — arrives with automatic posting.") {
       DSTextField(placeholder: "Not available yet", text: .constant(""), size: .sm).frame(width: 180)
@@ -401,10 +401,10 @@ struct AlertsSettings: View {
       .fixedSize()
     }
     SettingsRow("Slot reminders", description: "One notification per slot; silent when it's already posted.") {
-      DSBadge("Always on", style: .soft(.neutral))
+      DSBadge("Always on", style: .soft(.neutral), help: "Slot reminders can't be turned off")
     }
     SettingsRow("Copyright and failed posts", description: "Red card on every screen and a red badge on the menu-bar icon.") {
-      DSBadge("Always on", style: .soft(.neutral))
+      DSBadge("Always on", style: .soft(.neutral), help: "Problem alerts can't be turned off")
     }
   }
 }

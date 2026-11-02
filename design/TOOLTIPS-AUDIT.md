@@ -1317,3 +1317,10 @@ Status (Phase B): ✅ fixed · ➖ no change needed · ⏭ deferred (reason in t
 16. Editor › "Drop hashtags for X" writes a caption; its toast has no Undo (EditorCaptionSection.swift:115, EditorModel.swift:735) → add Undo.
 17. Root cause: the editor autosaves with no undo stack, and ⌘Z only reaches text fields (MainWindowView.swift:157). The cleanest fix is an EditorModel UndoManager wired to ⌘Z, plus "Saved · Undo" in the header.
 
+
+## Round 4 re-review (v0.4.0)
+
+- Badges are linted too: every `DSBadge` needs `help:` or `.dsTooltip` (the component gallery is exempt; a badge inside a tooltipped control is marked `// tooltip-on-parent`). Settings, editor header, version list and caption-count badges gained tooltips.
+- The lint also catches `Button("", systemImage:)`, an empty-title button with no keyboard shortcut, `.dsTooltip(nil|"", …)` without a `disabledReason:`, and `.help (`. It does not parse `Image(…).onTapGesture`, `Toggle` with a button style, `SwiftUI.Button` or a label held in a variable; those are reviewed by hand (none exist today).
+- Evidence gap left on purpose: the snapshot pass has no Score list/cards, Edit single, paused, empty-screen or problem-card tooltip cases. The code walk covers them; snapshots of those screens without a tooltip are in the normal `--snapshot` run.
+- The menu-bar status item's tooltip (`.help` on the MenuBarExtra label) can't be checked without a real pointer.

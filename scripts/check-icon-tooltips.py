@@ -128,7 +128,11 @@ def icon_only(args, closures, chain):
     first = args.strip()
     titled = bool(re.match(r'^(LocalizedStringKey\()?"', first)) or bool(re.match(r"^(String|Text)\(", first))
     if re.match(r'^""', first):
-        return False  # hidden keyboard-shortcut buttons (Button("") { … }.opacity(0))
+        # Hidden keyboard-shortcut buttons (`Button("") { … }.keyboardShortcut(…)`) show nothing and need no tooltip.
+        # An empty title with an image, or with no shortcut to justify it, is an unexplained control.
+        if "systemImage" in first:
+            return True
+        return not re.search(r"\.keyboardShortcut\(|\.opacity\(0\)|\.hidden\(\)", chain)
     if titled:
         return ".labelStyle(.iconOnly)" in chain
     if re.match(r"^\w+\s*,\s*systemImage:", first) or re.match(r"^\w+\s*,", first) and "systemImage" in first:
@@ -173,11 +177,12 @@ def check(root=SRC):
                 line = s.count("\n", 0, m.start()) + 1
                 offenders.append((os.path.relpath(p, os.path.dirname(os.path.dirname(root))), line,
                                   ".help only" if ".help(" in chain else "no tooltip"))
-    # A tooltip that is always empty is no tooltip: `.dsTooltip(nil…)` / `.dsTooltip("")` literals.
-    empty = re.compile(r'\.dsTooltip\(\s*(nil|"")\s*\)')
+    # A tooltip that is always empty is no tooltip: `.dsTooltip(nil…)` / `.dsTooltip("")` literals, unless the call
+    # gives a `disabledReason:` (the tooltip then explains why the control is off).
+    empty = re.compile(r'\.dsTooltip\(\s*(nil|"\s*")\s*[,)]')
     # Native help tags draw a second, system bubble next to DSTooltip: only where DSTooltip can't reach (the menu-bar
     # status item), marked `// native-help-ok`.
-    native = re.compile(r'\.help\(')
+    native = re.compile(r'\.help\s*\(')
     for dp, _, files in os.walk(root):
         for f in sorted(files):
             if f.endswith(".swift"):
@@ -185,12 +190,40 @@ def check(root=SRC):
                 s = open(p, encoding="utf-8").read()
                 rel = os.path.relpath(p, os.path.dirname(os.path.dirname(root)))
                 for m in empty.finditer(s):
+                    k = s.find("(", m.start())
+                    if "disabledReason:" in s[k:match_close(s, k, "(", ")")]:
+                        continue
                     offenders.append((rel, s.count("\n", 0, m.start()) + 1, "empty .dsTooltip literal"))
                 for m in native.finditer(s):
                     eol = s.find("\n", m.start())
                     line_text = s[s.rfind("\n", 0, m.start()) + 1:eol if eol >= 0 else len(s)]
                     if "native-help-ok" not in line_text and not line_text.lstrip().startswith("//"):
                         offenders.append((rel, s.count("\n", 0, m.start()) + 1, "native .help( — use .dsTooltip (it draws a second, system bubble)"))
+    # Badges explain themselves too (S2): `DSBadge(…, help:)` or `.dsTooltip` on the badge. A badge inside a control
+    # that carries the tooltip is marked `// tooltip-on-parent`. The component gallery shows the bare component.
+    badge = re.compile(r"(?<![\w.])DSBadge\s*\(")
+    for dp, _, files in os.walk(root):
+        if os.sep + "Gallery" in dp:
+            continue
+        for f in sorted(files):
+            if not f.endswith(".swift"):
+                continue
+            p = os.path.join(dp, f)
+            s = open(p, encoding="utf-8").read()
+            rel = os.path.relpath(p, os.path.dirname(os.path.dirname(root)))
+            for m in badge.finditer(s):
+                line_start = s.rfind("\n", 0, m.start()) + 1
+                eol = s.find("\n", m.start())
+                line_text = s[line_start:eol if eol >= 0 else len(s)]
+                if line_text.lstrip().startswith("//") or "tooltip-on-parent" in line_text:
+                    continue
+                k = s.find("(", m.start())
+                e = match_close(s, k, "(", ")")
+                badge_args = s[k + 1:e - 1]
+                chain = modifier_chain(s, e)
+                if re.search(r"\bhelp\s*:", badge_args) or ".dsTooltip(" in chain:
+                    continue
+                offenders.append((rel, s.count("\n", 0, m.start()) + 1, "DSBadge without help: or .dsTooltip"))
     return offenders
 
 

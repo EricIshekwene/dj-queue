@@ -68,8 +68,8 @@ struct EngineSettings: View {
 
   @ViewBuilder private var agentBadge: some View {
     switch loaded {
-    case true?: DSBadge("Loaded", style: .soft(.success))
-    case false?: DSBadge("Not loaded", style: .soft(.danger))
+    case true?: DSBadge("Loaded", style: .soft(.success), help: "The background engine is installed and running")
+    case false?: DSBadge("Not loaded", style: .soft(.danger), help: "The background engine isn't running")
     case nil: DSSpinner(size: 12, color: DS.color.textTertiary)
     }
   }

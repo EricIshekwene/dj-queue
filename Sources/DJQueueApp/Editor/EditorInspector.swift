@@ -121,7 +121,7 @@ struct EditorVersionList: View {
       }
       .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
       Spacer()
-      if selected { DSBadge("Editing", style: .soft(.neutral), size: .sm) }
+      if selected { DSBadge("Editing", style: .soft(.neutral), size: .sm, help: "The version you're editing") }
       Menu {
         Button("Duplicate as new version") { model.newVersion(copying: n) }
         if n > 1 { Button("Delete v\(n)…", role: .destructive) { requestDelete(n) } }

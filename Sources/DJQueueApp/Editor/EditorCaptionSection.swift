@@ -209,7 +209,7 @@ struct EditorCaptionSection: View {
         HStack(spacing: 6) {
           Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).rotationEffect(.degrees(showOwn ? 90 : 0))
           Text("Captions for one platform").font(DS.type.calloutMedium)
-          if !r.platformCaptions.isEmpty { DSBadge("\(r.platformCaptions.count)", style: .soft(.neutral), size: .sm) }
+          if !r.platformCaptions.isEmpty { DSBadge("\(r.platformCaptions.count)", style: .soft(.neutral), size: .sm, help: r.platformCaptions.count == 1 ? "1 platform has its own caption" : "\(r.platformCaptions.count) platforms have their own caption") }
           Spacer(minLength: 0)
         }
         .foregroundStyle(DS.color.text)
