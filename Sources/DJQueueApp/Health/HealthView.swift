@@ -1,234 +1,288 @@
 import DJQCore
 import SwiftUI
 
-/// H.L: status tiles · 7-day awake timeline (incident.io ref) · Doctor findings (Customer.io ref).
+/// Health (DESIGN-v2 §6.8, refs R2.HEALTH OpenAI service health + R2.HEALTH-alt Vanta OK / needs attention). Job:
+/// prove the engine is running, and give Eric a report to paste.
+///
+/// Centred 880 column: header "● All systems running" (or "2 checks need attention", amber/red) with **Copy report**
+/// and Run again · 7-day awake chart card · collapsible 48 pt check rows (Engine, Last tick, Render queue, Disk,
+/// Backup, ffmpeg, LaunchAgent, Proxies) · Doctor findings (severity icon, what, where, fix). The toolbar ⋯ keeps
+/// Run tick, Open log and Run Doctor.
 struct HealthView: View {
   @Bindable var model: AppModel
-  @State private var agentLoaded: Bool?
-  @State private var disk: Int64?
-  @State private var lastBackup: Date?
+  @Bindable private var probe = HealthProbe.shared
+  @State private var expanded: Set<String> = []
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 20) {
-        tiles
-        AwakeTimeline(model: model)
-        doctor
+    let checks = model.healthChecks(probe.current)
+    ScreenScaffold(model: model, screen: .health, subtitle: model.doctorReport.map { "Checked \(Fmt.relative($0.generatedAt, now: model.now))" },
+                   readingColumn: true) {
+      Menu {
+        Button("Run engine tick now", systemImage: "bolt.horizontal.circle") { model.runTick() }
+        Button("Open engine log", systemImage: "doc.text") { model.openLog() }
+        Button("Run Doctor again", systemImage: "stethoscope") { runAgain() }
+      } label: {
+        Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium))
       }
-      .padding(DS.Space.xl)
-      .frame(maxWidth: 1180)
-      .frame(maxWidth: .infinity)
+      .menuStyle(.button)
+      .buttonStyle(DSButtonStyle(variant: .ghost, size: .md, iconOnly: true))
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .dsTooltip("Engine tick, log, Doctor")
+    } content: {
+      ScrollView {
+        VStack(alignment: .leading, spacing: DS.space.xl) {
+          header(checks)
+          AwakeChartCard(model: model, awake: probe.awake, missed: probe.missed)
+          checkList(checks)
+          doctor
+        }
+        .frame(maxWidth: DS.size.readingColumn)
+        .frame(maxWidth: .infinity)
+        .modifier(BrowseGutter())
+        .padding(.top, DS.space.xxs)
+        .padding(.bottom, DS.space.xxxl)
+      }
     }
     .task {
-      if model.doctorReport == nil { model.runDoctor() }
-      let paths = model.store.paths
-      let frozen = model.frozen
-      let r = await Task.detached { () -> (Bool, Int64?, Date?) in
-        let loaded = frozen ? true : LaunchAgent.isLoaded()
-        let free = (try? paths.root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
-          .volumeAvailableCapacityForImportantUsage
-        let backups = (try? FileManager.default.contentsOfDirectory(at: paths.backups, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        let last = backups.compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }.max()
-        return (loaded, free, last)
-      }.value
-      agentLoaded = r.0
-      disk = r.1
-      lastBackup = r.2
+      if model.doctorReport == nil && !model.frozen { model.runDoctor() }
+      await probe.refresh(model)
+      // Open the rows that need Eric, so their fix is visible at once.
+      expanded.formUnion(model.healthChecks(probe.current).filter(\.needsAttention).map(\.id))
     }
   }
 
-  private var tiles: some View {
-    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), spacing: 12) {
-      Tile(title: "Engine", value: model.engineRunning ? "Running" : "Stopped", tint: model.engineRunning ? .green : .red,
-           symbol: model.engineRunning ? "checkmark.circle.fill" : "xmark.octagon.fill",
-           sub: agentLoaded == nil ? "Checking agent…" : (agentLoaded! ? "LaunchAgent loaded" : "LaunchAgent not loaded"))
-      Tile(title: "Last tick", value: model.lastHeartbeat.map { Fmt.relative($0.at, now: model.now) } ?? "Never",
-           tint: model.engineRunning ? .primary : .orange, symbol: "clock",
-           sub: model.engine?.lastTick.map { "\($0.steps.count) steps\($0.errors.isEmpty ? "" : " · \($0.errors.count) errors")" } ?? model.lastHeartbeat?.kind.rawValue.capitalized)
-      Tile(title: "Render queue", value: "\(model.renderQueue)", tint: .primary, symbol: "gearshape.2",
-           sub: model.renderLine?.capitalized ?? ((model.engine?.isRendering ?? false) ? "Rendering" : "Idle"))
-      Tile(title: "Disk free", value: disk.map { Fmt.bytes($0) } ?? "—", tint: (disk ?? .max) < 50_000_000_000 ? .orange : .primary,
-           symbol: "internaldrive", sub: (disk ?? .max) < 50_000_000_000 ? "Under 50 GB" : "OK")
-      Tile(title: "Last backup", value: lastBackup.map { Fmt.relative($0, now: model.now) } ?? "None yet",
-           tint: lastBackup.map { model.now.timeIntervalSince($0) < 2 * 86400 } ?? false ? .primary : .orange,
-           symbol: "externaldrive.badge.timemachine", sub: "Daily, keeps 14")
-      Tile(title: "ffmpeg", value: Tools.ffmpeg == nil ? "Missing" : "Installed", tint: Tools.ffmpeg == nil ? .red : .primary,
-           symbol: "film.stack", sub: Tools.ffprobe == nil ? "ffprobe missing" : "ffprobe OK")
+  private func runAgain() {
+    model.runDoctor()
+    Task { await probe.refresh(model) }
+  }
+
+  // MARK: Header
+
+  /// Checks + Doctor warnings/errors that need Eric.
+  private func attention(_ checks: [HealthCheck]) -> (count: Int, title: String, tone: DSTone) {
+    let bad = checks.filter(\.needsAttention)
+    let findings = (model.doctorReport?.findings ?? []).filter { $0.severity != .info }
+    let n = bad.count + findings.count
+    let danger = bad.contains { $0.tone == .danger } || findings.contains { $0.severity == .error }
+    func plural(_ k: Int, _ w: String) -> String { "\(k) \(w)\(k == 1 ? "" : "s")" }
+    let title: String
+    switch (bad.count, findings.count) {
+    case (0, 0): title = "All systems running"
+    case (let c, 0): title = "\(plural(c, "check")) need\(c == 1 ? "s" : "") attention"
+    case (0, let f): title = "\(plural(f, "Doctor finding")) need\(f == 1 ? "s" : "") attention"
+    case (let c, let f): title = "\(plural(c, "check")) and \(plural(f, "finding")) need attention"
+    }
+    return (n, title, n == 0 ? .success : danger ? .danger : .warning)
+  }
+
+  private func header(_ checks: [HealthCheck]) -> some View {
+    let a = attention(checks)
+    return HStack(spacing: DS.space.sm) {
+      Image(systemName: a.count == 0 ? "checkmark.circle.fill" : a.tone.symbol)
+        .font(.system(size: 18, weight: .semibold)).foregroundStyle(a.tone.color)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(a.title)
+          .font(DS.type.headline).foregroundStyle(DS.color.text)
+        Text(summaryLine).font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+      }
+      Spacer(minLength: DS.space.sm)
+      DSButton("Run again", icon: "arrow.clockwise", variant: .outline, isLoading: model.doctorRunning || probe.loading,
+               tooltip: "Check everything again") { runAgain() }
+      DSButton("Copy report", icon: "doc.on.clipboard", variant: .primary,
+               disabledReason: model.doctorReport == nil ? "Doctor is still checking" : nil,
+               tooltip: "Copy the checks and Doctor findings as Markdown to paste to an agent") {
+        model.copy(model.healthReportMarkdown(checks))
+        model.show(DSToastModel(message: "Report copied", detail: "Paste it to your agent", tone: .success, duration: 4))
+      }
+    }
+    .padding(.top, DS.space.xs)
+  }
+
+  private var summaryLine: String {
+    var parts: [String] = [model.engineLine.text]
+    if let r = model.doctorReport { parts.append("Doctor: \(r.passed.count) passed") }
+    return parts.joined(separator: " · ")
+  }
+
+  // MARK: Checks
+
+  private func checkList(_ checks: [HealthCheck]) -> some View {
+    VStack(alignment: .leading, spacing: DS.space.xs) {
+      DSSectionHeader("Checks")
+      VStack(spacing: 0) {
+        ForEach(checks) { c in
+          HealthCheckRow(check: c, expanded: expanded.contains(c.id)) {
+            dsWithAnimation { if expanded.contains(c.id) { expanded.remove(c.id) } else { expanded.insert(c.id) } }
+          } perform: { perform($0) }
+          if c.id != checks.last?.id { DSSeparator() }
+        }
+      }
+      .padding(.horizontal, DS.space.md)
+      .background(DS.color.surface, in: RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous))
+      .overlay { RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous).strokeBorder(DS.color.border) }
+      .dsElevation(DS.elevation.e1)
     }
   }
+
+  private func perform(_ a: HealthCheck.Action) {
+    switch a {
+    case .runTick: model.runTick()
+    case .openLog: model.openLog()
+    case .runDoctor: runAgain()
+    case .openEngineSettings:
+      model.settingsSection = .engine
+      model.showSettings = true
+    }
+  }
+
+  // MARK: Doctor
 
   private var doctor: some View {
-    Card(padding: 0) {
-      VStack(alignment: .leading, spacing: 0) {
-        HStack(spacing: 10) {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Doctor").font(DS.Font.title)
-            Text(model.doctorReport.map { "Checked \(Fmt.relative($0.generatedAt, now: model.now)) · \($0.passed.count) passed" } ?? "Not run yet")
-              .font(DS.Font.secondary).foregroundStyle(.secondary)
-          }
-          Spacer()
-          Button("Open log", systemImage: "doc.text") { model.openLog() }
-          Button("Run again", systemImage: "arrow.clockwise") { model.runDoctor() }.disabled(model.doctorRunning)
-          Button("Copy report", systemImage: "doc.on.clipboard") { model.copyDoctorReport() }
-            .buttonStyle(.borderedProminent).disabled(model.doctorReport == nil)
+    VStack(alignment: .leading, spacing: DS.space.xs) {
+      DSSectionHeader("Doctor findings", count: model.doctorReport.map { $0.findings.count },
+                      description: "Read-only checks of files, plan, renders and posts. Each finding has a safe fix.")
+      if model.doctorReport == nil {
+        HStack(spacing: DS.space.xs) {
+          DSSpinner()
+          Text("Doctor is checking…").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
         }
-        .padding(DS.Space.l)
-        Divider()
-        if model.doctorRunning && model.doctorReport == nil {
-          ProgressView().frame(maxWidth: .infinity).padding(30)
-        } else if let r = model.doctorReport {
-          if r.findings.isEmpty {
-            Label("Everything is running smoothly", systemImage: "checkmark.circle.fill").foregroundStyle(.green).padding(DS.Space.l)
+        .padding(.vertical, DS.space.md)
+      } else if let r = model.doctorReport {
+        if r.findings.isEmpty {
+          HStack(spacing: DS.space.xs) {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(DS.color.success)
+            Text("No findings — every check passed").font(DS.type.callout).foregroundStyle(DS.color.text)
           }
-          ForEach(r.findings.sorted { $0.severity > $1.severity }) { f in
-            FindingRow(finding: f)
-            Divider()
-          }
-          if !r.passed.isEmpty {
-            HStack(spacing: 8) {
-              StatusPill(text: "OK", tint: .green, icon: "checkmark")
-              Text(r.passed.joined(separator: " · ")).font(DS.Font.secondary).foregroundStyle(.secondary).lineLimit(2)
+          .padding(.vertical, DS.space.sm)
+        } else {
+          VStack(spacing: 0) {
+            ForEach(r.findings.sorted { ($0.severity, $1.id) > ($1.severity, $0.id) }) { f in
+              DoctorFindingRow(finding: f)
+              if f.id != r.findings.last?.id { DSSeparator() }
             }
-            .padding(.horizontal, DS.Space.l)
-            .padding(.vertical, 12)
           }
+        }
+        if !r.passed.isEmpty {
+          Text("Passed: " + r.passed.joined(separator: " · ")).font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+            .padding(.top, DS.space.xs)
         }
       }
     }
   }
 }
 
-struct Tile: View {
-  let title: String
-  let value: String
-  var tint: Color = .primary
-  var symbol: String
-  var sub: String?
+/// 48 pt check row with chevron; expanded → detail, suggested fix and its action.
+struct HealthCheckRow: View {
+  let check: HealthCheck
+  let expanded: Bool
+  let toggle: () -> Void
+  let perform: (HealthCheck.Action) -> Void
+  @State private var hovering = false
 
   var body: some View {
-    Card(padding: 14) {
-      VStack(alignment: .leading, spacing: 6) {
-        Label(title, systemImage: symbol).font(DS.Font.secondary).foregroundStyle(.secondary)
-        Text(value).font(.system(size: 19, weight: .semibold, design: .rounded)).foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.7)
-        Text(sub ?? " ").font(DS.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
+    VStack(alignment: .leading, spacing: 0) {
+      Button(action: toggle) {
+        HStack(spacing: DS.space.sm) {
+          Image(systemName: icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(check.tone.color).frame(width: 18)
+          Text(check.title).font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).frame(width: 120, alignment: .leading)
+          Text(check.value).font(DS.type.callout).foregroundStyle(check.needsAttention ? check.tone.color : DS.color.textSecondary)
+            .lineLimit(1)
+          Spacer(minLength: DS.space.xs)
+          Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(DS.color.textTertiary)
+            .rotationEffect(.degrees(expanded ? 180 : 0))
+        }
+        .frame(height: 48)
+        .contentShape(Rectangle())
       }
+      .buttonStyle(.plain)
+      .dsTooltip(expanded ? "Hide details" : "Show details and fix")
+      if expanded {
+        VStack(alignment: .leading, spacing: DS.space.xs) {
+          Text(check.detail).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
+          if let fix = check.fix {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+              Text("Fix").font(DS.type.captionMedium).foregroundStyle(DS.color.text)
+              Text(fix).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).textSelection(.enabled)
+            }
+          }
+          if let a = check.action {
+            DSButton(a.title, variant: .outline, size: .sm) { perform(a.1) }.padding(.top, 2)
+          }
+        }
+        .padding(.leading, 30)
+        .padding(.bottom, DS.space.md)
+        .transition(.opacity)
+      }
+    }
+  }
+
+  private var icon: String {
+    switch check.tone {
+    case .success: "checkmark.circle.fill"
+    case .neutral: "circle.dashed"
+    default: check.tone.symbol
     }
   }
 }
 
-struct FindingRow: View {
+/// A Doctor finding: severity icon · what · where · fix · id.
+struct DoctorFindingRow: View {
   let finding: DoctorFinding
-  @State private var expanded = false
+  @State private var showAll = false
 
   var body: some View {
-    HStack(alignment: .top, spacing: 12) {
-      StatusPill(text: finding.severity.rawValue.capitalized, tint: finding.severity.tint, icon: finding.severity.symbol)
-        .frame(width: 86, alignment: .leading)
-      VStack(alignment: .leading, spacing: 3) {
-        Text(finding.title).font(DS.Font.bodyStrong)
-        Text(finding.detail).font(DS.Font.body).foregroundStyle(.secondary)
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-          Text("Fix").font(DS.Font.secondaryStrong).foregroundStyle(.secondary)
-          Text(finding.fix).font(DS.Font.secondary)
-        }
-        if !finding.where_.isEmpty {
-          DisclosureGroup(isExpanded: $expanded) {
-            Text(finding.where_.joined(separator: "\n")).font(DS.Font.mono).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-          } label: {
-            Text("\(finding.where_.count) item\(finding.where_.count == 1 ? "" : "s")").font(DS.Font.secondary).foregroundStyle(.secondary)
-          }
-        }
-      }
-      Spacer()
-      Text(finding.id).font(DS.Font.mono).foregroundStyle(.tertiary)
-    }
-    .padding(.horizontal, DS.Space.l)
-    .padding(.vertical, 12)
-  }
-}
-
-/// H.S2: last 7 days, one bar per day; green = awake, grey = asleep/off, red tick = missed slot.
-struct AwakeTimeline: View {
-  @Bindable var model: AppModel
-
-  var body: some View {
-    let start = model.dm.date(model.dm.addDays(model.todayKey, -6))
-    let awake = (try? Health.awakePeriods(store: model.store, since: start)) ?? []
-    let missed = (try? Health.missedSlots(store: model.store, since: start)) ?? []
-    let awakeHours = awake.reduce(0.0) { $0 + $1.duration } / 3600
-    return Card {
-      VStack(alignment: .leading, spacing: 12) {
+    HStack(alignment: .top, spacing: DS.space.sm) {
+      Image(systemName: finding.severity.dsSymbol).font(.system(size: 15, weight: .semibold))
+        .foregroundStyle(finding.severity.dsTone.color).frame(width: 18).padding(.top, 1)
+        .dsTooltip(finding.severity.rawValue.capitalized)
+      VStack(alignment: .leading, spacing: 4) {
         HStack(alignment: .firstTextBaseline) {
-          Text("Mac awake").font(DS.Font.title)
-          Text("Last 7 days").font(DS.Font.body).foregroundStyle(.secondary)
-          Spacer()
-          legend(.green, "Awake")
-          legend(Color.secondary.opacity(0.3), "Asleep / off")
-          legend(.red, "Missed slot")
-          Text(String(format: "%.0f h awake", awakeHours)).font(DS.Font.secondary.monospacedDigit()).foregroundStyle(.secondary)
+          Text(finding.title).font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+          Spacer(minLength: DS.space.xs)
+          Text(finding.id).font(DS.type.mono).foregroundStyle(DS.color.textTertiary).textSelection(.enabled)
         }
-        ForEach(0..<7, id: \.self) { i in
-          let day = model.dm.addDays(model.todayKey, i - 6)
-          HStack(spacing: 10) {
-            Text(Fmt.day(model.dm.date(day), tz: model.tz, style: "EEE d")).font(DS.Font.secondary.monospacedDigit())
-              .foregroundStyle(day == model.todayKey ? Color.accentColor : .secondary).frame(width: 52, alignment: .leading)
-            DayBar(model: model, day: day, awake: awake, missed: missed.filter { model.dm.key($0.scheduledAt) == day })
-              .frame(height: 16)
-            Text("\(missed.filter { model.dm.key($0.scheduledAt) == day }.count)").font(DS.Font.secondary.monospacedDigit())
-              .foregroundStyle(missed.contains { model.dm.key($0.scheduledAt) == day } ? Color.red : Color.clear).frame(width: 14)
+        Text(finding.detail).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
+        if !finding.where_.isEmpty {
+          let shown = showAll ? finding.where_ : Array(finding.where_.prefix(3))
+          VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, w in
+              Text(w).font(DS.type.mono).foregroundStyle(DS.color.textSecondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+            }
+            if finding.where_.count > 3 {
+              Button(showAll ? "Show fewer" : "Show all \(finding.where_.count)") { dsWithAnimation { showAll.toggle() } }
+                .buttonStyle(.plain).font(DS.type.captionMedium).foregroundStyle(DS.color.accent)
+            }
           }
+          .padding(DS.space.xs)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
         }
-        HStack(spacing: 0) {
-          Spacer().frame(width: 62)
-          ForEach(["12a", "6a", "12p", "6p"], id: \.self) { h in
-            Text(h).font(DS.Font.secondary).foregroundStyle(.tertiary).frame(maxWidth: .infinity, alignment: .leading)
-          }
-          Spacer().frame(width: 24)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Text("Fix").font(DS.type.captionMedium).foregroundStyle(DS.color.text)
+          Text(finding.fix).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
         }
       }
     }
-  }
-
-  private func legend(_ c: Color, _ t: String) -> some View {
-    HStack(spacing: 4) {
-      RoundedRectangle(cornerRadius: 2).fill(c).frame(width: 10, height: 10)
-      Text(t).font(DS.Font.secondary).foregroundStyle(.secondary)
-    }
-    .padding(.trailing, 6)
+    .padding(.vertical, DS.space.sm)
   }
 }
 
-struct DayBar: View {
-  @Bindable var model: AppModel
-  let day: String
-  let awake: [DateInterval]
-  let missed: [PlatformPost]
+extension Severity {
+  var dsTone: DSTone {
+    switch self {
+    case .info: .info
+    case .warning: .warning
+    case .error: .danger
+    }
+  }
 
-  var body: some View {
-    GeometryReader { g in
-      let start = model.dm.date(day)
-      let w = g.size.width
-      let segments = 96
-      let segW = w / CGFloat(segments)
-      ZStack(alignment: .leading) {
-        // incident.io-style segmented bar: one tick per 15 minutes.
-        HStack(spacing: 0) {
-          ForEach(0..<segments, id: \.self) { i in
-            let t0 = start.addingTimeInterval(Double(i) * 900)
-            let future = t0 > model.now
-            let on = !future && awake.contains { $0.start < t0.addingTimeInterval(900) && $0.end > t0 }
-            RoundedRectangle(cornerRadius: 1)
-              .fill(future ? Color.primary.opacity(0.04) : (on ? Color.green.opacity(0.8) : Color.secondary.opacity(0.25)))
-              .frame(width: max(1, segW - 1.5))
-              .frame(width: segW)
-          }
-        }
-        ForEach(missed) { p in
-          let x = w * p.scheduledAt.timeIntervalSince(start) / 86400
-          RoundedRectangle(cornerRadius: 1).fill(Color.red).frame(width: 3, height: 20).offset(x: x - 1.5)
-            .help("Missed: \(p.platform.displayName) \(Fmt.shortTime(p.scheduledAt, tz: model.tz))")
-        }
-      }
+  var dsSymbol: String {
+    switch self {
+    case .info: "info.circle.fill"
+    case .warning: "exclamationmark.triangle.fill"
+    case .error: "xmark.octagon.fill"
     }
   }
 }

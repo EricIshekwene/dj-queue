@@ -244,26 +244,53 @@ struct DSToast: View {
       }
     }
     .padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 8)
-    .frame(minWidth: 300, maxWidth: 460)
+    .frame(minWidth: 300, maxWidth: 560)
     .dsFloatingSurface(radius: DS.radius.md)
     .accessibilityElement(children: .contain)
     .accessibilityAddTraits(.updatesFrequently)
   }
 }
 
+/// Where the toast may go: the content area (right of the sidebar; nil = the whole window, e.g. the editor) and
+/// the floating controls it must never cover (bulk bar, Score's control pill), as anchors.
+struct DSToastLayout {
+  var area: Anchor<CGRect>?
+  var avoid: [Anchor<CGRect>] = []
+}
+
+struct DSToastLayoutKey: PreferenceKey {
+  static let defaultValue = DSToastLayout()
+  static func reduce(value: inout DSToastLayout, nextValue: () -> DSToastLayout) {
+    let n = nextValue()
+    value.area = n.area ?? value.area
+    value.avoid += n.avoid
+  }
+}
+
 private struct DSToastHost: ViewModifier {
   @Binding var toast: DSToastModel?
   func body(content: Content) -> some View {
-    content.overlay(alignment: .bottom) {
-      if let t = toast {
-        DSToast(toast: t) { dsWithAnimation { toast = nil } }
-          .padding(.bottom, DS.space.xl)
-          .transition(.dsMove(.bottom))
-          .task(id: t.id) {
-            guard let d = t.duration else { return }
-            try? await Task.sleep(for: .seconds(d))
-            if toast?.id == t.id { dsWithAnimation { toast = nil } }
+    content.overlayPreferenceValue(DSToastLayoutKey.self) { layout in
+      GeometryReader { geo in
+        let area = layout.area.map { geo[$0] } ?? CGRect(origin: .zero, size: geo.size)
+        // Sit above the highest floating control in the content area, else 24 pt above its bottom edge.
+        let top = layout.avoid.map { geo[$0] }.filter { $0.intersects(area) }.map(\.minY).min()
+        let bottom = min(area.maxY - DS.space.xl, (top ?? .infinity) - DS.space.sm)
+        VStack(spacing: 0) {
+          Spacer(minLength: 0)
+          if let t = toast {
+            DSToast(toast: t) { dsWithAnimation { toast = nil } }
+              .transition(.dsMove(.bottom))
+              .task(id: t.id) {
+                guard let d = t.duration else { return }
+                try? await Task.sleep(for: .seconds(d))
+                if toast?.id == t.id { dsWithAnimation { toast = nil } }
+              }
           }
+        }
+        .frame(width: area.width, height: max(0, bottom - area.minY))
+        .padding(.leading, area.minX)
+        .padding(.top, area.minY)
       }
     }
     .dsAnimation(DS.motion.layout, value: toast)
@@ -271,8 +298,17 @@ private struct DSToastHost: ViewModifier {
 }
 
 extension View {
-  /// Shows `toast` at the bottom centre; auto-dismisses after its duration.
+  /// Shows `toast` at the bottom centre of the content area (`dsToastArea`), above any `dsToastAvoid` control;
+  /// auto-dismisses after its duration.
   func dsToast(_ toast: Binding<DSToastModel?>) -> some View { modifier(DSToastHost(toast: toast)) }
+  /// Marks a floating control the toast must stay above (bulk bar, Score pill).
+  func dsToastAvoid(_ active: Bool = true) -> some View {
+    anchorPreference(key: DSToastLayoutKey.self, value: .bounds) { DSToastLayout(avoid: active ? [$0] : []) }
+  }
+  /// Marks the area the toast centres in (the screen beside the sidebar).
+  func dsToastArea() -> some View {
+    transformAnchorPreference(key: DSToastLayoutKey.self, value: .bounds) { $0.area = $1 }
+  }
 }
 
 // MARK: - Bulk bar (DESIGN-v2 §5)
@@ -365,7 +401,7 @@ extension View {
   /// Floats `bar` 16 pt above the bottom edge while `isPresented`, sliding up 12 pt + fading.
   func dsBulkBar<B: View>(isPresented: Bool, @ViewBuilder bar: () -> B) -> some View {
     overlay(alignment: .bottom) {
-      if isPresented { bar().padding(.bottom, DS.space.md).transition(.dsMove(.bottom)) }
+      if isPresented { bar().dsToastAvoid().padding(.bottom, DS.space.md).transition(.dsMove(.bottom)) }
     }
     .dsAnimation(DS.motion.layout, value: isPresented)
   }

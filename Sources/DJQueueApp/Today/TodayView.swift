@@ -2,468 +2,296 @@ import AppKit
 import DJQCore
 import SwiftUI
 
-/// T.L (Todoist ref): day header + "3 / 6 posted", then one row per platform post today.
+/// Today (DESIGN-v2 §6.5, `R2.TODAY` Todoist centred column; Next-up card after `R2.MENUBAR-alt` Lyssna).
+/// Job: post what's due, by hand, and mark it posted.
+///
+/// ```
+/// ┌ Today · Sun 1 Nov ······················································ ◔ 3 of 6 posted ┐
+/// │            ┌ Next: TikTok · 7:00 PM · in 2h 21m ─────────────────────────────┐           │
+/// │            │ ▮ Golden Hour Blend      [Copy caption] [Open upload page] [Mark posted] │  │
+/// │            └─────────────────────────────────────────────────────────────────┘           │
+/// │            7:00 PM  ♪ TikTok   ▮ title …………  Ready   ⧉ T ⎘ ⌕ ✓ ⋯   (64 pt rows)       │
+/// └────────────────────────────────────────────────────────────────────────────────────────┘
+/// ```
+/// The only filled button is Mark posted on the Next-up card, and only while that post is due. The thumb is the
+/// file drag-out handle. Hidden: scores, queue order, editor controls.
 struct TodayView: View {
   @Bindable var model: AppModel
 
+  static let column: CGFloat = 720
+
   var body: some View {
-    ScrollView {
+    ScreenScaffold(model: model, screen: .today, subtitle: Fmt.day(model.now, tz: model.tz, style: "EEE d MMM"), readingColumn: true) {
+      if model.loaded && model.todayTotal > 0 { progress }
+    } content: {
+      if !model.loaded {
+        TodaySkeleton()
+      } else if model.todayPosts.isEmpty {
+        DSEmptyState(icon: "checkmark.circle", title: "Nothing due today",
+                     message: model.nextAfterTodayText.map { "Next \($0)" } ?? "No posts planned — approve a week to plan some.",
+                     actionTitle: "Open Week") { model.screen = .week }
+      } else {
+        list
+      }
+    }
+  }
+
+  private var progress: some View {
+    let done = model.postedTodayCount, total = model.todayTotal
+    return HStack(spacing: DS.space.xs) {
+      DSProgressRing(value: Double(done) / Double(max(total, 1)), size: 22, lineWidth: 3, tone: .success)
+      Text("\(done) of \(total) posted").font(DS.type.calloutMedium.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(done) of \(total) posted today")
+  }
+
+  private var list: some View {
+    let posts = model.todayPosts
+    let next = model.todayNextUp
+    return ScrollView {
       VStack(alignment: .leading, spacing: 0) {
-        header.padding(.bottom, 18)
-        if !model.loaded {
-          SkeletonRows(count: 6, height: DS.Row.today)
-        } else if model.dueToday.isEmpty {
-          empty
-        } else {
-          let firstDue = model.dueToday.first { $0.state == .due || $0.state == .overdue || (!$0.state.isTerminal && $0.scheduledAt <= model.now) }?.id
-            ?? model.dueToday.first { !$0.state.isTerminal }?.id
-          ForEach(model.dueToday) { p in
-            TodayRow(model: model, post: p, primary: p.id == firstDue)
-            Divider()
-          }
-          if let n = model.posts.first(where: { !$0.state.isTerminal && model.dm.key($0.scheduledAt) > model.todayKey }) {
-            nextLine(n).padding(.top, 14)
-          }
+        if let next { NextUpCard(model: model, post: next).padding(.bottom, DS.space.xl) }
+        ForEach(Array(posts.enumerated()), id: \.element.id) { i, p in
+          TodayRow(model: model, post: p)
+          if i < posts.count - 1 { DSSeparator() }
+        }
+        if let after = model.nextAfterTodayText {
+          Text("Next after today: \(after)").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+            .padding(.top, DS.space.md).padding(.horizontal, DS.space.xs)
         }
       }
-      .frame(maxWidth: 1040)
-      .padding(.horizontal, 32)
-      .padding(.vertical, 24)
+      .frame(maxWidth: Self.column)
       .frame(maxWidth: .infinity)
-    }
-  }
-
-  private var header: some View {
-    HStack(alignment: .lastTextBaseline, spacing: 12) {
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Today").font(DS.Font.largeTitle)
-        Text(Fmt.day(model.now, tz: model.tz, style: "EEEE d MMMM")).font(DS.Font.body).foregroundStyle(.secondary)
-      }
-      Spacer()
-      if model.todayTotal > 0 {
-        VStack(alignment: .trailing, spacing: 4) {
-          HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text("\(model.postedTodayCount)").font(DS.Font.runway)
-            Text("/ \(model.todayTotal) posted").font(DS.Font.body).foregroundStyle(.secondary)
-          }
-          Capsule().fill(Color.primary.opacity(0.1)).frame(width: 140, height: 5)
-            .overlay(alignment: .leading) {
-              Capsule().fill(Color.green).frame(width: 140 * Double(model.postedTodayCount) / Double(max(model.todayTotal, 1)), height: 5)
-            }
-        }
-      }
-    }
-  }
-
-  private var empty: some View {
-    let next = model.nextPost
-    return EmptyState(symbol: "checkmark.circle", title: "Nothing due today",
-                      subtitle: next.map { "Next: \(Fmt.day($0.scheduledAt, tz: model.tz, style: "EEE")) \(Fmt.shortTime($0.scheduledAt, tz: model.tz)) · \($0.platform.displayName)" }
-                        ?? "No posts planned — approve a week.",
-                      buttonTitle: next == nil ? "Open Week" : nil) { model.screen = .week }
-      .frame(minHeight: 420)
-  }
-
-  private func nextLine(_ p: PlatformPost) -> some View {
-    HStack(spacing: 6) {
-      Image(systemName: "arrow.turn.down.right").foregroundStyle(.tertiary)
-      Text("Next: \(Fmt.day(p.scheduledAt, tz: model.tz, style: "EEE")) \(Fmt.shortTime(p.scheduledAt, tz: model.tz)) · \(p.platform.displayName) · \(model.video(p.videoId).map(model.title) ?? "")")
-        .font(DS.Font.secondary).foregroundStyle(.secondary)
+      .padding(.horizontal, DS.space.xl)
+      .padding(.top, DS.space.xs)
+      .padding(.bottom, DS.space.xxl)
     }
   }
 }
 
-/// T.S1 row (64 pt): time · glyph · cover · name + version · status · [file] [Copy caption] … [Mark posted].
+// MARK: - Next-up card
+
+/// "Next: TikTok · 7:00 PM · in 2h 21m" + thumb + title + [Copy caption] [Open upload page] [Mark posted].
+struct NextUpCard: View {
+  @Bindable var model: AppModel
+  let post: PlatformPost
+
+  var body: some View {
+    let v = model.video(post.videoId)
+    let due = model.isActionableNow(post)
+    DSCard(variant: .outline, padding: DS.space.md) {
+      HStack(alignment: .center, spacing: DS.space.md) {
+        FileDragThumb(model: model, post: post, width: 54)
+        VStack(alignment: .leading, spacing: DS.space.xs) {
+          HStack(spacing: 6) {
+            Image(systemName: post.platform.dsSymbol).font(.system(size: 11, weight: .medium)).foregroundStyle(DS.color.textSecondary)
+            Text(headline(due: due)).font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+          }
+          Text(v.map(model.displayName) ?? "Missing clip").font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(2)
+          HStack(spacing: DS.space.xs) {
+            DSButton("Copy caption", icon: "text.quote", variant: .outline, size: .sm) { model.copyCaptionNamed(post) }
+            if post.platform == .youtube {
+              DSButton("Copy title", icon: "textformat", variant: .ghost, size: .sm, tooltip: "Copy the YouTube title") { model.copyTitleNamed(post) }
+            }
+            DSButton("Open upload page", icon: "arrow.up.right", variant: .ghost, size: .sm,
+                     tooltip: "Open the \(post.platform.displayName) upload page in your browser") { model.openUploadPage(post) }
+            Spacer(minLength: DS.space.xs)
+            DSButton("Mark posted", icon: "checkmark", variant: due ? .primary : .outline, size: .md,
+                     tooltip: due ? "Paste the post URL" : "Not due yet — you can still mark it posted early") {
+              model.markPostedTarget = post
+            }
+          }
+          .padding(.top, 4)
+        }
+      }
+    }
+    .task(id: AppModel.prepStamp(post)) { await model.prepareIfRendered(post) }
+  }
+
+  private func headline(due: Bool) -> String {
+    let time = AppModel.clockText(post.scheduledAt, tz: model.tz)
+    let when: String
+    switch model.postStatus(post) {
+    case .late(let t): when = "late \(t)"
+    case .dueNow: when = "due now"
+    default: when = post.scheduledAt > model.now ? "in \(AppModel.countdown(to: post.scheduledAt, now: model.now))" : "due now"
+    }
+    let day = model.dm.key(post.scheduledAt) == model.todayKey ? "" : "\(Fmt.day(post.scheduledAt, tz: model.tz, style: "EEE")) "
+    return "Next: \(post.platform.displayName) · \(day)\(time) · \(when)"
+  }
+}
+
+// MARK: - Row
+
+/// 64 pt row: time (mono) · glyph + platform · thumb (file drag-out) · title · status pill · ghost actions.
 struct TodayRow: View {
   @Bindable var model: AppModel
   let post: PlatformPost
-  let primary: Bool
+  @State private var hovering = false
   @State private var showMetrics = false
 
   private var video: Video? { model.video(post.videoId) }
-  private var isCopyright: Bool { post.state.isCopyright && post.resolution == nil }
-  private var isFailed: Bool { post.state == .failed && post.resolution == nil }
-  private var isResolved: Bool { post.resolution != nil }
 
   var body: some View {
-    HStack(spacing: 12) {
+    let status = model.postStatus(post)
+    HStack(spacing: DS.space.sm) {
       VStack(alignment: .leading, spacing: 0) {
         if model.dm.key(post.scheduledAt) != model.todayKey {
-          Text(Fmt.day(post.scheduledAt, tz: model.tz, style: "EEE")).font(DS.Font.secondaryStrong).foregroundStyle(.orange)
+          Text(Fmt.day(post.scheduledAt, tz: model.tz, style: "EEE")).font(DS.type.micro).foregroundStyle(DS.color.warning)
         }
-        Text(Fmt.shortTime(post.scheduledAt, tz: model.tz)).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+        Text(AppModel.clockText(post.scheduledAt, tz: model.tz)).font(DS.type.mono).foregroundStyle(DS.color.textSecondary)
       }
-      .frame(width: 52, alignment: .leading)
-      PlatformGlyph(platform: post.platform, tint: post.state == .posted ? .green : .primary, size: 22)
-      CoverThumb(video: video, width: 30, height: 53)
-      VStack(alignment: .leading, spacing: 2) {
-        Text(video.map(model.title) ?? "Missing video").font(DS.Font.bodyStrong).lineLimit(1)
-        Text("v\(post.versionNo) · \(post.platform.displayName)\(post.attemptNo > 1 ? " · attempt \(post.attemptNo)" : "")")
-          .font(DS.Font.secondary).foregroundStyle(.secondary)
-      }
-      .frame(minWidth: 160, alignment: .leading)
-      Spacer(minLength: 8)
-      if let f = model.renderFraction(post) {
-        StatusPill(text: "Rendering \(Int(f * 100))%", tint: DS.Status.planned, icon: "gearshape")
-      } else {
-        StatusPill(post: post, now: model.now)
-      }
-      actions
+      .frame(width: 66, alignment: .leading)
+      DSPlatformIcon(platform: post.platform, size: 20, showsLabel: false)
+      Text(post.platform.dsxCompactName).font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+        .frame(width: 66, alignment: .leading).lineLimit(1)
+      FileDragThumb(model: model, post: post, width: 27)
+      Text(video.map(model.displayName) ?? "Missing clip").font(DS.type.bodyMedium).foregroundStyle(DS.color.text).lineLimit(1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      DSBadge(status.text, style: status.badgeStyle, icon: status.badgeIcon)
+        .dsTooltip(statusHelp(status))
+      actions(status)
     }
-    .padding(.horizontal, 10)
-    .frame(height: DS.Row.today)
-    .background(rowBackground, in: RoundedRectangle(cornerRadius: 8))
+    .padding(.horizontal, DS.space.xs)
+    .frame(height: 64)
+    .background(rowFill(status), in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+    .onHover { hovering = $0 }
     .contextMenu { PostContextMenu(model: model, post: post) }
     // Only rows whose render already exists get a file; nothing renders on display.
     .task(id: AppModel.prepStamp(post)) { await model.prepareIfRendered(post) }
   }
 
-  private var rowBackground: Color {
-    if isCopyright || isFailed { return Color.red.opacity(0.10) }
-    if post.id == model.highlightPostId { return Color.accentColor.opacity(0.10) }
-    return .clear
+  private func rowFill(_ s: DSXPostStatus) -> Color {
+    if post.id == model.highlightPostId { return DS.color.selected }
+    if let t = s.problemTone, t == .danger { return DS.color.tint(.danger) }
+    return hovering ? DS.color.hover.opacity(0.6) : .clear
   }
 
-  @ViewBuilder private var actions: some View {
-    if isResolved {
-      // Handled problem (accepted / skipped / re-uploaded / retried): no live posting actions on this attempt.
-      HStack(spacing: 6) {
-        StatusPill(text: resolutionLabel, tint: .secondary, icon: "checkmark.circle")
-        moreMenu
-      }
-    } else if isCopyright {
-      HStack(spacing: 6) {
+  private func statusHelp(_ s: DSXPostStatus) -> String {
+    switch s {
+    case .rendering: "The engine is preparing the file"
+    case .ready: "File ready — it's due at \(AppModel.clockText(post.scheduledAt, tz: model.tz))"
+    case .dueNow: "Post it now, then mark it posted"
+    case .late: "Past its time — post it now or shift the plan"
+    case .copyright: post.errorMessage ?? "Copyright problem"
+    case .failed: post.errorMessage ?? "Upload failed"
+    default: s.text
+    }
+  }
+
+  @ViewBuilder private func actions(_ s: DSXPostStatus) -> some View {
+    HStack(spacing: 2) {
+      switch s {
+      case .resolved:
+        more
+      case .copyright:
         ReuploadMenu(model: model, post: post)
-        Button("Skip platform") { model.resolve(post, .skipPlatform) }
-        Button("Accept") { model.resolve(post, .accept) }
-        moreMenu
-      }
-      .controlSize(.small)
-    } else if isFailed {
-      HStack(spacing: 6) {
-        Button("Fix…") { model.openEditor(post.videoId, fixPostId: post.id) }
-        Button("Re-queue") { model.fixed(post.id) }.help("The cause is fixed: try again on the next day's slot")
-        moreMenu
-      }
-      .controlSize(.small)
-    } else if post.state == .posted {
-      HStack(spacing: 6) {
+        DSButton("Skip platform", variant: .ghost, size: .sm, tooltip: "Don't post this clip on \(post.platform.displayName)") {
+          model.resolve(post, .skipPlatform)
+        }
+        DSButton("Accept", variant: .ghost, size: .sm, tooltip: "Keep it as it is (e.g. muted)") { model.resolve(post, .accept) }
+        more
+      case .failed:
+        DSButton("Fix…", variant: .ghost, size: .sm, tooltip: "Open the editor to fix it") { model.openEditor(post.videoId, fixPostId: post.id) }
+        DSButton("Re-queue", variant: .ghost, size: .sm, tooltip: "The cause is fixed: try again on the next day's slot") { model.fixed(post.id) }
+        more
+      case .posted:
         if let u = post.url, let url = URL(string: u) {
-          Link(destination: url) { Label("Open post", systemImage: "arrow.up.right.square") }
-            .font(DS.Font.body)
+          DSIconButton("arrow.up.right.square", tooltip: "Open the post", size: .sm) { NSWorkspace.shared.open(url) }
         }
-        Button { showMetrics = true } label: {
-          Label(post.metrics?.views.map { "\($0) views" } ?? "Metrics", systemImage: "chart.bar")
-        }
-        .popover(isPresented: $showMetrics) { MetricsPopover(model: model, post: post) }
-        moreMenu
-      }
-      .controlSize(.small)
-      .buttonStyle(.borderless)
-    } else if post.state == .skipped {
-      moreMenu
-    } else {
-      HStack(spacing: 6) {
-        FileDragChip(model: model, post: post)
-        Button { model.copyCaption(post) } label: { Label("Copy caption", systemImage: "text.quote") }
-          .buttonStyle(.bordered)
+        DSButton(post.metrics?.views.map { "\($0) views" } ?? "Metrics", icon: "chart.bar", variant: .ghost, size: .sm,
+                 tooltip: "Views and likes after 72 h") { showMetrics = true }
+          .popover(isPresented: $showMetrics) { MetricsPopover(model: model, post: post) }
+        more
+      case .skipped:
+        more
+      default:
+        DSIconButton("text.quote", tooltip: "Copy caption", size: .sm) { model.copyCaptionNamed(post) }
         if post.platform == .youtube {
-          Button { model.copyTitle(post) } label: { Image(systemName: "textformat") }
-            .buttonStyle(.bordered).help("Copy title").accessibilityLabel("Copy title")
+          DSIconButton("textformat", tooltip: "Copy title for YouTube", size: .sm) { model.copyTitleNamed(post) }
         }
-        Button { model.openUploadPage(post) } label: { Image(systemName: "safari") }
-          .buttonStyle(.bordered).help("Open upload page").accessibilityLabel("Open upload page")
-        if primary {
-          Button("Mark posted") { model.markPostedTarget = post }.buttonStyle(.borderedProminent)
-        } else {
-          Button("Mark posted") { model.markPostedTarget = post }.buttonStyle(.bordered)
-        }
-        moreMenu
+        DSIconButton("doc.on.doc", tooltip: "Copy file", size: .sm) { model.copyFile(post) }
+        DSIconButton("folder", tooltip: "Reveal in Finder", size: .sm) { model.revealFile(post) }
+        DSIconButton("checkmark.circle", tooltip: "Mark posted…", size: .sm) { model.markPostedTarget = post }
+        more
       }
-      .controlSize(.regular)
     }
   }
 
-  private var resolutionLabel: String {
-    switch post.resolution ?? "" {
-    case "accepted": "Accepted"
-    case "skipped": "Skipped"
-    case "reuploaded": "Re-uploading"
-    case "retried": "Re-queued"
-    default: (post.resolution ?? "").capitalized
-    }
-  }
-
-  private var moreMenu: some View {
-    Menu {
-      if !post.state.isTerminal {
+  private var more: some View {
+    DSXMenuButton(tooltip: "More", size: .sm) {
+      if !post.state.isTerminal || post.state == .posted {
         Button("Report problem…", systemImage: "exclamationmark.bubble") { model.reportTarget = post }
-        Button("Reveal in Finder", systemImage: "folder") { model.revealFile(post) }
-        Button("Copy file", systemImage: "doc.on.doc") { model.copyFile(post) }
       }
-      if post.state == .posted { Button("Report problem…", systemImage: "exclamationmark.bubble") { model.reportTarget = post } }
+      if !post.state.isTerminal {
+        Button("Open upload page", systemImage: "arrow.up.right") { model.openUploadPage(post) }
+      }
+      if post.state == .overdue {
+        Button("Post now", systemImage: "bolt") { model.postNow(post) }
+        Button("Shift plan", systemImage: "calendar.badge.clock") { model.shiftPlan(post) }
+      }
       if model.canReset(post) || model.canSkip(post) { Divider() }
       if model.canReset(post) { Button("Reset", systemImage: "arrow.counterclockwise") { model.reset(post) } }
       if model.canSkip(post) { Button("Skip this platform", systemImage: "forward") { model.skip(post) } }
-      if let v = model.video(post.videoId) {
+      if let v = video {
         Divider()
-        Button("Edit video", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(v.id) }
+        Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(v.id) }
       }
-    } label: { Image(systemName: "ellipsis") }
-      .accessibilityLabel("More actions")
-      .menuStyle(.borderlessButton)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .help("More")
+    }
   }
 }
 
-/// T.S1.a drag-out of the render file (decision Q4: drag file + caption are primary).
-struct FileDragChip: View {
+/// The thumb doubles as the file drag-out handle (decision Q4): drag the rendered file into the browser upload
+/// page. Until the render exists the thumb is a plain cover with a "Rendering" tooltip.
+struct FileDragThumb: View {
   @Bindable var model: AppModel
   let post: PlatformPost
+  var width: CGFloat = 27
 
   var body: some View {
     let ready = model.preparedPost(post.id)
-    HStack(spacing: 5) {
-      Image(systemName: ready == nil ? "hourglass" : "film").font(.system(size: 11, weight: .semibold))
-      Text(ready != nil ? "Drag file" : (model.isRenderable(post) ? "Preparing" : "Rendering")).font(DS.Font.body)
-      Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(.secondary)
-    }
-    .padding(.horizontal, 9)
-    .frame(height: 24)
-    .background(Color.accentColor.opacity(ready == nil ? 0.05 : 0.12), in: RoundedRectangle(cornerRadius: DS.Radius.control))
-    .overlay(RoundedRectangle(cornerRadius: DS.Radius.control).strokeBorder(Color.accentColor.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
-    .foregroundStyle(ready == nil ? Color.secondary : Color.accentColor)
-    .onDrag {
-      guard let url = model.preparedPost(post.id)?.fileURL else { return NSItemProvider() }
-      return NSItemProvider(object: url as NSURL)
-    }
-    .help(ready.map { "Drag \($0.fileURL.lastPathComponent) into the browser upload page" } ?? "Waiting for the render")
-  }
-}
-
-struct MetricsPopover: View {
-  @Bindable var model: AppModel
-  let post: PlatformPost
-  @State private var views = ""
-  @State private var likes = ""
-  @Environment(\.dismiss) private var dismiss
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Text("Metrics after 72 h").font(DS.Font.bodyStrong)
-      HStack {
-        TextField("Views", text: $views).textFieldStyle(.roundedBorder).frame(width: 90)
-        TextField("Likes", text: $likes).textFieldStyle(.roundedBorder).frame(width: 90)
-      }
-      HStack {
-        Spacer()
-        Button("Save") {
-          model.setMetrics(post, views: Int(views), likes: Int(likes))
-          dismiss()
-        }
-        .buttonStyle(.borderedProminent)
-        .keyboardShortcut(.defaultAction)
-      }
-    }
-    .padding(14)
-    .onAppear {
-      views = post.metrics?.views.map(String.init) ?? ""
-      likes = post.metrics?.likes.map(String.init) ?? ""
-    }
-  }
-}
-
-// MARK: - Sheets (T.S2, T.S3, L.S4)
-
-/// T.S2 (Arcade ref): one URL field validated against the platform's domain, posted time.
-struct MarkPostedSheet: View {
-  @Bindable var model: AppModel
-  let post: PlatformPost
-  @State private var url = ""
-  @State private var postedAt = Date()
-  @Environment(\.dismiss) private var dismiss
-
-  private var valid: Bool { (try? PostActions.validate(url: url.trimmingCharacters(in: .whitespaces), for: post.platform)) != nil }
-  private var validationError: String? {
-    do { try PostActions.validate(url: url.trimmingCharacters(in: .whitespaces), for: post.platform); return nil } catch {
-      return error.localizedDescription
-    }
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        PlatformGlyph(platform: post.platform, size: 22)
-        Text("Mark posted").font(DS.Font.title)
-        Spacer()
-        Button { dismiss() } label: { Image(systemName: "xmark") }.buttonStyle(.plain).keyboardShortcut(.cancelAction)
-      }
-      Text("Paste the \(post.platform.displayName) post URL for “\(model.video(post.videoId).map(model.title) ?? "")”.")
-        .font(DS.Font.body).foregroundStyle(.secondary)
-      TextField("https://\(post.platform.urlHosts[0])/…", text: $url)
-        .textFieldStyle(.roundedBorder)
-        .font(.system(size: 14))
-        .controlSize(.large)
-      if !url.isEmpty, let e = validationError {
-        Label(e, systemImage: "exclamationmark.circle.fill").font(DS.Font.secondary).foregroundStyle(.red)
-      }
-      DatePicker("Posted", selection: $postedAt, in: ...Date().addingTimeInterval(3600)).font(DS.Font.body)
-      HStack {
-        Text(post.platform.urlHosts[0]).font(DS.Font.secondary).foregroundStyle(.tertiary)
-        Spacer()
-        Button("Cancel") { dismiss() }
-        Button("Mark posted") {
-          model.markPosted(post, url: url.trimmingCharacters(in: .whitespaces), at: postedAt)
-          dismiss()
-        }
-        .buttonStyle(.borderedProminent)
-        .keyboardShortcut(.defaultAction)
-        .disabled(!valid)
-      }
-    }
-    .padding(22)
-    .frame(width: 480)
-    .onAppear {
-      postedAt = model.frozen ? model.now : Date()
-      if let pre = model.markPostedPrefill {
-        url = pre
-        model.markPostedPrefill = nil
-      } else if let s = NSPasteboard.general.string(forType: .string), (try? PostActions.validate(url: s, for: post.platform)) != nil {
-        url = s
-      }
-    }
-  }
-}
-
-/// T.S3: error type + message (+ optional raw response).
-struct ReportProblemSheet: View {
-  @Bindable var model: AppModel
-  let post: PlatformPost
-  @State private var type: ErrorType = .uploadFailed
-  @State private var message = ""
-  @State private var raw = ""
-  @Environment(\.dismiss) private var dismiss
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        PlatformGlyph(platform: post.platform, size: 22)
-        Text("Report problem").font(DS.Font.title)
-        Spacer()
-        Button { dismiss() } label: { Image(systemName: "xmark") }.buttonStyle(.plain).keyboardShortcut(.cancelAction)
-      }
-      LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-        ForEach(ErrorType.allCases, id: \.self) { t in
-          Button { type = t } label: {
-            Text(t.displayName).font(DS.Font.body).lineLimit(1).frame(maxWidth: .infinity).frame(height: 26)
-              .background(type == t ? (t.postState.isCopyright ? Color.red : Color.accentColor).opacity(0.18) : Color.primary.opacity(0.05),
-                          in: RoundedRectangle(cornerRadius: DS.Radius.control))
-              .overlay(RoundedRectangle(cornerRadius: DS.Radius.control)
-                .strokeBorder(type == t ? (t.postState.isCopyright ? Color.red : Color.accentColor) : Color.primary.opacity(0.1)))
-          }
-          .buttonStyle(.plain)
+    DSXThumb(model: model, video: model.video(post.videoId), width: width)
+      .overlay(alignment: .bottomTrailing) {
+        if ready != nil {
+          Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+            .font(.system(size: width > 40 ? 9 : 7, weight: .bold)).foregroundStyle(.white)
+            .frame(width: width > 40 ? 18 : 13, height: width > 40 ? 18 : 13)
+            .background(Color.black.opacity(0.6), in: Circle())
+            .padding(2)
         }
       }
-      TextField("What happened?", text: $message, axis: .vertical).lineLimit(2...4).textFieldStyle(.roundedBorder)
-      DisclosureGroup("Raw response (optional)") {
-        TextEditor(text: $raw).font(DS.Font.mono).frame(height: 70)
+      .onDrag {
+        guard let url = model.preparedPost(post.id)?.fileURL else { return NSItemProvider() }
+        return NSItemProvider(object: url as NSURL)
       }
-      .font(DS.Font.body)
-      if type.postState.isCopyright {
-        Label("Copyright stops this platform only. No automatic retry.", systemImage: "c.circle.fill")
-          .font(DS.Font.secondary).foregroundStyle(.red)
-      }
-      HStack {
-        Spacer()
-        Button("Cancel") { dismiss() }
-        Button("Save") {
-          model.reportProblem(post, type: type, message: message.isEmpty ? type.displayName : message, raw: raw.isEmpty ? nil : raw)
-          dismiss()
+      .dsTooltip(ready.map { "Drag \($0.fileURL.lastPathComponent) into the upload page" }
+                 ?? (model.isRenderable(post) ? "Preparing the file…" : "The file is still rendering"))
+      .accessibilityLabel(ready == nil ? "Clip cover, file not ready" : "Drag the file")
+  }
+}
+
+/// Loading placeholder shaped like the Next-up card and the rows.
+struct TodaySkeleton: View {
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(spacing: DS.space.md) {
+        DSSkeleton(width: 54, height: 96, radius: DS.radius.xs)
+        VStack(alignment: .leading, spacing: DS.space.xs) {
+          DSSkeleton(width: 220, height: 12)
+          DSSkeleton(width: 300, height: 16)
+          HStack { DSSkeleton(width: 110, height: 28, radius: 14); DSSkeleton(width: 140, height: 28, radius: 14) }
         }
-        .buttonStyle(.borderedProminent)
-        .keyboardShortcut(.defaultAction)
-      }
-    }
-    .padding(22)
-    .frame(width: 520)
-  }
-}
-
-/// L.S4: paste the YouTube URL → long-form moves to Posted/Longform.
-struct LongformPostedSheet: View {
-  @Bindable var model: AppModel
-  let video: Video
-  @State private var url = ""
-  @Environment(\.dismiss) private var dismiss
-
-  private var valid: Bool { URL(string: url)?.host.map { $0.contains("youtube.com") || $0.contains("youtu.be") } ?? false }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      Text("Mark long-form posted").font(DS.Font.title)
-      Text("Paste the YouTube URL for “\(model.title(video))”. The file moves from Ready to Post to Posted.")
-        .font(DS.Font.body).foregroundStyle(.secondary)
-      TextField("https://youtube.com/watch?v=…", text: $url).textFieldStyle(.roundedBorder).controlSize(.large)
-      HStack {
-        Text("Then run a Test & Compare on the thumbnail.").font(DS.Font.secondary).foregroundStyle(.tertiary)
         Spacer()
-        Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-        Button("Mark posted") { model.markLongformPosted(video, url: url); dismiss() }
-          .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(!valid)
       }
+      .padding(DS.space.md)
+      .dsSurface(DS.color.surface, radius: DS.radius.lg, border: DS.color.border)
+      .padding(.bottom, DS.space.xl)
+      SkeletonRows(count: 6, height: 64)
     }
-    .padding(22)
-    .frame(width: 480)
-  }
-}
-
-/// T.S4 "Re-upload anyway" with a version choice: same, an existing later one, or a new version (opens the editor).
-struct ReuploadMenu: View {
-  @Bindable var model: AppModel
-  let post: PlatformPost
-  var body: some View {
-    let versions = max(1, model.versionCounts[post.videoId] ?? 1)
-    Menu("Re-upload anyway") {
-      Button("Same version (v\(post.versionNo))") { model.reupload(post, version: post.versionNo) }
-      ForEach(Array(stride(from: post.versionNo + 1, through: versions, by: 1)), id: \.self) { n in
-        Button("v\(n)") { model.reupload(post, version: n) }
-      }
-      Divider()
-      Button("New version (v\(versions + 1))…") { model.reupload(post, version: nil, newVersion: true) }
-    }
-    .fixedSize()
-  }
-}
-
-/// Placeholder rows while the first load runs (Q.states / T.states / L.states "Ld").
-struct SkeletonRows: View {
-  var count = 8
-  var height: CGFloat = DS.Row.queue
-  @State private var pulse = false
-  var body: some View {
-    VStack(spacing: 0) {
-      ForEach(0..<count, id: \.self) { i in
-        HStack(spacing: 12) {
-          RoundedRectangle(cornerRadius: 3).frame(width: 18, height: 10)
-          RoundedRectangle(cornerRadius: DS.Radius.thumb).frame(width: 28, height: 50)
-          VStack(alignment: .leading, spacing: 6) {
-            RoundedRectangle(cornerRadius: 3).frame(width: CGFloat(140 + (i * 37) % 120), height: 11)
-            RoundedRectangle(cornerRadius: 3).frame(width: 110, height: 8)
-          }
-          Spacer()
-          RoundedRectangle(cornerRadius: 8).frame(width: 52, height: 16)
-          RoundedRectangle(cornerRadius: 3).frame(width: 60, height: 8)
-        }
-        .foregroundStyle(Color.primary.opacity(pulse ? 0.06 : 0.11))
-        .padding(.horizontal, DS.Space.l)
-        .frame(height: height)
-        Divider().padding(.leading, DS.Space.l)
-      }
-      Spacer(minLength: 0)
-    }
-    .accessibilityLabel("Loading")
-    .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever()) { pulse = true } }
+    .frame(maxWidth: TodayView.column)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    .padding(.horizontal, DS.space.xl)
+    .padding(.top, DS.space.xs)
   }
 }

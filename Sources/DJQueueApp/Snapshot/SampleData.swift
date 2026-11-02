@@ -4,6 +4,17 @@ import Foundation
 /// Plausible scores, edits, an approved week with posts in every state, a draft next week and 7 days of
 /// heartbeats — written ONLY into the throwaway database copy used by `--snapshot`.
 enum SampleData {
+  /// Made-up sample titles for the throwaway snapshot DB (never shown for real data).
+  static let sampleTitles = [
+    "Midnight Run x Afterglow", "Golden Hour Blend", "Low Tide x Paper Moon", "Velvet Room Transition", "Sunday Drift",
+    "Neon Harbour x Slow Bloom", "Late Train Edit", "Copper Sky x Warm Static", "Open Window Groove", "Blue Hour Switch",
+  ]
+
+  /// "A x B" → two tracks with a made-up artist each.
+  static func sampleTracks(_ title: String) -> [Track] {
+    title.components(separatedBy: " x ").enumerated().map { i, t in Track(title: t, artist: ["Sample Artist", "Demo Collective"][i % 2]) }
+  }
+
   /// Deterministic across runs (String.hashValue is seeded per process).
   static func stableHash(_ s: String) -> Int { s.unicodeScalars.reduce(7) { ($0 &* 31 &+ Int($1.value)) & 0x7fffffff } }
 
@@ -13,7 +24,6 @@ enum SampleData {
     try store.save(st)
     let dm = DayMath(settings: st)
     let today = dm.key(now)
-    let rules = PrefillRules.load(store.paths)
 
     // Throwaway copy only: start from an empty plan so seeding never collides with an existing one.
     for t in ["plan_slots", "weeks", "platform_posts", "post_history", "renders", "sent_notifications"] {
@@ -23,20 +33,45 @@ enum SampleData {
     let shorts = try store.videos(where: "type='short-form'").sorted { ($0.part ?? 0, $0.start ?? 0) < ($1.part ?? 0, $1.start ?? 0) }
     guard shorts.count >= 30 else { return }
 
-    // Scores (48 scored, 14 to score), edits for 40 → ready, a few talking / excluded / missing.
+    // Scores (48 scored, 14 to score); clips 0–39 edited → ready (two thirds titled, the rest "No text");
+    // 40–47 need edit with a mix of missing pieces; title suggestions on a spread of clips (some low-confidence so
+    // "Ask an agent" shows, some none); a few talking / excluded / missing. Fixed sample strings only.
     for (i, v) in shorts.enumerated() {
       clock.set(now.addingTimeInterval(-86400 * 3 + Double(i) * 60))
       if i < 48 {
         let h = stableHash(v.id) % 1000
         try store.setScore(v.id, 28 + (h * 7 + i * 13) % 68)
       }
+      let titled = i % 3 != 2 && ![42, 43, 46, 47].contains(i)
+      if titled && i < 48 { try store.setTitle(v.id, sampleTitles[i % sampleTitles.count], source: "app") }
+      if !titled || i >= 48 {
+        let n = (i / 3) % 4  // 0 = none, 1–3 suggestions
+        if n > 0 {
+          let list = (0..<n).map { k -> SuggestionInput in
+            let t = sampleTitles[(i + k * 5 + 3) % sampleTitles.count]
+            return SuggestionInput(text: t, tracks: sampleTracks(t), confidence: i % 2 == 0 ? 0.82 - Double(k) * 0.1 : 0.35,
+                                   source: "sample")
+          }
+          try store.addSuggestions(videoId: v.id, list, origin: "agent")
+        }
+      }
+      if i >= 40 && i < 48 {
+        // Needs edit: 40–41 no crop (titled) · 42–43 crop but no text (suggestions) · 46 nothing yet · 47 crop +
+        // title but the whole file as trim (too long for some platforms when the clip is long).
+        if [42, 43, 47].contains(i) {
+          var e = Edit()
+          e.crop = CropRect(x: 1312, y: 0, w: 1215, h: 2160)
+          if i == 47 { e.trimIn = 0; e.trimOut = v.duration }
+          try store.save(e, videoId: v.id)
+        }
+        if i == 47 { try store.setTitle(v.id, sampleTitles[1], source: "app") }
+      }
       if i < 40 {
         var e = Edit()
         e.crop = CropRect(x: 1312, y: 0, w: 1215, h: 2160)
         try store.save(e, videoId: v.id)
         var ver = Version(number: 1)
-        ver.text = Prefill.text(tag: v.tag, kind: .djVid, rules: rules)
-        if ver.text?.isEmpty ?? true { ver.noText = true }
+        if !titled { ver.noText = true }
         ver.captionTemplateId = "set-link"
         try store.save(ver, videoId: v.id)
         if i % 9 == 4 {

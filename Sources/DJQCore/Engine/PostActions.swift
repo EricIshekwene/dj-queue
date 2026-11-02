@@ -326,7 +326,7 @@ public final class PostActions: @unchecked Sendable {
     let free = placer.place(skipped.platform, position: position, from: today)
     let gap = dm.days(from: free, to: dm.key(first.scheduledAt))
     guard gap > 0 else { return }
-    try store.db.transaction { try store.reflow(rest, days: -gap, dm: dm, note: "gap closed −\(gap) d") }
+    _ = try store.db.transaction { try store.reflow(rest, days: -gap, dm: dm, note: "gap closed −\(gap) d") }
   }
 
   /// Records the edit's length-related state for a platform when a too_long failure happens, so the engine only

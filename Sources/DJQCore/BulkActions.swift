@@ -27,9 +27,45 @@ public struct BulkResult: Codable, Sendable {
   public var changed: [String]
   /// Clip id → why it was left alone.
   public var skipped: [String: String]
-  /// Clip id → what still keeps it from being ready, after the action (changed clips only).
+  /// Clip id → what still keeps it from being ready, after the action (changed clips only; make-ready reports
+  /// every clip it looked at, changed or not).
   public var remainingIssues: [String: [ValidationIssue]]
   public var summary: String
+  /// Make-ready only: where each clip it looked at stands afterwards (from `remainingIssues`).
+  public var outlook: ReadyOutlook? = nil
+}
+
+/// Where clips stand after "Make ready with defaults" (every non-skipped clip, changed or not).
+public struct ReadyOutlook: Codable, Sendable, Equatable {
+  /// No issues left: the clip is ready.
+  public var ready: [String]
+  /// No Title, so the default text is empty ("Add text (no title yet)") — fixed by a title, nothing else.
+  public var needTitle: [String]
+  /// Anything else still open (and clips with no title that ALSO have other issues).
+  public var other: [String]
+
+  public init(ready: [String] = [], needTitle: [String] = [], other: [String] = []) {
+    self.ready = ready; self.needTitle = needTitle; self.other = other
+  }
+
+  /// Sorts clips by their remaining issues (`hasTitle`: the clip has a Title).
+  public static func classify(_ issues: [(id: String, issues: [ValidationIssue], hasTitle: Bool)]) -> ReadyOutlook {
+    var o = ReadyOutlook()
+    for c in issues {
+      if c.issues.isEmpty { o.ready.append(c.id) }
+      else if !c.hasTitle, c.issues.allSatisfy({ $0.kind == .noText }) { o.needTitle.append(c.id) }
+      else { o.other.append(c.id) }
+    }
+    return o
+  }
+
+  /// "3 ready · 58 still need a title · 2 other issues" (zero parts dropped, except "0 ready" when alone).
+  public var summary: String {
+    var parts = ["\(ready.count) ready"]
+    if !needTitle.isEmpty { parts.append("\(needTitle.count) still need\(needTitle.count == 1 ? "s" : "") a title") }
+    if !other.isEmpty { parts.append("\(other.count) other issue\(other.count == 1 ? "" : "s")") }
+    return parts.joined(separator: " · ")
+  }
 }
 
 /// One journal row.
@@ -65,10 +101,11 @@ public final class BulkActions: @unchecked Sendable {
 
   /// Confirms the default crop (anchor) where none is set and returns what is still missing per clip.
   /// Text, caption, cover and the rest already follow the defaults (clips store only overrides), so nothing
-  /// Eric customised is touched.
+  /// Eric customised is touched. `remainingIssues` / `outlook` cover every clip it looked at (changed or not), so
+  /// the UI can say truthfully how many end up ready and how many still need a title.
   @discardableResult
   public func makeReadyWithDefaults(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
-    try run("make-ready", ids: ids, dryRun: dryRun) { _, v, s in
+    try run("make-ready", ids: ids, dryRun: dryRun, reportsAll: true) { _, v, s in
       guard v.type == .short else { return .skipped("long-form") }
       if v.missing { return .skipped("file missing") }
       var e = try store.edit(videoId: v.id)
@@ -231,6 +268,17 @@ public final class BulkActions: @unchecked Sendable {
       let t = title?.trimmingCharacters(in: .whitespacesAndNewlines)
       guard v.titleText != ((t?.isEmpty ?? true) ? nil : t) else { return .unchanged }
       try store.setTitle(v.id, title)
+      return .changed
+    }
+  }
+
+  /// Sets each clip's Title to its raw marker tag, verbatim (Eric's explicit choice; no tidying). Clips that
+  /// already have a title are skipped.
+  @discardableResult
+  public func useRawTagAsTitle(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
+    try run("title-raw-tag", ids: ids, dryRun: dryRun) { _, v, _ in
+      if v.titleText != nil { return .skipped("already has a title") }
+      try store.setTitle(v.id, v.tag, source: "raw tag")
       return .changed
     }
   }
@@ -424,7 +472,7 @@ public final class BulkActions: @unchecked Sendable {
   struct Snapshot: Codable { var clips: [ClipSnap]; var plan: PlanSnap? }
 
   private func run(_ action: String, ids raw: [String], params: [String: String] = [:], dryRun: Bool, plan: Bool = false,
-                   renders: Bool = false, _ body: (Int, Video, Settings) throws -> Outcome) throws -> BulkResult {
+                   renders: Bool = false, reportsAll: Bool = false, _ body: (Int, Video, Settings) throws -> Outcome) throws -> BulkResult {
     var seen = Set<String>()
     let ids = raw.filter { !$0.isEmpty && seen.insert($0).inserted }
     var result = BulkResult(batchId: nil, action: action, dryRun: dryRun, videoIds: ids, changed: [], skipped: [:],
@@ -450,11 +498,16 @@ public final class BulkActions: @unchecked Sendable {
             result.skipped[id] = "\(error)"
           }
         }
-        for id in result.changed {
+        let reported = reportsAll ? existing.filter { result.skipped[$0] == nil } : result.changed
+        var rows: [(id: String, issues: [ValidationIssue], hasTitle: Bool)] = []
+        for id in reported {
           if let v = try store.video(id: id), v.type == .short {
-            result.remainingIssues[id] = (try? Validation.issues(video: v, store: store)) ?? []
+            let issues = (try? Validation.issues(video: v, store: store)) ?? []
+            result.remainingIssues[id] = issues
+            rows.append((id, issues, v.titleText != nil))
           }
         }
+        if reportsAll { result.outlook = ReadyOutlook.classify(rows) }
         result.summary = "\(action): \(result.changed.count) changed"
           + (result.skipped.isEmpty ? "" : ", \(result.skipped.count) skipped")
           + (ids.count - result.changed.count - result.skipped.count > 0

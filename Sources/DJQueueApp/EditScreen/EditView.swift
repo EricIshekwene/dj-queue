@@ -1,0 +1,222 @@
+import DJQCore
+import SwiftUI
+
+/// Edit (DESIGN-v2 §6.2, ref R2.EDIT issue cards) — job: turn scored clips into ready clips.
+///
+/// Toolbar "Edit · 9 need work" · filter chips under it (`All 9 · No crop 4 · No text 6 · …`, from
+/// `issuesByVideo`) · view toggle (Cards · Grid · Single · List) · primary **Make ready with defaults** (the
+/// selection, else every clip the filter shows; > 1 clip asks first). Cards show missing chips (warning), hard
+/// blocks (danger) with explicit fixes ("Trim for X", "Drop hashtags for X", "Write an X caption"), up to three
+/// title suggestions (click = set Title, undoable), an "Add title" field when there are none, "Ask an agent" when
+/// the title is ambiguous, a "Cover" badge, Open editor and ⋯. Hidden: dates, platform post state, queue order.
+struct EditView: View {
+  @Bindable var model: AppModel
+  private var ui: PipelineUIState { .shared }
+
+  var body: some View {
+    let all = model.editList
+    let filters = Self.filters(all, issues: model.issuesByVideo)
+    let active = ui.editFilter.flatMap { f in filters.contains { $0.filter == f } ? f : nil }
+    let list = active.map { f in all.filter { f.matches(model.issuesByVideo[$0.id] ?? []) } } ?? all
+    let ids = list.map(\.id)
+    let mode = model.viewMode(.edit)
+    let sel = model.selectedIds(.edit)
+    let templates = model.captionTemplates
+    ScreenScaffold(model: model, screen: .edit, subtitle: all.isEmpty ? nil : "\(all.count) need work",
+                   readingColumn: mode == .wide || mode == .list) {
+      DSViewModeSwitcher(mode: model.viewModeBinding(.edit))
+      DSButton("Make ready with defaults", variant: sel.isEmpty ? .primary : .outline,
+               disabledReason: list.isEmpty ? "Nothing to edit" : nil,
+               tooltip: sel.isEmpty ? "Confirm the default crop for the \(AppModel.pipelineClips(ids.count)) shown"
+                 : "Confirm the default crop for the \(AppModel.pipelineClips(sel.count)) selected") {
+        makeReady(sel.isEmpty ? ids : sel)
+      }
+    } subToolbar: {
+      if !all.isEmpty {
+        DSChip("All", isSelected: active == nil, count: all.count, showsCheck: false) { ui.editFilter = nil }
+        ForEach(filters, id: \.filter) { f in
+          DSChip(f.filter.title, isSelected: active == f.filter, count: f.count, showsCheck: false) {
+            ui.editFilter = active == f.filter ? nil : f.filter
+          }
+        }
+      }
+    } content: {
+      if !model.loaded {
+        Color.clear
+      } else if list.isEmpty {
+        DSEmptyState(icon: "pencil", title: "Nothing to edit",
+                     message: "Scored clips that still need a crop, text or caption show up here.",
+                     actionTitle: "Open Queue") { model.screen = .queue }
+      } else {
+        ClipCollection(model: model, screen: .edit, videos: list, mode: mode, clip: { v in clip(v, mode: mode) },
+                       onOpen: { v in model.openEditor(v.id, in: ids) }) { v in
+          EditClipActions(model: model, video: v, mode: mode, ids: ids)
+        } contextMenu: { v in
+          EditClipMenu(model: model, video: v, ids: ids, templates: templates)
+        }
+      }
+    }
+    .dsBulkBar(isPresented: !sel.isEmpty) {
+      EditBulkBar(model: model, ids: sel, templates: templates, hashtagSets: model.hashtagSets) { makeReady(sel) }
+    }
+  }
+
+  /// Card model: the shared mapping, plus a "Cover" badge; suggestion chips keep only their text outside Single
+  /// (the matched tracks would wrap a 132 pt card — Single's side panel and the editor show them). List rows have
+  /// no chip row, so their second line lists what's missing instead of the session.
+  private func clip(_ v: Video, mode: DSViewMode) -> DSClip {
+    var c = model.dsClip(v, for: .edit)
+    if mode != .single { c.suggestions = c.suggestions.map { DSTitleSuggestion(text: $0.text) } }
+    // Grid tiles and list rows are narrow: blocks read "Too long for X" (the numbers are on Cards / Single).
+    let short = c.blocks.map { $0.components(separatedBy: " · ").first ?? $0 }
+    if mode == .grid { c.blocks = short }
+    if mode == .list, !(short + c.issues).isEmpty { c.subtitle = (short + c.issues).joined(separator: " · ") }
+    if model.coverIds.contains(v.id) { c.tags.append(DSClipTag(text: "Cover", style: .outline, icon: "photo")) }
+    return c
+  }
+
+  private func makeReady(_ ids: [String]) {
+    model.pipelineBulk("Make \(AppModel.pipelineClips(ids.count)) ready?", verb: "Make ready", ids: ids,
+                       changes: [.init(field: "Crop", value: "Default anchor, confirmed where missing"),
+                                 .init(field: "Text, caption, cover", value: "Keep following New clip defaults"),
+                                 .init(field: "Title", value: "Not set by this — clips without one still need text")]) { b, dry in
+      try b.makeReadyWithDefaults(ids, dryRun: dry)
+    }
+  }
+
+  /// Filter chips with counts, in a stable order (missing pieces, then hard blocks).
+  static func filters(_ list: [Video], issues: [String: [ValidationIssue]]) -> [(filter: EditFilter, count: Int)] {
+    var counts: [EditFilter: Int] = [:]
+    for v in list {
+      let fs = Set((issues[v.id] ?? []).filter { $0.kind != .missingFile }.map { EditFilter(kind: $0.kind, platform: $0.platform) })
+      for f in fs { counts[f, default: 0] += 1 }
+    }
+    return counts.map { ($0.key, $0.value) }.sorted {
+      ($0.filter.order, Platform.allCases.firstIndex(of: $0.filter.platform ?? .tiktok) ?? 0)
+        < ($1.filter.order, Platform.allCases.firstIndex(of: $1.filter.platform ?? .tiktok) ?? 0)
+    }
+  }
+}
+
+/// Edit bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Top title · Caption ▾ (template + hashtags) · Kind ▾ ·
+/// More (agent prompt, apply defaults per section, skip platform, re-render) · **Make ready** (with defaults).
+private struct EditBulkBar: View {
+  @Bindable var model: AppModel
+  let ids: [String]
+  let templates: [CaptionTemplate]
+  let hashtagSets: [HashtagSet]
+  let makeReady: () -> Void
+
+  var body: some View {
+    let n = AppModel.pipelineClips(ids.count)
+    ScreenBulkBar(model: model, screen: .edit) {
+      let noSuggestions = !ids.contains { !(model.suggestionsByVideo[$0] ?? []).isEmpty }
+      Button("Top title", systemImage: "text.badge.checkmark") {
+        let ids = ids
+        model.pipelineBulk("Accept the top title for \(n)?", verb: "Accept titles", ids: ids,
+                           changes: [.init(field: "Title", value: "Top suggestion from metadata (clips without a title)")]) { b, dry in
+          try b.acceptTopTitleSuggestion(ids, dryRun: dry)
+        }
+      }
+      .disabled(noSuggestions)
+      .dsTooltip(noSuggestions ? "None of the selected clips has title suggestions yet — Copy agent prompt (More) asks your agent for some"
+                 : "Accept top title: each clip's best suggestion becomes its title (clips with a title keep it)")
+      PipelineBulkMenu("Caption", tooltip: "Caption template and hashtag set for the selected clips") {
+        Section("Caption template") {
+          Button("Default template") { setTemplate(nil, "Default") }
+          ForEach(templates) { t in Button(t.name) { setTemplate(t.id, t.name) } }
+        }
+        Section("Hashtags") {
+          Button("Default hashtags") { setHashtags(nil, "Default") }
+          ForEach(hashtagSets) { s in Button(s.name) { setHashtags([s.id], s.name) } }
+        }
+      }
+      PipelineBulkMenu("Kind", tooltip: "DJ vid or Talking for the selected clips") {
+        ForEach(Kind.allCases, id: \.self) { k in
+          Button(k.displayName) {
+            let ids = ids
+            model.pipelineBulk("Set \(n) to \(k.displayName)?", verb: "Set kind", ids: ids,
+                               changes: [.init(field: "Kind", value: k.displayName)]) { b, dry in try b.setKind(ids, k, dryRun: dry) }
+          }
+        }
+      }
+    } more: {
+      Button("Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") { model.copyAgentPrompt(ids) }
+      EditApplyDefaultsMenu(model: model, ids: ids)
+      Menu("Skip platform") {
+        ForEach(model.settings.activePlatforms) { p in
+          Button(p.displayName) {
+            let ids = ids
+            model.pipelineBulk("Skip \(p.displayName) for \(n)?", verb: "Skip \(p.displayName)", ids: ids,
+                               changes: [.init(field: p.displayName, value: "Skipped — these clips won't post there")]) { b, dry in
+              try b.setPlatform(ids, p, skipped: true, dryRun: dry)
+            }
+          }
+        }
+      }
+      Button("Re-render", systemImage: "arrow.triangle.2.circlepath") {
+        let ids = ids
+        model.pipelineBulk("Re-render \(n)?", verb: "Re-render", ids: ids,
+                           changes: [.init(field: "Renders", value: "Made again on the next engine tick")]) { b, dry in
+          try b.reRender(ids, dryRun: dry)
+        }
+      }
+    } primary: {
+      DSButton("Make ready", variant: .primary, size: .sm,
+               tooltip: "Make ready with defaults: confirm the default crop for the \(n) selected", action: makeReady)
+    }
+  }
+
+  private func setTemplate(_ id: String?, _ name: String) {
+    let ids = ids
+    model.pipelineBulk("Use the \(name) caption template for \(AppModel.pipelineClips(ids.count))?", verb: "Set template", ids: ids,
+                       changes: [.init(field: "Caption", value: id == nil ? "Default template (written captions cleared)"
+                                   : "Template “\(name)” (written captions cleared)")]) { b, dry in
+      try b.setCaptionTemplate(ids, id, dryRun: dry)
+    }
+  }
+
+  private func setHashtags(_ setIds: [String]?, _ name: String) {
+    let ids = ids
+    model.pipelineBulk("Use \(name) hashtags for \(AppModel.pipelineClips(ids.count))?", verb: "Set hashtags", ids: ids,
+                       changes: [.init(field: "Hashtags", value: setIds == nil ? "Default set" : "“\(name)”")]) { b, dry in
+      try b.setHashtagSets(ids, setIds, dryRun: dry)
+    }
+  }
+}
+
+/// "Apply defaults ▸" — clears the overrides of one section (or all) so the clips follow New clip defaults.
+struct EditApplyDefaultsMenu: View {
+  @Bindable var model: AppModel
+  let ids: [String]
+
+  var body: some View {
+    Menu("Apply defaults") {
+      ForEach(BulkSection.allCases, id: \.self) { s in Button(Self.title(s)) { apply([s]) } }
+      Divider()
+      Button("Every section") { apply(Set(BulkSection.allCases)) }
+    }
+  }
+
+  static func title(_ s: BulkSection) -> String {
+    switch s {
+    case .frame: "Frame"
+    case .trim: "Trim"
+    case .text: "Text"
+    case .cover: "Cover"
+    case .caption: "Caption"
+    case .platforms: "Platforms"
+    }
+  }
+
+  private func apply(_ sections: Set<BulkSection>) {
+    let ids = ids
+    let what = sections.count == BulkSection.allCases.count ? "every section"
+      : BulkSection.allCases.filter(sections.contains).map { Self.title($0).lowercased() }.joined(separator: ", ")
+    model.pipelineBulk("Apply defaults (\(what)) to \(AppModel.pipelineClips(ids.count))?", verb: "Apply defaults", ids: ids,
+                       changes: BulkSection.allCases.filter(sections.contains).map { .init(field: Self.title($0), value: "Default") },
+                       done: "Defaults applied") { b, dry in
+      try b.applyDefaults(ids, sections: sections, dryRun: dry)
+    }
+  }
+}

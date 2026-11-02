@@ -1,88 +1,70 @@
 import DJQCore
 import SwiftUI
 
+/// One ⌘K row: an action, a clip (opens its action page) or a destination.
 struct PaletteCommand: Identifiable {
   let id: String
   let title: String
   let symbol: String
+  /// Right-aligned shortcut text ("⌘3").
   var hint: String? = nil
   var group = "Actions"
+  /// Second line (clip rows: session · state).
+  var subtitle: String? = nil
   /// Shown greyed with this reason; not runnable.
   var disabled: String? = nil
+  /// Keeps the palette open (clip rows open the clip's action page).
+  var keepsOpen = false
   let run: () -> Void
 }
 
+// MARK: - Commands
+
 extension AppModel {
-  /// Every action (INVENTORY APP.CMD), contextual to the selected video / post.
-  var commands: [PaletteCommand] {
-    var c: [PaletteCommand] = []
-    for s in Screen.allCases {
-      c.append(.init(id: "go.\(s.rawValue)", title: "Go to \(s.title)", symbol: s.symbol, hint: "⌘\(s.key.character)", group: "Go to") { [weak self] in
+  /// Destinations: every screen (⌘1…⌘8) and Settings.
+  var paletteGoTo: [PaletteCommand] {
+    Screen.allCases.map { s in
+      PaletteCommand(id: "go.\(s.rawValue)", title: "Go to \(s.title)", symbol: s.symbol, hint: "⌘\(s.key.character)", group: "Go to") {
+        [weak self] in
+        self?.editor = nil
         self?.screen = s
-      })
-    }
-    c.append(.init(id: "go.settings", title: "Open Settings", symbol: "gearshape", hint: "⌘,", group: "Go to") {
-      WindowManager.shared.showSettings()
-    })
+      }
+    } + [PaletteCommand(id: "go.settings", title: "Open Settings", symbol: "gearshape", hint: "⌘,", group: "Go to") { [weak self] in
+      self?.showSettings = true
+    }]
+  }
 
+  /// Screen-independent actions, plus the selection's (one clip → its page; clips → agent prompt; a post → its actions).
+  var paletteActions: [PaletteCommand] {
+    var c: [PaletteCommand] = []
     if let v = focusedVideo {
-      let name = title(v)
-      c.append(.init(id: "video.edit", title: "Edit “\(name)”", symbol: "slider.horizontal.below.rectangle", hint: "⌘E") { [weak self] in
-        self?.openEditor(v.id, in: self?.selectedVideoIds)
-      })
-      c.append(.init(id: "video.preview", title: "Preview “\(name)”", symbol: "play.rectangle", hint: "Space") { [weak self] in
-        self?.previewVideo = v
-      })
-      c.append(.init(id: "video.postToday", title: "Post “\(name)” today", symbol: "bolt") { [weak self] in self?.postToday(v.id) })
-      c.append(.init(id: "video.pinTomorrow", title: "Pin “\(name)” to tomorrow", symbol: "pin") { [weak self] in
-        guard let self else { return }
-        self.pin(v.id, dayKey: self.dm.addDays(self.todayKey, 1))
-      })
-      c.append(.init(id: "video.setScore", title: "Set score of “\(name)”…", symbol: "number") { [weak self] in self?.scorePrompt = v })
-      c.append(.init(id: "video.pinDate", title: "Pin “\(name)” to date…", symbol: "calendar") { [weak self] in self?.pinPrompt = v })
-      let notPlanned = nextSlotByVideo[v.id] == nil ? "Not planned — order follows score; change the score to move it" : nil
-      c.append(.init(id: "video.moveUp", title: "Move up", symbol: "arrow.up", disabled: notPlanned ?? (neighbourSlot(v.id, -1) == nil ? "Already first" : nil)) {
-        [weak self] in self?.moveVideo(v.id, by: -1)
-      })
-      c.append(.init(id: "video.moveDown", title: "Move down", symbol: "arrow.down", disabled: notPlanned ?? (neighbourSlot(v.id, 1) == nil ? "Already last" : nil)) {
-        [weak self] in self?.moveVideo(v.id, by: 1)
-      })
-      c.append(.init(id: "video.skipNext", title: "Skip next slot of “\(name)”", symbol: "forward.end") { [weak self] in self?.skipNext(v.id) })
-      c.append(.init(id: "video.exclude", title: v.excluded ? "Include “\(name)”" : "Exclude “\(name)”", symbol: v.excluded ? "plus.circle" : "minus.circle") { [weak self] in
-        self?.setExcluded([v.id], !v.excluded)
-      })
-      c.append(.init(id: "video.duplicateVersion", title: "Duplicate latest version", symbol: "plus.square.on.square") { [weak self] in
-        self?.duplicateVersion(v.id)
-      })
-      c.append(.init(id: "video.rerender", title: "Re-render", symbol: "arrow.triangle.2.circlepath") { [weak self] in self?.reRender(v.id) })
-      for p in settings.activePlatforms where repostBlocker(v.id, p) == nil {
-        c.append(.init(id: "video.repost.\(p.rawValue)", title: "Repost on \(p.displayName)", symbol: "arrow.uturn.forward") { [weak self] in
-          self?.repost(v.id, p)
-        })
-      }
-      for k in Kind.allCases where k != v.kind {
-        c.append(.init(id: "video.kind.\(k.rawValue)", title: "Set kind: \(k.displayName)", symbol: "tag") { [weak self] in self?.setKind([v.id], k) })
-      }
-      if v.type == .long {
-        c.append(.init(id: "video.longform", title: "Mark long-form posted…", symbol: "checkmark.circle") { [weak self] in self?.longformTarget = v })
-      }
+      c.append(paletteClipRow(v, title: "Actions for “\(displayName(v))”"))
     }
-    c.append(.init(id: "queue.scoreMode", title: "Score mode", symbol: "number", hint: "⇧⌘S") { [weak self] in self?.scoreMode = true })
+    let shorts = selectedVideoIds.compactMap(video).filter { $0.type == .short }.map(\.id)
+    if !shorts.isEmpty {
+      c.append(.init(id: "selection.agentPrompt", title: "Copy agent prompt for \(shorts.count) clip\(shorts.count == 1 ? "" : "s")",
+                     symbol: "text.bubble") { [weak self] in self?.copyAgentPrompt(shorts) })
+    }
+    c.append(.init(id: "post.pauseAll", title: settings.paused ? "Resume all posting" : "Pause all posting",
+                   symbol: settings.paused ? "play.circle" : "pause.circle") { [weak self] in
+      guard let self else { return }
+      if self.settings.paused { self.setPaused(false) } else { self.confirmPause = true }
+    })
+    if !problems.isEmpty {
+      c.append(.init(id: "post.review", title: "Review \(problems.count) problem\(problems.count == 1 ? "" : "s")", symbol: "exclamationmark.octagon") {
+        [weak self] in self?.reviewProblems()
+      })
+    }
 
-    let thisWeek = planner.weekStart(for: now)
-    let nextWeek = dm.addDays(thisWeek, 7)
-    c.append(.init(id: "week.approveNext", title: "Approve next week", symbol: "checkmark.seal", hint: "⌘↩") { [weak self] in self?.approveWeek(nextWeek) })
+    let nextWeek = dm.addDays(planner.weekStart(for: now), 7)
+    c.append(.init(id: "week.approveNext", title: "Approve next week", symbol: "checkmark.seal", hint: "⌘↩",
+                   disabled: weekStates[nextWeek] == .approved ? "Next week is already approved" : nil) { [weak self] in self?.approveWeek(nextWeek) })
     if weekStates[nextWeek] != .approved {
       c.append(.init(id: "week.proposeNext", title: "Propose next week", symbol: "wand.and.stars") { [weak self] in self?.proposeWeek(nextWeek) })
     }
     c.append(.init(id: "week.rebuild", title: "Rebuild next week", symbol: "arrow.clockwise") { [weak self] in self?.rebuildWeek(nextWeek) })
     c.append(.init(id: "week.push", title: "Push plan by a day", symbol: "calendar.badge.clock") { [weak self] in self?.pushPlan(days: 1) })
 
-    c.append(.init(id: "post.pauseAll", title: settings.paused ? "Resume all posting" : "Pause all posting",
-                   symbol: settings.paused ? "play.circle" : "pause.circle") { [weak self] in
-      guard let self else { return }
-      if self.settings.paused { self.setPaused(false) } else { self.confirmPause = true }
-    })
     for p in settings.activePlatforms {
       let paused = settings.pausedPlatforms.contains(p)
       c.append(.init(id: "post.pause.\(p.rawValue)", title: paused ? "Resume \(p.displayName)" : "Pause \(p.displayName)",
@@ -91,28 +73,26 @@ extension AppModel {
 
     let post = postsSelection.flatMap { id in posts.first { $0.id == id } } ?? highlightPostId.flatMap { id in posts.first { $0.id == id } }
     if let post {
-      let n = "\(post.platform.shortName) · \(video(post.videoId).map(title) ?? "")"
+      let n = "\(post.platform.displayName) · \(video(post.videoId).map(displayName) ?? "")"
       if !post.state.isTerminal {
         c.append(.init(id: "post.markPosted", title: "Mark posted… (\(n))", symbol: "checkmark.circle") { [weak self] in self?.markPostedTarget = post })
       }
       if !post.state.isTerminal || post.state == .posted {
-        c.append(.init(id: "post.report", title: "Mark failed / report problem… (\(n))", symbol: "exclamationmark.bubble") { [weak self] in
+        c.append(.init(id: "post.report", title: "Report problem… (\(n))", symbol: "exclamationmark.bubble") { [weak self] in
           self?.reportTarget = post
         })
       }
-      if canReset(post) {
-        c.append(.init(id: "post.reset", title: "Reset post (\(n))", symbol: "arrow.counterclockwise") { [weak self] in self?.reset(post) })
-      }
-      if canSkip(post) {
-        c.append(.init(id: "post.skip", title: "Skip post (\(n))", symbol: "forward") { [weak self] in self?.skip(post) })
-      }
+      c.append(.init(id: "post.reset", title: "Reset post (\(n))", symbol: "arrow.counterclockwise",
+                     disabled: canReset(post) ? nil : "Its time has passed or it's still planned") { [weak self] in self?.reset(post) })
+      c.append(.init(id: "post.skip", title: "Skip post (\(n))", symbol: "forward",
+                     disabled: canSkip(post) ? nil : "Already \(post.state.displayName.lowercased())") { [weak self] in self?.skip(post) })
       if post.state == .overdue {
         c.append(.init(id: "post.postNow", title: "Post now (\(n))", symbol: "bolt") { [weak self] in self?.postNow(post) })
         c.append(.init(id: "post.shiftPlan", title: "Shift plan (\(n))", symbol: "calendar.badge.clock") { [weak self] in self?.shiftPlan(post) })
       }
     }
-    c.append(.init(id: "post.review", title: "Review problems", symbol: "exclamationmark.octagon") { [weak self] in self?.reviewProblems() })
 
+    c.append(.init(id: "health.tick", title: "Run engine tick now", symbol: "bolt.horizontal.circle") { [weak self] in self?.runTick() })
     c.append(.init(id: "health.doctor", title: "Open Doctor", symbol: "stethoscope") { [weak self] in
       self?.screen = .health
       self?.runDoctor()
@@ -122,143 +102,335 @@ extension AppModel {
       if self.doctorReport == nil { self.doctorReport = Doctor(store: self.store).run() }
       self.copyDoctorReport()
     })
-    c.append(.init(id: "health.tick", title: "Run engine tick now", symbol: "bolt.horizontal.circle") { [weak self] in self?.runTick() })
     c.append(.init(id: "health.log", title: "Open engine log", symbol: "doc.text") { [weak self] in self?.openLog() })
     c.append(.init(id: "help.shortcuts", title: "Keyboard shortcuts", symbol: "keyboard", hint: "⌘/") { [weak self] in self?.showShortcuts = true })
     return c
   }
+
+  /// A clip as a palette row: opens its action page.
+  func paletteClipRow(_ v: Video, title: String? = nil) -> PaletteCommand {
+    let chip = libraryIsMissing(v) ? "File missing" : libraryStateChip(v).text
+    let meta = [sessionName(v), v.type == .long ? "Long-form" : v.score.map { "Score \($0)" }, chip].compactMap { $0 }.filter { !$0.isEmpty }
+    return PaletteCommand(id: "clip.\(v.id)", title: title ?? displayName(v), symbol: v.type == .long ? "rectangle" : "rectangle.portrait",
+                          hint: "Actions ›", group: "Clips", subtitle: meta.joined(separator: " · "), keepsOpen: true) {
+      BrowseUI.shared.paletteClipId = v.id
+      BrowseUI.shared.paletteQuery = ""
+    }
+  }
+
+  /// Clips whose display name (or raw tag) contains `q`, best first: prefix matches, then the rest.
+  func paletteClips(matching q: String, limit: Int = 6) -> [Video] {
+    let q = q.trimmingCharacters(in: .whitespaces)
+    guard !q.isEmpty else { return [] }
+    let hits = videos.filter { displayName($0).localizedCaseInsensitiveContains(q) || $0.tag.localizedCaseInsensitiveContains(q) }
+    let prefix = hits.filter { displayName($0).lowercased().hasPrefix(q.lowercased()) }
+    let rest = hits.filter { !displayName($0).lowercased().hasPrefix(q.lowercased()) }
+    return Array((prefix + rest).prefix(limit))
+  }
+
+  /// One clip's actions (the palette's second page): open, score, pin, move, exclude, agent prompt, kind, render…
+  func paletteClipCommands(_ v: Video) -> [PaletteCommand] {
+    let name = displayName(v)
+    let short = v.type == .short
+    let missing = libraryIsMissing(v)
+    let longWhy = short ? nil : "Long-form clips have no score or plan"
+    var c: [PaletteCommand] = []
+    c.append(.init(id: "clip.\(v.id).edit", title: "Open in editor", symbol: "slider.horizontal.below.rectangle", hint: "⌘E",
+                   disabled: !short ? "Long-form clips aren't edited here" : missing ? "File missing — relink it first" : nil) { [weak self] in
+      self?.openEditor(v.id)
+    })
+    c.append(.init(id: "clip.\(v.id).preview", title: "Quick look", symbol: "eye", hint: "Space",
+                   disabled: missing ? "File missing" : nil) { [weak self] in self?.previewVideo = v })
+    c.append(.init(id: "clip.\(v.id).score", title: v.score == nil ? "Set score…" : "Change score (\(v.score!))…", symbol: "number",
+                   disabled: longWhy) { [weak self] in self?.scorePrompt = v })
+    c.append(.init(id: "clip.\(v.id).pinDate", title: "Pin to date…", symbol: "calendar", disabled: longWhy ?? (v.excluded ? "Excluded" : nil)) {
+      [weak self] in self?.pinPrompt = v
+    })
+    c.append(.init(id: "clip.\(v.id).pinTomorrow", title: "Pin to tomorrow", symbol: "pin", disabled: longWhy ?? (v.excluded ? "Excluded" : nil)) {
+      [weak self] in
+      guard let self else { return }
+      self.pin(v.id, dayKey: self.dm.addDays(self.todayKey, 1))
+    })
+    c.append(.init(id: "clip.\(v.id).postToday", title: "Post today", symbol: "bolt", disabled: longWhy ?? (v.excluded ? "Excluded" : nil)) {
+      [weak self] in self?.postToday(v.id)
+    })
+    let notPlanned = nextSlotByVideo[v.id] == nil ? "Not planned — order follows score; change the score to move it" : nil
+    c.append(.init(id: "clip.\(v.id).moveUp", title: "Move up", symbol: "arrow.up",
+                   disabled: longWhy ?? notPlanned ?? (neighbourSlot(v.id, -1) == nil ? "Already first" : nil)) { [weak self] in self?.moveVideo(v.id, by: -1) })
+    c.append(.init(id: "clip.\(v.id).moveDown", title: "Move down", symbol: "arrow.down",
+                   disabled: longWhy ?? notPlanned ?? (neighbourSlot(v.id, 1) == nil ? "Already last" : nil)) { [weak self] in self?.moveVideo(v.id, by: 1) })
+    c.append(.init(id: "clip.\(v.id).skipNext", title: "Skip next slot", symbol: "forward.end", disabled: longWhy ?? notPlanned) {
+      [weak self] in self?.skipNext(v.id)
+    })
+    c.append(.init(id: "clip.\(v.id).exclude", title: v.excluded ? "Include" : "Exclude", symbol: v.excluded ? "plus.circle" : "minus.circle") {
+      [weak self] in self?.setExcluded([v.id], !v.excluded)
+    })
+    if short {
+      c.append(.init(id: "clip.\(v.id).agentPrompt", title: "Copy agent prompt", symbol: "text.bubble") { [weak self] in self?.copyAgentPrompt([v.id]) })
+      for k in Kind.allCases where k != v.kind {
+        c.append(.init(id: "clip.\(v.id).kind.\(k.rawValue)", title: "Set kind: \(k.displayName)", symbol: "tag") { [weak self] in self?.setKind([v.id], k) })
+      }
+      c.append(.init(id: "clip.\(v.id).rerender", title: "Re-render", symbol: "arrow.triangle.2.circlepath",
+                     disabled: missing ? "File missing" : nil) { [weak self] in self?.reRender(v.id) })
+      c.append(.init(id: "clip.\(v.id).duplicateVersion", title: "Duplicate latest version", symbol: "plus.square.on.square") { [weak self] in
+        self?.duplicateVersion(v.id)
+      })
+      for p in settings.activePlatforms where repostBlocker(v.id, p) == nil {
+        c.append(.init(id: "clip.\(v.id).repost.\(p.rawValue)", title: "Repost on \(p.displayName)", symbol: "arrow.uturn.forward") { [weak self] in
+          self?.repost(v.id, p)
+        })
+      }
+    } else if v.longformURL == nil {
+      c.append(.init(id: "clip.\(v.id).longform", title: "Mark long-form posted…", symbol: "checkmark.circle") { [weak self] in
+        self?.screen = .library
+        BrowseUI.shared.longformTargets = [v]
+      })
+    }
+    return c.map { cmd in
+      var cmd = cmd
+      cmd.group = name
+      return cmd
+    }
+  }
+
+  /// A recent command id back to its command (clip rows and clip actions included).
+  func paletteCommand(id: String) -> PaletteCommand? {
+    if let c = (paletteActions + paletteGoTo).first(where: { $0.id == id }) { return c }
+    guard id.hasPrefix("clip.") else { return nil }
+    let rest = id.dropFirst(5)
+    if let v = video(String(rest)) { return paletteClipRow(v) }
+    guard let vid = videos.first(where: { rest.hasPrefix($0.id + ".") }) else { return nil }
+    return paletteClipCommands(vid).first { $0.id == id }.map { cmd in
+      var cmd = cmd
+      cmd = PaletteCommand(id: cmd.id, title: "\(cmd.title) · \(displayName(vid))", symbol: cmd.symbol, hint: cmd.hint, group: "Recents",
+                           subtitle: nil, disabled: cmd.disabled, keepsOpen: cmd.keepsOpen, run: cmd.run)
+      return cmd
+    }
+  }
 }
 
-/// APP.CMD (ref Magnific): 640 pt panel, Recents + Actions, shortcut hints right-aligned.
+// MARK: - Palette
+
+/// ⌘K (DESIGN-v2 §3, ref APP.CMD Magnific): a 640 pt e2 surface with a capsule search field, Recents and Actions,
+/// shortcuts right-aligned in caption tertiary. Typing searches commands and clips (by display name); a clip opens
+/// its own action page (score, pin, move, exclude, open editor, agent prompt…). ↑/↓ move, ↩ runs, Esc goes back /
+/// closes, ⌫ on an empty field leaves a clip page.
 struct CommandPalette: View {
   @Bindable var model: AppModel
-  @State private var query = ""
+  @Bindable private var ui = BrowseUI.shared
   @State private var index = 0
   @FocusState private var focused: Bool
 
-  private var all: [PaletteCommand] { model.commands }
+  private var clip: Video? { ui.paletteClipId.flatMap(model.video) }
 
   private var sections: [(String, [PaletteCommand])] {
-    let cmds = all
-    if !query.isEmpty {
-      let q = query.lowercased()
-      return [("Results", cmds.filter { $0.title.lowercased().contains(q) || $0.id.lowercased().contains(q) })]
+    let q = ui.paletteQuery.trimmingCharacters(in: .whitespaces).lowercased()
+    func match(_ c: PaletteCommand) -> Bool { q.isEmpty || c.title.lowercased().contains(q) }
+    if let v = clip {
+      let cmds = model.paletteClipCommands(v).filter(match)
+      return [(model.displayName(v), cmds)]
     }
-    let recents = model.recentCommands.compactMap { id in cmds.first { $0.id == id } }
+    if q.isEmpty {
+      var out: [(String, [PaletteCommand])] = []
+      let recents = model.recentCommands.compactMap(model.paletteCommand(id:))
+      if !recents.isEmpty { out.append(("Recents", recents)) }
+      out.append(("Actions", model.paletteActions))
+      out.append(("Go to", model.paletteGoTo))
+      return out
+    }
     var out: [(String, [PaletteCommand])] = []
-    if !recents.isEmpty { out.append(("Recents", recents)) }
-    let groups = ["Actions", "Go to"]
-    for g in groups { out.append((g == "Actions" ? "Quick actions" : g, cmds.filter { $0.group == g })) }
+    let clips = model.paletteClips(matching: q).map { model.paletteClipRow($0) }
+    if !clips.isEmpty { out.append(("Clips", clips)) }
+    let actions = model.paletteActions.filter(match)
+    if !actions.isEmpty { out.append(("Actions", actions)) }
+    let go = model.paletteGoTo.filter(match)
+    if !go.isEmpty { out.append(("Go to", go)) }
     return out
   }
 
-  private var flat: [PaletteCommand] { sections.flatMap(\.1) }
-
   var body: some View {
+    let secs = sections
+    let flat = secs.flatMap(\.1)
     ZStack(alignment: .top) {
-      Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { close() }
+      DS.color.scrim.ignoresSafeArea().contentShape(Rectangle()).onTapGesture { close() }
       VStack(spacing: 0) {
-        HStack(spacing: 10) {
-          Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-          TextField("Type a command or search…", text: $query)
-            .textFieldStyle(.plain)
-            .font(.system(size: 16))
-            .focused($focused)
-            .onSubmit { runSelected() }
-            .onKeyPress(.upArrow) { index = max(0, index - 1); return .handled }
-            .onKeyPress(.downArrow) { index = min(flat.count - 1, index + 1); return .handled }
-            .onExitCommand { close() }
-          KeyHint("⌘K")
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 52)
-        Divider()
-        ScrollViewReader { proxy in
-          ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-              let flatIds = flat.map(\.id)
-              ForEach(sections, id: \.0) { section in
-                Eyebrow(section.0).padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
-                ForEach(section.1) { cmd in
-                  let i = flatIds.firstIndex(of: cmd.id) ?? -1
-                  row(cmd, selected: i == index)
-                    .id("\(section.0).\(cmd.id)")
-                    .onTapGesture { run(cmd) }
-                }
-              }
-              if flat.isEmpty {
-                Text("No matching command").foregroundStyle(.secondary).padding(20)
-              }
-            }
-            .padding(8)
-          }
-          .frame(maxHeight: 420)
-          .onChange(of: index) { _, i in
-            if i < flat.count, let s = sections.first(where: { $0.1.contains { $0.id == flat[i].id } }) {
-              proxy.scrollTo("\(s.0).\(flat[i].id)")
-            }
-          }
-        }
-        Divider()
-        HStack(spacing: 16) {
+        searchRow(flat)
+          .padding(DS.space.sm)
+        DSSeparator()
+        list(secs, flat: flat)
+        DSSeparator()
+        HStack(spacing: DS.space.md) {
           footer("↑ ↓", "Navigate")
           footer("↩", "Select")
-          footer("Esc", "Close")
+          footer("esc", clip == nil ? "Close" : "Back")
           Spacer()
+          if clip == nil { Text("Type a clip name to act on it").font(DS.type.caption).foregroundStyle(DS.color.textTertiary) }
         }
-        .padding(.horizontal, 16)
-        .frame(height: 34)
+        .padding(.horizontal, DS.space.md)
+        .frame(height: 36)
       }
       .frame(width: 640)
-      .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-      .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.12)))
-      .shadow(color: .black.opacity(0.25), radius: 30, y: 10)
-      .padding(.top, 90)
+      .dsFloatingSurface(radius: DS.radius.lg, elevation: DS.elevation.e2)
+      .padding(.top, 88)
     }
-    .onAppear { focused = true; index = 0 }
-    .onChange(of: query) { index = 0 }
+    .onAppear {
+      focused = true
+      index = 0
+    }
+    .onChange(of: ui.paletteQuery) { index = 0 }
+    .onChange(of: ui.paletteClipId) { index = 0 }
   }
 
-  private func row(_ c: PaletteCommand, selected: Bool) -> some View {
-    HStack(spacing: 10) {
-      Image(systemName: c.symbol)
-        .font(.system(size: 12, weight: .medium))
-        .frame(width: 26, height: 26)
-        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-      Text(c.title).font(.system(size: 14)).lineLimit(1).foregroundStyle(c.disabled == nil ? .primary : .tertiary)
-      if let why = c.disabled { Text(why).font(DS.Font.secondary).foregroundStyle(.tertiary).lineLimit(1) }
-      Spacer()
-      if let h = c.hint { KeyHint(h) }
-      if selected { Image(systemName: "return").font(.system(size: 11)).foregroundStyle(.secondary) }
+  // MARK: Pieces
+
+  private func searchRow(_ flat: [PaletteCommand]) -> some View {
+    HStack(spacing: 8) {
+      Image(systemName: "magnifyingglass").font(.system(size: 14, weight: .medium)).foregroundStyle(DS.color.textTertiary)
+      if let v = clip {
+        Button {
+          ui.paletteClipId = nil
+        } label: {
+          HStack(spacing: 4) {
+            Text(model.displayName(v)).lineLimit(1)
+            Image(systemName: "xmark").font(.system(size: 8.5, weight: .bold)).foregroundStyle(DS.color.textTertiary)
+          }
+          .font(DS.type.captionMedium)
+          .foregroundStyle(DS.color.text)
+          .padding(.horizontal, 10)
+          .frame(height: 24)
+          .background(DS.color.selected, in: Capsule())
+          .frame(maxWidth: 220)
+          .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .dsTooltip("Back to all commands")
+      }
+      TextField(clip == nil ? "Search clips and commands…" : "Filter actions…", text: $ui.paletteQuery)
+        .textFieldStyle(.plain)
+        .font(Font.system(size: 15))
+        .foregroundStyle(DS.color.text)
+        .focused($focused)
+        .onSubmit { run(at: index, in: flat) }
+        .onKeyPress(.upArrow) { index = max(0, index - 1); return .handled }
+        .onKeyPress(.downArrow) { index = min(max(0, flat.count - 1), index + 1); return .handled }
+        .onKeyPress(.delete) {
+          guard ui.paletteQuery.isEmpty, clip != nil else { return .ignored }
+          ui.paletteClipId = nil
+          return .handled
+        }
+        .onExitCommand { back() }
+      Text("⌘K").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
     }
-    .padding(.horizontal, 6)
-    .frame(height: 38)
-    .background(selected ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 8))
-    .contentShape(Rectangle())
+    .padding(.horizontal, 14)
+    .frame(height: DS.size.controlLg)
+    .modifier(DSFieldBox(focused: false, hovering: false, error: false, disabled: false, radius: DS.size.controlLg / 2))
+  }
+
+  private func list(_ secs: [(String, [PaletteCommand])], flat: [PaletteCommand]) -> some View {
+    ScrollViewReader { proxy in
+      ScrollView {
+        VStack(alignment: .leading, spacing: 1) {
+          let ids = flat.map(\.id)
+          ForEach(Array(secs.enumerated()), id: \.offset) { si, section in
+            Text(section.0).font(DS.type.micro).foregroundStyle(DS.color.textTertiary).lineLimit(1)
+              .padding(.horizontal, 10).padding(.top, si == 0 ? 6 : 12).padding(.bottom, 4)
+            ForEach(Array(section.1.enumerated()), id: \.offset) { _, cmd in
+              let i = ids.firstIndex(of: cmd.id) ?? -1
+              PaletteRow(command: cmd, selected: i == index)
+                .id("\(si).\(cmd.id)")
+                .onTapGesture { run(cmd) }
+                .onHover { if $0, i >= 0 { index = i } }
+            }
+          }
+          if flat.isEmpty {
+            VStack(spacing: 4) {
+              Text(clip == nil ? "No clip or command matches “\(ui.paletteQuery)”" : "No action matches “\(ui.paletteQuery)”")
+                .font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+              Text("Try part of a title or a raw tag").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, DS.space.xxl)
+          }
+        }
+        .padding(6)
+      }
+      .frame(maxHeight: 420)
+      .fixedSize(horizontal: false, vertical: true)
+      .onChange(of: index) { _, i in
+        guard flat.indices.contains(i), let s = secs.firstIndex(where: { $0.1.contains { $0.id == flat[i].id } }) else { return }
+        proxy.scrollTo("\(s).\(flat[i].id)")
+      }
+    }
   }
 
   private func footer(_ k: String, _ t: String) -> some View {
     HStack(spacing: 5) {
-      KeyHint(k)
-      Text(t).font(DS.Font.secondary).foregroundStyle(.secondary)
+      Text(k).font(DS.type.captionMedium).foregroundStyle(DS.color.textSecondary)
+      Text(t).font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
     }
   }
 
-  private func runSelected() {
-    guard index < flat.count else { return }
-    run(flat[index])
+  // MARK: Actions
+
+  private func run(at i: Int, in flat: [PaletteCommand]) {
+    guard flat.indices.contains(i) else { return }
+    run(flat[i])
   }
 
   private func run(_ c: PaletteCommand) {
     if let why = c.disabled { model.show(why, error: true); return }
     model.noteCommand(c.id)
+    if c.keepsOpen {
+      c.run()
+      focused = true
+      return
+    }
     close()
     c.run()
   }
 
+  private func back() {
+    if clip != nil { ui.paletteClipId = nil; ui.paletteQuery = "" } else { close() }
+  }
+
   private func close() {
     model.showPalette = false
-    query = ""
+    ui.paletteQuery = ""
+    ui.paletteClipId = nil
+  }
+}
+
+/// A palette row: icon tile · title (+ subtitle / disabled reason) · right-aligned shortcut (caption tertiary).
+private struct PaletteRow: View {
+  let command: PaletteCommand
+  let selected: Bool
+
+  var body: some View {
+    let enabled = command.disabled == nil
+    HStack(spacing: 10) {
+      Image(systemName: command.symbol)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(enabled ? DS.color.text : DS.color.textTertiary)
+        .frame(width: 26, height: 26)
+        .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
+      VStack(alignment: .leading, spacing: 1) {
+        Text(command.title).font(DS.type.callout).foregroundStyle(enabled ? DS.color.text : DS.color.textTertiary).lineLimit(1)
+        if let s = command.disabled ?? command.subtitle {
+          Text(s).font(DS.type.caption).foregroundStyle(DS.color.textTertiary).lineLimit(1)
+        }
+      }
+      Spacer(minLength: DS.space.sm)
+      if let h = command.hint {
+        Text(h).font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+      } else if selected && enabled {
+        Image(systemName: "return").font(.system(size: 11, weight: .medium)).foregroundStyle(DS.color.textTertiary)
+      }
+    }
+    .padding(.horizontal, 8)
+    .frame(height: command.subtitle != nil || command.disabled != nil ? 44 : 36)
+    .background(selected ? DS.color.selected : .clear, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+    .contentShape(Rectangle())
+    .dsTooltip(command.disabled)
   }
 }
 
@@ -346,53 +518,59 @@ struct RepostMenu: View {
   }
 }
 
-/// ⌘K "Set score…": one big number field.
+
+/// ⌘K "Set score…": one big number field (DSDialog in a sheet).
 struct ScorePromptSheet: View {
   @Bindable var model: AppModel
   let video: Video
   @State private var text = ""
   @Environment(\.dismiss) private var dismiss
+
+  private var value: Int? { Int(text.trimmingCharacters(in: .whitespaces)).flatMap { (0...100).contains($0) ? $0 : nil } }
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("Score “\(model.title(video))”").font(DS.Font.title)
-      TextField("0–100", text: $text)
-        .font(.system(size: 34, weight: .semibold, design: .rounded).monospacedDigit())
-        .textFieldStyle(.roundedBorder)
-        .onSubmit(save)
-      HStack {
-        Spacer()
-        Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-        Button("Save", action: save).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-          .disabled(Int(text).map { !(0...100).contains($0) } ?? true)
-      }
+    DSDialog("Score “\(model.displayName(video))”", description: "0 to 100. Higher scores post sooner.", icon: "number", width: 400,
+             onClose: { dismiss() }) {
+      DSTextField(placeholder: "0–100", text: $text, error: !text.isEmpty && value == nil ? "Type a whole number from 0 to 100" : nil,
+                  size: .lg, onSubmit: save)
+    } footer: {
+      DSButton("Cancel", variant: .ghost) { dismiss() }.keyboardShortcut(.cancelAction)
+      DSButton("Save", variant: .primary, disabledReason: value == nil ? "Type a score from 0 to 100" : nil, action: save)
+        .keyboardShortcut(.defaultAction)
     }
-    .padding(22)
-    .frame(width: 360)
+    .background(DS.color.surfaceRaised)
     .onAppear { text = video.score.map(String.init) ?? "" }
   }
+
   private func save() {
-    guard let n = Int(text), (0...100).contains(n) else { return }
+    guard let n = value else { return }
     model.setScore([video.id], n)
     dismiss()
   }
 }
 
-/// ⌘K "Pin to date…".
+/// ⌘K "Pin to date…" (DSDialog in a sheet).
 struct PinPromptSheet: View {
   @Bindable var model: AppModel
   let video: Video
   @State private var date = Date()
   @Environment(\.dismiss) private var dismiss
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("Pin “\(model.title(video))”").font(DS.Font.title)
-      DatePicker("Date", selection: $date, in: model.now..., displayedComponents: .date).datePickerStyle(.graphical).labelsHidden()
-      HStack {
-        Spacer()
-        Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-        Button("Pin") { model.pin(video.id, date: date); dismiss() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+    DSDialog("Pin “\(model.displayName(video))”", description: "It posts on this day; the rest of the plan flows around it.",
+             icon: "pin", width: 360, onClose: { dismiss() }) {
+      DatePicker("Date", selection: $date, in: model.now..., displayedComponents: .date)
+        .datePickerStyle(.graphical).labelsHidden()
+        .frame(maxWidth: .infinity)
+    } footer: {
+      DSButton("Cancel", variant: .ghost) { dismiss() }.keyboardShortcut(.cancelAction)
+      DSButton("Pin", variant: .primary) {
+        model.pin(video.id, date: date)
+        dismiss()
       }
+      .keyboardShortcut(.defaultAction)
     }
-    .padding(22)
+    .background(DS.color.surfaceRaised)
+    .onAppear { date = max(model.now, date) }
   }
 }

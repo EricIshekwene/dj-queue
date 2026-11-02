@@ -3,57 +3,6 @@ import DJQCore
 import Observation
 import SwiftUI
 
-enum Screen: String, CaseIterable, Identifiable {
-  case queue, week, today, library, posts, health
-  var id: String { rawValue }
-
-  var title: String {
-    switch self {
-    case .queue: "Queue"
-    case .week: "Week"
-    case .today: "Today"
-    case .library: "Library"
-    case .posts: "Posts"
-    case .health: "Health"
-    }
-  }
-
-  var symbol: String {
-    switch self {
-    case .queue: "list.number"
-    case .week: "calendar"
-    case .today: "checklist"
-    case .library: "photo.on.rectangle.angled"
-    case .posts: "paperplane"
-    case .health: "stethoscope"
-    }
-  }
-
-  var key: KeyEquivalent {
-    switch self {
-    case .queue: "1"
-    case .week: "2"
-    case .today: "3"
-    case .library: "4"
-    case .posts: "5"
-    case .health: "6"
-    }
-  }
-}
-
-enum QueueTab: String, CaseIterable, Identifiable {
-  case ready, toScore, needsEdit, excluded
-  var id: String { rawValue }
-  var title: String {
-    switch self {
-    case .ready: "Ready"
-    case .toScore: "To score"
-    case .needsEdit: "Needs edit"
-    case .excluded: "Excluded"
-    }
-  }
-}
-
 enum PostsFilter: String, CaseIterable, Identifiable {
   case all, problems, posted, failed, copyright
   var id: String { rawValue }
@@ -68,19 +17,19 @@ enum PostsFilter: String, CaseIterable, Identifiable {
   }
 }
 
-struct EditorRequest: Equatable {
-  var videoId: String
-  var videoIds: [String]
-  var fixPostId: String?
-}
-
-struct Toast: Equatable, Identifiable {
-  let id = UUID()
-  var text: String
-  var isError = false
-}
-
 /// One source of UI truth: loads from Store, refreshes on ChangeSignal + a 5 s timer, and runs every action.
+///
+/// Round-2 screen contract (fan-out leaves build on this; extend with `extension AppModel` in your own files):
+/// - Lists: `scoreList`, `editList`, `queueList`, `libraryAll` + per-video caches `suggestionsByVideo`,
+///   `issuesByVideo`, `needsTitleHelp` (all loaded off-main on every refresh).
+/// - `dsClip(_:for:)` maps a Video to the DS card model (AppModel+Clips.swift).
+/// - `viewMode(_:)` / `setViewMode(_:for:)`, `playback` / `setPlayback(_:)`, `requestProxies(_:)`
+///   (AppModel+Playback.swift).
+/// - Selection per screen: `selection`, `select(_:modifiers:ordered:screen:)`, `selectAll`, `clearSelection`
+///   (AppModel+Selection.swift).
+/// - Bulk: `requestBulk(_:)` (confirmation sheet + undo toast), `undoLast()`, `copyAgentPrompt(_:)`
+///   (AppModel+Bulk.swift).
+/// - Toasts: `show(_:error:)` or `show(_: DSToastModel)`.
 @MainActor
 @Observable
 final class AppModel {
@@ -123,7 +72,19 @@ final class AppModel {
   var loadError: String?
   var doctorReport: DoctorReport?
   var doctorRunning = false
-  var prefillRules = PrefillRules()
+  /// Queue screen: upcoming planned clips in date order, then the ready unplanned backlog (`ordered`).
+  var queueList: [Video] = []
+  /// Title suggestions per short clip, best first (metadata only — never generated in the app).
+  var suggestionsByVideo: [String: [TitleSuggestion]] = [:]
+  /// Needs-edit clips with a chosen cover frame (Edit's "Cover" badge).
+  var coverIds: Set<String> = []
+  /// Caption templates and hashtag sets (Edit's bulk/context menus).
+  var captionTemplates: [CaptionTemplate] = []
+  var hashtagSets: [HashtagSet] = []
+  /// What keeps a clip from being ready / postable (Validation.issues) for every clip in `editList` and `queueList`.
+  var issuesByVideo: [String: [ValidationIssue]] = [:]
+  /// Short clips with no title and no confident suggestion (AgentPrompts.needsTitleHelp) → "Ask an agent".
+  var needsTitleHelp: Set<String> = []
   private var prepared: [String: PreparedPost] = [:]
   private var preparedStamp: [String: String] = [:]
   private var refreshing = false
@@ -138,40 +99,77 @@ final class AppModel {
   var renderProgress: [String: Double] = [:]
   /// Week drop that would replace a planned video (confirm first).
   var pendingReplace: (videoId: String, day: String, replaced: String)?
-  var markPostedPrefill: String?
+  var markPostedDraftURL: String?
   var offerLaunchAgent = false
+  /// ⌘K "Set score…" sheet (CommandPalette.swift).
   var scorePrompt: Video?
   /// Last LaunchAgent install failure, shown in Settings → Engine.
   var agentError: String?
+  /// ⌘K "Pin to date…" sheet (CommandPalette.swift).
   var pinPrompt: Video?
 
   // MARK: UI state
-  var screen: Screen = .queue
-  var queueTab: QueueTab = .ready
-  var queueSelection: Set<String> = []
-  var librarySelection: Set<String> = []
+  var screen: Screen = .score
   var librarySession: String? = nil
   var postsSelection: String? = nil
   var postsFilter: PostsFilter = .all
   var weekStart: String = "" { didSet { if oldValue != weekStart && !oldValue.isEmpty { refresh() } } }
   var editor: EditorRequest?
-  var scoreMode = false
   var showPalette = false
+  /// In-window Settings modal (DESIGN-v2 §6.9), opened by the sidebar row, ⌘, and `WindowManager.showSettings`.
+  var showSettings = false
+  /// Section the Settings modal shows (the Settings leaf owns the `SettingsSection` enum).
+  var settingsSection: SettingsSection = .general
+  /// Sidebar collapsed to icons by the user (it also collapses automatically under 1200 pt).
+  var sidebarCollapsed = false
   var showShortcuts = false
   var showInspector = true
   var weekBacklogExpanded = false
   var libraryGrid = false
+  /// Quick-look sheet (Shared/ClipPreviewSheet.swift).
   var previewVideo: Video?
   var markPostedTarget: PlatformPost?
   var reportTarget: PlatformPost?
   var longformTarget: Video?
   var confirmPause = false
-  var toast: Toast?
+  /// The one toast (`.dsToast`). Set through `show(_:)`.
+  var toast: DSToastModel?
   var highlightPostId: String?
   var dismissedWarnings: [String: Date] = [:]
   var recentCommands: [String] = []
   /// Snapshot mode freezes `now` and skips timers.
   var frozen = false
+
+  // MARK: Round-2 contract state (see the extensions in App/)
+
+  /// Remembered view mode per screen (UserDefaults `djq.viewMode.<screen>`). Read with `viewMode(_:)`.
+  var viewModes: [Screen: DSViewMode] = [:]
+  /// Autoplay preferences (UserDefaults `djq.playback`). Change ONLY with `setPlayback(_:)` / `playbackBinding`
+  /// (they persist and drop stale proxy URLs).
+  var playback = PlaybackPrefs()
+  /// The one background proxy generator (stopped on quit).
+  let proxies: ProxyService
+  /// Proxy file per clip id for the current `playback.loop` range (filled by `requestProxies`).
+  var proxyURLs: [String: URL] = [:]
+  @ObservationIgnored var proxyPending: Set<String> = []
+  /// Decoded covers by ThumbCache key (filled by `requestPoster`).
+  var posters: [String: NSImage] = [:]
+  @ObservationIgnored var posterPending: Set<String> = []
+  /// Selected clip ids per screen (#11). Use `select`, `toggleSelection`, `selectAll`, `clearSelection`.
+  var selection: [Screen: Set<String>] = [:]
+  /// Last plain/⌘-clicked id per screen (⇧-click range anchor).
+  var selectionAnchor: [Screen: String] = [:]
+  /// Ordered ids each screen currently shows (ClipCollection registers them; ⌘A selects these).
+  var visibleIds: [Screen: [String]] = [:]
+  /// Bulk actions with batch journal + undo (posts ChangeSignal itself).
+  let bulk: BulkActions
+  /// Bulk confirmation sheet currently shown (AppModel+Bulk.swift).
+  var pendingBulk: PendingBulk?
+  /// Batch the next ⌘Z undoes.
+  var lastBatchId: String?
+
+  /// True while rendering `--snapshot` (no UserDefaults reads/writes, no proxy generation).
+  static let isSnapshotRun: Bool = { if case .snapshot = LaunchMode.current { return true } else { return false } }()
 
   init(store: Store) {
     self.store = store
@@ -180,14 +178,22 @@ final class AppModel {
     postActions = PostActions(store: store)
     renderer = Renderer(store: store)
     publisher = ManualPublisher(store: store, renderer: renderer)
+    proxies = ProxyService(store: store)
+    bulk = BulkActions(store: store)
+    bulk.postsChangeSignal = true
     ThumbCache.shared.store = store
-    if let d = UserDefaults.standard.dictionary(forKey: "djq.dismissedWarnings") as? [String: Date] { dismissedWarnings = d }
-    recentCommands = UserDefaults.standard.stringArray(forKey: "djq.recentCommands") ?? []
+    if !Self.isSnapshotRun {
+      if let d = UserDefaults.standard.dictionary(forKey: "djq.dismissedWarnings") as? [String: Date] { dismissedWarnings = d }
+      recentCommands = UserDefaults.standard.stringArray(forKey: "djq.recentCommands") ?? []
+      loadPersistedPrefs()
+    }
     weekStart = planner.weekStart(for: store.clock.now)
     renderer.onProgress = { [weak self] id, f in
       Task { @MainActor in self?.renderProgress[id] = f < 1 ? f : nil }
     }
-    refresh()  // first load off-main; views show skeleton rows until it lands
+    // First load off-main; views show skeleton rows until it lands. Snapshot runs load synchronously themselves
+    // (a late async load would land mid-shot).
+    if !Self.isSnapshotRun { refresh() }
   }
 
   /// Progress of the render a post is waiting for (nil when not rendering here).
@@ -263,8 +269,13 @@ final class AppModel {
     var keptRemoved: Set<String> = []
     var renderQueue = 0
     var activeRenders: [Render] = []
-    var prefillRules = PrefillRules()
+    var suggestions: [String: [TitleSuggestion]] = [:]
+    var issues: [String: [ValidationIssue]] = [:]
+    var needsTitleHelp: Set<String> = []
     var editStamps: [String: Double] = [:]
+    var covers: Set<String> = []
+    var captionTemplates: [CaptionTemplate] = []
+    var hashtagSets: [HashtagSet] = []
     var weekSlots: [PlanSlot] = []
     var weekAwake: [DateInterval] = []
     var error: String?
@@ -297,7 +308,21 @@ final class AppModel {
       l.keptRemoved = Set((try store.kv("ui.keptRemoved", as: [String].self)) ?? [])
       l.renderQueue = try store.renders(where: "status IN ('pending','rendering') AND deleted_at IS NULL").count
       l.activeRenders = try store.renders(where: "status='rendering' AND deleted_at IS NULL")
-      l.prefillRules = PrefillRules.load(store.paths)
+      // Per-clip caches for the round-2 screens (suggestions for every active short; issues for Edit + Queue).
+      for v in l.videos where v.type == .short && !v.excluded {
+        let s = try store.titleSuggestions(videoId: v.id)
+        if !s.isEmpty { l.suggestions[v.id] = s }
+        if AgentPrompts.needsTitleHelp(v, suggestions: s) && !v.missing { l.needsTitleHelp.insert(v.id) }
+      }
+      let plannedIds = Set(l.upcomingSlots.map(\.videoId))
+      for v in l.videos where v.type == .short && (plannedIds.contains(v.id) || l.needsEdit.contains { $0.id == v.id }
+                                                   || l.ordered.contains { $0.id == v.id }) {
+        l.issues[v.id] = (try? Validation.issues(video: v, store: store)) ?? []
+      }
+      // Edit's "Cover" badge and bulk menus (read here, off the main actor, not per refresh in the view).
+      for v in l.needsEdit where (try? store.edit(videoId: v.id))?.coverTime != nil { l.covers.insert(v.id) }
+      l.captionTemplates = try store.captionTemplates()
+      l.hashtagSets = try store.hashtagSets()
       l.editStamps = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT video_id, updated_at FROM edits").compactMap { r in
         r.string("video_id").map { ($0, r.double("updated_at") ?? 0) }
       })
@@ -319,6 +344,17 @@ final class AppModel {
     videos = l.videos
     videoById = Dictionary(uniqueKeysWithValues: videos.map { ($0.id, $0) })
     ordered = l.ordered
+    suggestionsByVideo = l.suggestions
+    issuesByVideo = l.issues
+    needsTitleHelp = l.needsTitleHelp
+    coverIds = l.covers
+    captionTemplates = l.captionTemplates
+    hashtagSets = l.hashtagSets
+    var seenPlanned = Set<String>()
+    let planned = l.upcomingSlots.sorted { ($0.date, $0.position) < ($1.date, $1.position) }
+      .compactMap { s -> Video? in seenPlanned.insert(s.videoId).inserted ? videoById[s.videoId] : nil }
+      .filter { $0.type == .short && !$0.excluded }
+    queueList = planned + l.ordered.filter { !seenPlanned.contains($0.id) }
     toScore = l.toScore
     needsEdit = l.needsEdit
     excluded = videos.filter { $0.excluded && $0.type == .short }
@@ -348,7 +384,6 @@ final class AppModel {
     activeRenders = l.activeRenders
     renderProgress = renderProgress.filter { id, _ in l.activeRenders.contains { $0.id == id } }
     loaded = true
-    prefillRules = l.prefillRules
     weekSlots = l.weekSlots
     weekAwake = l.weekAwake
     ThumbStamps.shared.update(l.editStamps)
@@ -390,10 +425,11 @@ final class AppModel {
 
   // MARK: Derived
 
-  func title(_ v: Video) -> String {
-    if v.type == .long { return "\(Captions.setName(sessionName(v))) · Part \(v.part ?? 1)" }
-    let t = Captions.oneLine(Prefill.text(tag: v.tag, kind: .djVid, rules: prefillRules))
-    return t.isEmpty ? v.tag : t
+  /// What every screen shows for a clip: `Video.displayName` (Title, else the raw tag verbatim). Long-form parts
+  /// without a Title read "Set · Part N" from the session name (data, not a guess).
+  func displayName(_ v: Video) -> String {
+    if v.type == .long && v.titleText == nil { return "\(Captions.setName(sessionName(v))) · Part \(v.part ?? 1)" }
+    return v.displayName
   }
 
   func sessionName(_ v: Video) -> String { sessionById[v.sessionId]?.name ?? "" }
@@ -406,7 +442,14 @@ final class AppModel {
     return h.kind != .stop && now.timeIntervalSince(h.at) < 180
   }
 
-  var unscoredCount: Int { toScore.count }
+  // MARK: Screen lists (round 2)
+
+  /// Score screen: short clips with no score (not excluded/missing), session order.
+  var scoreList: [Video] { toScore }
+  /// Edit screen: scored clips that aren't ready yet.
+  var editList: [Video] { needsEdit }
+  /// Library: every video in every state.
+  var libraryAll: [Video] { videos }
 
   /// Latest attempt per platform for a video.
   func latestPosts(_ videoId: String) -> [Platform: PlatformPost] {
@@ -448,27 +491,9 @@ final class AppModel {
     return ("\(n) post\(n == 1 ? "" : "s") need\(n == 1 ? "s" : "") attention", parts.joined(separator: " · ") + (n > 3 ? " · …" : ""))
   }
 
-  struct Warning: Identifiable { let id: String; let text: String; let action: String?; let run: (() -> Void)? }
-
-  var warnings: [Warning] {
-    var w: [Warning] = []
-    if !engineRunning {
-      w.append(.init(id: "engine", text: "Engine not running — posts won't be prepared", action: engineInProcess ? nil : "Open Health",
-                     run: { [weak self] in self?.screen = .health }))
-    }
-    if runway.approvedDays < settings.approvedRunwayAlertDays {
-      w.append(.init(id: "approve", text: "Approved runway \(runway.approvedDays)d — approve next week", action: "Open Week",
-                     run: { [weak self] in self?.goToNextWeek() }))
-    }
-    if runway.totalDays < settings.totalRunwayAlertDays {
-      w.append(.init(id: "record", text: "Total runway \(runway.totalDays)d — record a new set", action: nil, run: nil))
-    }
-    return w.filter { d in dismissedWarnings[d.id].map { now.timeIntervalSince($0) > 86400 } ?? true }
-  }
-
   func dismissWarning(_ id: String) {
     dismissedWarnings[id] = now
-    UserDefaults.standard.set(dismissedWarnings, forKey: "djq.dismissedWarnings")
+    if !Self.isSnapshotRun { UserDefaults.standard.set(dismissedWarnings, forKey: "djq.dismissedWarnings") }
   }
 
   func goToNextWeek() {
@@ -495,20 +520,23 @@ final class AppModel {
     }
   }
 
+  /// One-line toast. Errors use the danger tone and stay 6 s (others 3 s); snapshot mode keeps it on screen.
   func show(_ text: String, error: Bool = false) {
-    let t = Toast(text: text, isError: error)
+    show(DSToastModel(message: text, tone: error ? .danger : .neutral, duration: error ? 6 : 3))
+  }
+
+  /// Any toast (e.g. with an Undo action). `.dsToast` in MainWindowView hosts it and auto-dismisses it.
+  func show(_ t: DSToastModel) {
+    var t = t
+    if frozen { t.duration = nil }
     toast = t
-    if frozen { return }
-    DispatchQueue.main.asyncAfter(deadline: .now() + (error ? 4 : 2)) { [weak self] in
-      if self?.toast?.id == t.id { self?.toast = nil }
-    }
   }
 
   func noteCommand(_ id: String) {
     recentCommands.removeAll { $0 == id }
     recentCommands.insert(id, at: 0)
     recentCommands = Array(recentCommands.prefix(5))
-    UserDefaults.standard.set(recentCommands, forKey: "djq.recentCommands")
+    if !Self.isSnapshotRun { UserDefaults.standard.set(recentCommands, forKey: "djq.recentCommands") }
   }
 
   // MARK: Digit scoring (Queue + Library)
@@ -730,11 +758,9 @@ final class AppModel {
         guard let rv = try s.resolvedVersion(videoId: v.id, number: post.versionNo, settings: st) else {
           throw EditorlessError("\(v.tag) has no v\(post.versionNo)")
         }
-        let rules = PrefillRules.load(s.paths)
         let c = Captions.caption(for: post.platform, version: rv, video: v, sessionName: try s.session(id: v.sessionId)?.name ?? "",
-                                 sets: try s.hashtagSets(), templates: try s.captionTemplates(), settings: st, rules: rules)
-        let t = post.platform == .youtube
-          ? Captions.youtubeTitle(rv, video: v, limit: st.limits[.youtube]?.titleLimit ?? 100, rules: rules) : nil
+                                 sets: try s.hashtagSets(), templates: try s.captionTemplates(), settings: st)
+        let t = post.platform == .youtube ? Captions.youtubeTitle(rv, video: v, settings: st) : nil
         return .success((c, t))
       } catch { return .failure(error) }
     }.value
@@ -781,7 +807,10 @@ final class AppModel {
 
   func closeEditor() {
     let fix = editor?.fixPostId
-    for id in editor?.videoIds ?? [] { ThumbCache.shared.invalidate(id) }
+    for id in editor?.videoIds ?? [] {
+      ThumbCache.shared.invalidate(id)
+      proxyURLs[id] = nil  // the crop/trim may have changed → a new proxy key
+    }
     prepared = [:]
     preparedStamp = [:]
     editor = nil
@@ -793,14 +822,9 @@ final class AppModel {
     screen = .posts
   }
 
-  var selectedVideoIds: [String] {
-    switch screen {
-    case .library: Array(librarySelection)
-    default: Array(queueSelection)
-    }
-  }
+  /// Selected ids on the current screen, in display order (⌘K, ⌘E, context menus).
+  var selectedVideoIds: [String] { selectedIds(screen) }
 
-  var focusedVideo: Video? { selectedVideoIds.count == 1 ? video(selectedVideoIds[0]) : nil }
 
   // MARK: Engine + health
 

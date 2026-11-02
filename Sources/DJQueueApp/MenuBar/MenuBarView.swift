@@ -2,8 +2,9 @@ import AppKit
 import DJQCore
 import SwiftUI
 
-/// MB.ICON: glyph + approved days ("5d"); red badge with count on errors; grey when the engine is stopped;
-/// pause glyph when paused. Drawn at display time so the colours follow the menu bar's appearance.
+/// MB.ICON (DESIGN-v2 §6.10): template glyph + approved-runway days ("5d"); a red dot when posts need attention;
+/// grey when the engine is stopped; pause glyph while posting is paused. Drawn at display time so the colours
+/// follow the menu bar's appearance (template unless the red dot has to stay red).
 enum MenuBarIcon {
   static func image(days: Int, errors: Int, engineOn: Bool, paused: Bool) -> NSImage {
     let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
@@ -12,11 +13,9 @@ enum MenuBarIcon {
     let symbolName = paused ? "pause.circle" : "play.square.stack"
     let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: "DJ Queue")?
       .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))
-    let badgeText = errors > 9 ? "9+" : "\(errors)" as NSString
-    let badgeFont = NSFont.systemFont(ofSize: 9, weight: .bold)
-    let badgeW = errors > 0 ? max(14, badgeText.size(withAttributes: [.font: badgeFont]).width + 7) : 0
     let symW = symbol?.size.width ?? 16
-    let size = NSSize(width: ceil(symW + 4 + textSize.width + (errors > 0 ? badgeW + 3 : 0)), height: 18)
+    let dot: CGFloat = 6
+    let size = NSSize(width: ceil(symW + 4 + textSize.width + (errors > 0 ? dot + 1 : 0)), height: 18)
     let template = errors == 0
     let img = NSImage(size: size, flipped: false) { _ in
       let alpha: CGFloat = engineOn ? 1 : 0.4
@@ -32,17 +31,17 @@ enum MenuBarIcon {
       }
       text.draw(at: NSPoint(x: symW + 4, y: (18 - textSize.height) / 2), withAttributes: [.font: font, .foregroundColor: ink])
       if errors > 0 {
-        let r = NSRect(x: size.width - badgeW, y: 2, width: badgeW, height: 14)
         NSColor.systemRed.setFill()
-        NSBezierPath(roundedRect: r, xRadius: 7, yRadius: 7).fill()
-        let bs = badgeText.size(withAttributes: [.font: badgeFont])
-        badgeText.draw(at: NSPoint(x: r.midX - bs.width / 2, y: r.midY - bs.height / 2),
-                       withAttributes: [.font: badgeFont, .foregroundColor: NSColor.white])
+        NSBezierPath(ovalIn: NSRect(x: size.width - dot, y: 18 - dot - 2, width: dot, height: dot)).fill()
       }
       return true
     }
     img.isTemplate = template
-    img.accessibilityDescription = "DJ Queue: \(days) days approved\(errors > 0 ? ", \(errors) problems" : "")"
+    var desc = "DJ Queue: \(days) days approved"
+    if errors > 0 { desc += ", \(errors) need attention" }
+    if paused { desc += ", posting paused" }
+    if !engineOn { desc += ", engine stopped" }
+    img.accessibilityDescription = desc
     return img
   }
 }
@@ -64,172 +63,292 @@ struct MenuBarRoot: View {
     if let m = host.model {
       MenuBarView(model: m)
     } else {
-      VStack(alignment: .leading, spacing: 8) {
-        Label("DJ Queue can't start", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
-        Text(host.startupError ?? "").font(DS.Font.secondary)
-        Button("Quit") { NSApp.terminate(nil) }
+      VStack(alignment: .leading, spacing: DS.space.sm) {
+        Label("DJ Queue can't start", systemImage: DSTone.danger.symbol)
+          .font(DS.type.calloutSemibold).foregroundStyle(DS.color.danger)
+        Text(host.startupError ?? "").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        DSButton("Quit", variant: .outline, size: .sm) { NSApp.terminate(nil) }
       }
-      .padding(14).frame(width: 320)
+      .padding(DS.space.md)
+      .frame(width: 320, alignment: .leading)
+      .background(DS.color.surfaceRaised)
     }
   }
 }
 
-/// MB.S1–S3 (Bonsai popover ref): big runway number, next post, due rows, errors, footer.
+/// What the menu-bar window shows, read from the model in one place (snapshots build variants of it).
+struct MenuBarState {
+  /// The post the header is about: the first one due now, else the next upcoming one.
+  var next: PlatformPost?
+  /// Other posts due now (≤ 3 shown).
+  var due: [PlatformPost]
+  var problems: [PlatformPost]
+  var engineRunning: Bool
+  var paused: Bool
+  var lastTick: Date?
+
+  @MainActor init(model m: AppModel) {
+    let dueNow = m.dueNow.filter { $0.resolution == nil }.sorted { $0.scheduledAt < $1.scheduledAt }
+    next = dueNow.first ?? m.nextPost
+    due = Array(dueNow.dropFirst())
+    problems = m.problems
+    engineRunning = m.engineRunning
+    paused = m.settings.paused
+    lastTick = m.lastHeartbeat?.at
+  }
+}
+
+/// MB (DESIGN-v2 §6.10, `R2.MENUBAR` Crouton popover + Lyssna countdown): "Next post" + countdown (display) + the
+/// clip row; [Copy caption] [Mark posted] (primary only when due); ≤ 3 due rows; "2 need attention › Review";
+/// footer: Open DJ Queue · Pause posting.
 struct MenuBarView: View {
   @Bindable var model: AppModel
+
+  var body: some View {
+    MenuBarContent(model: model, state: MenuBarState(model: model))
+      .onAppear { model.popoverVisible = true; model.refresh() }
+      .onDisappear { model.popoverVisible = false }
+  }
+}
+
+struct MenuBarContent: View {
+  @Bindable var model: AppModel
+  let state: MenuBarState
+  /// Post whose inline "paste URL" field is open (the main window may be closed, so marking posted stays here).
   @State private var urlFor: String?
   @State private var url = ""
   @State private var urlError: String?
+  @State private var confirmPause = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      runway
-      if !model.problems.isEmpty { errors }
-      if let n = model.nextPost { next(n) }
-      due
-      Divider()
+    VStack(alignment: .leading, spacing: 0) {
+      VStack(alignment: .leading, spacing: DS.space.md) {
+        if let n = state.next { header(n) } else { nothingNext }
+        if !state.due.isEmpty { dueList }
+      }
+      .padding(DS.space.md)
+      if !state.problems.isEmpty || !state.engineRunning {
+        VStack(spacing: DS.space.xs) {
+          if !state.problems.isEmpty { problemsRow }
+          if !state.engineRunning { engineRow }
+        }
+        .padding(.horizontal, DS.space.sm)
+        .padding(.bottom, DS.space.sm)
+      }
+      DSSeparator()
       footer
-      engineLine
     }
-    .padding(14)
     .frame(width: 320)
-    .onAppear { model.popoverVisible = true; model.refresh() }
-    .onDisappear { model.popoverVisible = false }
+    .background(DS.color.surfaceRaised)
   }
 
-  private var runway: some View {
-    HStack(alignment: .bottom) {
-      VStack(alignment: .leading, spacing: 0) {
-        Text("\(model.runway.approvedDays)d")
-          .font(.system(size: 34, weight: .semibold, design: .rounded).monospacedDigit())
-          .foregroundStyle(model.runwayTint(model.runway.approvedDays, threshold: model.settings.approvedRunwayAlertDays))
-        Text("approved").font(DS.Font.secondary).foregroundStyle(.secondary)
+  // MARK: Header
+
+  private func header(_ p: PlatformPost) -> some View {
+    let due = model.isActionableNow(p)
+    let v = model.video(p.videoId)
+    let status = model.postStatus(p)
+    return VStack(alignment: .leading, spacing: DS.space.sm) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(due ? "Post now" : "Next post").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+        Text(countdownText(p, status: status, due: due))
+          .font(DS.type.display.monospacedDigit())
+          .foregroundStyle(status.problemTone == .warning ? DS.color.warning : DS.color.text)
+          .contentTransition(.numericText())
       }
-      Spacer()
-      RunwayNumber(days: model.runway.readyDays, label: "ready", emphasized: false)
-      RunwayNumber(days: model.runway.totalDays, label: "total", emphasized: false).padding(.leading, 12)
-    }
-  }
-
-  private var errors: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Button { open(.posts); model.reviewProblems() } label: {
-        HStack {
-          Image(systemName: "exclamationmark.octagon.fill")
-          Text(model.problemSummary.title).font(DS.Font.bodyStrong)
-          Spacer()
-          Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 10)
-        .frame(height: 30)
-        .background(Color.red, in: RoundedRectangle(cornerRadius: 8))
-      }
-      .buttonStyle(.plain)
-      ForEach(model.problems.prefix(3)) { p in
-        HStack(spacing: 8) {
-          PlatformGlyph(platform: p.platform, tint: .red, size: 18)
-          Text(model.video(p.videoId).map(model.title) ?? "").font(DS.Font.body).lineLimit(1)
-          Spacer()
-          StatusPill(text: p.errorType?.displayName ?? p.state.displayName, tint: .red)
-        }
-      }
-    }
-  }
-
-  private func next(_ p: PlatformPost) -> some View {
-    HStack(spacing: 8) {
-      Eyebrow("Next")
-      Text(Fmt.shortTime(p.scheduledAt, tz: model.tz)).font(DS.Font.mono)
-      PlatformGlyph(platform: p.platform, size: 16)
-      Text(model.video(p.videoId).map(model.title) ?? "").font(DS.Font.body).lineLimit(1)
-      Spacer()
-      Text(model.dm.key(p.scheduledAt) == model.todayKey ? Fmt.relative(p.scheduledAt, now: model.now) : Fmt.day(p.scheduledAt, tz: model.tz, style: "EEE"))
-        .font(DS.Font.secondary).foregroundStyle(.secondary)
-    }
-  }
-
-  @ViewBuilder private var due: some View {
-    let rows = Array(model.dueNow.prefix(3))
-    if !rows.isEmpty {
-      VStack(alignment: .leading, spacing: 6) {
-        Eyebrow("Due now")
-        ForEach(rows) { p in
-          VStack(spacing: 6) {
-            HStack(spacing: 8) {
-              PlatformGlyph(platform: p.platform, size: 20)
-              VStack(alignment: .leading, spacing: 0) {
-                Text(model.video(p.videoId).map(model.title) ?? "").font(DS.Font.bodyStrong).lineLimit(1)
-                Text(Fmt.shortTime(p.scheduledAt, tz: model.tz) + (p.scheduledAt < model.now ? " · \(Fmt.relative(p.scheduledAt, now: model.now))" : ""))
-                  .font(DS.Font.secondary).foregroundStyle(p.state == .overdue ? Color.orange : .secondary)
-              }
-              Spacer()
-              Button { model.copyCaption(p) } label: { Image(systemName: "text.quote") }.help("Copy caption")
-                .accessibilityLabel("Copy caption")
-              Button { urlFor = urlFor == p.id ? nil : p.id; url = ""; urlError = nil } label: { Image(systemName: "checkmark.circle") }
-                .help("Mark posted").accessibilityLabel("Mark posted")
-            }
-            .buttonStyle(.borderless)
-            if urlFor == p.id {
-              HStack {
-                TextField("Paste \(p.platform.shortName) URL", text: $url).textFieldStyle(.roundedBorder)
-                  .onSubmit { save(p) }
-                  .onChange(of: url) { urlError = nil }
-                Button("Save") { save(p) }.disabled(url.isEmpty)
-              }
-              if let urlError {
-                Label(urlError, systemImage: "exclamationmark.circle.fill").font(DS.Font.secondary).foregroundStyle(.red)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-            }
+      HStack(spacing: DS.space.sm) {
+        DSXThumb(model: model, video: v, width: 27)
+        VStack(alignment: .leading, spacing: 3) {
+          Text(v.map(model.displayName) ?? "Missing clip").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).lineLimit(2)
+          HStack(spacing: 5) {
+            Image(systemName: p.platform.dsSymbol).font(.system(size: 10, weight: .medium)).foregroundStyle(DS.color.textSecondary)
+            Text(whenText(p)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
           }
         }
+        Spacer(minLength: 0)
       }
+      HStack(spacing: DS.space.xs) {
+        DSButton("Copy caption", icon: "text.quote", variant: .outline, size: .sm) { model.copyCaptionNamed(p) }
+        if p.platform == .youtube {
+          DSIconButton("textformat", tooltip: "Copy title for YouTube", variant: .ghost, size: .sm) { model.copyTitleNamed(p) }
+        }
+        Spacer(minLength: 0)
+        DSButton("Mark posted", icon: "checkmark", variant: due ? .primary : .ghost, size: .sm,
+                 tooltip: due ? "Paste the post URL" : "Not due yet — you can still mark it posted early") { toggleURL(p) }
+      }
+      if urlFor == p.id { urlField(p) }
+    }
+  }
+
+  private var nothingNext: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text("Next post").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+      Text("Nothing planned").font(DS.type.headline).foregroundStyle(DS.color.text)
+      Text("Approve a week to plan posts.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+    }
+  }
+
+  private func countdownText(_ p: PlatformPost, status: DSXPostStatus, due: Bool) -> String {
+    if case .late(let t) = status { return "Late \(t)" }
+    if due { return "Due now" }
+    return AppModel.countdown(to: p.scheduledAt, now: model.now)
+  }
+
+  /// "TikTok · 7:00 PM" (+ weekday when not today).
+  private func whenText(_ p: PlatformPost) -> String {
+    let day = model.dm.key(p.scheduledAt) == model.todayKey ? "" : "\(Fmt.day(p.scheduledAt, tz: model.tz, style: "EEE")) "
+    return "\(p.platform.displayName) · \(day)\(AppModel.clockText(p.scheduledAt, tz: model.tz))"
+  }
+
+  // MARK: Due list
+
+  private var dueList: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text("Also due").font(DS.type.micro).foregroundStyle(DS.color.textTertiary).padding(.bottom, 2)
+      ForEach(state.due.prefix(3)) { p in
+        VStack(spacing: 4) {
+          HStack(spacing: DS.space.xs) {
+            DSPlatformIcon(platform: p.platform, state: .due, size: 22)
+            VStack(alignment: .leading, spacing: 0) {
+              Text(model.video(p.videoId).map(model.displayName) ?? "").font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(1)
+              Text("\(p.platform.dsxCompactName) · \(AppModel.clockText(p.scheduledAt, tz: model.tz))")
+                .font(DS.type.caption.monospacedDigit())
+                .foregroundStyle(p.state == .overdue ? DS.color.warning : DS.color.textSecondary)
+            }
+            Spacer(minLength: 0)
+            DSIconButton("text.quote", tooltip: "Copy caption", size: .sm) { model.copyCaptionNamed(p) }
+            DSIconButton("checkmark.circle", tooltip: "Mark posted", size: .sm, isOn: urlFor == p.id) { toggleURL(p) }
+          }
+          .frame(height: 36)
+          if urlFor == p.id { urlField(p) }
+        }
+      }
+      if state.due.count > 3 {
+        Text("+ \(state.due.count - 3) more in Today").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+      }
+    }
+  }
+
+  // MARK: Inline mark posted
+
+  private func toggleURL(_ p: PlatformPost) {
+    dsWithAnimation(DS.motion.hover) {
+      urlFor = urlFor == p.id ? nil : p.id
+      url = ""
+      urlError = nil
+    }
+  }
+
+  private func urlField(_ p: PlatformPost) -> some View {
+    HStack(alignment: .top, spacing: DS.space.xs) {
+      DSTextField(placeholder: "Paste the \(p.platform.displayName) URL", text: $url, error: urlError, size: .sm) { save(p) }
+        .onChange(of: url) { urlError = nil }
+      DSButton("Save", variant: .outline, size: .sm, disabledReason: url.isEmpty ? "Paste the post URL first" : nil) { save(p) }
     }
   }
 
   /// Validated inline: on a bad URL the field stays open with the reason (the main window may be closed).
   private func save(_ p: PlatformPost) {
-    let u = url.trimmingCharacters(in: .whitespaces)
+    let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
     do {
       try model.postActions.markPosted(postId: p.id, url: u, at: Date())
       ChangeSignal.post()
       model.refresh()
       urlFor = nil
       urlError = nil
+      url = ""
     } catch {
       urlError = error.localizedDescription
     }
   }
 
-  private var footer: some View {
-    HStack(spacing: 8) {
-      Button("Open DJ Queue") { open(nil) }.buttonStyle(.borderedProminent)
-      Spacer()
-      Button(model.settings.paused ? "Resume" : "Pause all") { model.setPaused(!model.settings.paused) }
-      Menu {
-        ForEach(model.settings.activePlatforms) { p in
-          Toggle(p.displayName, isOn: Binding(get: { model.settings.pausedPlatforms.contains(p) }, set: { model.setPlatformPaused(p, $0) }))
+  // MARK: Attention rows
+
+  private var problemsRow: some View {
+    let n = state.problems.count
+    return Button {
+      WindowManager.shared.showMain(screen: .posts)
+      model.reviewProblems()
+    } label: {
+      HStack(spacing: DS.space.xs) {
+        Image(systemName: DSTone.danger.symbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(DS.color.danger)
+        Text("\(n) need\(n == 1 ? "s" : "") attention").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+        Spacer(minLength: 0)
+        Text("Review").font(DS.type.calloutMedium).foregroundStyle(DS.color.textSecondary)
+        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DS.color.textTertiary)
+      }
+      .padding(.horizontal, DS.space.sm)
+      .frame(height: 40)
+      .background(DS.color.tint(.danger), in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .dsTooltip(model.problemSummary.detail)
+  }
+
+  private var engineRow: some View {
+    Button {
+      WindowManager.shared.showMain(screen: .health)
+    } label: {
+      HStack(spacing: DS.space.xs) {
+        DSStatusDot(tone: .danger, size: 7)
+        Text("Engine stopped").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+        Text(state.lastTick.map { "ticked \(Fmt.relative($0, now: model.now))" } ?? "never ticked")
+          .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+        Spacer(minLength: 0)
+        Text("Health").font(DS.type.calloutMedium).foregroundStyle(DS.color.textSecondary)
+        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DS.color.textTertiary)
+      }
+      .padding(.horizontal, DS.space.sm)
+      .frame(height: 40)
+      .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .dsTooltip("Nothing is posted or handed to you while the engine is stopped. Open Health to see why.")
+  }
+
+  // MARK: Footer
+
+  @ViewBuilder private var footer: some View {
+    if confirmPause {
+      HStack(spacing: DS.space.xs) {
+        Text("Pause all posting?").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+        Spacer(minLength: 0)
+        DSButton("Cancel", variant: .ghost, size: .sm) { confirmPause = false }
+        DSButton("Pause", variant: .outline, size: .sm, tooltip: "Nothing is handed to you or posted until you resume") {
+          model.setPaused(true)
+          confirmPause = false
         }
-      } label: { Image(systemName: "pause.circle") }
-        .menuStyle(.borderlessButton).fixedSize().help("Pause one platform")
+      }
+      .padding(.horizontal, DS.space.md)
+      .frame(height: 52)
+    } else {
+      HStack(spacing: DS.space.xs) {
+        DSButton("Open DJ Queue", variant: .ghost, size: .sm) { WindowManager.shared.showMain() }
+        Spacer(minLength: 0)
+        Text("Pause posting").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+        DSSwitch(isOn: Binding(get: { state.paused }, set: { on in
+          if on { confirmPause = true } else { model.setPaused(false) }
+        }), small: true)
+        .dsTooltip(state.paused ? "Posting is paused — switch off to resume" : "Pause all posting (asks first)")
+        .accessibilityLabel("Pause posting")
+        DSXMenuButton(tooltip: "More", size: .sm) {
+          Menu("Pause one platform") {
+            ForEach(model.settings.activePlatforms) { p in
+              Toggle(p.displayName, isOn: Binding(get: { model.settings.pausedPlatforms.contains(p) }, set: { model.setPlatformPaused(p, $0) }))
+            }
+          }
+          Button("Open Health", systemImage: "heart") { WindowManager.shared.showMain(screen: .health) }
+          Divider()
+          Button("Quit DJ Queue", systemImage: "power") { NSApp.terminate(nil) }
+            .help("The background engine restarts it automatically. To stop it, use Settings → Engine.")
+        }
+      }
+      .padding(.leading, DS.space.xs)
+      .padding(.trailing, DS.space.sm)
+      .frame(height: 52)
     }
-  }
-
-  private var engineLine: some View {
-    HStack(spacing: 6) {
-      StateDot(tint: model.engineRunning ? .green : .red, size: 7)
-      Text(model.engineRunning ? "Engine running" : "Engine stopped").font(DS.Font.secondary).fixedSize()
-      Text("ticked \(model.lastHeartbeat.map { Fmt.relative($0.at, now: model.now) } ?? "never")\(model.renderLine.map { " · \($0)" } ?? "")")
-        .font(DS.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
-      Spacer()
-      Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.buttonStyle(.borderless)
-        .help("Quit — the background engine restarts it automatically. To stop it, use Settings → Engine.")
-        .accessibilityLabel("Quit")
-    }
-  }
-
-  private func open(_ s: Screen?) {
-    WindowManager.shared.showMain(screen: s)
   }
 }

@@ -36,7 +36,6 @@ public struct Paths: Sendable {
   public var thumbs: URL { appSupport.appendingPathComponent("thumbs") }
   public var proxies: URL { appSupport.appendingPathComponent("proxies") }
   public var overlays: URL { appSupport.appendingPathComponent("overlays") }
-  public var prefillRules: URL { appSupport.appendingPathComponent("prefill-rules.json") }
   public var engineLog: URL { logs.appendingPathComponent("engine.log") }
   public var agentPlist: URL { launchAgents.appendingPathComponent("com.djlovd.queue.engine.plist") }
 

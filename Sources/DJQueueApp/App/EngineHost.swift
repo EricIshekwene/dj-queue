@@ -17,6 +17,13 @@ final class EngineHost {
     renderer = model.renderer
     publisher = model.publisher
     engine = Engine(store: model.store, renderer: renderer, publisher: publisher, notifier: UserNotifier.shared)
+    // One ProxyService per process: the engine's idle step and the app's visible tiles share the app's instance,
+    // so a clip is never encoded twice and visible tiles jump the engine's background queue.
+    if engine.proxyService != nil {
+      let e = engine
+      model.proxies.shouldPause = { [weak e] in e?.isRendering ?? false }
+      engine.proxyService = model.proxies
+    }
   }
 
   /// Returns false when another process already holds the engine lock (its heartbeats still drive the UI).

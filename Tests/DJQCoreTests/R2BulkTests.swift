@@ -36,6 +36,38 @@ import Testing
     #expect(throws: EngineError.self) { try bulk(f).undo(r.batchId!) }  // only once
   }
 
+  /// The confirmation sheet and toast quote `outlook`; it must match what validation says after the apply,
+  /// for unchanged clips too (Edit's "N will be ready · M still need a title").
+  @Test func makeReadyOutlookMatchesRemainingIssues() throws {
+    let f = try Fixture()
+    try f.intake()
+    try f.store.setTitle("clip-0", "Yayo x Johnny")
+    var custom = Edit()
+    custom.crop = CropRect(x: 0, y: 0, w: 1216, h: 2160)
+    try f.store.save(custom, videoId: "clip-3")
+    let ids = ["clip-0", "clip-2", "clip-3", "long-0001"]
+    let dry = try bulk(f).makeReadyWithDefaults(ids, dryRun: true)
+    let r = try bulk(f).makeReadyWithDefaults(ids)
+    #expect(dry.outlook == r.outlook)
+    #expect(Set(r.remainingIssues.keys) == ["clip-0", "clip-2", "clip-3"])  // clip-3 unchanged but reported
+    for (id, issues) in r.remainingIssues {
+      let v = try #require(try f.store.video(id: id))
+      #expect(issues == (try Validation.issues(video: v, store: f.store)))
+    }
+    let o = try #require(r.outlook)
+    #expect(o.ready == ["clip-0"])
+    #expect(Set(o.needTitle) == ["clip-2", "clip-3"] && o.other.isEmpty)
+    #expect(o.summary == "1 ready · 2 still need a title")
+    // "Use raw tag as title" sets the tag verbatim; those clips are then ready.
+    let t = try bulk(f).useRawTagAsTitle(o.needTitle + ["clip-0"])
+    #expect(t.skipped["clip-0"] == "already has a title")
+    let v2 = try #require(try f.store.video(id: "clip-2"))
+    #expect(v2.title == v2.tag)
+    #expect(try bulk(f).makeReadyWithDefaults(ids, dryRun: true).outlook?.ready.sorted() == ["clip-0", "clip-2", "clip-3"])
+    try bulk(f).undo(try #require(t.batchId))
+    #expect(try f.store.video(id: "clip-2")?.titleText == nil)
+  }
+
   @Test func dryRunChangesNothing() throws {
     let f = try Fixture()
     try f.intake()

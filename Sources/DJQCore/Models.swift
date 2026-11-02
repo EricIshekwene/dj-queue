@@ -355,26 +355,6 @@ public struct Edit: Codable, Sendable, Hashable {
 
   /// True when nothing is overridden.
   public var isEmpty: Bool { self == Edit() }
-
-  // MARK: Deprecated round-1 accessors (kept so the round-1 app compiles)
-
-  @available(*, deprecated, message: "Edits store overrides only: read ResolvedEdit.aspect, write aspectOverride")
-  public var aspect: Aspect {
-    get { aspectOverride ?? .r9x16 }
-    set { aspectOverride = newValue }
-  }
-
-  @available(*, deprecated, message: "Edits store overrides only: read ResolvedEdit.coverIncludesText, write coverIncludesTextOverride")
-  public var coverIncludesText: Bool {
-    get { coverIncludesTextOverride ?? true }
-    set { coverIncludesTextOverride = newValue }
-  }
-
-  @available(*, deprecated, message: "Ignores the markers default: use ResolvedEdit.trim(platform:)")
-  public func trim(duration: Double, platform: Platform? = nil) -> TrimRange {
-    if let p = platform, let t = platformTrims[p] { return t }
-    return TrimRange(start: trimIn ?? 0, end: trimOut ?? duration)
-  }
 }
 
 /// Text versions with carry-forward: nil fields inherit from the previous version (spec §3).
@@ -427,9 +407,6 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
 
   /// True when `field` (a Version property name) follows the defaults.
   public func isDefault(_ field: String) -> Bool { defaulted.contains(field) }
-
-  @available(*, deprecated, message: "Rotating hashtags were removed in round 2; use isDefault(\"hashtagSetIds\")")
-  public var autoHashtags: Bool { defaulted.contains("hashtagSetIds") }
 
   enum CodingKeys: String, CodingKey {
     case number, text, noText, style, size, posX, posY, align, textStart, textEnd, caption, captionTemplateId,
@@ -723,19 +700,6 @@ public struct Settings: Codable, Sendable, Hashable {
   }
 
   public func slot(for p: Platform) -> Int { slotMinutes[p] ?? p.defaultSlotMinutes }
-
-  // MARK: Deprecated round-1 names (forward to `defaults`)
-
-  @available(*, deprecated, message: "Use defaults.textStyle")
-  public var defaultStyle: TextStyle { get { defaults.textStyle } set { defaults.textStyle = newValue } }
-  @available(*, deprecated, message: "Use defaults.textSize")
-  public var defaultTextSize: Double { get { defaults.textSize } set { defaults.textSize = newValue } }
-  @available(*, deprecated, message: "Use defaults.textPosY")
-  public var defaultPosY: Double { get { defaults.textPosY } set { defaults.textPosY = newValue } }
-  @available(*, deprecated, message: "Use defaults.captionTemplateId")
-  public var defaultCaptionTemplateId: String { get { defaults.captionTemplateId } set { defaults.captionTemplateId = newValue } }
-  @available(*, deprecated, message: "Use defaults.hashtagSetIds")
-  public var defaultHashtagSetIds: [String] { get { defaults.hashtagSetIds } set { defaults.hashtagSetIds = newValue } }
 }
 
 public struct PlatformLimits: Codable, Sendable, Hashable {

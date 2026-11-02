@@ -1,409 +1,222 @@
 import DJQCore
 import SwiftUI
 
-/// Q.L: header (stat strip tabs + sort) · filter bar · ordered rows · right inspector.
+/// Queue (DESIGN-v2 §6.3, ref R2.QUEUE Hootsuite cards) — job: keep ready clips in posting order.
+///
+/// Toolbar "Queue · 41 ready · next Thu 5 Nov" · runway chip · sort menu ("Worst → best ▾", tie rule inside,
+/// writes `Settings.sort`) · view toggle. No filled primary: the primary act is direct manipulation.
+/// Order = the upcoming plan (date order) then the ready backlog in sort order. Cards: position · ⋮⋮ on hover ·
+/// thumb · title + meta · score · next-date chip · platform icons only when planned/posted · pin glyph. Hover
+/// actions: Post today, Pin to date…, ⋯ (Skip next, Exclude, Open editor). Drag a card onto a planned clip to take
+/// its day (pinned); the backlog itself follows the sort. Bulk: Pin to days… · Post today · Skip platform ▾ ·
+/// Exclude · More · **Add to week**. Hidden: unscored / not-ready / excluded clips, versions.
 struct QueueView: View {
   @Bindable var model: AppModel
-  @State private var sessionFilter: String?
-  @State private var kindFilter: Kind?
-  @State private var scoreFilter: ClosedRange<Int>?
-  @State private var search = ""
+  @State private var pinTarget: [String]?
 
   var body: some View {
-    VStack(spacing: 0) {
-      QueueHeader(model: model)
-      if model.queueSelection.count > 1 {
-        BulkBar(model: model, ids: Array(model.queueSelection), onClear: { model.queueSelection = [] })
+    let list = model.queueList
+    let ids = list.map(\.id)
+    let mode = model.viewMode(.queue)
+    let sel = model.selectedIds(.queue)
+    let positions = Dictionary(uniqueKeysWithValues: list.enumerated().map { ($1.id, $0 + 1) })
+    ScreenScaffold(model: model, screen: .queue, subtitle: subtitle(list), readingColumn: mode == .wide || mode == .list) {
+      RunwayChip(model: model)
+      QueueSortMenu(model: model)
+      DSViewModeSwitcher(mode: model.viewModeBinding(.queue))
+    } content: {
+      if !model.loaded {
+        Color.clear
+      } else if list.isEmpty {
+        DSEmptyState(icon: "list.bullet", title: "Nothing ready yet", message: "Clips appear here once they're scored and edited.",
+                     actionTitle: "Go to Edit") { model.screen = .edit }
+      } else if mode == .wide {
+        QueueCardList(model: model, videos: list, positions: positions, onPin: { pinTarget = [$0] })
       } else {
-        filterBar
+        ClipCollection(model: model, screen: .queue, videos: list, mode: mode, clip: { v in
+          var c = model.dsClip(v, for: .queue)
+          c.position = positions[v.id]
+          // Grid tiles have no date chip of their own: the next day rides as a tag (only when scheduled).
+          if mode == .grid, let d = c.dateText, d != "Not scheduled" {
+            c.tags.append(DSClipTag(text: d, style: .outline, icon: c.isPinned ? "pin.fill" : "calendar"))
+          }
+          return c
+        }, onOpen: { v in model.openEditor(v.id, in: ids) }) { v in
+          QueueClipActions(model: model, video: v, mode: mode, ids: ids, onPin: { pinTarget = [v.id] })
+        } contextMenu: { v in
+          QueueClipMenu(model: model, video: v, ids: ids, onPin: { pinTarget = $0 })
+        }
+      }
+    }
+    .dsBulkBar(isPresented: !sel.isEmpty && pinTarget == nil) {
+      QueueBulkBar(model: model, ids: sel, onPin: { pinTarget = sel })
+    }
+    .overlay {
+      if let t = pinTarget {
+        ZStack {
+          DS.color.scrim.ignoresSafeArea().onTapGesture { pinTarget = nil }
+          QueuePinDialog(model: model, ids: t) { pinTarget = nil }
+        }
+        .transition(.opacity)
+      }
+    }
+    .dsAnimation(DS.motion.popover, value: pinTarget)
+  }
+
+  private func subtitle(_ list: [Video]) -> String? {
+    guard !list.isEmpty else { return nil }
+    let next = model.upcomingSlots.first.flatMap { model.video($0.videoId) }.map { model.dateText($0) }
+      .map { $0 == "Today" ? "today" : $0 }
+    return "\(list.count) ready" + (next.map { " · next \($0)" } ?? "")
+  }
+}
+
+/// "Worst → best ▾": the backlog order (Settings.sort) with the tie rule explained inside.
+struct QueueSortMenu: View {
+  @Bindable var model: AppModel
+
+  var body: some View {
+    let current = model.settings.sort
+    Menu {
+      ForEach(SortDirection.allCases, id: \.self) { d in
+        Button {
+          if d != current { model.update { $0.sort = d } }
+        } label: {
+          if d == current { Label(d.displayName, systemImage: "checkmark") } else { Text(d.displayName) }
+        }
       }
       Divider()
-      content
-    }
-    .inspector(isPresented: $model.showInspector) {
-      Group {
-        if let id = model.queueSelection.first, model.queueSelection.count == 1, let v = model.video(id) {
-          VideoInspector(model: model, video: v)
-        } else {
-          EmptyState(symbol: "sidebar.right", title: model.queueSelection.count > 1 ? "\(model.queueSelection.count) selected" : "No selection",
-                     subtitle: model.queueSelection.count > 1 ? "Use the bar above to score, set kind or exclude." : "Select a video to see its details.")
-        }
-      }
-      .inspectorColumnWidth(min: 280, ideal: DS.inspectorWidth, max: 380)
-    }
-  }
-
-  // MARK: Rows
-
-  private func filtered(_ vs: [Video]) -> [Video] {
-    vs.filter { v in
-      (sessionFilter == nil || v.sessionId == sessionFilter)
-        && (kindFilter == nil || v.kind == kindFilter)
-        && (scoreFilter == nil || (v.score.map { scoreFilter!.contains($0) } ?? false))
-        && (search.isEmpty || v.tag.localizedCaseInsensitiveContains(search) || v.name.localizedCaseInsensitiveContains(search))
-    }
-  }
-
-  /// Ready tab = upcoming planned slots (in date order) + the unplanned backlog (posting order).
-  private var plannedRows: [(PlanSlot, Video)] {
-    filtered(model.upcomingSlots.compactMap { model.video($0.videoId) }).isEmpty ? [] :
-      model.upcomingSlots.compactMap { s in model.video(s.videoId).map { (s, $0) } }.filter { !filtered([$0.1]).isEmpty }
-  }
-
-  private var backlogRows: [Video] {
-    let planned = Set(model.upcomingSlots.map(\.videoId))
-    return filtered(model.ordered.filter { !planned.contains($0.id) })
-  }
-
-  private var tabRows: [Video] {
-    switch model.queueTab {
-    case .ready: []
-    case .toScore: filtered(model.toScore)
-    case .needsEdit: filtered(model.needsEdit)
-    case .excluded: filtered(model.excluded)
-    }
-  }
-
-  @ViewBuilder private var content: some View {
-    let isEmpty = model.queueTab == .ready ? (plannedRows.isEmpty && backlogRows.isEmpty) : tabRows.isEmpty
-    if !model.loaded {
-      SkeletonRows()
-    } else if model.videos.isEmpty {
-      EmptyState(symbol: "film.stack", title: "No videos yet", subtitle: "Export clips from CapCut into a session's videos.json.",
-                 buttonTitle: "Open Library") { model.screen = .library }
-    } else if isEmpty {
-      emptyForTab
-    } else {
-      list
-    }
-  }
-
-  @ViewBuilder private var emptyForTab: some View {
-    switch model.queueTab {
-    case .ready:
-      EmptyState(symbol: "tray", title: "Nothing ready", subtitle: "Score and edit videos to fill the queue.",
-                 buttonTitle: model.toScore.isEmpty ? nil : "Score \(model.toScore.count) videos") { model.scoreMode = true }
-    case .toScore: EmptyState(symbol: "checkmark.circle", title: "Everything is scored")
-    case .needsEdit: EmptyState(symbol: "checkmark.circle", title: "Nothing needs edits")
-    case .excluded: EmptyState(symbol: "minus.circle", title: "Nothing excluded")
-    }
-  }
-
-  private var list: some View {
-    List(selection: $model.queueSelection) {
-      if model.queueTab == .ready {
-        let planned = plannedRows
-        if !planned.isEmpty {
-          Section {
-            ForEach(Array(planned.enumerated()), id: \.element.0.id) { i, pair in
-              QueueRow(model: model, video: pair.1, position: i + 1, slot: pair.0)
-                .tag(pair.1.id)
-                .contextMenu { VideoContextMenu(model: model, video: pair.1, ids: Array(model.queueSelection)) }
-            }
-            .onMove { from, to in movePlanned(planned, from: from, to: to) }
-          } header: {
-            SectionHeader(title: "Planned", count: planned.count, note: "Drag to swap days")
-          }
-        }
-        let backlog = backlogRows
-        if !backlog.isEmpty {
-          Section {
-            ForEach(Array(backlog.enumerated()), id: \.element.id) { i, v in
-              QueueRow(model: model, video: v, position: planned.count + i + 1, slot: nil)
-                .tag(v.id)
-                .contextMenu { VideoContextMenu(model: model, video: v, ids: Array(model.queueSelection)) }
-            }
-          } header: {
-            SectionHeader(title: "Backlog", count: backlog.count, note: "Order follows score — \(model.settings.sort.displayName.lowercased())")
-          }
-        }
-      } else {
-        ForEach(Array(tabRows.enumerated()), id: \.element.id) { i, v in
-          QueueRow(model: model, video: v, position: i + 1, slot: nil)
-            .tag(v.id)
-            .contextMenu { VideoContextMenu(model: model, video: v, ids: Array(model.queueSelection)) }
-        }
+      Text("Ties: the older set first, then part, then start time")
+      Text("Planned clips keep their days; this orders the ready backlog")
+    } label: {
+      HStack(spacing: 5) {
+        Text(current.displayName)
+        Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).opacity(0.7)
       }
     }
-    .listStyle(.inset)
-    .alternatingRowBackgrounds(.disabled)
-    .onKeyPress(characters: .decimalDigits, phases: .down) { press in
-      model.typeDigit(press.characters, ids: model.queueSelection)
-      return .handled
-    }
-    .onKeyPress(.space) {
-      if let v = model.focusedVideo { model.previewVideo = v }
-      return .handled
-    }
-    .onKeyPress(.return) {
-      if let v = model.focusedVideo { model.openEditor(v.id, in: model.selectedVideoIds) }
-      return .handled
-    }
-  }
-
-  /// Planned rows map to Planner ops: dropping a row onto another planned row swaps their days.
-  private func movePlanned(_ planned: [(PlanSlot, Video)], from: IndexSet, to: Int) {
-    guard let src = from.first else { return }
-    let dst = to > src ? to - 1 : to
-    guard dst != src, dst < planned.count else { return }
-    model.swap(planned[src].0.id, planned[dst].0.id)
-  }
-
-  // MARK: Filters (Q.S2)
-
-  private var filterBar: some View {
-    HStack(spacing: 8) {
-      Picker("Sort", selection: Binding(get: { model.settings.sort }, set: { s in model.update { $0.sort = s } })) {
-        ForEach(SortDirection.allCases, id: \.self) { Text($0.displayName).tag($0) }
-      }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      .fixedSize()
-      .help("Sort the unplanned backlog. Approved weeks don't change until you rebuild.")
-      Button("Ties: older first") { model.show("Equal scores: older session first, then set order") }
-        .buttonStyle(.plain).font(DS.Font.secondary).foregroundStyle(.secondary)
-      Divider().frame(height: 16)
-      Menu {
-        Button("All sessions") { sessionFilter = nil }
-        ForEach(model.sessions) { s in Button(Captions.setName(s.name)) { sessionFilter = s.id } }
-      } label: { filterLabel("Session", sessionFilter.flatMap { model.sessionById[$0] }.map { Captions.setName($0.name) }) }
-        .menuStyle(.borderlessButton).fixedSize()
-      Menu {
-        Button("All kinds") { kindFilter = nil }
-        ForEach(Kind.allCases, id: \.self) { k in Button(k.displayName) { kindFilter = k } }
-      } label: { filterLabel("Kind", kindFilter?.displayName) }
-        .menuStyle(.borderlessButton).fixedSize()
-      Menu {
-        Button("Any score") { scoreFilter = nil }
-        Button("80–100") { scoreFilter = 80...100 }
-        Button("60–79") { scoreFilter = 60...79 }
-        Button("40–59") { scoreFilter = 40...59 }
-        Button("0–39") { scoreFilter = 0...39 }
-      } label: { filterLabel("Score", scoreFilter.map { "\($0.lowerBound)–\($0.upperBound)" }) }
-        .menuStyle(.borderlessButton).fixedSize()
-      Spacer()
-      TextField("Search tags", text: $search)
-        .textFieldStyle(.roundedBorder)
-        .frame(minWidth: 100, maxWidth: 200)
-      Menu {
-        Toggle("Avoid overlapping clips within \(model.settings.avoidOverlapDays) days",
-               isOn: Binding(get: { model.settings.avoidOverlap }, set: { v in model.update { $0.avoidOverlap = v } }))
-        Divider()
-        Button("Score mode") { model.scoreMode = true }
-        Button("Per-platform sort…") { WindowManager.shared.showSettings(section: .queue) }
-      } label: { Image(systemName: "ellipsis.circle") }
-        .menuStyle(.borderlessButton).fixedSize().help("More")
-    }
-    .controlSize(.regular)
-    .padding(.horizontal, DS.Space.l)
-    .padding(.vertical, 8)
-  }
-
-  private func filterLabel(_ title: String, _ value: String?) -> some View {
-    HStack(spacing: 4) {
-      Text(title).foregroundStyle(.secondary)
-      if let value { Text(value).fontWeight(.medium) }
-    }
-    .font(DS.Font.body)
+    .menuStyle(.button)
+    .buttonStyle(DSButtonStyle(variant: .ghost, size: .sm))
+    .menuIndicator(.hidden)
+    .fixedSize()
+    .dsTooltip("Order of the ready backlog by score")
   }
 }
 
-struct SectionHeader: View {
-  let title: String
-  let count: Int
-  var note: String? = nil
-  var body: some View {
-    HStack(spacing: 6) {
-      Text(title).font(DS.Font.bodyStrong).foregroundStyle(.primary)
-      Text("\(count)").font(DS.Font.body.monospacedDigit()).foregroundStyle(.secondary)
-      Spacer()
-      if let note { Text(note).font(DS.Font.secondary).foregroundStyle(.tertiary) }
-    }
-  }
-}
-
-/// Q.S1: stat strip (n8n ref) whose tiles double as the tabs, plus the one primary action.
-struct QueueHeader: View {
-  @Bindable var model: AppModel
-
-  var body: some View {
-    HStack(alignment: .center, spacing: 0) {
-      ForEach(QueueTab.allCases) { tab in
-        Button { model.queueTab = tab; model.queueSelection = [] } label: {
-          VStack(alignment: .leading, spacing: 2) {
-            Text(tab.title).font(DS.Font.body).foregroundStyle(.secondary)
-            Text("\(count(tab))").font(DS.Font.runway)
-              .foregroundStyle(tab == .toScore && count(tab) > 0 ? Color.orange : Color.primary)
-          }
-          .padding(.horizontal, 16)
-          .padding(.vertical, 10)
-          .frame(width: 150, alignment: .leading)
-          .background(model.queueTab == tab ? Color.accentColor.opacity(0.10) : .clear)
-          .overlay(alignment: .bottom) {
-            Rectangle().fill(model.queueTab == tab ? Color.accentColor : .clear).frame(height: 2)
-          }
-          .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        if tab != QueueTab.allCases.last { Divider().frame(height: 40) }
-      }
-      Spacer()
-      Button {
-        model.scoreMode = true
-      } label: {
-        Label(model.toScore.isEmpty ? "Score mode" : "Score \(model.toScore.count)", systemImage: "number")
-      }
-      .buttonStyle(.bordered)
-      .controlSize(.large)
-      .keyboardShortcut("s", modifiers: [.command, .shift])
-      .help("Score mode (⇧⌘S) — the selected video's Edit is this screen's primary action")
-      .disabled(model.toScore.isEmpty && model.queueTab != .ready)
-      .padding(.trailing, DS.Space.l)
-    }
-    .padding(.top, 4)
-    .overlay(alignment: .bottom) { Divider() }
-  }
-
-  private func count(_ t: QueueTab) -> Int {
-    switch t {
-    case .ready: model.ordered.filter { v in model.nextSlotByVideo[v.id] == nil }.count + Set(model.upcomingSlots.map(\.videoId)).count
-    case .toScore: model.toScore.count
-    case .needsEdit: model.needsEdit.count
-    case .excluded: model.excluded.count
-    }
-  }
-}
-
-/// Q.S3 row (56 pt).
-struct QueueRow: View {
-  @Bindable var model: AppModel
-  let video: Video
-  let position: Int
-  let slot: PlanSlot?
-  @State private var hover = false
-
-  var body: some View {
-    HStack(spacing: 12) {
-      Text("\(position)").font(DS.Font.mono).foregroundStyle(.secondary).frame(width: 22, alignment: .trailing)
-      CoverThumb(video: video)
-      VStack(alignment: .leading, spacing: 2) {
-        HStack(spacing: 6) {
-          Text(model.title(video)).font(DS.Font.bodyStrong).lineLimit(1)
-          if slot?.pinned == true { Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(.secondary) }
-          if video.missing { StatusPill(text: "Missing", tint: .red, icon: "exclamationmark.triangle.fill") }
-        }
-        Text(model.setName(video)).font(DS.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
-      }
-      Spacer(minLength: 8)
-      StatusPill(text: video.kind.displayName, tint: video.kind == .talking ? .purple : .secondary)
-      ScoreField(score: video.score) { model.setScore([video.id], $0) }
-      Text("v\(model.versions(video))").font(DS.Font.secondary.monospacedDigit()).foregroundStyle(.secondary).frame(width: 20)
-      PlatformDots(model: model, videoId: video.id)
-      Text(model.nextDateLabel(video) ?? "—").font(DS.Font.secondary).foregroundStyle(slot == nil ? .tertiary : .secondary)
-        .frame(width: 78, alignment: .trailing)
-      Image(systemName: "line.3.horizontal")
-        .font(.system(size: 11))
-        .foregroundStyle(slot == nil ? Color.secondary.opacity(0.35) : Color.secondary)
-        .opacity(hover ? 1 : 0)
-        .frame(width: 14)
-        .help(slot == nil ? "Order follows score. Change the score to move it." : "Drag onto another planned row to swap days")
-    }
-    .frame(height: DS.Row.queue)
-    .contentShape(Rectangle())
-    .onHover { hover = $0 }
-    .opacity(video.excluded ? 0.6 : 1)
-  }
-}
-
-struct PlatformDots: View {
-  @Bindable var model: AppModel
-  let videoId: String
-  var body: some View {
-    HStack(spacing: 3) {
-      ForEach(Platform.allCases.sorted()) { p in
-        let d = model.dot(videoId, p)
-        StateDot(tint: d.tint, filled: d.filled, size: 7).help("\(p.displayName): \(d.label)")
-      }
-    }
-    .frame(width: 60)
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(Platform.allCases.sorted().map { "\($0.displayName) \(model.dot(videoId, $0).label)" }.joined(separator: ", "))
-  }
-}
-
-/// Q.S3.a inline score: type a number, ↑/↓ ±1, ⇧↑/↓ ±10, ↩ to commit, Esc to revert.
-struct ScoreField: View {
-  let score: Int?
-  var width: CGFloat = 38
-  var font: Font = DS.Font.score
-  let onCommit: (Int?) -> Void
-  @State private var text = ""
-  @FocusState private var focused: Bool
-
-  var body: some View {
-    TextField("–", text: $text)
-      .textFieldStyle(.plain)
-      .font(font)
-      .multilineTextAlignment(.trailing)
-      .frame(width: width)
-      .focused($focused)
-      .onAppear { text = score.map(String.init) ?? "" }
-      .onChange(of: score) { _, s in if !focused { text = s.map(String.init) ?? "" } }
-      .onChange(of: focused) { _, f in if !f { commit() } }
-      .onSubmit { commit() }
-      .onExitCommand { text = score.map(String.init) ?? ""; focused = false }
-      .onKeyPress(keys: [.upArrow, .downArrow], phases: [.down, .repeat]) { press in
-        let step = press.modifiers.contains(.shift) ? 10 : 1
-        let cur = Int(text) ?? score ?? 50
-        let next = min(100, max(0, cur + (press.key == .upArrow ? step : -step)))
-        text = "\(next)"
-        return .handled
-      }
-      .help("Score 0–100 · ↑/↓ ±1 · ⇧↑/↓ ±10")
-  }
-
-  private func commit() {
-    let t = text.trimmingCharacters(in: .whitespaces)
-    let v: Int? = t.isEmpty ? nil : Int(t).map { min(100, max(0, $0)) }
-    if t.isEmpty == false && v == nil { text = score.map(String.init) ?? ""; return }
-    if v != score { onCommit(v) }
-    text = v.map(String.init) ?? ""
-  }
-}
-
-/// Q.S5 bulk bar (Later ref): "3 selected" · score · kind · exclude · add to week.
-struct BulkBar: View {
+/// Queue bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Pin to days… · Post today · More (Skip platform ▸,
+/// Exclude, post on a platform again, Kind, re-render) · **Add to week**.
+private struct QueueBulkBar: View {
   @Bindable var model: AppModel
   let ids: [String]
-  let onClear: () -> Void
-  @State private var score = ""
+  let onPin: () -> Void
 
   var body: some View {
-    HStack(spacing: 10) {
-      Text("\(ids.count) selected").font(DS.Font.bodyStrong)
-      Button("Deselect all", action: onClear).buttonStyle(.bordered)
-      Spacer()
-      HStack(spacing: 4) {
-        TextField("Score", text: $score).textFieldStyle(.roundedBorder).frame(width: 64)
-          .onSubmit(apply)
-        Button("Set score", action: apply).disabled(Int(score) == nil)
+    let n = AppModel.pipelineClips(ids.count)
+    ScreenBulkBar(model: model, screen: .queue) {
+      Button("Pin to days…", systemImage: "pin") { onPin() }
+        .dsTooltip("Pin the selected clips to consecutive days, in the order shown")
+      Button("Post today", systemImage: "bolt") {
+        let ids = ids
+        model.pipelineBulk("Post \(n) today?", verb: "Post today", ids: ids,
+                           changes: [.init(field: "Day", value: "Today · the rest of the plan moves a day later")]) { b, dry in
+          try b.postToday(ids, dryRun: dry)
+        }
+      }
+      .dsTooltip("Put the selected clips on today (clips beyond today's free slots are skipped)")
+    } more: {
+      Menu("Skip platform") {
+        ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { setPlatform(p, skipped: true) } }
+      }
+      Button("Exclude", systemImage: "minus.circle") {
+        let ids = ids
+        model.pipelineBulk("Exclude \(n)?", verb: "Exclude", ids: ids,
+                           changes: [.init(field: "Excluded", value: "Yes · they leave the queue and never post")]) { b, dry in
+          try b.setExcluded(ids, true, dryRun: dry)
+        }
+      }
+      Menu("Post on a platform again") {
+        ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { setPlatform(p, skipped: false) } }
       }
       Menu("Kind") {
-        ForEach(Kind.allCases, id: \.self) { k in Button(k.displayName) { model.setKind(ids, k) } }
+        ForEach(Kind.allCases, id: \.self) { k in
+          Button(k.displayName) {
+            let ids = ids
+            model.pipelineBulk("Set \(n) to \(k.displayName)?", verb: "Set kind", ids: ids,
+                               changes: [.init(field: "Kind", value: k.displayName)]) { b, dry in try b.setKind(ids, k, dryRun: dry) }
+          }
+        }
       }
-      .fixedSize()
-      Button("Exclude", systemImage: "minus.circle") { model.setExcluded(ids, true) }
-      Button("Add to week", systemImage: "calendar.badge.plus") { model.addToWeek(ids) }
+      Button("Re-render", systemImage: "arrow.triangle.2.circlepath") {
+        let ids = ids
+        model.pipelineBulk("Re-render \(n)?", verb: "Re-render", ids: ids,
+                           changes: [.init(field: "Renders", value: "Made again on the next engine tick")]) { b, dry in
+          try b.reRender(ids, dryRun: dry)
+        }
+      }
+    } primary: {
+      DSButton("Add to week", variant: .primary, size: .sm, tooltip: "Plan the selected clips on the first free days") { addToWeek() }
     }
-    .buttonStyle(.bordered)
-    .padding(.horizontal, DS.Space.l)
-    .padding(.vertical, 8)
-    .background(Color.accentColor.opacity(0.07))
   }
 
-  private func apply() {
-    guard let n = Int(score) else { return }
-    model.setScore(ids, n)
-    score = ""
+  private func addToWeek() {
+    let ids = ids
+    let week = model.pipelineWeekWithRoom()
+    let label = Fmt.day(model.dm.date(week), tz: model.tz, style: "d MMM")
+    model.pipelineBulk("Add \(AppModel.pipelineClips(ids.count)) to the week of \(label)?", verb: "Add to week", ids: ids,
+                       changes: [.init(field: "Plan", value: "First free days of the week of \(label), pinned")]) { b, dry in
+      try b.addToWeek(ids, week: week, dryRun: dry)
+    }
+  }
+
+  private func setPlatform(_ p: Platform, skipped: Bool) {
+    let ids = ids
+    let n = AppModel.pipelineClips(ids.count)
+    model.pipelineBulk(skipped ? "Skip \(p.displayName) for \(n)?" : "Post \(n) on \(p.displayName) again?",
+                       verb: skipped ? "Skip \(p.displayName)" : "Turn on \(p.displayName)", ids: ids,
+                       changes: [.init(field: p.displayName, value: skipped ? "Skipped" : "Posts again")]) { b, dry in
+      try b.setPlatform(ids, p, skipped: skipped, dryRun: dry)
+    }
+  }
+}
+
+/// "Pin to date…" (one clip) / "Pin to days…" (several, consecutive days in the order shown): an in-screen
+/// dialog with a graphical calendar. Goes through BulkActions.pinConsecutive (confirmation for > 1, undo toast).
+struct QueuePinDialog: View {
+  @Bindable var model: AppModel
+  let ids: [String]
+  let onClose: () -> Void
+  @State private var date: Date?
+
+  var body: some View {
+    let start = model.dm.date(model.todayKey)
+    let pick = date ?? model.nextSlotByVideo[ids.first ?? ""].map { model.dm.date($0.date) } ?? start
+    let multi = ids.count > 1
+    DSDialog(multi ? "Pin \(AppModel.pipelineClips(ids.count)) to days" : "Pin to date",
+             description: multi ? "The first clip goes on the day you pick, the next on the day after, in the order shown."
+               : "The clip posts on this day and the planner won't move it.",
+             icon: "pin", width: 380, onClose: onClose) {
+      DatePicker("Date", selection: Binding(get: { pick }, set: { date = $0 }), in: start..., displayedComponents: .date)
+        .datePickerStyle(.graphical)
+        .labelsHidden()
+        .frame(maxWidth: .infinity)
+    } footer: {
+      DSButton("Cancel", variant: .ghost) { onClose() }
+        .keyboardShortcut(.cancelAction)
+      DSButton(multi ? "Pin \(ids.count)" : "Pin", variant: .primary) { pin(pick) }
+        .keyboardShortcut(.defaultAction)
+    }
+    .dsFloatingSurface(radius: DS.radius.lg, elevation: DS.elevation.e3)
+  }
+
+  private func pin(_ d: Date) {
+    let ids = ids
+    let day = model.dm.key(d)
+    let first = Fmt.day(d, tz: model.tz)
+    let last = Fmt.day(model.dm.date(model.dm.addDays(day, ids.count - 1)), tz: model.tz)
+    onClose()
+    model.pipelineBulk("Pin \(AppModel.pipelineClips(ids.count)) to \(first) – \(last)?", verb: "Pin", ids: ids,
+                       changes: [.init(field: "Days", value: ids.count == 1 ? first : "\(first) – \(last), one a day")],
+                       done: ids.count == 1 ? "Pinned to \(first)" : nil) { b, dry in
+      try b.pinConsecutive(ids, from: day, dryRun: dry)
+    }
   }
 }
