@@ -161,15 +161,15 @@ struct DSClipCard<Actions: View>: View {
   /// 20 pt circle (DESIGN-v2 §4).
   private func selectCircle(onMedia: Bool) -> some View {
     DSCheckbox(isOn: isSelected, size: 20, shape: .circle, onMedia: onMedia) { onToggleSelect?() }
-      .dsTooltip(isSelected ? "Deselect" : "Select", edge: .bottom)
+      .dsTooltip(isSelected ? "Deselect this clip" : "Select this clip", shortcut: isSelected ? nil : "⌘-click", side: .bottom)
   }
 
   private var scoreText: some View {
     Group {
       if let s = clip.score {
-        Text("\(s)").font(DS.type.score).foregroundStyle(DS.color.text)
+        Text("\(s)").font(DS.type.score).foregroundStyle(DS.color.text).dsTooltip("Your score (0–100) — it sets the posting order")
       } else {
-        Text("—").font(DS.type.score).foregroundStyle(DS.color.textTertiary).dsTooltip("Not scored")
+        Text("—").font(DS.type.score).foregroundStyle(DS.color.textTertiary).dsTooltip("Not scored yet — score it in Score")
       }
     }
   }
@@ -196,7 +196,7 @@ struct DSClipCard<Actions: View>: View {
         .padding(.horizontal, 10).frame(height: 26)
         .overlay(Capsule().strokeBorder(none ? DS.color.border : DS.color.borderStrong))
         .fixedSize()
-        .dsTooltip(clip.isPinned ? "Pinned to this date" : none ? "Not in the plan yet" : "Next post")
+        .dsTooltip(clip.isPinned ? "Pinned to this day — the plan works around it" : none ? "Not in the plan yet" : "Next planned post")
       }
     }
   }
@@ -209,9 +209,12 @@ struct DSClipCard<Actions: View>: View {
 
   private var chipItems: [AnyView] {
     var out: [AnyView] = []
-    if clip.isMissing { out.append(AnyView(DSBadge("File missing · Relink", style: .soft(.danger), icon: "exclamationmark"))) }
-    out += clip.blocks.map { AnyView(DSBadge($0, style: .soft(.danger))) }
-    out += clip.issues.map { AnyView(DSBadge($0, style: .soft(.warning))) }
+    if clip.isMissing {
+      out.append(AnyView(DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark",
+                                 help: "The source file moved or was deleted — Health › Doctor relinks it")))
+    }
+    out += clip.blocks.map { AnyView(DSBadge($0, style: .soft(.danger), help: "Blocks posting until fixed in the editor")) }
+    out += clip.issues.map { AnyView(DSBadge($0, style: .soft(.warning), help: "Still needed before it's ready — open the editor")) }
     out += clip.suggestions.prefix(3).map { s in
       AnyView(DSSuggestionChip(suggestion: s) { onAcceptSuggestion?(s) })
     }
@@ -232,7 +235,7 @@ struct DSClipCard<Actions: View>: View {
     HStack(spacing: DS.space.sm) {
       if config.showsDragHandle {
         Image(systemName: "line.3.horizontal").font(.system(size: 12, weight: .medium)).foregroundStyle(DS.color.textTertiary)
-          .frame(width: 14).opacity(hot ? 1 : 0).dsTooltip(hot ? "Drag to reorder" : nil)
+          .frame(width: 14).opacity(hot ? 1 : 0).dsTooltip(hot ? "Drag to change the posting order" : nil)
       }
       if onToggleSelect != nil {
         selectCircle(onMedia: false).opacity(showCheck ? 1 : 0).allowsHitTesting(showCheck)
@@ -248,6 +251,7 @@ struct DSClipCard<Actions: View>: View {
             Text(clip.title).font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(1)
             if clip.isPinned && clip.dateText == nil {
               Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(DS.color.textTertiary)
+                .dsTooltip("Pinned to a day")
             }
           }
           if !clip.meta.isEmpty { Text(clip.meta).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1) }
@@ -284,7 +288,8 @@ struct DSClipCard<Actions: View>: View {
         .overlay(alignment: .topTrailing) {
           if let s = clip.score {
             Text("\(s)").font(DS.type.micro.monospacedDigit()).foregroundStyle(.white)
-              .padding(.horizontal, 7).frame(height: 20).background(Color.black.opacity(0.63), in: Capsule()).padding(8)
+              .padding(.horizontal, 7).frame(height: 20).background(Color.black.opacity(0.63), in: Capsule())
+              .dsTooltip("Your score (0–100)").padding(8)
           }
         }
         .overlay(alignment: .bottomLeading) { durationBadge.padding(8) }
@@ -367,7 +372,7 @@ struct DSClipCard<Actions: View>: View {
       }
       .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
       if clip.isMissing {
-        DSBadge("File missing", style: .soft(.danger), size: .sm)
+        DSBadge("File missing", style: .soft(.danger), size: .sm, help: "The source file moved or was deleted — Health › Doctor relinks it")
       } else if let k = clip.kind {
         DSBadge(k, style: .outline, size: .sm)
       }
@@ -422,7 +427,7 @@ struct DSSuggestionChip: View {
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
     .fixedSize()
-    .dsTooltip("Use as title")
+    .dsTooltip("Set the Title to “\(suggestion.text)”")
   }
 }
 

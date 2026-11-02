@@ -202,6 +202,9 @@ final class AppHost {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationWillFinishLaunching(_ notification: Notification) {
+    // Tooltips are DSTooltip (round 3). Native help tags would draw a second, system bubble over ours (`.help` in a
+    // dependency or a stray call): push their delay out of reach. Accessibility help is unaffected.
+    UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 3_600_000])
     if case .snapshot = AppHost.shared.mode { return }
     UserNotifier.shared.setUp()
   }

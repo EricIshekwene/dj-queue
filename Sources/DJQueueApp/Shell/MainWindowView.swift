@@ -199,18 +199,20 @@ struct ShortcutSheet: View {
 
   private let groups: [(String, [(String, String)])] = [
     ("Everywhere", [("⌘K", "Search clips and commands"), ("⌘/", "This cheat sheet"), ("⌘1 – ⌘8", "Score · Edit · Queue · Week · Today · Library · Posts · Health"),
-                    ("⌘,", "Settings"), ("⌘R", "Refresh")]),
+                    ("⌘,", "Settings"), ("⌘R", "Refresh"), ("⌘0", "Open the DJ Queue window (menu bar)"),
+                    ("⌘Z", "Undo the most recent change (again for the one before)")]),
     ("Selecting clips", [("Click circle", "Select a clip"), ("⇧ Click", "Select a range"), ("⌘ Click", "Add or remove one"),
-                         ("⌘A", "Select every clip on the screen"), ("Esc", "Clear the selection"), ("⌘Z", "Undo the last bulk change")]),
+                         ("⌘A", "Select every clip on the screen"), ("Esc", "Clear the selection")]),
     ("Clips", [("⌘E", "Open the selected clip in the editor"), ("← / →", "Previous / next clip (Single view)")]),
     ("Week", [("⌘↩", "Approve week"), ("Drag", "Move or swap days")]),
+    ("Editor", [("⌘Z / ⇧⌘Z", "Undo / redo the last change to this clip"), ("⌘[ / ⌘]", "Previous / next clip"), ("⌘↩", "Done")]),
   ]
 
   var body: some View {
     DSDialog("Keyboard shortcuts", width: 720, onClose: { model.showShortcuts = false }) {
       HStack(alignment: .top, spacing: DS.space.xxl) {
         VStack(alignment: .leading, spacing: DS.space.lg) { group(groups[0]); group(groups[3]) }
-        VStack(alignment: .leading, spacing: DS.space.lg) { group(groups[1]); group(groups[2]) }
+        VStack(alignment: .leading, spacing: DS.space.lg) { group(groups[1]); group(groups[2]); group(groups[4]) }
       }
     } footer: {
       DSButton("Done", variant: .primary) { model.showShortcuts = false }.keyboardShortcut(.defaultAction)

@@ -231,9 +231,9 @@ struct StageControl: View {
     let back = model.stageBlocker(video, .back)
     let fwd = model.stageBlocker(video, .forward)
     if compact {
-      DSIconButton("chevron.left", tooltip: back ?? "\(model.stageBackTitle(video)) — \(model.stageBackHelp(video))", size: .sm,
+      DSIconButton("chevron.left", tooltip: back == nil ? "\(model.stageBackTitle(video)) — \(model.stageBackHelp(video))" : model.stageBackTitle(video), size: .sm,
                    disabledReason: back) { model.stageBack([video.id]) }
-      DSIconButton("chevron.right", tooltip: fwd ?? "\(model.stageForwardTitle(video)) — \(model.stageForwardHelp(video))", size: .sm,
+      DSIconButton("chevron.right", tooltip: fwd == nil ? "\(model.stageForwardTitle(video)) — \(model.stageForwardHelp(video))" : model.stageForwardTitle(video), size: .sm,
                    disabledReason: fwd) { model.stageForward([video.id]) }
     } else {
       HStack(spacing: 4) {
@@ -257,16 +257,20 @@ struct StageMenuItems: View {
     let many = targets.count > 1
     let back = many ? nil : model.stageBlocker(video, .back)
     let fwd = many ? nil : model.stageBlocker(video, .forward)
-    Button(many ? "Back a stage (\(targets.count))" : model.stageBackTitle(video), systemImage: "arrow.uturn.backward") {
+    // Native menu items can't show a tooltip: a disabled item carries its reason in the title.
+    Button(menuTitle(many ? "Back a stage (\(targets.count))" : model.stageBackTitle(video), blocker: back), systemImage: "arrow.uturn.backward") {
       model.stageBack(targets)
     }
     .disabled(back != nil)
-    .help(back ?? (many ? "Each clip goes back one stage" : model.stageBackHelp(video)))
-    Button(many ? "Forward a stage (\(targets.count))" : model.stageForwardTitle(video), systemImage: "arrow.forward") {
+    Button(menuTitle(many ? "Forward a stage (\(targets.count))" : model.stageForwardTitle(video), blocker: fwd), systemImage: "arrow.forward") {
       model.stageForward(targets)
     }
     .disabled(fwd != nil)
-    .help(fwd ?? (many ? "Each clip moves forward one stage" : model.stageForwardHelp(video)))
+  }
+
+  private func menuTitle(_ title: String, blocker: String?) -> String {
+    guard let b = blocker else { return title }
+    return "\(title) — \(b.count > 60 ? String(b.prefix(57)) + "…" : b)"
   }
 }
 
