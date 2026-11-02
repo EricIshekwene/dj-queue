@@ -21,8 +21,14 @@ struct DSTooltipContent: Equatable {
   var label: String?
   var shortcut: String?
   var disabledReason: String?
+  /// A label view instead of `label` — used where only a view is at hand (a `Label`'s title drawn icon-only).
+  var richLabel: AnyView? = nil
 
-  var isEmpty: Bool { (label ?? "").isEmpty && (disabledReason ?? "").isEmpty }
+  var isEmpty: Bool { (label ?? "").isEmpty && (disabledReason ?? "").isEmpty && richLabel == nil }
+
+  static func == (a: Self, b: Self) -> Bool {
+    a.label == b.label && a.shortcut == b.shortcut && a.disabledReason == b.disabledReason && (a.richLabel == nil) == (b.richLabel == nil)
+  }
   /// Spoken by VoiceOver (as the hint).
   var spoken: String { [label, disabledReason].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ". ") }
 }
@@ -42,7 +48,9 @@ struct DSTooltipBubble: View {
     let label = (content.label ?? "").isEmpty ? nil : content.label
     let reason = (content.disabledReason ?? "").isEmpty ? nil : content.disabledReason
     VStack(alignment: .leading, spacing: 2) {
-      if let title = label ?? reason {
+      if let rich = content.richLabel {
+        rich.font(DS.type.captionMedium).lineLimit(2).labelStyle(.titleOnly)
+      } else if let title = label ?? reason {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(title).font(DS.type.captionMedium).lineLimit(3).fixedSize(horizontal: false, vertical: true)
           if reason == nil, let shortcut = content.shortcut, !shortcut.isEmpty {
@@ -149,6 +157,11 @@ private extension TooltipSide {
 }
 
 extension View {
+  /// Tooltip whose label is a view (e.g. a `Label`'s title shown icon-only on media). Prefer `dsTooltip(_:)`.
+  func dsTooltip<V: View>(view: V, side: DSTooltipSide = .top) -> some View {
+    modifier(DSTooltipModifier(content: DSTooltipContent(richLabel: AnyView(view)), side: side, forceVisible: false))
+  }
+
   /// Hover tooltip (Base UI anatomy). `text` is a short verb phrase ("Post today"), `shortcut` shows as keycaps,
   /// `disabledReason` (non-nil = the control is disabled) adds why on a second line and hides the shortcut.
   /// nil/empty text and reason = no tooltip. `forceVisible` draws the bubble in place (gallery/snapshots).

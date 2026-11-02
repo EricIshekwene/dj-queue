@@ -161,13 +161,13 @@ struct DSClipCard<Actions: View>: View {
   /// 20 pt circle (DESIGN-v2 §4).
   private func selectCircle(onMedia: Bool) -> some View {
     DSCheckbox(isOn: isSelected, size: 20, shape: .circle, onMedia: onMedia) { onToggleSelect?() }
-      .dsTooltip(isSelected ? "Deselect this clip" : "Select this clip", shortcut: isSelected ? nil : "⌘-click", side: .bottom)
+      .dsTooltip(isSelected ? "Deselect" : "Select for bulk actions", shortcut: isSelected ? nil : "⌘-click", side: .bottom)
   }
 
   private var scoreText: some View {
     Group {
       if let s = clip.score {
-        Text("\(s)").font(DS.type.score).foregroundStyle(DS.color.text).dsTooltip("Your score (0–100) — it sets the posting order")
+        Text("\(s)").font(DS.type.score).foregroundStyle(DS.color.text).dsTooltip("Score \(s) — it sets the posting order")
       } else {
         Text("—").font(DS.type.score).foregroundStyle(DS.color.textTertiary).dsTooltip("Not scored yet — score it in Score")
       }
@@ -180,6 +180,7 @@ struct DSClipCard<Actions: View>: View {
         Text(d).font(DS.type.micro.monospacedDigit()).foregroundStyle(.white)
           .padding(.horizontal, 6).frame(height: 18)
           .background(Color.black.opacity(0.63), in: Capsule())
+          .dsTooltip("Length \(d)")
       }
     }
   }
@@ -289,7 +290,7 @@ struct DSClipCard<Actions: View>: View {
           if let s = clip.score {
             Text("\(s)").font(DS.type.micro.monospacedDigit()).foregroundStyle(.white)
               .padding(.horizontal, 7).frame(height: 20).background(Color.black.opacity(0.63), in: Capsule())
-              .dsTooltip("Your score (0–100)").padding(8)
+              .dsTooltip("Score \(s)").padding(8)
           }
         }
         .overlay(alignment: .bottomLeading) { durationBadge.padding(8) }
@@ -431,15 +432,26 @@ struct DSSuggestionChip: View {
   }
 }
 
-/// Small round buttons floating on media (grid tile hover actions).
+/// Small round buttons floating on media (grid tile hover actions). The label shows only its icon, so its title
+/// becomes the tooltip automatically — an icon-only action can't be left unexplained (round 3, F5).
 struct DSMediaActionStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .labelStyle(.iconOnly)
+      .labelStyle(DSIconWithTitleTooltip())
       .font(.system(size: 12, weight: .semibold))
       .foregroundStyle(.white)
       .frame(width: 28, height: 28)
       .background(Color.black.opacity(configuration.isPressed ? 0.75 : 0.55), in: Circle())
       .contentShape(Circle())
+  }
+}
+
+/// Icon only, with the label's title as the tooltip (DSMediaActionStyle).
+struct DSIconWithTitleTooltip: LabelStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.icon
+      .frame(width: 28, height: 28)
+      .contentShape(Circle())
+      .dsTooltip(view: configuration.title)
   }
 }
