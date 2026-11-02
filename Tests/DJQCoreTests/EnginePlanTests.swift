@@ -27,7 +27,8 @@ import Testing
     #expect(try q.ordered().map(\.id) == ["clip-0"])
     #expect(try q.toScore().map(\.id).contains("clip-4"))
     try f.store.setScore("clip-5", 40)
-    #expect(try q.needsEdit().map(\.id) == ["clip-5"])
+    // Round 4: the Edit list is the Edit stage — the scored clip whose file went missing (clip-2) is in it too.
+    #expect(try q.needsEdit().map(\.id) == ["clip-2", "clip-5"])
   }
 
   @Test func perPlatformOverrideUsesItsOwnOrder() throws {

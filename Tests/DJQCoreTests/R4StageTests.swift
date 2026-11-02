@@ -55,6 +55,13 @@ import Testing
     // The Queue never lists them; the others stay.
     let queued = Set(try Queue(store: f.store).ordered().map(\.id))
     #expect(queued.isDisjoint(with: ["clip-0", "clip-2", "clip-5"]))
+    // …and the Edit list (Edit page, djq status/queue counts) has all three, the missing-file clip included.
+    let edit = try Queue(store: f.store).needsEdit()
+    #expect(Set(edit.map(\.id)) == ["clip-0", "clip-2", "clip-5"])
+    #expect(edit.allSatisfy { ClipStage.of($0) == .edit })
+    // Runway counts only clips that can become posting days (not the missing file).
+    let rw = try Queue(store: f.store).runway()
+    #expect(rw.totalDays == rw.approvedDays + (queued.count + 2))
     for id in ["clip-0", "clip-2", "clip-5"] {
       #expect(try f.store.events(videoId: id).contains { $0.kind == "stage" && $0.message.hasPrefix("Moved to Edit: ") })
     }
@@ -81,9 +88,9 @@ import Testing
   @Test func invalidQueueClipsMoveToEditAfterADjqStyleWrite() throws {
     let f = try Fixture.engine(6)
     try makeThreeStale(f)
-    // Any djq write (e.g. `djq score` on another clip) runs the stage check afterwards.
+    // Any djq write (e.g. `djq score` on another clip) runs the stage check afterwards (djq main.swift's hook).
     try f.store.setScore("clip-3", 77)
-    let r = try Revalidation(store: f.store).run()
+    let r = try #require(Revalidation.afterWrite(store: f.store, command: "score"))
     #expect(Set(r.movedToEdit.keys) == ["clip-0", "clip-5"])
     #expect(r.movedToEdit["clip-5"] == ["Too long for X"] && r.movedToEdit["clip-0"] == ["No crop"])
     // `djq intake` (a write) notices the missing file.
@@ -94,6 +101,7 @@ import Testing
     try f.updateSettings { $0.limits[.x]?.maxDuration = 140 }
     let back = try Revalidation(store: f.store).run()
     #expect(back.movedToQueue == ["clip-5"])
+    #expect(try f.store.events(videoId: "clip-5").contains { $0.message == "Moved to the Queue: nothing missing any more" })
     try f.fakeFile("Clips/\(f.sessionDir.lastPathComponent) – song2 x mix2.mp4", seed: "song2 x mix2")
     try f.intake()
     try Revalidation(store: f.store).run()
@@ -144,6 +152,44 @@ import Testing
     #expect(try f.doublePosts().isEmpty)
   }
 
+  @Test func approvalRechecksStatesFirstSoAStaleReadyBacklogClipIsNeverPicked() throws {
+    let f = try Fixture.engine(9)
+    let planner = Planner(store: f.store)
+    try planner.proposeWeek(f.week)
+    let backlog = try Queue(store: f.store).ordered().map(\.id)
+    #expect(backlog.count == 2)
+    let mon = try #require(try f.store.planSlots(where: "date=?", ["2026-11-02"]).first)
+    // Monday's clip and BOTH backlog clips go invalid behind the store's back (stored states still say Queue).
+    for id in [mon.videoId] + backlog { try clearCropStale(f, id) }
+    try planner.approveWeek(f.week)
+    for id in [mon.videoId] + backlog {
+      #expect(try f.store.posts(where: "video_id=?", [id]).isEmpty)
+      #expect(try ClipStage.of(video(f, id)) == .edit)
+    }
+    // Monday is left open (nothing valid to refill it); the rest of the week is approved.
+    #expect(try f.store.planSlots(where: "date=?", ["2026-11-02"]).isEmpty)
+    #expect(try f.store.week(f.week)?.state == .approved)
+  }
+
+  @Test func approvalThatFailsLeavesTheDraftUntouched() throws {
+    let f = try Fixture.engine(1)
+    let planner = Planner(store: f.store)
+    f.setTime("2026-11-08", "09:00")  // Sunday: one day left
+    try planner.proposeWeek(f.week)
+    let sun = try #require(try f.store.planSlots(where: "date=?", ["2026-11-08"]).first)
+    try clearCropStale(f, sun.videoId)
+    #expect(throws: EngineError.self) { try planner.approveWeek(f.week) }
+    // Refused as a whole: the draft day and the stored state are as they were.
+    #expect(try f.store.planSlot(id: sun.id) != nil)
+    #expect(try video(f, sun.videoId).state == .ready)
+  }
+
+  @Test func makeReadyOutlookCountsUnscoredClipsAsNeedingAScore() throws {
+    let o = ReadyOutlook.classify([(id: "a", issues: [], hasTitle: true, hasScore: true),
+                                   (id: "b", issues: [], hasTitle: true, hasScore: false)])
+    #expect(o.ready == ["a"] && o.needScore == ["b"] && o.summary == "1 to the Queue · 1 still needs a score")
+  }
+
   @Test func revalidationRefillsADraftDay() throws {
     let f = try Fixture.engine(9)
     try Planner(store: f.store).proposeWeek(f.week)
@@ -180,9 +226,12 @@ import Testing
     #expect(try f.store.planSlot(id: thu.id) != nil)
     #expect(try f.store.posts(where: "video_id=?", [thu.videoId]).count == postsBefore)
     #expect(!n.titles(containing: "can't post").isEmpty)
-    // Pinned: its slot stays pinned on its day.
+    // Pinned: its slot stays pinned on its day, and its history says it can't post there (not "Moved to Edit").
     let pinned = try #require(try f.store.planSlots(where: "video_id=?", [pinnedId]).first)
     #expect(pinned.pinned && pinned.date == "2026-11-10")
+    let pinEvents = try f.store.events(videoId: pinnedId).map(\.message)
+    #expect(pinEvents.contains("Can't post on Tue 10 Nov: No crop"), "\(pinEvents)")
+    #expect(!pinEvents.contains { $0.hasPrefix("Moved to Edit") })
     // Doctor reports both.
     let doc = Doctor(store: f.store).run()
     let where_ = doc.findings.first { $0.id == "plan.notReady" }?.where_ ?? []

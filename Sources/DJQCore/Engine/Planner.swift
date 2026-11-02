@@ -55,8 +55,13 @@ public final class Planner: @unchecked Sendable {
     return try slots(week: week)
   }
 
-  /// Creates a PlatformPost per slot (today on) × active platform; marks the week approved.
+  /// Creates a PlatformPost per slot (today on) × active platform; marks the week approved. One transaction: the
+  /// state check, the draft-day refill and the approval all land or none do.
   public func approveWeek(_ week: String) throws {
+    try store.db.transaction { try approveWeekInTransaction(week) }
+  }
+
+  private func approveWeekInTransaction(_ week: String) throws {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     let today = store.today(dm)
@@ -82,13 +87,16 @@ public final class Planner: @unchecked Sendable {
   /// computed, isn't `ready`) are removed and each freed day/position is refilled from the queue order, like a
   /// proposal. `week` limits it to one week (nil = every draft week). Pinned slots and approved weeks are never
   /// touched. Returns the removed slots.
+  /// `revalidate` first re-derives every Edit/Queue clip's state (states only), so neither the drop nor the refill
+  /// trusts a stale stored `ready` (e.g. right after a settings save, before the next tick).
   @discardableResult
-  public func dropNotReadyDraftSlots(week: String? = nil) throws -> [PlanSlot] {
+  public func dropNotReadyDraftSlots(week: String? = nil, revalidate: Bool = true) throws -> [PlanSlot] {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     let today = store.today(dm)
     var dropped: [PlanSlot] = []
     try store.db.transaction {
+      if revalidate { try Revalidation(store: store).run(adjustPlan: false) }
       var clause = "date>=? AND pinned=0 AND week_start NOT IN (SELECT week_start FROM weeks WHERE state='approved')"
       var binds: [SQLBindable?] = [today]
       if let week { clause += " AND week_start=?"; binds.append(week) }

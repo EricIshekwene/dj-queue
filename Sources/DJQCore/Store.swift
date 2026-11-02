@@ -574,7 +574,14 @@ public final class Store: @unchecked Sendable {
     if Self.wasInQueue(v), ClipStage.of(after) == .edit {
       let issues = try Validation.issues(video: after, store: self, context: context)
       if !issues.contains(where: { $0.kind == .heldInEdit }) {  // "Back to Edit" logs its own event
-        try logEvent("stage", StageWording.movedToEdit(issues), videoId: v.id)
+        // A clip pinned to a (draft) day stays on that day: say it can't post there, not that it moved.
+        let dm = try dayMath()
+        if let pin = try planSlots(where: "video_id=? AND pinned=1 AND date>=?", [v.id, today(dm)]).first {
+          let s = try context?.settings ?? settings()
+          try logEvent("stage", StageWording.cantPost(on: BulkActions.day(pin.date, dm, s), issues), videoId: v.id)
+        } else {
+          try logEvent("stage", StageWording.movedToEdit(issues), videoId: v.id)
+        }
       }
     }
     return s

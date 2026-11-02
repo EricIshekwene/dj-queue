@@ -47,16 +47,23 @@ public struct ReadyOutlook: Codable, Sendable, Equatable {
   public var needTitle: [String]
   /// Anything else still open (and clips with no title that ALSO have other issues).
   public var other: [String]
+  /// Round 4: nothing missing in the edit, but no score yet — it's in Score, not the Queue.
+  public var needScore: [String] = []
 
-  public init(ready: [String] = [], needTitle: [String] = [], other: [String] = []) {
-    self.ready = ready; self.needTitle = needTitle; self.other = other
+  public init(ready: [String] = [], needTitle: [String] = [], other: [String] = [], needScore: [String] = []) {
+    self.ready = ready; self.needTitle = needTitle; self.other = other; self.needScore = needScore
   }
 
   /// Sorts clips by their remaining issues (`hasTitle`: the clip has a Title).
   public static func classify(_ issues: [(id: String, issues: [ValidationIssue], hasTitle: Bool)]) -> ReadyOutlook {
+    classify(issues.map { (id: $0.id, issues: $0.issues, hasTitle: $0.hasTitle, hasScore: true) })
+  }
+
+  /// Same, and an unscored clip with nothing missing counts as `needScore` (it goes to Score, not the Queue).
+  public static func classify(_ issues: [(id: String, issues: [ValidationIssue], hasTitle: Bool, hasScore: Bool)]) -> ReadyOutlook {
     var o = ReadyOutlook()
     for c in issues {
-      if c.issues.isEmpty { o.ready.append(c.id) }
+      if c.issues.isEmpty { if c.hasScore { o.ready.append(c.id) } else { o.needScore.append(c.id) } }
       else if !c.hasTitle, c.issues.allSatisfy({ $0.kind == .noText }) { o.needTitle.append(c.id) }
       else { o.other.append(c.id) }
     }
@@ -69,6 +76,7 @@ public struct ReadyOutlook: Codable, Sendable, Equatable {
     var parts = ["\(ready.count) to the Queue"]
     if !needTitle.isEmpty { parts.append("\(needTitle.count) still need\(needTitle.count == 1 ? "s" : "") a title") }
     if !other.isEmpty { parts.append("\(other.count) other issue\(other.count == 1 ? "" : "s")") }
+    if !needScore.isEmpty { parts.append("\(needScore.count) still need\(needScore.count == 1 ? "s" : "") a score") }
     return parts.joined(separator: " · ")
   }
 }
@@ -629,6 +637,11 @@ public final class BulkActions: @unchecked Sendable {
     return result
   }
 
+  /// Clip-history words for a journaled action; the command name stays (round 4: "make-ready" reads as what it does).
+  static func historyLabel(_ action: String) -> String {
+    action == "make-ready" ? "Confirm default crop (make-ready)" : action
+  }
+
   // MARK: Selection helper
 
   /// Clip ids for a filter: a VideoState raw value (`needs_edit`, `ready`, …), `unscored`, `scored`, `all`
@@ -731,12 +744,12 @@ public final class BulkActions: @unchecked Sendable {
           }
         }
         let reported = reportsAll ? existing.filter { result.skipped[$0] == nil } : result.changed
-        var rows: [(id: String, issues: [ValidationIssue], hasTitle: Bool)] = []
+        var rows: [(id: String, issues: [ValidationIssue], hasTitle: Bool, hasScore: Bool)] = []
         for id in reported {
           if let v = try store.video(id: id), v.type == .short {
             let issues = (try? Validation.issues(video: v, store: store)) ?? []
             result.remainingIssues[id] = issues
-            rows.append((id, issues, v.titleText != nil))
+            rows.append((id, issues, v.titleText != nil, v.score != nil))
           }
         }
         if reportsAll { result.outlook = ReadyOutlook.classify(rows) }
@@ -754,7 +767,7 @@ public final class BulkActions: @unchecked Sendable {
           """, [batchId, action, JSONCoding.string(params), JSONCoding.string(result.changed), JSONCoding.string(before),
                 JSONCoding.string(after), result.summary, store.clock.now])
         for id in result.changed {
-          try store.logEvent("bulk", "\(action)\(params.isEmpty ? "" : " " + params.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")) (batch \(batchId.prefix(8)))",
+          try store.logEvent("bulk", "\(Self.historyLabel(action))\(params.isEmpty ? "" : " " + params.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")) (batch \(batchId.prefix(8)))",
                              videoId: id)
         }
         result.batchId = batchId

@@ -10,7 +10,7 @@ let usage = """
 usage: djq <command> [args]
 
   status                              runway, today, problems, engine
-  queue [--platform P]                the Queue (ready, not scheduled) in posting order
+  queue [--platform P]                the Queue (nothing missing, not scheduled yet) in posting order
   today                               today's posts
   posts [--problems] [--json]         upcoming/recent posts (or unresolved problems)
   week [--propose|--approve|--rebuild] [--json] [YYYY-MM-DD]
@@ -198,7 +198,7 @@ func run() throws -> Int32 {
     if wrote {
       // Round 4 (S1): after any write, invalid Queue clips move to Edit (and valid Edit clips return) before the app
       // and engine hear about it.
-      do { try Revalidation(store: store).run() } catch { Log.shared.warn("stage check after \(cmd): \(error)") }
+      Revalidation.afterWrite(store: store, command: cmd)
       ChangeSignal.post()
     }
   }
