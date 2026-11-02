@@ -1,0 +1,179 @@
+import Foundation
+
+/// Stable JSON shapes for outside agents (`djq … --json`). Field names are snake_case and documented in
+/// `skills/dj-queue-agent/SKILL.md`; add fields, never rename them.
+public enum AgentAPI {
+  public struct VideoSummary: Codable, Sendable {
+    public var id: String
+    public var display_name: String
+    public var title: String?
+    public var title_source: String?
+    public var raw_tag: String
+    public var name: String
+    public var session: String
+    public var type: String
+    public var kind: String
+    public var state: String
+    public var score: Int?
+    public var excluded: Bool
+    public var missing: Bool
+    public var part: Int?
+    public var duration: Double
+    public var marked_start: Double?
+    public var marked_end: Double?
+    public var audio: String?
+    public var file: String?
+    public var suggestion_count: Int
+    public var needs_title_help: Bool
+    public var issues: [String]
+  }
+
+  public struct SuggestionOut: Codable, Sendable {
+    public var id: Int64
+    public var text: String
+    public var tracks: [Track]
+    public var confidence: Double?
+    public var source: String
+    public var origin: String
+  }
+
+  public struct PostOut: Codable, Sendable {
+    public var id: String
+    public var video_id: String
+    public var platform: String
+    public var version: Int
+    public var attempt: Int
+    public var kind: String
+    public var state: String
+    public var scheduled_at: Date
+    public var posted_at: Date?
+    public var url: String?
+    public var error_type: String?
+    public var error_message: String?
+  }
+
+  public struct VideoDetail: Codable, Sendable {
+    public var video: VideoSummary
+    public var title_tracks: [Track]?
+    public var title_suggestions: [SuggestionOut]
+    /// Raw overrides as stored (nil fields follow the defaults).
+    public var edit: Edit
+    public var resolved_edit: ResolvedEdit
+    public var versions: [Version]
+    public var resolved_v1: ResolvedVersion?
+    public var captions: [String: String]
+    public var youtube_title: String?
+    public var issues: [ValidationIssue]
+    public var plan: [PlanSlot]
+    public var posts: [PostOut]
+  }
+
+  public struct WeekOut: Codable, Sendable {
+    public struct Day: Codable, Sendable {
+      public var date: String
+      public var slots: [SlotOut]
+    }
+    public struct SlotOut: Codable, Sendable {
+      public var slot_id: String
+      public var position: Int
+      public var pinned: Bool
+      public var video_id: String
+      public var display_name: String
+      public var score: Int?
+      public var posts: [PostOut]
+    }
+    public var week_start: String
+    public var state: String
+    public var approved_at: Date?
+    public var days: [Day]
+  }
+
+  public static var encoder: JSONEncoder {
+    let e = JSONEncoder()
+    e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    e.dateEncodingStrategy = .iso8601
+    return e
+  }
+
+  public static func summary(_ v: Video, store: Store, sessions: [String: Session]? = nil) throws -> VideoSummary {
+    let sugg = try store.titleSuggestions(videoId: v.id)
+    let s = try sessions?[v.sessionId] ?? store.session(id: v.sessionId)
+    return VideoSummary(
+      id: v.id, display_name: v.displayName, title: v.titleText, title_source: v.titleSource,
+      raw_tag: v.tag, name: v.name, session: s?.name ?? "", type: v.type.rawValue, kind: v.kind.rawValue,
+      state: v.state.rawValue, score: v.score, excluded: v.excluded, missing: v.missing, part: v.part, duration: v.duration,
+      marked_start: v.markedStart, marked_end: v.markedEnd, audio: v.audio, file: (try? store.fileURL(for: v))??.path,
+      suggestion_count: sugg.count, needs_title_help: AgentPrompts.needsTitleHelp(v, suggestions: sugg),
+      issues: v.type == .short ? ((try? Validation.issues(video: v, store: store)) ?? []).map(\.message) : [])
+  }
+
+  public static func post(_ p: PlatformPost) -> PostOut {
+    PostOut(id: p.id, video_id: p.videoId, platform: p.platform.rawValue, version: p.versionNo, attempt: p.attemptNo,
+            kind: p.kind.rawValue, state: p.state.rawValue, scheduled_at: p.scheduledAt, posted_at: p.postedAt, url: p.url,
+            error_type: p.errorType?.rawValue, error_message: p.errorMessage)
+  }
+
+  /// `djq videos --json [--state S]` (state also accepts the BulkActions filters: unscored, scored, needs-edit, all).
+  public static func videos(store: Store, filter: String? = nil) throws -> [VideoSummary] {
+    let sessions = Dictionary(uniqueKeysWithValues: try store.sessions().map { ($0.id, $0) })
+    let vids: [Video]
+    if let f = filter {
+      let ids = try BulkActions(store: store).ids(filter: f)
+      vids = try ids.compactMap { try store.video(id: $0) }
+    } else {
+      vids = try store.videos().sorted { ($0.sessionId, $0.part ?? 0, $0.start ?? 0, $0.name) < ($1.sessionId, $1.part ?? 0, $1.start ?? 0, $1.name) }
+    }
+    return try vids.map { try summary($0, store: store, sessions: sessions) }
+  }
+
+  /// `djq video <id> --json`
+  public static func video(_ id: String, store: Store) throws -> VideoDetail {
+    guard let v = try store.video(id: id) else { throw EngineError("No video \(id)") }
+    let settings = try store.settings()
+    let r1 = try store.resolvedVersion(videoId: id, number: 1, settings: settings)
+    var captions: [String: String] = [:]
+    var yt: String?
+    if let r1, v.type == .short {
+      let session = try store.session(id: v.sessionId)?.name ?? ""
+      let sets = try store.hashtagSets(), templates = try store.captionTemplates()
+      for p in settings.activePlatforms {
+        captions[p.rawValue] = Captions.caption(for: p, version: r1, video: v, sessionName: session, sets: sets,
+                                                templates: templates, settings: settings)
+      }
+      yt = Captions.youtubeTitle(r1, video: v, settings: settings)
+    }
+    return VideoDetail(
+      video: try summary(v, store: store), title_tracks: v.titleText == nil ? nil : v.titleTracks,
+      title_suggestions: try store.titleSuggestions(videoId: id).map {
+        SuggestionOut(id: $0.id, text: $0.text, tracks: $0.tracks, confidence: $0.confidence, source: $0.source, origin: $0.origin)
+      },
+      edit: try store.edit(videoId: id), resolved_edit: try store.resolvedEdit(videoId: id, settings: settings),
+      versions: try store.versions(videoId: id), resolved_v1: r1, captions: captions, youtube_title: yt,
+      issues: v.type == .short ? try Validation.issues(video: v, store: store) : [],
+      plan: try store.planSlots(where: "video_id=?", [id]), posts: try store.posts(where: "video_id=?", [id]).map(post))
+  }
+
+  /// `djq week --json [date]`
+  public static func week(_ weekStart: String, store: Store) throws -> WeekOut {
+    let planner = Planner(store: store)
+    let w = try planner.week(weekStart)
+    let dm = try store.dayMath()
+    let slots = try planner.slots(week: weekStart)
+    let days = try dm.weekDays(weekStart).map { day in
+      WeekOut.Day(date: day, slots: try slots.filter { $0.date == day }.map { s in
+        let v = try store.video(id: s.videoId)
+        return WeekOut.SlotOut(slot_id: s.id, position: s.position, pinned: s.pinned, video_id: s.videoId,
+                               display_name: v?.displayName ?? s.videoId, score: v?.score,
+                               posts: try store.posts(where: "plan_slot_id=?", [s.id]).map(post))
+      })
+    }
+    return WeekOut(week_start: weekStart, state: w.state.rawValue, approved_at: w.approvedAt, days: days)
+  }
+
+  /// `djq posts --json [--problems]`
+  public static func posts(store: Store, problems: Bool = false, since: Date? = nil) throws -> [PostOut] {
+    if problems { return try PostActions(store: store).problems().map(post) }
+    if let since { return try store.posts(where: "scheduled_at>=?", [since]).map(post) }
+    return try store.posts().map(post)
+  }
+}

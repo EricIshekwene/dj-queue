@@ -19,6 +19,9 @@ posts, then marks each post done with its URL. Refer to Eric as they/them.
   LaunchAgent without Eric saying so.
 - Copyright problems are Eric's call (re-upload / skip / accept). Don't fight or retry them.
 
+For reading/changing clips (titles, suggestions, text, captions, bulk edits, undo) use the
+`dj-queue-agent` skill (`skills/dj-queue-agent/SKILL.md`).
+
 ## Run it
 
 ```sh
@@ -40,7 +43,7 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | What | Path |
 |---|---|
 | Database (single source of truth) | `~/Library/Application Support/DJ Queue/queue.sqlite` (WAL) |
-| Prefill rules (tag → overlay text) | `~/Library/Application Support/DJ Queue/prefill-rules.json` (`djq prefill "<tag>"` previews) |
+| Title formatter (tag → title suggestions, upstream) | `scripts/prefill_titles.py` in the repo — the app itself never derives text (see `docs/metadata.md`) |
 | Engine log (rotated, 5 MB × 3) | `~/Library/Logs/DJ Queue/engine.log` |
 | Daily DB backups (keep 14) | `~/Movies/DJ Video/_app/backups/queue-YYYY-MM-DD.sqlite` |
 | Sessions | `~/Movies/DJ Video/Sessions/<YYYY-MM-DD – name>/` (`videos.json` = intake source) |

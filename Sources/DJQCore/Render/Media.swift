@@ -159,18 +159,25 @@ public enum Media {
   /// aspect; default time = marker in-point + 1 s. Cache key covers video id, crop, aspect, time and size.
   public static func thumbnail(store: Store, video: Video, at seconds: Double? = nil, maxHeight: Int = 320) -> URL? {
     guard let src = try? store.fileURL(for: video), FileManager.default.fileExists(atPath: src.path) else { return nil }
-    let edit = (try? store.edit(videoId: video.id)) ?? Edit()
+    let settings = (try? store.settings()) ?? Settings()
+    let raw = (try? store.edit(videoId: video.id)) ?? Edit()
+    let edit = EditResolver.resolve(raw, video: video, defaults: settings.defaults)
     var t = seconds ?? ((video.markerIn ?? 0) + 1)
     if video.duration > 0 { t = min(max(0, t), max(0, video.duration - 0.05)) }
-    let cropKey = edit.crop.map { "\($0.x),\($0.y),\($0.w),\($0.h)" } ?? "centre"
+    let anchor = settings.defaults.cropAnchor
+    let cropKey = raw.crop.map { "\($0.x),\($0.y),\($0.w),\($0.h)" } ?? "default-\(anchor.rawValue)"
     let key = "\(video.id)|\(cropKey)|\(edit.aspect.rawValue)|\(String(format: "%.3f", t))|\(maxHeight)|\(video.fingerprint ?? "")"
     let hash = SHA256.hash(data: Data(key.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     let url = store.paths.thumbs.appendingPathComponent("\(video.id)-\(hash).jpg")
     if FileManager.default.fileExists(atPath: url.path) { return url }
     guard let frame = frame(src, at: t, maxSize: .zero) else { return nil }
+    if video.sourceWidth == nil { try? store.setSourceSize(video.id, width: frame.width, height: frame.height) }
     let h = maxHeight
     let w = max(2, Int((Double(h) * edit.aspect.ratio).rounded()))
-    guard let img = compose(frame, crop: edit.crop, aspect: edit.aspect, size: CGSize(width: w, height: h)) else {
+    let crop = raw.crop ?? settings.defaults.defaultCrop(
+      source: CGSize(width: frame.width, height: frame.height), aspect: edit.aspect,
+      lastUsed: anchor == .lastUsed ? (try? store.lastCropCentre()) ?? nil : nil)
+    guard let img = compose(frame, crop: crop, aspect: edit.aspect, size: CGSize(width: w, height: h)) else {
       return nil
     }
     do {

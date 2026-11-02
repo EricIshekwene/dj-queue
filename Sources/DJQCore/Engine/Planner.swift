@@ -258,7 +258,7 @@ public final class Planner: @unchecked Sendable {
     var touched: Set<String> = [s.videoId]
     for p in settings.activePlatforms where !existing.contains(p) {
       var videoId: String? = s.videoId
-      if try store.edit(videoId: s.videoId).skippedPlatforms.contains(p), !picker.hasOverride(p) { continue }
+      if try store.edit(videoId: s.videoId).isSkipped(p, defaults: settings.defaults), !picker.hasOverride(p) { continue }
       if picker.hasOverride(p) {
         videoId = try picker.next(p)?.id ?? (try usable(s.videoId, on: p) ? s.videoId : nil)
       } else if try !usable(s.videoId, on: p) {
@@ -282,7 +282,7 @@ public final class Planner: @unchecked Sendable {
   func usable(_ videoId: String, on p: Platform) throws -> Bool {
     guard let v = try store.video(id: videoId) else { return false }
     if v.alreadyPostedOn.contains(p) { return false }
-    if try store.edit(videoId: videoId).skippedPlatforms.contains(p) { return false }
+    if try store.edit(videoId: videoId).isSkipped(p, defaults: try store.settings().defaults) { return false }
     return try store.platformHistory(videoId: videoId, platform: p).isEmpty
   }
 

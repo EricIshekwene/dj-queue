@@ -247,7 +247,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
 
   struct Plan {
     var video: Video
-    var edit: Edit
+    var edit: ResolvedEdit
     var version: ResolvedVersion
     var settings: Settings
     var scope: String
@@ -288,10 +288,14 @@ public final class Renderer: RenderService, @unchecked Sendable {
     guard let version = try store.resolvedVersion(videoId: videoId, number: versionNo, settings: settings) else {
       throw RenderError("\(video.name) has no version \(versionNo)")
     }
-    let edit = try store.edit(videoId: videoId)
+    let raw = try store.edit(videoId: videoId)
+    // Only a confirmed crop renders (the default anchor crop is a suggestion until Eric confirms it).
+    var edit = EditResolver.resolve(raw, video: video, defaults: settings.defaults)
+    if !edit.cropConfirmed { edit.crop = nil }
     let scopePlatform = platform.flatMap { edit.platformTrims[$0] != nil ? $0 : nil }
     let scope = scopePlatform?.rawValue ?? "all"
-    let trim = edit.trim(duration: video.duration, platform: scopePlatform)
+    // Resolved trim: Eric's markers (± default extra seconds) unless the clip overrides it; the hash follows it.
+    let trim = edit.trim(platform: scopePlatform)
     let maxBytes: Int64? = {
       func limit(_ p: Platform) -> Int64? { (settings.limits[p] ?? PlatformLimits.defaults[p])?.maxBytes }
       if let p = scopePlatform { return limit(p) }
@@ -470,7 +474,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
 
     // Cover: built like the editor preview (AVFoundation frame → same pixel crop → scale → TextOverlay),
     // so it looks exactly like the frame Eric picked. ffmpeg fallback if AVFoundation can't decode.
-    let coverAt = min(max(0, p.edit.coverTime ?? start), max(0, info.duration - 0.05))
+    let coverAt = min(max(0, p.edit.coverTime), max(0, info.duration - 0.05))
     let coverOverlay = hasText && p.edit.coverIncludesText ? TextOverlay.image(for: p.version, aspect: p.edit.aspect) : nil
     var haveCover = false
     if let frame = Media.frame(src, at: coverAt, maxSize: .zero),

@@ -21,6 +21,8 @@ public final class Intake: @unchecked Sendable {
   var paths: Paths { store.paths }
   let fm = FileManager.default
 
+  var defaultKind: Kind = .djVid
+
   public init(store: Store) { self.store = store }
 
   struct Manifest: Decodable {
@@ -45,12 +47,40 @@ public final class Intake: @unchecked Sendable {
     var grace: Double?
     var audio: String?
     var status: String?
+    /// Optional upstream metadata (docs/metadata.md): seeds the app title once, when it is empty.
+    var title: String?
+    /// Optional upstream guesses; synced into title_suggestions (origin "manifest") on every intake.
+    var titleSuggestions: [SuggestionInput]?
 
     enum CodingKeys: String, CodingKey {
-      case id, name, tags, type, file, session, part, start, end, duration, grace, audio, status
+      case id, name, tags, type, file, session, part, start, end, duration, grace, audio, status, title
       case contentType = "content-type"
       case markedStart = "marked_start"
       case markedEnd = "marked_end"
+      case titleSuggestions = "title_suggestions"
+    }
+
+    init(from d: Decoder) throws {
+      let c = try d.container(keyedBy: CodingKeys.self)
+      id = try c.decodeIfPresent(String.self, forKey: .id)
+      name = try c.decode(String.self, forKey: .name)
+      tags = try c.decodeIfPresent([String].self, forKey: .tags)
+      type = try c.decodeIfPresent(String.self, forKey: .type)
+      contentType = try c.decodeIfPresent(String.self, forKey: .contentType)
+      file = try c.decode(String.self, forKey: .file)
+      session = try c.decodeIfPresent(String.self, forKey: .session)
+      part = try c.decodeIfPresent(Int.self, forKey: .part)
+      markedStart = try c.decodeIfPresent(Double.self, forKey: .markedStart)
+      markedEnd = try c.decodeIfPresent(Double.self, forKey: .markedEnd)
+      start = try c.decodeIfPresent(Double.self, forKey: .start)
+      end = try c.decodeIfPresent(Double.self, forKey: .end)
+      duration = try c.decodeIfPresent(Double.self, forKey: .duration)
+      grace = try c.decodeIfPresent(Double.self, forKey: .grace)
+      audio = try c.decodeIfPresent(String.self, forKey: .audio)
+      status = try c.decodeIfPresent(String.self, forKey: .status)
+      title = try? c.decodeIfPresent(String.self, forKey: .title)
+      // Malformed suggestions never fail the manifest (they're optional guesses); they are just ignored.
+      titleSuggestions = (try? c.decodeIfPresent([SuggestionInput].self, forKey: .titleSuggestions)) ?? nil
     }
   }
 
@@ -63,6 +93,7 @@ public final class Intake: @unchecked Sendable {
       .sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []
 
     let existingVideos = Dictionary(uniqueKeysWithValues: try store.videos().map { ($0.id, $0) })
+    defaultKind = try store.settings().defaults.kind
     var existingSessions = try store.sessions()
     var seenIds = Set<String>()
     var seenSessionIds = Set<String>()
@@ -159,7 +190,7 @@ public final class Intake: @unchecked Sendable {
     let type: VideoType = e.type == VideoType.long.rawValue ? .long : .short
     var v = old ?? Video(
       id: id, sessionId: session.id, name: e.name, tags: e.tags ?? [], type: type,
-      contentType: e.contentType ?? "dj vid", kind: e.contentType?.lowercased() == "talking" ? .talking : .djVid, file: e.file, fingerprint: nil, fileSize: nil,
+      contentType: e.contentType ?? "dj vid", kind: e.contentType?.lowercased() == "talking" ? .talking : defaultKind, file: e.file, fingerprint: nil, fileSize: nil,
       duration: e.duration ?? 0, markedStart: e.markedStart, markedEnd: e.markedEnd, start: e.start, end: e.end,
       grace: e.grace, audio: e.audio, part: e.part, score: nil, state: .needsEdit, excluded: false, missing: false,
       inManifest: true, notes: "", alreadyPostedOn: [], longformURL: nil, createdAt: now, updatedAt: now)
@@ -216,8 +247,19 @@ public final class Intake: @unchecked Sendable {
     if old == nil {
       try store.save(v)
     } else if old != v {
-      try store.saveIdentity(v)  // app-owned fields (score, kind, notes, excluded…) are never written by intake
+      try store.saveIdentity(v)  // app-owned fields (score, kind, notes, excluded, title…) are never written by intake
     }
+    // Metadata: the manifest title only seeds a title that was never set (a title Eric set or cleared is never
+    // touched); otherwise a different manifest title is offered as a suggestion. Suggestions sync.
+    var suggestions = e.titleSuggestions ?? []
+    if let t = e.title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty, let cur = try store.video(id: v.id) {
+      if cur.titleText == nil && cur.titleSource != Store.clearedTitleSource {
+        try store.setTitle(v.id, t, source: "manifest")
+      } else if cur.titleText != t, !suggestions.contains(where: { $0.text.trimmingCharacters(in: .whitespaces) == t }) {
+        suggestions.append(SuggestionInput(text: t, source: "videos.json title"))
+      }
+    }
+    try store.syncManifestSuggestions(videoId: v.id, suggestions)
     try store.refreshState(videoId: v.id)
   }
 

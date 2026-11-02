@@ -50,12 +50,12 @@ import Testing
       let src = try #require(try store.fileURL(for: v))
       let info = try Media.probe(src)
       var e = try store.edit(videoId: v.id)
-      e.aspect = .r9x16
+      e.aspectOverride = .r9x16
       e.crop = CropRect(x: c.cropX, y: 0, w: 2160 * 9 / 16, h: 2160)
       e.trimIn = v.markerIn ?? 3
       e.trimOut = v.markerOut ?? info.duration
       e.coverTime = nil
-      e.coverIncludesText = true
+      e.coverIncludesTextOverride = true
       try store.save(e, videoId: v.id)
       var ver = try store.versions(videoId: v.id).first { $0.number == 1 } ?? Version(number: 1)
       ver.text = c.text; ver.noText = false; ver.style = .box; ver.size = 64; ver.posX = 0.5; ver.posY = 0.5
@@ -68,7 +68,7 @@ import Testing
       let r = try renderer.ensureRender(videoId: v.id, versionNo: 1, platform: nil)
       let secs = Date().timeIntervalSince(t0)
       let out = URL(fileURLWithPath: try #require(r.outputPath))
-      let trim = e.trim(duration: v.duration)
+      let trim = try store.resolvedEdit(videoId: v.id).trim()
       let probe = try Media.probe(out)
 
       // (a) Loudness: source segment (pass-1 loudnorm), full source file and output (ebur128 peak=true).

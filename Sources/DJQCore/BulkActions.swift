@@ -1,0 +1,583 @@
+import CoreGraphics
+import Foundation
+
+/// Sections of an edit that "Apply defaults" resets (clears the overrides so the clip follows Settings.defaults).
+public enum BulkSection: String, Codable, Sendable, CaseIterable {
+  /// Aspect, and the crop re-fitted to the default anchor (confirmed when the source size is known).
+  case frame
+  /// Trim in/out and per-platform trims.
+  case trim
+  /// v1 text, No text, style, size, position, alignment, timing.
+  case text
+  /// Cover time and "include text on cover".
+  case cover
+  /// v1 caption, template, hashtag sets, extra hashtags, YouTube title, per-platform captions.
+  case caption
+  /// Per-clip platform skips / turn-ons.
+  case platforms
+}
+
+/// Result of a bulk action (also what `djq bulk … --json` prints).
+public struct BulkResult: Codable, Sendable {
+  /// Journal id for `undo`; nil for dry runs and when nothing changed.
+  public var batchId: String?
+  public var action: String
+  public var dryRun: Bool
+  public var videoIds: [String]
+  public var changed: [String]
+  /// Clip id → why it was left alone.
+  public var skipped: [String: String]
+  /// Clip id → what still keeps it from being ready, after the action (changed clips only).
+  public var remainingIssues: [String: [ValidationIssue]]
+  public var summary: String
+}
+
+/// One journal row.
+public struct BatchRecord: Codable, Sendable, Identifiable, Hashable {
+  public var id: String
+  public var action: String
+  public var params: [String: String]
+  public var videoIds: [String]
+  public var summary: String
+  public var createdAt: Date
+  /// Set only when everything in the batch was restored.
+  public var undoneAt: Date?
+  /// Clip ids (and "#plan") already restored by a partial undo.
+  public var restored: [String] = []
+}
+
+/// Bulk editing (round 2 #11). Every action runs in ONE transaction, logs a per-clip event, and records a batch
+/// journal entry with before/after snapshots so `undo(batchId)` restores exactly what it changed. `dryRun`
+/// runs the action and rolls it back, returning what would change.
+///
+/// Undo refuses (per clip, or the whole plan part) when something else changed the same data after the batch,
+/// unless `force` — so an undo never silently overwrites Eric's later work.
+public final class BulkActions: @unchecked Sendable {
+  let store: Store
+  /// Post `ChangeSignal` after a committed batch (the app sets this; `djq` posts it itself).
+  public var postsChangeSignal = false
+  /// Source picture size for the default crop when the video's size isn't cached (default: ffprobe).
+  public var sourceSize: (@Sendable (Store, Video) -> CGSize?) = { store, v in Media.sourceSize(store: store, video: v) }
+
+  public init(store: Store) { self.store = store }
+
+  // MARK: Clip edits
+
+  /// Confirms the default crop (anchor) where none is set and returns what is still missing per clip.
+  /// Text, caption, cover and the rest already follow the defaults (clips store only overrides), so nothing
+  /// Eric customised is touched.
+  @discardableResult
+  public func makeReadyWithDefaults(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
+    try run("make-ready", ids: ids, dryRun: dryRun) { _, v, s in
+      guard v.type == .short else { return .skipped("long-form") }
+      if v.missing { return .skipped("file missing") }
+      var e = try store.edit(videoId: v.id)
+      guard e.crop == nil else { return .unchanged }
+      guard let size = try cachedOrProbedSize(v) else { return .skipped("can't read the clip's size to place the crop") }
+      e.crop = s.defaults.defaultCrop(source: size, aspect: e.aspectOverride ?? s.defaults.aspect,
+                                      lastUsed: s.defaults.cropAnchor == .lastUsed ? try store.lastCropCentre() : nil)
+      try store.save(e, videoId: v.id)
+      return .changed
+    }
+  }
+
+  /// Clears the overrides of `sections` so the clips follow the defaults again.
+  @discardableResult
+  public func applyDefaults(_ ids: [String], sections: Set<BulkSection> = Set(BulkSection.allCases),
+                            dryRun: Bool = false) throws -> BulkResult {
+    try run("apply-defaults", ids: ids, params: ["sections": sections.map(\.rawValue).sorted().joined(separator: ",")],
+            dryRun: dryRun) { _, v, s in
+      guard v.type == .short else { return .skipped("long-form") }
+      var e = try store.edit(videoId: v.id)
+      let e0 = e
+      if sections.contains(.frame) {
+        e.aspectOverride = nil
+        if e.crop != nil {
+          e.crop = try cachedOrProbedSize(v).map {
+            s.defaults.defaultCrop(source: $0, aspect: s.defaults.aspect,
+                                   lastUsed: s.defaults.cropAnchor == .lastUsed ? try store.lastCropCentre() : nil)
+          }
+        }
+      }
+      if sections.contains(.trim) { e.trimIn = nil; e.trimOut = nil; e.platformTrims = [:] }
+      if sections.contains(.cover) { e.coverTime = nil; e.coverIncludesTextOverride = nil }
+      if sections.contains(.platforms) { e.skippedPlatforms = []; e.includedPlatforms = [] }
+      var changed = false
+      if e != e0 { try store.save(e, videoId: v.id); changed = true }
+      if var v1 = try store.versions(videoId: v.id).first(where: { $0.number == 1 }) {
+        let o = v1
+        if sections.contains(.text) {
+          v1.text = nil; v1.noText = nil; v1.style = nil; v1.size = nil; v1.posX = nil; v1.posY = nil
+          v1.align = nil; v1.textStart = nil; v1.textEnd = nil
+        }
+        if sections.contains(.caption) {
+          v1.caption = nil; v1.captionTemplateId = nil; v1.hashtagSetIds = nil; v1.extraHashtags = nil
+          v1.youtubeTitle = nil; v1.platformCaptions = nil
+        }
+        if v1 != o { try store.save(v1, videoId: v.id); changed = true }
+      }
+      return changed ? .changed : .unchanged
+    }
+  }
+
+  @discardableResult
+  public func setScore(_ ids: [String], _ score: Int?, dryRun: Bool = false) throws -> BulkResult {
+    try run("score", ids: ids, params: ["score": score.map(String.init) ?? "clear"], dryRun: dryRun) { _, v, _ in
+      let new = score.map { min(100, max(0, $0)) }
+      guard v.score != new else { return .unchanged }
+      try store.setScore(v.id, new)
+      try store.refreshState(videoId: v.id)
+      return .changed
+    }
+  }
+
+  /// Adds `delta` to each clip's score (0…100). Unscored clips are skipped.
+  @discardableResult
+  public func adjustScore(_ ids: [String], by delta: Int, dryRun: Bool = false) throws -> BulkResult {
+    try run("score-adjust", ids: ids, params: ["delta": String(delta)], dryRun: dryRun) { _, v, _ in
+      guard let s = v.score else { return .skipped("not scored yet") }
+      let new = min(100, max(0, s + delta))
+      guard new != s else { return .unchanged }
+      try store.setScore(v.id, new)
+      try store.refreshState(videoId: v.id)
+      return .changed
+    }
+  }
+
+  @discardableResult
+  public func setKind(_ ids: [String], _ kind: Kind, dryRun: Bool = false) throws -> BulkResult {
+    try run("kind", ids: ids, params: ["kind": kind.rawValue], dryRun: dryRun) { _, v, _ in
+      guard v.kind != kind else { return .unchanged }
+      try store.setKind(v.id, kind)
+      return .changed
+    }
+  }
+
+  @discardableResult
+  public func setExcluded(_ ids: [String], _ excluded: Bool, dryRun: Bool = false) throws -> BulkResult {
+    try run(excluded ? "exclude" : "include", ids: ids, dryRun: dryRun) { _, v, _ in
+      guard v.excluded != excluded else { return .unchanged }
+      try store.setExcluded(v.id, excluded)
+      return .changed
+    }
+  }
+
+  /// Sets v1's caption template (nil = back to the default) and clears a written v1 caption so it takes effect.
+  @discardableResult
+  public func setCaptionTemplate(_ ids: [String], _ templateId: String?, dryRun: Bool = false) throws -> BulkResult {
+    if let t = templateId, try !store.captionTemplates().contains(where: { $0.id == t }) {
+      throw EngineError("No caption template \(t)")
+    }
+    return try run("caption-template", ids: ids, params: ["template": templateId ?? "default"], dryRun: dryRun) { _, v, _ in
+      try updateV1(v) { $0.captionTemplateId = templateId; $0.caption = nil }
+    }
+  }
+
+  /// Sets v1's hashtag sets (nil = the default sets).
+  @discardableResult
+  public func setHashtagSets(_ ids: [String], _ setIds: [String]?, dryRun: Bool = false) throws -> BulkResult {
+    if let s = setIds {
+      let known = Set(try store.hashtagSets().map(\.id))
+      if let bad = s.first(where: { !known.contains($0) }) { throw EngineError("No hashtag set \(bad)") }
+    }
+    return try run("hashtag-sets", ids: ids, params: ["sets": setIds?.joined(separator: ",") ?? "default"], dryRun: dryRun) { _, v, _ in
+      try updateV1(v) { $0.hashtagSetIds = setIds }
+    }
+  }
+
+  /// Sets v1's extra hashtags (nil = the default extras).
+  @discardableResult
+  public func setExtraHashtags(_ ids: [String], _ tags: [String]?, dryRun: Bool = false) throws -> BulkResult {
+    try run("extra-hashtags", ids: ids, params: ["extra": tags?.joined(separator: " ") ?? "default"], dryRun: dryRun) { _, v, _ in
+      try updateV1(v) { $0.extraHashtags = tags }
+    }
+  }
+
+  /// Writes each clip's caption for `platform` without hashtags as that platform's override ("Drop hashtags for X").
+  @discardableResult
+  public func dropHashtags(_ ids: [String], platform: Platform, dryRun: Bool = false) throws -> BulkResult {
+    try run("drop-hashtags", ids: ids, params: ["platform": platform.rawValue], dryRun: dryRun) { _, v, s in
+      guard let r = try store.resolvedVersion(videoId: v.id, number: 1, settings: s) else { return .skipped("no version") }
+      let bare = Captions.withoutHashtags(for: platform, version: r, video: v, sessionName: try store.sessionName(for: v),
+                                          templates: try store.captionTemplates(), settings: s)
+      return try updateV1(v) { var pc = $0.platformCaptions ?? r.platformCaptions; pc[platform] = bare; $0.platformCaptions = pc }
+    }
+  }
+
+  /// Skips (or posts again on) `platform` for each clip.
+  @discardableResult
+  public func setPlatform(_ ids: [String], _ platform: Platform, skipped: Bool, dryRun: Bool = false) throws -> BulkResult {
+    try run(skipped ? "skip-platform" : "unskip-platform", ids: ids, params: ["platform": platform.rawValue],
+            dryRun: dryRun) { _, v, s in
+      var e = try store.edit(videoId: v.id)
+      let o = e
+      if skipped {
+        e.skippedPlatforms.insert(platform)
+        e.includedPlatforms.remove(platform)
+      } else {
+        e.skippedPlatforms.remove(platform)
+        if !s.defaults.platforms.contains(platform) { e.includedPlatforms.insert(platform) }
+      }
+      guard e != o else { return .unchanged }
+      try store.save(e, videoId: v.id)
+      return .changed
+    }
+  }
+
+  /// Sets the title (nil clears it) on every clip.
+  @discardableResult
+  public func setTitle(_ ids: [String], _ title: String?, dryRun: Bool = false) throws -> BulkResult {
+    try run("title", ids: ids, params: ["title": title ?? ""], dryRun: dryRun) { _, v, _ in
+      let t = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard v.titleText != ((t?.isEmpty ?? true) ? nil : t) else { return .unchanged }
+      try store.setTitle(v.id, title)
+      return .changed
+    }
+  }
+
+  /// Makes each clip's best suggestion its title. Clips that already have a title, or no suggestions, are skipped.
+  @discardableResult
+  public func acceptTopTitleSuggestion(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
+    try run("accept-title", ids: ids, dryRun: dryRun) { _, v, _ in
+      if v.titleText != nil { return .skipped("already has a title") }
+      guard let top = try store.titleSuggestions(videoId: v.id).first else { return .skipped("no suggestions") }
+      try store.setTitle(v.id, top.text, tracks: top.tracks.isEmpty ? nil : top.tracks, source: "suggestion")
+      return .changed
+    }
+  }
+
+  // MARK: Plan
+
+  /// Puts each clip on the first day of `week` (today on) with a free slot, pinned there.
+  @discardableResult
+  public func addToWeek(_ ids: [String], week: String, dryRun: Bool = false) throws -> BulkResult {
+    let planner = Planner(store: store)
+    return try run("add-to-week", ids: ids, params: ["week": week], dryRun: dryRun, plan: true) { _, v, s in
+      let dm = DayMath(settings: s)
+      let today = store.today(dm)
+      if try !store.planSlots(where: "video_id=? AND date>=?", [v.id, today]).isEmpty { return .skipped("already planned") }
+      let perDay = max(1, s.postsPerDay)
+      guard let day = try dm.weekDays(dm.weekStart(of: dm.date(week))).first(where: { d in
+        try d >= today && store.planSlots(where: "date=?", [d]).count < perDay
+      }) else { return .skipped("no free day left in the week of \(week)") }
+      try planner.pin(videoId: v.id, date: day)
+      return .changed
+    }
+  }
+
+  /// Pins clip 1 to `from`, clip 2 to the next day, … (in the order given).
+  @discardableResult
+  public func pinConsecutive(_ ids: [String], from date: String, dryRun: Bool = false) throws -> BulkResult {
+    let planner = Planner(store: store)
+    var day = date
+    return try run("pin-consecutive", ids: ids, params: ["from": date], dryRun: dryRun, plan: true) { _, v, s in
+      let dm = DayMath(settings: s)
+      defer { day = dm.addDays(day, 1) }
+      try planner.pin(videoId: v.id, date: day)
+      return .changed
+    }
+  }
+
+  /// Post today (in the order given; clips beyond today's free slots are skipped with the reason).
+  @discardableResult
+  public func postToday(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
+    let planner = Planner(store: store)
+    return try run("post-today", ids: ids, dryRun: dryRun, plan: true) { _, v, _ in
+      try planner.postToday(videoId: v.id)
+      return .changed
+    }
+  }
+
+  /// Forces a fresh render: the clip's current renders are retired (files stay until replaced) and the engine
+  /// renders again on its next tick. Undo un-retires them while their files still exist.
+  @discardableResult
+  public func reRender(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
+    try run("re-render", ids: ids, dryRun: dryRun, renders: true) { _, v, _ in
+      let live = try store.renders(where: "deleted_at IS NULL AND status IN ('done','failed') AND video_id=?", [v.id])
+      guard !live.isEmpty else { return .skipped("nothing rendered yet") }
+      for r in live { try store.markRenderDeleted(id: r.id) }
+      return .changed
+    }
+  }
+
+  // MARK: Journal
+
+  public func batches(limit: Int = 50) throws -> [BatchRecord] {
+    try store.db.query("SELECT * FROM batches ORDER BY created_at DESC, rowid DESC LIMIT ?", [limit]).map(Self.batch)
+  }
+
+  static let planMarker = "#plan"
+
+  public func batch(id: String) throws -> BatchRecord? {
+    try store.db.one("SELECT * FROM batches WHERE id=?", [id]).map(Self.batch)
+  }
+
+  /// Restores what batch `id` changed. Clips changed again since are skipped (and the plan part refused) unless
+  /// `force`.
+  @discardableResult
+  public func undo(_ id: String, force: Bool = false, dryRun: Bool = false) throws -> BulkResult {
+    guard let row = try store.db.one("SELECT * FROM batches WHERE id=?", [id]) else { throw EngineError("No batch \(id)") }
+    let rec = Self.batch(row)
+    if let u = rec.undoneAt { throw EngineError("Batch \(id.prefix(8)) was already undone (\(u))") }
+    guard let bs = row.string("before"), let asx = row.string("after"),
+          let before = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(bs.utf8)),
+          let after = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(asx.utf8)) else {
+      throw EngineError("Batch \(id.prefix(8)) journal is unreadable")
+    }
+    var result = BulkResult(batchId: nil, action: "undo", dryRun: dryRun, videoIds: rec.videoIds, changed: [], skipped: [:],
+                            remainingIssues: [:], summary: "")
+    do {
+      try store.db.transaction {
+        let afterById = Dictionary(uniqueKeysWithValues: after.clips.map { ($0.id, $0) })
+        // A partial undo (clips skipped as changed again) leaves the batch open; `restored` remembers what's done
+        // so a later undo (e.g. with force) handles only the rest.
+        var restored = Set(rec.restored)
+        for b in before.clips where !restored.contains(b.id) {
+          let cur = try clipSnapshot(b.id, renders: b.renders != nil)
+          if let a = afterById[b.id], cur != a, !force {
+            result.skipped[b.id] = "changed again since the batch (use force to overwrite)"
+            continue
+          }
+          restored.insert(b.id)
+          if cur == b { continue }
+          try restore(b)
+          result.changed.append(b.id)
+        }
+        var touched = Set(result.changed)
+        if let bp = before.plan, let ap = after.plan, !restored.contains(Self.planMarker) {
+          let cp = try planSnapshot()
+          if !force, let why = planConflict(before: bp, after: ap, current: cp) {
+            throw EngineError("Can't undo the plan part of \(rec.action): \(why). Use force to overwrite.")
+          }
+          try restorePlan(bp, current: cp, note: "undo \(rec.action) (batch \(id.prefix(8)))")
+          touched.formUnion(bp.slots.map(\.videoId) + ap.slots.map(\.videoId) + bp.posts.map(\.videoId) + ap.posts.map(\.videoId))
+          result.changed = Array(Set(result.changed).union(rec.videoIds.filter { touched.contains($0) })).sorted()
+          restored.insert(Self.planMarker)
+        }
+        for v in touched { try store.refreshState(videoId: v) }
+        for v in result.changed {
+          try store.logEvent("bulk", "Undid \(rec.action) (batch \(id.prefix(8)))", videoId: v)
+        }
+        let complete = result.skipped.isEmpty
+        try store.db.run("UPDATE batches SET restored=?, undone_at=? WHERE id=?",
+                         [JSONCoding.string(restored.sorted()), complete ? store.clock.now : nil, id])
+        result.summary = "undid \(rec.action): \(result.changed.count) restored"
+          + (complete ? "" : ", \(result.skipped.count) skipped — batch stays open; undo again with force to restore them")
+        if dryRun { throw DryRun(result: result) }
+      }
+    } catch let d as DryRun {
+      return d.result
+    }
+    if postsChangeSignal { ChangeSignal.post() }
+    return result
+  }
+
+  // MARK: Selection helper
+
+  /// Clip ids for a filter: a VideoState raw value (`needs_edit`, `ready`, …), `unscored`, `scored`, `all`
+  /// (short-form only, posting order not implied).
+  public func ids(filter: String) throws -> [String] {
+    let base = "type='short-form'"
+    let clause: String
+    switch filter {
+    case "all": clause = base
+    case "unscored", "to-score": clause = "\(base) AND excluded=0 AND missing=0 AND score IS NULL"
+    case "scored": clause = "\(base) AND score IS NOT NULL"
+    case "needs-edit": clause = "\(base) AND excluded=0 AND missing=0 AND score IS NOT NULL AND state='needs_edit'"
+    default:
+      guard let s = VideoState(rawValue: filter) else {
+        throw EngineError("Unknown filter \(filter) — use all, unscored, scored, needs-edit or a state (\(VideoState.allCases.map(\.rawValue).joined(separator: ", ")))")
+      }
+      clause = "\(base) AND state='\(s.rawValue)'"
+    }
+    return try store.videos(where: clause).sorted { ($0.part ?? 0, $0.start ?? 0, $0.name) < ($1.part ?? 0, $1.start ?? 0, $1.name) }
+      .map(\.id)
+  }
+
+  // MARK: Engine
+
+  enum Outcome { case changed, unchanged, skipped(String) }
+
+  struct DryRun: Error { var result: BulkResult }
+
+  struct RenderSnap: Codable, Equatable { var id: String; var deletedAt: Double? }
+
+  struct ClipSnap: Codable, Equatable {
+    var id: String
+    var score: Int?
+    var kind: String
+    var excluded: Bool
+    var title: String?
+    var titleTracks: String?
+    var titleSource: String?
+    var edit: String?
+    var versions: [String: String]
+    var renders: [RenderSnap]?
+  }
+
+  struct PlanSnap: Codable, Equatable {
+    var slots: [PlanSlot]
+    var weeks: [Week]
+    var posts: [PlatformPost]
+  }
+
+  struct Snapshot: Codable { var clips: [ClipSnap]; var plan: PlanSnap? }
+
+  private func run(_ action: String, ids raw: [String], params: [String: String] = [:], dryRun: Bool, plan: Bool = false,
+                   renders: Bool = false, _ body: (Int, Video, Settings) throws -> Outcome) throws -> BulkResult {
+    var seen = Set<String>()
+    let ids = raw.filter { !$0.isEmpty && seen.insert($0).inserted }
+    var result = BulkResult(batchId: nil, action: action, dryRun: dryRun, videoIds: ids, changed: [], skipped: [:],
+                            remainingIssues: [:], summary: "")
+    let settings = try store.settings()
+    do {
+      try store.db.transaction {
+        let existing = try ids.filter { try store.video(id: $0) != nil }
+        for id in ids where !existing.contains(id) { result.skipped[id] = "no such video" }
+        let before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
+                              plan: plan ? try planSnapshot() : nil)
+        for (i, id) in existing.enumerated() {
+          guard let v = try store.video(id: id) else { continue }
+          do {
+            // Each clip in its own savepoint: a clip that fails leaves no partial change.
+            let o = try store.db.transaction { try body(i, v, settings) }
+            switch o {
+            case .changed: result.changed.append(id)
+            case .unchanged: break
+            case .skipped(let why): result.skipped[id] = why
+            }
+          } catch {
+            result.skipped[id] = "\(error)"
+          }
+        }
+        for id in result.changed {
+          if let v = try store.video(id: id), v.type == .short {
+            result.remainingIssues[id] = (try? Validation.issues(video: v, store: store)) ?? []
+          }
+        }
+        result.summary = "\(action): \(result.changed.count) changed"
+          + (result.skipped.isEmpty ? "" : ", \(result.skipped.count) skipped")
+          + (ids.count - result.changed.count - result.skipped.count > 0
+            ? ", \(ids.count - result.changed.count - result.skipped.count) already so" : "")
+        if dryRun { throw DryRun(result: result) }
+        guard !result.changed.isEmpty else { return }
+        let batchId = newId()
+        let after = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
+                             plan: plan ? try planSnapshot() : nil)
+        try store.db.run("""
+          INSERT INTO batches(id,action,params,video_ids,before,after,summary,created_at) VALUES(?,?,?,?,?,?,?,?)
+          """, [batchId, action, JSONCoding.string(params), JSONCoding.string(result.changed), JSONCoding.string(before),
+                JSONCoding.string(after), result.summary, store.clock.now])
+        for id in result.changed {
+          try store.logEvent("bulk", "\(action)\(params.isEmpty ? "" : " " + params.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")) (batch \(batchId.prefix(8)))",
+                             videoId: id)
+        }
+        result.batchId = batchId
+      }
+    } catch let d as DryRun {
+      return d.result
+    }
+    if postsChangeSignal && !result.changed.isEmpty { ChangeSignal.post() }
+    return result
+  }
+
+  private func updateV1(_ v: Video, _ change: (inout Version) -> Void) throws -> Outcome {
+    var v1 = try store.versions(videoId: v.id).first { $0.number == 1 } ?? Version(number: 1)
+    let o = v1
+    change(&v1)
+    guard v1 != o else { return .unchanged }
+    try store.save(v1, videoId: v.id)
+    return .changed
+  }
+
+  private func cachedOrProbedSize(_ v: Video) throws -> CGSize? {
+    if let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { return CGSize(width: w, height: h) }
+    guard let s = sourceSize(store, v) else { return nil }
+    try store.setSourceSize(v.id, width: Int(s.width), height: Int(s.height))
+    return s
+  }
+
+  func clipSnapshot(_ id: String, renders: Bool) throws -> ClipSnap {
+    let r = try store.db.one("SELECT score, kind, excluded, title, title_tracks, title_source FROM videos WHERE id=?", [id])
+    let edit = try store.db.one("SELECT json FROM edits WHERE video_id=?", [id])?.string("json")
+    var versions: [String: String] = [:]
+    for row in try store.db.query("SELECT number, json FROM versions WHERE video_id=?", [id]) {
+      versions[String(row.int("number") ?? 0)] = row.string("json") ?? ""
+    }
+    let rs: [RenderSnap]? = renders
+      ? try store.db.query("SELECT id, deleted_at FROM renders WHERE video_id=? ORDER BY id", [id])
+        .map { RenderSnap(id: $0.string("id")!, deletedAt: $0.double("deleted_at")) }
+      : nil
+    return ClipSnap(id: id, score: r?.int("score"), kind: r?.string("kind") ?? Kind.djVid.rawValue,
+                    excluded: r?.bool("excluded") ?? false, title: r?.string("title"), titleTracks: r?.string("title_tracks"),
+                    titleSource: r?.string("title_source"), edit: edit, versions: versions, renders: rs)
+  }
+
+  private func restore(_ c: ClipSnap) throws {
+    let db = store.db
+    try db.run("UPDATE videos SET score=?, kind=?, excluded=?, title=?, title_tracks=?, title_source=?, updated_at=? WHERE id=?",
+               [c.score, c.kind, c.excluded, c.title, c.titleTracks, c.titleSource, store.clock.now, c.id])
+    if let e = c.edit {
+      try db.run("INSERT INTO edits(video_id,json,updated_at) VALUES(?,?,?) ON CONFLICT(video_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",
+                 [c.id, e, store.clock.now])
+    } else {
+      try db.run("DELETE FROM edits WHERE video_id=?", [c.id])
+    }
+    try db.run("DELETE FROM versions WHERE video_id=?", [c.id])
+    for (n, json) in c.versions {
+      try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?)", [c.id, Int(n) ?? 1, json, store.clock.now])
+    }
+    for r in c.renders ?? [] {
+      if r.deletedAt == nil {
+        // Only un-retire a render whose file is still there.
+        guard let out = try store.render(id: r.id)?.outputPath, FileManager.default.fileExists(atPath: out) else { continue }
+      }
+      try db.run("UPDATE renders SET deleted_at=? WHERE id=?", [r.deletedAt, r.id])
+    }
+  }
+
+  func planSnapshot() throws -> PlanSnap {
+    let weeks = try store.db.query("SELECT * FROM weeks ORDER BY week_start").map {
+      Week(weekStart: $0.string("week_start")!, state: WeekState(rawValue: $0.string("state")!) ?? .draft,
+           approvedAt: $0.date("approved_at"))
+    }
+    return PlanSnap(slots: try store.planSlots().sorted { $0.id < $1.id }, weeks: weeks,
+                    posts: try store.posts(order: "id"))
+  }
+
+  /// Why restoring `before` would overwrite someone else's later change (nil = safe).
+  private func planConflict(before b: PlanSnap, after a: PlanSnap, current c: PlanSnap) -> String? {
+    if c.slots != a.slots { return "the plan's slots changed after the batch" }
+    if c.weeks != a.weeks { return "a week was proposed/approved after the batch" }
+    let known = Set(b.posts.map(\.id) + a.posts.map(\.id))
+    if let extra = c.posts.first(where: { !known.contains($0.id) }) {
+      return "a new \(extra.platform.displayName) post was created after the batch"
+    }
+    let afterById = Dictionary(uniqueKeysWithValues: a.posts.map { ($0.id, $0) })
+    let acted: Set<PostState> = [.posted, .failed, .copyrightBlocked, .copyrightMuted, .removed, .skipped]
+    if let p = c.posts.first(where: { acted.contains($0.state) && afterById[$0.id]?.state != $0.state }) {
+      return "a \(p.platform.displayName) post was marked \(p.state.displayName.lowercased()) after the batch"
+    }
+    return nil
+  }
+
+  private func restorePlan(_ b: PlanSnap, current c: PlanSnap, note: String) throws {
+    let db = store.db
+    let keep = Set(b.posts.map(\.id))
+    for p in c.posts where !keep.contains(p.id) { try store.deletePost(p.id) }
+    try db.run("DELETE FROM plan_slots")
+    for s in b.slots { try store.save(s) }
+    try db.run("DELETE FROM weeks")
+    for w in b.weeks { try store.save(w) }
+    let cur = Dictionary(uniqueKeysWithValues: c.posts.map { ($0.id, $0) })
+    for p in b.posts where cur[p.id] != p {
+      try store.save(p, note: note)
+    }
+  }
+
+  static func batch(_ r: Row) -> BatchRecord {
+    BatchRecord(id: r.string("id")!, action: r.string("action")!, params: r.json("params") ?? [:],
+                videoIds: r.json("video_ids") ?? [], summary: r.string("summary") ?? "", createdAt: r.date("created_at")!,
+                undoneAt: r.date("undone_at"), restored: r.json("restored") ?? [])
+  }
+}
