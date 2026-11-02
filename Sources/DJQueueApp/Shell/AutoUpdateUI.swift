@@ -215,11 +215,20 @@ final class AutoUpdateUI {
       MainActor.assumeIsolated { AutoUpdateUI.shared.setWindow(open: false, now: true) }
     })
     let dnc = DistributedNotificationCenter.default()
-    distributed.append(dnc.addObserver(forName: .init(AutoUpdate.changedSignal), object: nil, queue: .main) { _ in
-      Task { @MainActor in AutoUpdateUI.shared.refresh() }
+    // Signals name the database they're about: a dev run's runner never moves this app (and the other way round).
+    distributed.append(dnc.addObserver(forName: .init(AutoUpdate.changedSignal), object: nil, queue: .main) { note in
+      let scope = note.userInfo?[AutoUpdate.scopeKey] as? String
+      Task { @MainActor in
+        guard let p = AutoUpdateUI.shared.paths, AutoUpdate.isFor(scope.map { [AutoUpdate.scopeKey: $0] }, p) else { return }
+        AutoUpdateUI.shared.refresh()
+      }
     })
-    distributed.append(dnc.addObserver(forName: .init(AutoUpdate.restartSignal), object: nil, queue: .main) { _ in
-      Task { @MainActor in AutoUpdateUI.shared.handleRestart() }
+    distributed.append(dnc.addObserver(forName: .init(AutoUpdate.restartSignal), object: nil, queue: .main) { note in
+      let scope = note.userInfo?[AutoUpdate.scopeKey] as? String
+      Task { @MainActor in
+        guard let p = AutoUpdateUI.shared.paths, AutoUpdate.isFor(scope.map { [AutoUpdate.scopeKey: $0] }, p) else { return }
+        AutoUpdateUI.shared.handleRestart()
+      }
     })
   }
 
