@@ -89,28 +89,15 @@ extension AppModel {
     }
   }
 
-  /// Short chip text for validation issues: missing pieces → warning chips, hard platform blocks → danger chips.
+  /// Chip text for validation issues, from the core stage wording (`ValidationIssue.chipText` / `chipDetail`,
+  /// `Kind.isBlock`, `chipOrder`): missing pieces → warning chips, hard blocks → danger chips ("Too long for X ·
+  /// 2:32 > 2:20"). A missing file is left out: `DSClip.isMissing` draws its own "File missing" chip.
   func issueChips(_ list: [ValidationIssue]) -> (issues: [String], blocks: [String]) {
-    var issues: [String] = [], blocks: [String] = []
-    for i in list {
-      let p = i.platform?.displayName ?? ""
-      switch i.kind {
-      case .heldInEdit: issues.append("Sent back from Queue")
-      case .noCrop: issues.append("No crop")
-      case .noText: issues.append("No text")
-      case .noCaption: issues.append("No caption")
-      case .noTitle: issues.append("No title")
-      case .missingFile: break  // DSClip.isMissing draws its own chip
-      case .tooLong:
-        let detail = i.count.flatMap { c in i.limit.map { " · \(Validation.fmt(c)) > \(Validation.fmt($0))" } } ?? ""
-        blocks.append("Too long for \(p)\(detail)")
-      case .tooLarge: blocks.append("Too large for \(p)")
-      case .captionTooLong:
-        let detail = i.count.flatMap { c in i.limit.map { " · \(Int(c))/\(Int($0))" } } ?? ""
-        blocks.append("Caption too long for \(p)\(detail)")
-      case .titleTooLong: blocks.append("YouTube title too long")
-      case .corrupt: blocks.append("Edit unreadable")
-      }
+    var issues: [String] = [], blocks: [String] = [], seen = Set<String>()
+    for i in list.sorted(by: { $0.kind.chipOrder < $1.kind.chipOrder }) where i.kind != .missingFile {
+      let text = i.chipText + (i.chipDetail.map { " · \($0)" } ?? "")
+      guard seen.insert(text).inserted else { continue }
+      if i.kind.isBlock { blocks.append(text) } else { issues.append(text) }
     }
     return (issues, blocks)
   }

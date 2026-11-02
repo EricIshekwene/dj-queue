@@ -400,9 +400,9 @@ public final class Renderer: RenderService, @unchecked Sendable {
     let scaleF = "scale=\(ow):\(oh):flags=lanczos+accurate_rnd+full_chroma_int:out_color_matrix=bt709:out_range=tv"
     var videoGraph = "[0:v]\(cropF),\(scaleF),format=yuv420p,setsar=1"
     if hasText {
-      var ts = max(0, p.version.textStart ?? 0)
-      var te = min(dur + 1, p.version.textEnd ?? (dur + 1))
-      if te <= ts || ts >= dur { ts = 0; te = dur + 1 }  // empty/inverted window → whole clip
+      // The one text-window rule, shared with every list preview (S6): empty/inverted window → whole clip.
+      let w = PreviewKeys.textWindow(p.version, trimDuration: dur) ?? 0...(dur + 1)
+      let (ts, te) = (w.lowerBound, w.upperBound)
       videoGraph += "[bg];[1:v]format=rgba,scale=out_color_matrix=bt709:out_range=tv,format=yuva420p[ov];"
         + "[bg][ov]overlay=0:0:format=yuv420:eof_action=repeat:enable='between(t,\(Self.f(ts)),\(Self.f(te)))'"
     }
@@ -475,11 +475,12 @@ public final class Renderer: RenderService, @unchecked Sendable {
     // Cover: built like the editor preview (AVFoundation frame → same pixel crop → scale → TextOverlay),
     // so it looks exactly like the frame Eric picked. ffmpeg fallback if AVFoundation can't decode.
     let coverAt = min(max(0, p.edit.coverTime), max(0, info.duration - 0.05))
-    let coverOverlay = hasText && p.edit.coverIncludesText ? TextOverlay.image(for: p.version, aspect: p.edit.aspect) : nil
+    // The shared cover composite (S6): list covers are this same composite at list size.
+    let coverText = hasText && p.edit.coverIncludesText
     var haveCover = false
     if let frame = Media.frame(src, at: coverAt, maxSize: .zero),
-       let img = Media.compose(frame, crop: crop, aspect: p.edit.aspect, size: CGSize(width: ow, height: oh),
-                               overlay: coverOverlay) {
+       let img = Media.coverComposite(frame, crop: crop, aspect: p.edit.aspect, size: CGSize(width: ow, height: oh),
+                                      text: p.version, includesText: coverText) {
       do { try Media.writeJPEG(img, to: tmpCover, quality: 0.92); haveCover = true } catch {
         Log.shared.warn("cover write failed for render \(renderId): \(error)")
       }
@@ -487,7 +488,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
     if !haveCover {
       var cArgs = ["-hide_banner", "-nostats", "-y", "-ss", Self.f(coverAt), "-i", src.path]
       var cGraph = "[0:v]\(cropF),scale=\(ow):\(oh):flags=lanczos+accurate_rnd+full_chroma_int,format=rgb24"
-      if coverOverlay != nil {
+      if coverText {
         cArgs += ["-i", overlayURL.path]
         cGraph += "[bg];[1:v]format=rgba[ov];[bg][ov]overlay=0:0:format=rgb"
       }

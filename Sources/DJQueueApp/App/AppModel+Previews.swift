@@ -46,6 +46,9 @@ extension AppModel {
   /// Overlay images (≤540 wide), least recently used evicted past 64 MB. Keyed by `PreviewKeys.textKey` (which
   /// covers text, style, size, position and aspect), so clips with the same text share one image.
   nonisolated static let overlayCache = CostCappedCache<String, CGImage>(costLimit: 64 << 20)
+  /// Overlay + timing loads run here, two at a time.
+  nonisolated static let previewWork = DispatchQueue(label: "djq.previews", qos: .userInitiated, attributes: .concurrent)
+  nonisolated static let previewGate = DispatchSemaphore(value: 2)
   /// Width of list overlays (the proxy width).
   nonisolated static let overlayWidth = Media.proxyWidth
 
@@ -122,6 +125,11 @@ extension AppModel {
       p.aspectRatio = info.aspect.ratio
       guard info.textKey != "none" else { return p }
       p.overlay = Self.overlayCache.value(info.overlayKey)
+      // Evicted from the LRU while still on screen (review L2): draw it again (throttled per key) when it can play.
+      if p.overlay == nil, proxy != nil, Date().timeIntervalSince(overlayReloadedAt[info.overlayKey] ?? .distantPast) > 2 {
+        overlayReloadedAt[info.overlayKey] = Date()
+        Task { @MainActor in self.requestPreviewInfo(v, version: version) }
+      }
       let offset = playback.loop == .wholeFile ? info.trimIn : 0
       p.textWindow = info.textWindow.map { ($0.lowerBound + offset)...($0.upperBound + offset) }
     }
@@ -204,9 +212,12 @@ extension AppModel {
       self.previewInfo[key] = info
     }
     if frozen { land(Self.loadPreviewInfo(store: s, videoId: id, version: version, stamp: stamp)); return }
-    Task.detached(priority: .userInitiated) {
+    // At most two overlay draws at once (each draws a 1080-wide image before scaling it down; review L3).
+    Self.previewWork.async {
+      Self.previewGate.wait()
       let info = Self.loadPreviewInfo(store: s, videoId: id, version: version, stamp: stamp)
-      await MainActor.run { land(info) }
+      Self.previewGate.signal()
+      DispatchQueue.main.async { MainActor.assumeIsolated { land(info) } }
     }
   }
 

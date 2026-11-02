@@ -79,12 +79,26 @@ extension AppModel {
     let svc = proxies
     let all = now + later
     let background = Set(later)
+    let store = self.store
     let land: @Sendable (String, Result<URL, Error>) -> Void = { id, result in
+      // Belt for review M1 (off the main thread): a proxy whose cache name isn't the one the clip's current edit
+      // asks for has an older crop/trim — never show it.
+      var stale = false
+      if case .success(let url) = result, let v = try? store.video(id: id),
+         let want = try? Media.proxyURL(store: store, video: v, range: range), want != url { stale = true }
       Task { @MainActor in
         guard ThumbStamps.shared.gen(id) == gens[id] else { return }  // the preview changed meanwhile: a newer request owns it
         self.proxyPending.remove(id)
-        guard self.playback.loop == range else { return }
-        if case .success(let url) = result { self.proxyURLs[id] = url }
+        guard self.playback.loop == range else { self.previewUpdating.remove(id); return }
+        if stale {
+          // Ask once more for this generation (the service runs it after any encode in flight); else keep the cover.
+          if self.proxyRetried.insert("\(id)|\(gens[id] ?? 0)").inserted {
+            self.requestProxies([id], keepOthersVisible: true)
+            return
+          }
+        } else if case .success(let url) = result {
+          self.proxyURLs[id] = url
+        }
         self.previewUpdating.remove(id)
       }
     }

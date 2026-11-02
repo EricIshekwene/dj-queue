@@ -229,7 +229,7 @@ struct DSClipCard<Actions: View>: View {
                                  help: "The source file moved or was deleted — Health › Doctor relinks it")))
     }
     out += clip.blocks.map { AnyView(DSBadge($0, style: .soft(.danger), help: "Blocks posting until fixed in the editor")) }
-    out += clip.issues.map { AnyView(DSBadge($0, style: .soft(.warning), help: "Still needed before it's ready — open the editor")) }
+    out += clip.issues.map { AnyView(DSBadge($0, style: .soft(.warning), help: "Still needed before it can go to the Queue — open the editor")) }
     out += clip.suggestions.prefix(3).map { s in
       AnyView(DSSuggestionChip(suggestion: s) { onAcceptSuggestion?(s) })
     }

@@ -13,7 +13,7 @@ import Testing
 
   @Test func stampMovesWithEditVersionTextAndDefaults() throws {
     let f = try Fixture()
-    try f.intake()
+    _ = try f.intake()
     let s = f.store, id = "clip-0", other = "clip-1"
     let a = try stamp(s, id), o = try stamp(s, other)
     #expect(try stamp(s, id) == a)  // stable
@@ -88,16 +88,18 @@ import Testing
     try rf.version { $0.text = "Different words" }
     let b = try #require(Media.thumbnail(store: rf.store, video: v))
     #expect(b != a)
+    #expect(!FileManager.default.fileExists(atPath: a.path))  // older cover of the same slot pruned (review L9)
+    let withText = try #require(loadImage(b))
     // A text change never changes the proxy (no re-encode): its cache name is the same.
     #expect(try Media.proxyURL(store: rf.store, video: v) == proxy)
     try rf.edit { $0.coverIncludesTextOverride = false }
     let c = try #require(Media.thumbnail(store: rf.store, video: v))
     #expect(c != b)
+    let without = try #require(loadImage(c))
     // Cover without text: the text no longer changes the cover.
     try rf.version { $0.text = "Yet another line" }
     #expect(Media.thumbnail(store: rf.store, video: v) == c)
     // The cover with text differs from the cover without it.
-    let withText = try #require(loadImage(b)), without = try #require(loadImage(c))
     let textDiff = meanDiff(withText, without)
     #expect(textDiff > 0.002, "cover with text vs without: \(textDiff)")
   }
@@ -114,7 +116,7 @@ import Testing
     #expect(list.width == 180 && list.height == 320)
     let small = try #require(scale(rendered, width: list.width, height: list.height))
     let d = meanDiff(list, small)
-    #expect(d < 0.02, "list cover differs from the renderer's cover by \(d)")
+    #expect(d < 0.012, "list cover differs from the renderer's cover by \(d)")
     // Sanity: the same comparison against the cover without text is clearly worse (the text is really there).
     try rf.edit { $0.coverIncludesTextOverride = false }
     let plainURL = try #require(Media.thumbnail(store: rf.store, video: v))

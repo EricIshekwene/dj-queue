@@ -132,7 +132,6 @@ struct LongformPostedDialog: View {
   let videos: [Video]
   @State private var urls: [String: String] = [:]
 
-  @State private var source = ClipPreviewSource.edited
   private var ui: BrowseUI { .shared }
 
   private func error(_ id: String) -> String? {

@@ -61,6 +61,7 @@ struct EditedClipPlayer: View {
     }
     .onChange(of: source, initial: true) { _, s in if s == .original { model.requestOriginalPoster(v) } }
     .task(id: p.stamp) {
+      renderURL = nil  // an older render (older crop/text) never keeps playing while the new one is looked up
       guard Self.hasToggle(v) else { model.requestPoster(v); return }
       model.requestPoster(v)
       model.requestProxies([v.id], keepOthersVisible: true)

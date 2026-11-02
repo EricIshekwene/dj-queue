@@ -153,8 +153,15 @@ struct DSVideoPreview: View {
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-    .overlay(alignment: .topLeading) {
-      if isUpdating && url == nil && updatingStyle != .none { updatingBadge.padding(updatingStyle == .icon ? 4 : 8).transition(.opacity) }
+    // Bottom-leading, above a tile's duration badge and the scrubber: never under the selection circle (top-leading)
+    // or the score (top-trailing).
+    .overlay(alignment: .bottomLeading) {
+      if isUpdating && url == nil && updatingStyle != .none {
+        updatingBadge
+          .padding(.leading, updatingStyle == .icon ? 4 : 8)
+          .padding(.bottom, updatingStyle == .icon ? 4 : 32)
+          .transition(.opacity)
+      }
     }
     .overlay(alignment: muteAlignment) {
       if showsMuteButton && playing && (hovering || audible) {
