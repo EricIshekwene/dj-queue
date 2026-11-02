@@ -72,10 +72,10 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | `files.missing` | Ask Eric to put the file back or undo the rename; `djq intake` relinks by fingerprint (any session). If it's gone for good: `djq exclude <video>` and, if it was planned, `djq remove-slot <slot>` or `djq skip-next <video>`. |
 | `files.relinked` | Info only. |
 | `files.duration` | File length ≠ `videos.json`. Re-export that clip with `export_clips.py --only N`, `djq intake`; the engine re-renders automatically when the edit/hash changes. |
-| `plan.notReady` | A planned video lost its crop/text/caption (or was excluded). Eric finishes the edit in the app, or take it out: `djq remove-slot <slot>` then `djq pin <ready-video> <date>` (`skip-next` only defers it a slot). |
-| `plan.gaps` | An approved day has no post. `djq pin <ready-video> <YYYY-MM-DD>` (see `djq queue`), or `djq week --rebuild <monday>` then Eric approves. |
+| `plan.notReady` | A planned clip lost its crop/text/caption, its file, or was excluded (it stays on its day and shows the problem). Eric finishes it in the app, or take it out: `djq remove-slot <slot>` then `djq pin <queue-clip> <date>` (a clip from `djq queue`) (`skip-next` only defers it a slot). |
+| `plan.gaps` | An approved day has no post. `djq pin <queue-clip> <YYYY-MM-DD>` (a clip from `djq queue`), or `djq week --rebuild <monday>` then Eric approves. |
 | `runway.approved` | Show Eric `djq week <next-monday>` (propose with `--propose`); Eric approves (`--approve`). Don't approve on their behalf unless told. |
-| `runway.total` | Eric needs to score videos (`djq queue` shows "to score"), finish edits, or record/export a new set. Nothing to fix in data. |
+| `runway.total` | Eric needs to score videos (`djq queue` shows "in Score" / "in Edit"), finish edits, or record/export a new set. Nothing to fix in data. |
 | `renders.missing` | Normal if the Mac was asleep. `djq tick` (renders one per tick, due posts first) or `djq render <video> --version N [--platform P]`. |
 | `renders.failed` | Read `engine.log` for the ffmpeg error. Usual causes: crop outside the frame, trim outside the file, file missing. Eric fixes the edit; then `djq render <video> --version N`. |
 | `posts.overdue` | A day passed unposted; the platform's plan already moved. Ask Eric which: post it now (`djq post-now <post>`), put it in today's slot (`djq shift-plan <post>`), or skip (`djq skip <post>` — pulls the rest back). If Eric did post it: `djq posted <post> <url>`. |

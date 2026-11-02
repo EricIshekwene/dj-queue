@@ -171,7 +171,7 @@ public final class Doctor: @unchecked Sendable {
       }
     }
     guard !w.isEmpty else { return [] }
-    return [.init(id: "plan.notReady", severity: .error, title: "Planned videos that aren't ready", detail: "These can't render or post on their day.",
+    return [.init(id: "plan.notReady", severity: .error, title: "Planned clips with something missing", detail: "These can't render or post on their day (they stay on their day; fix them or swap them).",
                   where_: w, fix: "Finish the edit in the app (crop, text or No text, caption), or remove/swap the slot in the Week view.")]
   }
 
@@ -189,7 +189,7 @@ public final class Doctor: @unchecked Sendable {
     }
     guard !w.isEmpty else { return [] }
     return [.init(id: "plan.gaps", severity: .warning, title: "Gaps in the approved week", detail: "Days with fewer posts than posts/day.",
-                  where_: w, fix: "Pin a ready video to the day (Week view, or `djq pin <video-id> <YYYY-MM-DD>`), or Rebuild week and approve again.")]
+                  where_: w, fix: "Pin a clip from the Queue to the day (Week view, or `djq pin <video-id> <YYYY-MM-DD>`), or Rebuild week and approve again.")]
   }
 
   func runway() throws -> [DoctorFinding] {
@@ -201,8 +201,8 @@ public final class Doctor: @unchecked Sendable {
                        where_: [], fix: "Approve next week (`djq week --approve <monday>`), after checking the proposal."))
     }
     if r.totalDays < s.totalRunwayAlertDays {
-      out.append(.init(id: "runway.total", severity: .warning, title: "Total runway \(r.totalDays) day(s)", detail: "Below the \(s.totalRunwayAlertDays)-day threshold (ready \(r.readyDays) d).",
-                       where_: [], fix: "Score unscored videos and finish edits; record and export a new set."))
+      out.append(.init(id: "runway.total", severity: .warning, title: "Total runway \(r.totalDays) day(s)", detail: "Below the \(s.totalRunwayAlertDays)-day threshold (Queue \(r.readyDays) d).",
+                       where_: [], fix: "Score unscored clips and finish the ones in Edit; record and export a new set."))
     }
     return out
   }

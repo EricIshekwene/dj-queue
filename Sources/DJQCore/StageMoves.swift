@@ -2,7 +2,8 @@ import Foundation
 
 /// Where a short clip is in its life (the pipeline screens): Score → Edit → Queue → Scheduled → Posted.
 ///
-/// - score: no score yet · edit: scored, not ready or sent back from Queue · queue: ready, not in an approved week
+/// - score: no score yet · edit: scored, not ready (or sent back from Queue, or its file is missing) · queue: ready,
+///   not in an approved week
 ///   (a proposed/draft day still counts as Queue) · scheduled: in an approved week, not fully posted ·
 ///   posted: every posting platform finished (posted, or partly posted/skipped/failed).
 public enum ClipStage: String, Codable, Sendable, CaseIterable, Comparable {
@@ -27,9 +28,21 @@ public enum ClipStage: String, Codable, Sendable, CaseIterable, Comparable {
     (allCases.firstIndex(of: a) ?? 0) < (allCases.firstIndex(of: b) ?? 0)
   }
 
-  /// The clip's stage from its stored state, or nil when it has none (long-form, excluded, file missing).
+  /// The clip's stage from its stored state, or nil when it has none (long-form, excluded, unscored with its file
+  /// missing).
+  ///
+  /// Round 4 (S1): a scored clip whose file is missing is in Edit (reason chip "File missing") unless it is already
+  /// in an approved week or posted — then it stays Scheduled/Posted and shows the problem (`Store.computeState`
+  /// keeps those states for a missing clip). The planner never picks a missing clip.
   public static func of(_ v: Video) -> ClipStage? {
-    guard v.type == .short, !v.excluded, !v.missing else { return nil }
+    guard v.type == .short, !v.excluded else { return nil }
+    if v.missing {
+      switch v.state {
+      case .planned, .posting: return .scheduled
+      case .posted, .partial: return .posted
+      default: return v.score == nil ? nil : .edit
+      }
+    }
     if v.score == nil { return .score }
     switch v.state {
     case .needsEdit: return .edit
@@ -56,11 +69,12 @@ public struct StageMove: Codable, Sendable, Equatable {
 /// Stage moves (Eric: "at any stage, bring a video back to its previous stage or move it forward a stage").
 /// Each is one BulkActions batch (journal + one-step undo, per-clip history) using the existing rules:
 ///
-/// Back: Edit → Score clears the score · Queue → Edit is "Remove from queue" (held in Edit, unposted days removed) ·
+/// Back: Edit → Score clears the score · Queue → Edit ("Back to Edit", formerly "Remove from queue": held in Edit,
+/// unposted days removed) ·
 /// Scheduled → Queue removes its unposted days from the plan (stays ready, not held) · Posted has no back (Repost /
 /// Reset a post instead).
-/// Forward: Score → Edit needs a score (the UI focuses the score field) · Edit → Queue sends it to the queue (clears
-/// "sent back") and makes it ready with defaults; if something is still missing it stays in Edit and says what ·
+/// Forward: Score → Edit needs a score (the UI focuses the score field) · Edit → Queue ("Send to Queue") clears
+/// "sent back" and confirms the default crop; if something is still missing it stays in Edit and says what ·
 /// Queue → Scheduled pins it to the next open day of this or next week (a draft week still needs approval) ·
 /// Scheduled → Posted only through Today's Mark posted.
 extension BulkActions {
@@ -71,24 +85,17 @@ extension BulkActions {
 
   /// Why `direction` can't move this clip (nil = it can). The UI disables its button with this text.
   public func blocker(_ v: Video, _ direction: StageDirection) throws -> String? {
+    if let why = StageWording.blocker(v, direction) { return why }
     guard let st = ClipStage.of(v) else { return Self.noStageReason(v) }
     switch (st, direction) {
-    case (.score, .back): return "Score is the first stage"
     case (.score, .forward): return "Give it a score on Score first"
     case (.scheduled, .back): return try postedBlocker(v)
     case (.scheduled, .forward): return "Mark it posted on Today once it's up"
-    case (.posted, .back): return "Posted — use Repost (next version) or Reset a wrongly marked post in Posts"
-    case (.posted, .forward): return "Posted is the last stage"
     default: return nil
     }
   }
 
-  static func noStageReason(_ v: Video) -> String {
-    if v.type != .short { return "Long-form clips are uploaded by hand — no stages" }
-    if v.excluded { return "Excluded — include it first" }
-    if v.missing { return "File missing — relink it first" }
-    return "No stage"
-  }
+  static func noStageReason(_ v: Video) -> String { StageWording.noStageReason(v) }
 
   /// Moves each clip one stage back (see the type comment). One batch; `moves` says what happened per clip.
   @discardableResult
@@ -107,7 +114,7 @@ extension BulkActions {
       case .queue:
         let items = try hold(v, planner: planner)
         if !items.isEmpty { removed[v.id] = items }
-        moves[v.id] = StageMove(from: .queue, to: .edit, note: "Removed from queue — back to Edit" + Self.daysText(items, store: store))
+        moves[v.id] = StageMove(from: .queue, to: .edit, note: StageWording.backInEdit + Self.daysText(items, store: store))
       case .scheduled:
         let items = try planner.unplan(videoId: v.id)
         if !items.isEmpty { removed[v.id] = items }
@@ -148,7 +155,7 @@ extension BulkActions {
         let after = try store.video(id: v.id) ?? cur
         let issues = try Validation.issues(video: after, store: store)
         let to = ClipStage.of(after) ?? .edit
-        let note = issues.isEmpty ? "Ready — in the queue" : "Still in Edit: " + issues.map(\.message).joined(separator: "; ")
+        let note = issues.isEmpty ? StageWording.sentToQueue : StageWording.stillInEdit(issues)
         guard changed else { return .skipped(note) }
         moves[v.id] = StageMove(from: .edit, to: to, note: note)
       case .queue:

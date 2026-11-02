@@ -37,7 +37,7 @@ import Testing
 
   @Test func summaries() {
     let same = Platform.allCases.enumerated().map { post("\($0.offset)", "a", $0.element, day: 2) }
-    #expect(PostGrouping.summary(same) == "6 platforms · all ready")
+    #expect(PostGrouping.summary(same) == "6 platforms · all rendered")
     #expect(PostGrouping.summary([post("1", "a", .x, day: 2, state: .planned)]) == "1 platform · planned")
     let mixed = [post("1", "a", .x, day: 2, state: .posted), post("2", "a", .tiktok, day: 2, state: .posted),
                  post("3", "a", .instagram, day: 2, state: .failed), post("4", "a", .youtube, day: 2, state: .due),

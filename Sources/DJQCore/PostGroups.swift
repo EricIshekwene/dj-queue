@@ -47,7 +47,7 @@ public enum PostGrouping {
     switch p.state {
     case .planned: "planned"
     case .rendering: "rendering"
-    case .rendered: "ready"
+    case .rendered: "rendered"
     case .due: "due now"
     case .overdue: "missed"
     case .posted: "posted"
@@ -57,10 +57,10 @@ public enum PostGrouping {
     }
   }
 
-  /// "6 platforms · all ready" / "4 posted · 1 failed · 1 due now", plus " · 1 retry" / " · 1 repost" for extras.
+  /// "6 platforms · all rendered" / "4 posted · 1 failed · 1 due now", plus " · 1 retry" / " · 1 repost" for extras.
   public static func summary(_ posts: [PlatformPost]) -> String {
     guard !posts.isEmpty else { return "No posts" }
-    let order = ["posted", "failed", "copyright", "missed", "due now", "ready", "rendering", "planned", "retried",
+    let order = ["posted", "failed", "copyright", "missed", "due now", "rendered", "rendering", "planned", "retried",
                  "handled", "skipped"]
     var counts: [String: Int] = [:]
     for p in posts { counts[bucket(p), default: 0] += 1 }

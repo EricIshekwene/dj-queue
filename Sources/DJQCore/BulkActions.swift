@@ -47,27 +47,36 @@ public struct ReadyOutlook: Codable, Sendable, Equatable {
   public var needTitle: [String]
   /// Anything else still open (and clips with no title that ALSO have other issues).
   public var other: [String]
+  /// Round 4: nothing missing in the edit, but no score yet — it's in Score, not the Queue.
+  public var needScore: [String] = []
 
-  public init(ready: [String] = [], needTitle: [String] = [], other: [String] = []) {
-    self.ready = ready; self.needTitle = needTitle; self.other = other
+  public init(ready: [String] = [], needTitle: [String] = [], other: [String] = [], needScore: [String] = []) {
+    self.ready = ready; self.needTitle = needTitle; self.other = other; self.needScore = needScore
   }
 
   /// Sorts clips by their remaining issues (`hasTitle`: the clip has a Title).
   public static func classify(_ issues: [(id: String, issues: [ValidationIssue], hasTitle: Bool)]) -> ReadyOutlook {
+    classify(issues.map { (id: $0.id, issues: $0.issues, hasTitle: $0.hasTitle, hasScore: true) })
+  }
+
+  /// Same, and an unscored clip with nothing missing counts as `needScore` (it goes to Score, not the Queue).
+  public static func classify(_ issues: [(id: String, issues: [ValidationIssue], hasTitle: Bool, hasScore: Bool)]) -> ReadyOutlook {
     var o = ReadyOutlook()
     for c in issues {
-      if c.issues.isEmpty { o.ready.append(c.id) }
+      if c.issues.isEmpty { if c.hasScore { o.ready.append(c.id) } else { o.needScore.append(c.id) } }
       else if !c.hasTitle, c.issues.allSatisfy({ $0.kind == .noText }) { o.needTitle.append(c.id) }
       else { o.other.append(c.id) }
     }
     return o
   }
 
-  /// "3 ready · 58 still need a title · 2 other issues" (zero parts dropped, except "0 ready" when alone).
+  /// "3 to the Queue · 58 still need a title · 2 other issues" (zero parts dropped, except "0 to the Queue" when
+  /// alone). Round 4: no "ready" wording — readiness is the stage.
   public var summary: String {
-    var parts = ["\(ready.count) ready"]
+    var parts = ["\(ready.count) to the Queue"]
     if !needTitle.isEmpty { parts.append("\(needTitle.count) still need\(needTitle.count == 1 ? "s" : "") a title") }
     if !other.isEmpty { parts.append("\(other.count) other issue\(other.count == 1 ? "" : "s")") }
+    if !needScore.isEmpty { parts.append("\(needScore.count) still need\(needScore.count == 1 ? "s" : "") a score") }
     return parts.joined(separator: " · ")
   }
 }
@@ -433,6 +442,9 @@ public final class BulkActions: @unchecked Sendable {
       let before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
                             plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil)
       try body()
+      // Round 4 (S1): a settings change (limits, platforms, defaults) can make Queue clips invalid or Edit clips valid —
+      // re-derive every Edit/Queue clip's state now (states only; the engine's next tick refills draft days).
+      if settings, try settingsSnapshot() != before.settings { try Revalidation(store: store).run(adjustPlan: false) }
       let after = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
                            plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil)
       var changed = Set(zip(before.clips, after.clips).filter { $0 != $1 }.map(\.0.id))
@@ -601,7 +613,10 @@ public final class BulkActions: @unchecked Sendable {
           if !force, cur != aset {
             throw EngineError("Can't undo the settings part of \(rec.action): settings changed after it. Use force to overwrite.")
           }
-          if cur != bset { try restoreSettings(bset) }
+          if cur != bset {
+            try restoreSettings(bset)
+            try Revalidation(store: store).run(adjustPlan: false)  // round 4 (S1): states follow the restored settings
+          }
           restored.insert(Self.settingsMarker)
         }
         for v in touched { try store.refreshState(videoId: v) }
@@ -620,6 +635,11 @@ public final class BulkActions: @unchecked Sendable {
     }
     if postsChangeSignal { ChangeSignal.post() }
     return result
+  }
+
+  /// Clip-history words for a journaled action; the command name stays (round 4: "make-ready" reads as what it does).
+  static func historyLabel(_ action: String) -> String {
+    action == "make-ready" ? "Confirm default crop (make-ready)" : action
   }
 
   // MARK: Selection helper
@@ -724,12 +744,12 @@ public final class BulkActions: @unchecked Sendable {
           }
         }
         let reported = reportsAll ? existing.filter { result.skipped[$0] == nil } : result.changed
-        var rows: [(id: String, issues: [ValidationIssue], hasTitle: Bool)] = []
+        var rows: [(id: String, issues: [ValidationIssue], hasTitle: Bool, hasScore: Bool)] = []
         for id in reported {
           if let v = try store.video(id: id), v.type == .short {
             let issues = (try? Validation.issues(video: v, store: store)) ?? []
             result.remainingIssues[id] = issues
-            rows.append((id, issues, v.titleText != nil))
+            rows.append((id, issues, v.titleText != nil, v.score != nil))
           }
         }
         if reportsAll { result.outlook = ReadyOutlook.classify(rows) }
@@ -747,7 +767,7 @@ public final class BulkActions: @unchecked Sendable {
           """, [batchId, action, JSONCoding.string(params), JSONCoding.string(result.changed), JSONCoding.string(before),
                 JSONCoding.string(after), result.summary, store.clock.now])
         for id in result.changed {
-          try store.logEvent("bulk", "\(action)\(params.isEmpty ? "" : " " + params.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")) (batch \(batchId.prefix(8)))",
+          try store.logEvent("bulk", "\(Self.historyLabel(action))\(params.isEmpty ? "" : " " + params.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")) (batch \(batchId.prefix(8)))",
                              videoId: id)
         }
         result.batchId = batchId

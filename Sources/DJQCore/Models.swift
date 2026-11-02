@@ -86,16 +86,18 @@ public enum VideoState: String, Codable, Sendable, CaseIterable {
   case ready, planned, posting, posted, partial, excluded
   case missingFile = "missing_file"
 
+  /// Round 4 (S1): readiness is the stage, so these read as stage names — never "Ready" / "Needs edit".
+  /// (`needs_edit` / `ready` stay the stored values.)
   public var displayName: String {
     switch self {
-    case .needsEdit: "Needs edit"
-    case .ready: "Ready"
-    case .planned: "Planned"
+    case .needsEdit: "In Edit"
+    case .ready: "In Queue"
+    case .planned: "Scheduled"
     case .posting: "Posting"
     case .posted: "Posted"
     case .partial: "Partial"
     case .excluded: "Excluded"
-    case .missingFile: "Missing"
+    case .missingFile: "File missing"
     }
   }
 }
@@ -121,7 +123,7 @@ public enum PostState: String, Codable, Sendable, CaseIterable {
     switch self {
     case .planned: "Planned"
     case .rendering: "Rendering"
-    case .rendered: "Ready"
+    case .rendered: "Rendered"  // a render state (file made), not clip readiness (round 4 S1)
     case .due: "Due"
     case .posted: "Posted"
     case .failed: "Failed"

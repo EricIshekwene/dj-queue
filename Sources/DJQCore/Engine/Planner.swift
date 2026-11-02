@@ -55,14 +55,23 @@ public final class Planner: @unchecked Sendable {
     return try slots(week: week)
   }
 
-  /// Creates a PlatformPost per slot (today on) × active platform; marks the week approved.
+  /// Creates a PlatformPost per slot (today on) × active platform; marks the week approved. One transaction: the
+  /// state check, the draft-day refill and the approval all land or none do.
   public func approveWeek(_ week: String) throws {
+    try store.db.transaction { try approveWeekInTransaction(week) }
+  }
+
+  private func approveWeekInTransaction(_ week: String) throws {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     let today = store.today(dm)
     if try slots(week: week).filter({ $0.date >= today }).isEmpty, try store.week(week)?.state != .approved {
       try proposeWeek(week)
     }
+    // Round 4 (S1): the Queue only holds ready clips — a draft day whose clip has since gone to Edit (unpinned, no
+    // posts) is refilled from the queue before approval, so approving never schedules a clip that isn't ready.
+    // Pinned days stay (pinned clips never move); the engine then reports them ("<clip> can't post").
+    try dropNotReadyDraftSlots(week: week)
     let upcoming = try slots(week: week).filter { $0.date >= today }
     guard !upcoming.isEmpty else { throw EngineError("Nothing left to approve in the week of \(week)") }
     try store.db.transaction {
@@ -72,6 +81,44 @@ public final class Planner: @unchecked Sendable {
       try store.save(Week(weekStart: week, state: .approved, approvedAt: store.clock.now))
     }
     try store.logEvent("plan", "Approved week of \(week) (\(upcoming.count) slots)")
+  }
+
+  /// Round 4 (S1): unpinned draft-week slots (today on, no posts) whose clip is no longer in the Queue (its state, freshly
+  /// computed, isn't `ready`) are removed and each freed day/position is refilled from the queue order, like a
+  /// proposal. `week` limits it to one week (nil = every draft week). Pinned slots and approved weeks are never
+  /// touched. Returns the removed slots.
+  /// `revalidate` first re-derives every Edit/Queue clip's state (states only), so neither the drop nor the refill
+  /// trusts a stale stored `ready` (e.g. right after a settings save, before the next tick).
+  @discardableResult
+  public func dropNotReadyDraftSlots(week: String? = nil, revalidate: Bool = true) throws -> [PlanSlot] {
+    let settings = try store.settings()
+    let dm = DayMath(settings: settings)
+    let today = store.today(dm)
+    var dropped: [PlanSlot] = []
+    try store.db.transaction {
+      if revalidate { try Revalidation(store: store).run(adjustPlan: false) }
+      var clause = "date>=? AND pinned=0 AND week_start NOT IN (SELECT week_start FROM weeks WHERE state='approved')"
+      var binds: [SQLBindable?] = [today]
+      if let week { clause += " AND week_start=?"; binds.append(week) }
+      for s in try store.planSlots(where: clause, binds) {
+        guard try store.slotPosts(s.id).isEmpty, let v = try store.video(id: s.videoId) else { continue }
+        _ = try store.refreshState(v, context: nil)
+        guard let fresh = try store.video(id: s.videoId), [.needsEdit, .missingFile, .excluded].contains(fresh.state) else { continue }
+        try store.deletePlanSlot(s.id)
+        dropped.append(s)
+      }
+      guard !dropped.isEmpty else { return }
+      var backlog = try queue.ordered()
+      for s in dropped.sorted(by: { ($0.date, $0.position) < ($1.date, $1.position) }) {
+        try store.logEvent("plan", "Removed from the draft plan on \(s.date): not in the Queue any more", videoId: s.videoId)
+        guard let i = try pickIndex(backlog, for: s.date, settings: settings, dm: dm) else { continue }
+        let v = backlog.remove(at: i)
+        try store.save(PlanSlot(id: newId(), date: s.date, position: s.position, videoId: v.id, pinned: false, weekStart: s.weekStart))
+        try store.refreshState(videoId: v.id)
+        try store.logEvent("plan", "Proposed for \(s.date) (filled a day freed by a clip that went back to Edit)", videoId: v.id)
+      }
+    }
+    return dropped
   }
 
   /// Drops unpinned slots (today on) that have nothing posted, deletes their un-posted posts, re-proposes; week → draft.
@@ -496,7 +543,7 @@ public final class Planner: @unchecked Sendable {
     if v.missing { throw EngineError("\(v.tag): file missing") }
     if v.excluded { throw EngineError("\(v.tag) is excluded") }
     let issues = try Validation.issues(video: v, store: store).filter { $0.kind != .tooLong }
-    if let i = issues.first { throw EngineError("\(v.tag) isn't ready (\(i.message))") }
+    if let i = issues.first { throw EngineError("\(v.tag) is in Edit, not the Queue (\(i.message))") }
     return v
   }
 
