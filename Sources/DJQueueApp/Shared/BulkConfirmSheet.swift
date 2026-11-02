@@ -102,7 +102,8 @@ struct BulkConfirmSheet: View {
     VStack(alignment: .leading, spacing: DS.space.sm) {
       Text(([("\(o.ready.count) go\(o.ready.count == 1 ? "es" : "") to the Queue", true),
              ("\(o.needTitle.count) still need\(o.needTitle.count == 1 ? "s" : "") a title", !o.needTitle.isEmpty),
-             ("\(o.other.count) other issue\(o.other.count == 1 ? "" : "s")", !o.other.isEmpty)])
+             ("\(o.other.count) other issue\(o.other.count == 1 ? "" : "s")", !o.other.isEmpty),
+             ("\(o.needScore.count) still need\(o.needScore.count == 1 ? "s" : "") a score", !o.needScore.isEmpty)])
         .filter(\.1).map(\.0).joined(separator: " · "))
         .font(DS.type.bodyMedium).foregroundStyle(DS.color.text)
       if !o.needTitle.isEmpty {

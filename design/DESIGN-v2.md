@@ -136,6 +136,19 @@ Locked: `R2.NAV` ChatGPT web sidebar (alt: ChatGPT iOS drawer). Menus follow `R2
 
 ---
 
+### 3.1 Clip list header (round 4, S3/S4/S1)
+
+Every clip list (Score, Edit, Queue, Library, Posts, Week's Next up drawer) uses one header (`DSListHeader`), in this
+order: **title + count** ("Library 12 of 63") · **search** (⌘F) · **view modes** · [extras, the one primary] /
+**status chips** · **Filters** · **sort** / applied filters as removable chips + **Clear all**. Status chips: Score =
+sessions, Edit = why clips are in Edit (core reason chips), Queue = Scheduled / Not scheduled, Library = All · Posted
+· Excluded · Missing · Long-form, Posts = Problems · Scheduled · Posted. Filters popover: Session · Kind · Score, plus
+Stage (Library) and Platform (Posts); an unapplied filter is never highlighted. Search, chip, filters and sort are
+remembered per page across relaunch. No "Ready" / "Needs edit" wording anywhere: the stage is the readiness (Edit = not
+yet, Queue = complete); Library tiles show the stage name.
+
+---
+
 ## 4. Clip card spec — one component, four view modes
 
 Locked: Cards `R2.QUEUE` (Hootsuite horizontal post cards; alt Buffer queue with Grid/List/Calendar toggle). Mode switching follows `R2.VIEWMODES` (Arcade filter pills + grid/list segmented control; alt Frame.io compact list). Grid follows `R2.LIBRARY` (Frame.io portrait tiles with fields under the cover). Single follows `R2.SCORE`. The large wide layout follows `R2.TODAY-alt` (Open's wide media cards with an action).

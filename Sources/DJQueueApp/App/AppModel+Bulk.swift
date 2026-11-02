@@ -91,7 +91,7 @@ extension AppModel {
           let msg = custom?.0 ?? r.doneMessage ?? res.outlook.map { Self.outlookMessage($0, changed: n) } ?? "Updated \(n) clip\(n == 1 ? "" : "s")"
           if let b = res.batchId { self.undoHistory.push(b, label: msg) }
           let skipped = res.skipped.count
-          let allReady = res.outlook.map { $0.needTitle.isEmpty && $0.other.isEmpty } ?? true
+          let allReady = res.outlook.map { $0.needTitle.isEmpty && $0.other.isEmpty && $0.needScore.isEmpty } ?? true
           let detail = [custom?.1, skipped > 0 ? "\(skipped) skipped" : nil].compactMap { $0 }.joined(separator: " · ")
           self.show(DSToastModel(message: msg, detail: detail.isEmpty ? nil : detail, tone: allReady ? .success : .neutral,
                                  actionTitle: res.batchId == nil ? nil : "Undo",
@@ -106,6 +106,7 @@ extension AppModel {
     var parts = [o.ready.isEmpty ? "Crop confirmed for \(pipelineClips(changed))" : "\(o.ready.count) sent to the Queue"]
     if !o.needTitle.isEmpty { parts.append("\(o.needTitle.count) still need\(o.needTitle.count == 1 ? "s" : "") a title") }
     if !o.other.isEmpty { parts.append("\(o.other.count) with other issues") }
+    if !o.needScore.isEmpty { parts.append("\(o.needScore.count) still need\(o.needScore.count == 1 ? "s" : "") a score") }
     return parts.joined(separator: " · ")
   }
 
