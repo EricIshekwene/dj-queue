@@ -81,20 +81,22 @@ enum AutoUpdateCommand {
       c.enabled = true
       if let r = option("--repo") { c.repo = URL(fileURLWithPath: r).standardizedFileURL.path }
       if let b = option("--branch") { c.branch = b }
-      try files.saveConfig(c)
       if dev {
+        try files.saveConfig(c)
         print("auto-update on (config: \(au.config.path)); no watcher in a dev environment — run `djq autoupdate run` by hand")
         return 0
       }
+      // Watcher first (it refuses while an update runs), then the setting, so a refusal changes nothing.
       try AutoUpdateWatcher.install(au, repo: c.repoPath(), branch: c.branch, load: true)
+      try files.saveConfig(c)
       print("auto-update on: watching \(c.repoPath()) · \(c.branch) (\(au.watcherPlist.path) loaded)")
       return 0
 
     case "off":
       var c = files.config()
       c.enabled = false
-      try files.saveConfig(c)
       try AutoUpdateWatcher.uninstall(au, unload: !dev)
+      try files.saveConfig(c)
       print("auto-update off: the watcher is unloaded; commits to \(c.branch) aren't installed until `djq autoupdate on`")
       return 0
 

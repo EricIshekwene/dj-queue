@@ -164,7 +164,7 @@ struct AutoUpdateSettings: View {
     if let r = s.ready {
       DSBadge("\(r.version) ready", style: .soft(.info), size: .sm,
               help: "Installs when you close the window, or now with Restart & update in the banner")
-    } else if let b = s.blocked ?? s.failedInstall {
+    } else if let b = updates.problem {
       DSBadge(b.afterInstall ? "\(b.version) failed checks" : "\(b.version) blocked", style: .soft(.warning), size: .sm,
               help: b.afterInstall ? "\(b.reason) It's still installed; `djq autoupdate rollback --restore-db` goes back." : "\(b.reason) Nothing was installed.")
     }
