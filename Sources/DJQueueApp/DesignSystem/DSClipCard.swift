@@ -316,6 +316,18 @@ struct DSClipCard<Actions: View>: View {
           Text(clip.title).font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(3)
           if !clip.meta.isEmpty { Text(clip.meta).font(DS.type.callout).foregroundStyle(DS.color.textSecondary) }
         }
+        // Score and next date (Queue §6.3) — the same facts the wide card shows on its right edge.
+        if clip.score != nil || clip.dateText != nil {
+          HStack(spacing: DS.space.sm) {
+            if clip.score != nil {
+              HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("Score").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+                scoreText
+              }
+            }
+            dateChip
+          }
+        }
         DSFlowLayout(spacing: 6) { chips() }
         if !clip.platforms.isEmpty {
           VStack(alignment: .leading, spacing: 8) {

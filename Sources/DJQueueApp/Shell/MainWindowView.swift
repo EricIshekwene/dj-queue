@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Window root (DESIGN-v2 §3): custom 260 pt sidebar + the current screen (each screen draws its own toolbar via
 /// ScreenScaffold). The editor takes over the whole window. In-window overlays (scrim + e3 card): ⌘K palette,
-/// Settings modal, bulk confirmation, quick look, keyboard shortcuts. One toast at the bottom (`model.toast`).
+/// Settings modal, bulk confirmation, quick look, keyboard shortcuts. One toast at the bottom of the content area, above the bulk bar / Score pill (`model.toast`).
 struct MainWindowView: View {
   @Bindable var model: AppModel
 
@@ -43,6 +43,7 @@ struct MainWindowView: View {
         screenView
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .background(DS.color.background)
+          .dsToastArea()
       }
       .dsAnimation(DS.motion.layout, value: compact)
     }

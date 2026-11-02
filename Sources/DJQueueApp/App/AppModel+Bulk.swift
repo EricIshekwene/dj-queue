@@ -21,8 +21,10 @@ struct BulkRequest {
   var ids: [String]
   /// "What will change" rows (DSChangeList), e.g. Caption → Template "DJ set".
   var changes: [DSChangeList.Change] = []
-  /// Toast after applying; nil = "Updated N clips".
+  /// Toast after applying; nil = "Updated N clips" (make-ready: its outlook, "Made 3 ready · 58 still need a title").
   var doneMessage: String? = nil
+  /// Clear the screen's selection once the batch changed something (the bulk bar hides, the toast is unobstructed).
+  var clearsSelection = true
   var run: @Sendable (_ dryRun: Bool) throws -> BulkResult
 }
 
@@ -44,19 +46,8 @@ extension AppModel {
       apply(r)
       return
     }
-    let p = PendingBulk(request: r)
-    pendingBulk = p
-    let run = r.run
-    Task.detached(priority: .userInitiated) {
-      let out: Result<BulkResult, Error> = Result { try run(true) }
-      await MainActor.run {
-        guard self.pendingBulk?.id == p.id else { return }
-        switch out {
-        case .success(let res): self.pendingBulk?.preview = res
-        case .failure(let e): self.pendingBulk?.error = e.localizedDescription
-        }
-      }
-    }
+    pendingBulk = PendingBulk(request: r)
+    recheckPendingBulk()
   }
 
   /// Confirmation sheet → primary button.
@@ -68,8 +59,9 @@ extension AppModel {
 
   func cancelPendingBulk() { pendingBulk = nil }
 
-  private func apply(_ r: BulkRequest, then: (() -> Void)? = nil) {
+  func apply(_ r: BulkRequest, then: (() -> Void)? = nil) {
     let run = r.run
+    let screen = self.screen
     Task.detached(priority: .userInitiated) {
       let out: Result<BulkResult, Error> = Result { try run(false) }
       await MainActor.run {
@@ -82,14 +74,53 @@ extension AppModel {
           if let b = res.batchId { self.lastBatchId = b }
           let n = res.changed.count
           if n == 0 {
-            self.show(DSToastModel(message: "Nothing changed", detail: res.skipped.values.sorted().first, duration: 4))
+            self.show(DSToastModel(message: "Nothing changed",
+                                   detail: res.outlook.map { "\($0.summary)" } ?? res.skipped.values.sorted().first, duration: 4))
             return
           }
-          let msg = r.doneMessage ?? "Updated \(n) clip\(n == 1 ? "" : "s")"
+          if r.clearsSelection { self.clearSelection(screen) }
+          let msg = r.doneMessage ?? res.outlook.map { Self.outlookMessage($0, changed: n) } ?? "Updated \(n) clip\(n == 1 ? "" : "s")"
           let skipped = res.skipped.count
-          self.show(DSToastModel(message: msg, detail: skipped > 0 ? "\(skipped) skipped" : nil, tone: .success,
+          let allReady = res.outlook.map { $0.needTitle.isEmpty && $0.other.isEmpty } ?? true
+          self.show(DSToastModel(message: msg, detail: skipped > 0 ? "\(skipped) skipped" : nil, tone: allReady ? .success : .neutral,
                                  actionTitle: res.batchId == nil ? nil : "Undo",
                                  action: res.batchId.map { b in { self.undo(batch: b) } }, duration: 6))
+        }
+      }
+    }
+  }
+
+  /// Make-ready's true result: "Made 3 ready · 58 still need a title" (none ready: "Crop confirmed for 3 · …").
+  static func outlookMessage(_ o: ReadyOutlook, changed: Int) -> String {
+    var parts = [o.ready.isEmpty ? "Crop confirmed for \(pipelineClips(changed))" : "Made \(o.ready.count) ready"]
+    if !o.needTitle.isEmpty { parts.append("\(o.needTitle.count) still need\(o.needTitle.count == 1 ? "s" : "") a title") }
+    if !o.other.isEmpty { parts.append("\(o.other.count) with other issues") }
+    return parts.joined(separator: " · ")
+  }
+
+  /// Confirmation sheet → "Use raw tag as title for these M": sets each clip's Title to its raw tag verbatim (one
+  /// undoable batch), then re-checks the pending action so the sheet's counts are true again.
+  func useRawTagAsTitle(_ ids: [String]) {
+    let b = bulk
+    apply(BulkRequest(title: "", verb: "", ids: ids, doneMessage: "Raw tag set as the title for \(AppModel.pipelineClips(ids.count))",
+                      clearsSelection: false) { dry in try b.useRawTagAsTitle(ids, dryRun: dry) }) { [weak self] in
+      self?.recheckPendingBulk()
+    }
+  }
+
+  /// Runs the pending sheet's dry run again (after something changed underneath it).
+  func recheckPendingBulk() {
+    guard let p = pendingBulk else { return }
+    pendingBulk?.preview = nil
+    pendingBulk?.error = nil
+    let run = p.request.run
+    Task.detached(priority: .userInitiated) {
+      let out: Result<BulkResult, Error> = Result { try run(true) }
+      await MainActor.run {
+        guard self.pendingBulk?.id == p.id else { return }
+        switch out {
+        case .success(let res): self.pendingBulk?.preview = res
+        case .failure(let e): self.pendingBulk?.error = e.localizedDescription
         }
       }
     }
@@ -123,7 +154,8 @@ extension AppModel {
   /// Sets a clip's Title from a suggestion chip (undoable like any batch).
   func acceptSuggestion(_ videoId: String, _ text: String) {
     let b = bulk
-    requestBulk(BulkRequest(title: "Set title?", verb: "Set title", ids: [videoId], doneMessage: "Title set") { dry in
+    requestBulk(BulkRequest(title: "Set title?", verb: "Set title", ids: [videoId], doneMessage: "Title set",
+                            clearsSelection: false) { dry in
       try b.setTitle([videoId], text, dryRun: dry)
     })
   }

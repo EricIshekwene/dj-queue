@@ -11,7 +11,8 @@ struct BulkConfirmSheet: View {
 
   var body: some View {
     let r = pending.request
-    DSDialog(r.title, description: "\(r.ids.count) clips selected", icon: "square.stack.3d.up", width: 480,
+    DSDialog(r.title, description: "\(r.ids.count) clips selected", icon: "square.stack.3d.up",
+             width: pending.preview?.outlook?.needTitle.isEmpty == false ? 560 : 480,
              onClose: { model.cancelPendingBulk() }) {
       VStack(alignment: .leading, spacing: DS.space.sm) {
         if !r.changes.isEmpty { DSChangeList(changes: r.changes) }
@@ -40,8 +41,9 @@ struct BulkConfirmSheet: View {
     } else if let p = pending.preview {
       let same = p.videoIds.count - p.changed.count - p.skipped.count
       VStack(alignment: .leading, spacing: DS.space.xs) {
+        if let o = p.outlook { outlook(o) }
         HStack(spacing: DS.space.xs) {
-          Text(([("\(p.changed.count) will change", true)] + [(same > 0 ? "\(same) already so" : "", same > 0),
+          Text(([("\(p.changed.count) will change" + (p.outlook == nil ? "" : " (crop confirmed)"), true)] + [(same > 0 ? "\(same) already so" : "", same > 0),
                 (p.skipped.isEmpty ? "" : "\(p.skipped.count) skipped", !p.skipped.isEmpty)])
             .filter(\.1).map(\.0).joined(separator: " · "))
             .font(DS.type.calloutMedium).foregroundStyle(DS.color.text)
@@ -69,6 +71,39 @@ struct BulkConfirmSheet: View {
       HStack(spacing: DS.space.xs) {
         DSSpinner(size: 12, color: DS.color.textSecondary)
         Text("Checking what will change…").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+      }
+    }
+  }
+
+  /// Make-ready's real outcome per clip, and — when clips still need a title — the two explicit ways to give them
+  /// one (the app never invents a title: an agent suggests, or Eric takes the raw tag as it is).
+  @ViewBuilder private func outlook(_ o: ReadyOutlook) -> some View {
+    VStack(alignment: .leading, spacing: DS.space.sm) {
+      Text(([("\(o.ready.count) will be ready", true),
+             ("\(o.needTitle.count) still need\(o.needTitle.count == 1 ? "s" : "") a title", !o.needTitle.isEmpty),
+             ("\(o.other.count) other issue\(o.other.count == 1 ? "" : "s")", !o.other.isEmpty)])
+        .filter(\.1).map(\.0).joined(separator: " · "))
+        .font(DS.type.bodyMedium).foregroundStyle(DS.color.text)
+      if !o.needTitle.isEmpty {
+        let m = o.needTitle.count
+        VStack(alignment: .leading, spacing: DS.space.xs) {
+          Text("Their text comes from the title, so they stay in Edit until they have one.")
+            .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+          HStack(spacing: DS.space.xs) {
+            DSButton("Ask an agent for these \(m)", icon: "doc.on.clipboard", variant: .outline, size: .sm,
+                     tooltip: "Copies a prompt for these \(m) clips; your agent answers with title suggestions via djq suggest") {
+              model.copyAgentPrompt(o.needTitle)
+            }
+            DSButton("Use raw tag as title for these \(m)", icon: "tag", variant: .outline, size: .sm,
+                     disabledReason: pending.applying ? "Applying…" : nil,
+                     tooltip: "Sets each clip's title to its marker tag exactly as written (undoable)") {
+              model.useRawTagAsTitle(o.needTitle)
+            }
+          }
+        }
+        .padding(DS.space.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
       }
     }
   }

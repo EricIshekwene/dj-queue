@@ -50,23 +50,36 @@ private struct LongformStatus: View {
   var compact = false
 
   var body: some View {
-    HStack(spacing: 6) {
-      if model.libraryIsMissing(video) {
-        DSBadge("File missing · Relink", style: .soft(.danger), icon: "exclamationmark")
-      } else {
-        DSBadge("Long-form", style: .outline)
-        DSBadge(model.libraryStateChip(video).text, style: model.libraryStateChip(video).style)
+    // Tiles (260–300 pt) can't fit both chips and "Mark posted" on one line, so the button gets its own row there.
+    if compact || video.longformURL != nil {
+      HStack(spacing: 6) { chips; Spacer(minLength: DS.space.xs); action }
+    } else {
+      VStack(alignment: .leading, spacing: DS.space.xs) {
+        HStack(spacing: 6) { chips }
+        action
       }
-      Spacer(minLength: DS.space.xs)
-      if let u = video.longformURL, let url = URL(string: u) {
-        DSIconButton("arrow.up.right.square", tooltip: "Open on YouTube · \(u)", size: .sm) { NSWorkspace.shared.open(url) }
-      } else {
-        DSButton("Mark posted", icon: "checkmark.circle", variant: .outline, size: .sm,
-                 disabledReason: video.excluded ? "Excluded — include it first" : nil,
-                 tooltip: "Paste the YouTube link; the file moves to Posted/Longform") {
-          BrowseUI.shared.longformTargets = [video]
-        }
+    }
+  }
+
+  @ViewBuilder private var chips: some View {
+    if model.libraryIsMissing(video) {
+      DSBadge("File missing · Relink", style: .soft(.danger), icon: "exclamationmark")
+    } else {
+      DSBadge("Long-form", style: .outline)
+      DSBadge(model.libraryStateChip(video).text, style: model.libraryStateChip(video).style)
+    }
+  }
+
+  @ViewBuilder private var action: some View {
+    if let u = video.longformURL, let url = URL(string: u) {
+      DSIconButton("arrow.up.right.square", tooltip: "Open on YouTube · \(u)", size: .sm) { NSWorkspace.shared.open(url) }
+    } else {
+      DSButton("Mark posted", icon: "checkmark.circle", variant: .outline, size: .sm,
+               disabledReason: video.excluded ? "Excluded — include it first" : nil,
+               tooltip: "Paste the YouTube link; the file moves to Posted/Longform") {
+        BrowseUI.shared.longformTargets = [video]
       }
+      .fixedSize()
     }
   }
 }

@@ -11,9 +11,6 @@ import SwiftUI
 /// the title is ambiguous, a "Cover" badge, Open editor and ⋯. Hidden: dates, platform post state, queue order.
 struct EditView: View {
   @Bindable var model: AppModel
-  @State private var templates: [CaptionTemplate] = []
-  @State private var hashtagSets: [HashtagSet] = []
-  @State private var covers: Set<String> = []
   private var ui: PipelineUIState { .shared }
 
   var body: some View {
@@ -24,6 +21,7 @@ struct EditView: View {
     let ids = list.map(\.id)
     let mode = model.viewMode(.edit)
     let sel = model.selectedIds(.edit)
+    let templates = model.captionTemplates
     ScreenScaffold(model: model, screen: .edit, subtitle: all.isEmpty ? nil : "\(all.count) need work",
                    readingColumn: mode == .wide || mode == .list) {
       DSViewModeSwitcher(mode: model.viewModeBinding(.edit))
@@ -59,9 +57,8 @@ struct EditView: View {
       }
     }
     .dsBulkBar(isPresented: !sel.isEmpty) {
-      EditBulkBar(model: model, ids: sel, templates: templates, hashtagSets: hashtagSets) { makeReady(sel) }
+      EditBulkBar(model: model, ids: sel, templates: templates, hashtagSets: model.hashtagSets) { makeReady(sel) }
     }
-    .task(id: "\(model.lastRefresh.timeIntervalSince1970)|\(ids.joined(separator: ","))") { load(ids) }
   }
 
   /// Card model: the shared mapping, plus a "Cover" badge; suggestion chips keep only their text outside Single
@@ -74,20 +71,15 @@ struct EditView: View {
     let short = c.blocks.map { $0.components(separatedBy: " · ").first ?? $0 }
     if mode == .grid { c.blocks = short }
     if mode == .list, !(short + c.issues).isEmpty { c.subtitle = (short + c.issues).joined(separator: " · ") }
-    if covers.contains(v.id) { c.tags.append(DSClipTag(text: "Cover", style: .outline, icon: "photo")) }
+    if model.coverIds.contains(v.id) { c.tags.append(DSClipTag(text: "Cover", style: .outline, icon: "photo")) }
     return c
-  }
-
-  private func load(_ ids: [String]) {
-    templates = (try? model.store.captionTemplates()) ?? []
-    hashtagSets = (try? model.store.hashtagSets()) ?? []
-    covers = Set(ids.filter { id in (try? model.store.edit(videoId: id))?.coverTime != nil })
   }
 
   private func makeReady(_ ids: [String]) {
     model.pipelineBulk("Make \(AppModel.pipelineClips(ids.count)) ready?", verb: "Make ready", ids: ids,
                        changes: [.init(field: "Crop", value: "Default anchor, confirmed where missing"),
-                                 .init(field: "Text, caption, cover", value: "Keep following New clip defaults")]) { b, dry in
+                                 .init(field: "Text, caption, cover", value: "Keep following New clip defaults"),
+                                 .init(field: "Title", value: "Not set by this — clips without one still need text")]) { b, dry in
       try b.makeReadyWithDefaults(ids, dryRun: dry)
     }
   }
@@ -118,6 +110,7 @@ private struct EditBulkBar: View {
   var body: some View {
     let n = AppModel.pipelineClips(ids.count)
     ScreenBulkBar(model: model, screen: .edit) {
+      let noSuggestions = !ids.contains { !(model.suggestionsByVideo[$0] ?? []).isEmpty }
       Button("Top title", systemImage: "text.badge.checkmark") {
         let ids = ids
         model.pipelineBulk("Accept the top title for \(n)?", verb: "Accept titles", ids: ids,
@@ -125,7 +118,9 @@ private struct EditBulkBar: View {
           try b.acceptTopTitleSuggestion(ids, dryRun: dry)
         }
       }
-      .dsTooltip("Accept top title: each clip's best suggestion becomes its title (clips with a title keep it)")
+      .disabled(noSuggestions)
+      .dsTooltip(noSuggestions ? "None of the selected clips has title suggestions yet — Copy agent prompt (More) asks your agent for some"
+                 : "Accept top title: each clip's best suggestion becomes its title (clips with a title keep it)")
       PipelineBulkMenu("Caption", tooltip: "Caption template and hashtag set for the selected clips") {
         Section("Caption template") {
           Button("Default template") { setTemplate(nil, "Default") }

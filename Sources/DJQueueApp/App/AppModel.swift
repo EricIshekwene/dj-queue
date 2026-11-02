@@ -76,6 +76,11 @@ final class AppModel {
   var queueList: [Video] = []
   /// Title suggestions per short clip, best first (metadata only — never generated in the app).
   var suggestionsByVideo: [String: [TitleSuggestion]] = [:]
+  /// Needs-edit clips with a chosen cover frame (Edit's "Cover" badge).
+  var coverIds: Set<String> = []
+  /// Caption templates and hashtag sets (Edit's bulk/context menus).
+  var captionTemplates: [CaptionTemplate] = []
+  var hashtagSets: [HashtagSet] = []
   /// What keeps a clip from being ready / postable (Validation.issues) for every clip in `editList` and `queueList`.
   var issuesByVideo: [String: [ValidationIssue]] = [:]
   /// Short clips with no title and no confident suggestion (AgentPrompts.needsTitleHelp) → "Ask an agent".
@@ -268,6 +273,9 @@ final class AppModel {
     var issues: [String: [ValidationIssue]] = [:]
     var needsTitleHelp: Set<String> = []
     var editStamps: [String: Double] = [:]
+    var covers: Set<String> = []
+    var captionTemplates: [CaptionTemplate] = []
+    var hashtagSets: [HashtagSet] = []
     var weekSlots: [PlanSlot] = []
     var weekAwake: [DateInterval] = []
     var error: String?
@@ -311,6 +319,10 @@ final class AppModel {
                                                    || l.ordered.contains { $0.id == v.id }) {
         l.issues[v.id] = (try? Validation.issues(video: v, store: store)) ?? []
       }
+      // Edit's "Cover" badge and bulk menus (read here, off the main actor, not per refresh in the view).
+      for v in l.needsEdit where (try? store.edit(videoId: v.id))?.coverTime != nil { l.covers.insert(v.id) }
+      l.captionTemplates = try store.captionTemplates()
+      l.hashtagSets = try store.hashtagSets()
       l.editStamps = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT video_id, updated_at FROM edits").compactMap { r in
         r.string("video_id").map { ($0, r.double("updated_at") ?? 0) }
       })
@@ -335,6 +347,9 @@ final class AppModel {
     suggestionsByVideo = l.suggestions
     issuesByVideo = l.issues
     needsTitleHelp = l.needsTitleHelp
+    coverIds = l.covers
+    captionTemplates = l.captionTemplates
+    hashtagSets = l.hashtagSets
     var seenPlanned = Set<String>()
     let planned = l.upcomingSlots.sorted { ($0.date, $0.position) < ($1.date, $1.position) }
       .compactMap { s -> Video? in seenPlanned.insert(s.videoId).inserted ? videoById[s.videoId] : nil }

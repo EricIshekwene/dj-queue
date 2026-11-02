@@ -125,6 +125,7 @@ struct ScoreSingleView: View {
     .background(DS.color.surfaceRaised, in: Capsule())
     .overlay(Capsule().strokeBorder(DS.color.border))
     .dsElevation(DS.elevation.e2)
+    .dsToastAvoid()
   }
 
   private func panel(_ v: Video) -> some View {

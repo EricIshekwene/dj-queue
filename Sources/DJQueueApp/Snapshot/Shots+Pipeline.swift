@@ -14,6 +14,12 @@ extension SnapshotShots {
         PipelineUIState.shared.typedScores = [:]
         mode(m, .score, .single)
       },
+      // After ↩: the toast sits above the control pill, never over it.
+      c.main("10b-score-after-save") { m in
+        PipelineUIState.shared.typedScores = [:]
+        mode(m, .score, .single)
+        m.show(DSToastModel(message: "Saved 1 score", tone: .success, actionTitle: "Undo", action: {}, duration: 6))
+      },
       c.main("11-score-grid") { m in
         mode(m, .score, .grid)
         let ids = m.scoreList.prefix(3).map(\.id)
@@ -47,11 +53,24 @@ extension SnapshotShots {
         let bulk = m.bulk
         m.pipelineBulk("Make \(AppModel.pipelineClips(ids.count)) ready?", verb: "Make ready", ids: ids,
                        changes: [.init(field: "Crop", value: "Default anchor, confirmed where missing"),
-                                 .init(field: "Text, caption, cover", value: "Keep following New clip defaults")]) { b, dry in
+                                 .init(field: "Text, caption, cover", value: "Keep following New clip defaults"),
+                                 .init(field: "Title", value: "Not set by this — clips without one still need text")]) { b, dry in
           try b.makeReadyWithDefaults(ids, dryRun: dry)
         }
         // Snapshot: show the dry-run line without waiting for the background check.
         if let r = try? bulk.makeReadyWithDefaults(ids, dryRun: true) { m.pendingBulk?.preview = r }
+      },
+      // The toast stacks above the bulk bar (here a selection is still showing) and states make-ready's real result.
+      c.main("16b-edit-toast-made-ready") { m in
+        SampleData.pipelineEditExtras(m)
+        mode(m, .edit, .wide)
+        let ids = m.editList.map(\.id)
+        m.visibleIds[.edit] = ids
+        m.setSelection(Array(ids.prefix(2)), screen: .edit)
+        if let r = try? m.bulk.makeReadyWithDefaults(ids, dryRun: true), let o = r.outlook {
+          m.show(DSToastModel(message: AppModel.outlookMessage(o, changed: r.changed.count),
+                              tone: o.needTitle.isEmpty && o.other.isEmpty ? .success : .neutral, actionTitle: "Undo", action: {}))
+        }
       },
       c.main("17-edit-empty", c.empty) { m in mode(m, .edit, .wide) },
       c.main("1e-edit-single") { m in

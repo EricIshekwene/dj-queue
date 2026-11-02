@@ -27,7 +27,7 @@ usage: djq <command> [args]
        actions: make-ready | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
        | score-adjust <±n> | kind <k> | exclude | include | caption-template <id|default> | hashtags <a,b|default>
        | extra-hashtags "<#a #b>"|default | drop-hashtags <P> | skip-platform <P> | unskip-platform <P>
-       | accept-title | title "<t>"|--clear | add-to-week <YYYY-MM-DD> | pin-consecutive <YYYY-MM-DD>
+       | accept-title | title-raw-tag | title "<t>"|--clear | add-to-week <YYYY-MM-DD> | pin-consecutive <YYYY-MM-DD>
        | post-today | re-render
   bulk undo <batch> [--force] | bulk batches [--json]
   agent-prompt titles [--ids a,b | --needs-title] [--out FILE]
@@ -639,6 +639,7 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   case "drop-hashtags": r = try bulk.dropHashtags(ids, platform: try p(), dryRun: dry)
   case "skip-platform", "unskip-platform": r = try bulk.setPlatform(ids, try p(), skipped: action == "skip-platform", dryRun: dry)
   case "accept-title": r = try bulk.acceptTopTitleSuggestion(ids, dryRun: dry)
+  case "title-raw-tag": r = try bulk.useRawTagAsTitle(ids, dryRun: dry)
   case "title": r = try bulk.setTitle(ids, flag("--clear") ? nil : try arg(0, "title"), dryRun: dry)
   case "add-to-week": r = try bulk.addToWeek(ids, week: try dateArg(0), dryRun: dry)
   case "pin-consecutive": r = try bulk.pinConsecutive(ids, from: try dateArg(0), dryRun: dry)
@@ -653,6 +654,7 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
 
 func printBulk(_ r: BulkResult) {
   print("\(r.dryRun ? "[dry run] " : "")\(r.summary)\(r.batchId.map { " · batch \(short($0)) (undo: djq bulk undo \(short($0)))" } ?? "")")
+  if let o = r.outlook { print("  after: \(o.summary)") }
   for (id, why) in r.skipped.sorted(by: { $0.key < $1.key }) { print("  skipped \(short(id))  \(why)") }
   for (id, issues) in r.remainingIssues.sorted(by: { $0.key < $1.key }) where !issues.isEmpty {
     print("  \(short(id)) still: \(issues.map(\.message).joined(separator: "; "))")
