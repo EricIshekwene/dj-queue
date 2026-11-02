@@ -2,7 +2,8 @@ import AppKit
 import DJQCore
 import SwiftUI
 
-/// Engine: LaunchAgent install/stop (+ the last install error), engine heartbeat, wake, folders, log, backups.
+/// Engine: LaunchAgent install/stop (+ the last install error), engine heartbeat, wake, auto-update, folders, log,
+/// backups.
 struct EngineSettings: View {
   @Bindable var model: AppModel
   let ui: SettingsUIState
@@ -43,6 +44,8 @@ struct EngineSettings: View {
         NSWorkspace.shared.open(model.store.paths.engineLog)
       }
     }
+
+    AutoUpdateSettings(model: model)
 
     SettingsGroupHeader("Folders")
     folder("DJ Video", model.store.paths.root)
@@ -96,6 +99,74 @@ struct EngineSettings: View {
   private func folder(_ title: String, _ url: URL) -> some View {
     SettingsRow(title, description: url.path, isPath: true) {
       DSButton("Reveal", variant: .ghost, size: .sm, tooltip: "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    }
+  }
+}
+
+/// Settings → Engine → Auto-update (round 4 S5): the "Install updates from main" switch (config + watcher), what's
+/// installed and what the last run did, Check now and the log. Rollback stays a CLI command on purpose.
+struct AutoUpdateSettings: View {
+  @Bindable var model: AppModel
+  var updates = AutoUpdateUI.shared
+  static let anchor = "autoupdate"
+
+  var body: some View {
+    SettingsGroupHeader("Auto-update").id(Self.anchor)
+    SettingsRow("Install updates from main",
+                description: "Builds and tests each new commit on main, backs up your data, then installs it when the window is closed.") {
+      DSSwitch(isOn: Binding(get: { updates.enabled }, set: { updates.setEnabled($0) }))
+        .dsTooltip(updates.enabled ? "Stop installing new commits (the app stays as it is)" : "Install each new commit on main once its tests pass")
+        .accessibilityLabel("Install updates from main")
+    }
+    if let err = updates.settingsError {
+      SettingsNote(err, icon: "exclamationmark.circle")
+    }
+    SettingsRow(installedLabel, description: statusLine) {
+      HStack(spacing: DS.space.xs) {
+        statusBadges
+        DSButton("Check now", variant: .outline, size: .sm, disabledReason: updates.checkBlockedReason,
+                 tooltip: "Look for a new commit on main now (builds and tests it in the background)") {
+          updates.checkNow()
+          model.show("Checking for updates")
+        }
+      }
+    }
+    SettingsRow("Update log", description: "Every check, install and block is logged. To go back to the previous build, run djq autoupdate rollback in Terminal.") {
+      DSButton("Open log", variant: .outline, size: .sm, disabledReason: updates.logURL == nil ? "No update log written yet." : nil,
+               tooltip: "Open the auto-update log") { updates.openLog() }
+    }
+    Color.clear.frame(height: 0)
+      .task {
+        updates.attach(model.store.paths)
+        updates.refresh()
+      }
+  }
+
+  /// "Installed 0.5.0 (4f2c9a1)".
+  private var installedLabel: String {
+    guard let i = updates.state.installed ?? BundleInfo.build(Bundle.main.bundleURL) else { return "Installed build" }
+    return "Installed \(i.version) (\(i.shortCommit))"
+  }
+
+  /// Now: the runner's phase; else what the last run did.
+  private var statusLine: String {
+    let s = updates.state
+    if updates.isWorking || s.isRunning { return "Now: \(updates.workingLabel)." }
+    if let last = s.last { return "Last check \(Fmt.relative(last.at, now: Date())): \(last.message)" }
+    return updates.enabled ? "No check yet." : "Auto-update is off."
+  }
+
+  @ViewBuilder private var statusBadges: some View {
+    let s = updates.state
+    if updates.isWorking || s.isRunning {
+      DSSpinner(size: 12, color: DS.color.textTertiary)
+    }
+    if let r = s.ready {
+      DSBadge("\(r.version) ready", style: .soft(.info), size: .sm,
+              help: "Installs when you close the window, or now with Restart & update in the banner")
+    } else if let b = s.blocked ?? s.failedInstall {
+      DSBadge(b.afterInstall ? "\(b.version) failed checks" : "\(b.version) blocked", style: .soft(.warning), size: .sm,
+              help: b.afterInstall ? "\(b.reason) It's still installed; `djq autoupdate rollback --restore-db` goes back." : "\(b.reason) Nothing was installed.")
     }
   }
 }

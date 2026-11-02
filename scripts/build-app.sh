@@ -1,6 +1,8 @@
 #!/bin/zsh
 # Builds "build/DJ Queue.app" (release, ad-hoc signed) with the djq CLI inside (Contents/MacOS/djq).
-# `--install` copies it to ~/Applications and points ~/bin/djq at the bundled CLI.
+# `--install` copies it to ~/Applications and points ~/bin/djq at the bundled CLI; the bundle it replaces is kept in
+# <app support>/autoupdate/previous for `djq autoupdate rollback`. DJQ_APP_DIR / DJQ_BIN_DIR redirect the install;
+# with DJQ_HOME set (dev) everything defaults to that scratch folder, never the real ~/Applications.
 # djq finds ffmpeg by absolute path (/opt/homebrew/bin, /usr/local/bin) and uses the same Paths.standard as the app.
 # Does not install or load the LaunchAgent — do that from Settings → Engine or `djq agent install`.
 set -euo pipefail
@@ -32,6 +34,12 @@ fi
 VERSION="${TAG#v}"; [[ "$AHEAD" != "0" ]] && VERSION="$VERSION-dev.$AHEAD"
 BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" Resources/Info.plist > "$APP/Contents/Info.plist"
+# The commit the bundle was built from (auto-update compares it with main; "What's new" starts from it).
+COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+plutil -replace DJQGitCommit -string "$COMMIT" "$APP/Contents/Info.plist"
+# The database schema this build expects: `djq autoupdate rollback` refuses a build older than the database.
+SCHEMA="$(sed -nE 's/.*static let schemaVersion = ([0-9]+).*/\1/p' Sources/DJQCore/Store.swift | head -1)"
+plutil -replace DJQSchemaVersion -integer "${SCHEMA:-0}" "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
 if [[ ! -f Resources/AppIcon.icns ]]; then
@@ -47,13 +55,27 @@ codesign --verify --strict "$APP"
 echo "built: $APP"
 
 if [[ "${1:-}" == "--install" ]]; then
-  mkdir -p "$HOME/Applications"
-  rm -rf "$HOME/Applications/DJ Queue.app"
-  cp -R "$APP" "$HOME/Applications/"
-  echo "installed: $HOME/Applications/DJ Queue.app"
-  CLI="$HOME/Applications/DJ Queue.app/Contents/MacOS/djq"
-  LINK="$HOME/bin/djq"
-  mkdir -p "$HOME/bin"
+  if [[ -n "${DJQ_ROOT:-}" && -z "${DJQ_HOME:-}" ]]; then
+    echo "error: DJQ_ROOT is set without DJQ_HOME — a dev install would go over the real app. Set DJQ_HOME (or unset DJQ_ROOT)." >&2
+    exit 1
+  fi
+  # With DJQ_HOME set (a dev run) the install stays in that scratch folder unless DJQ_APP_DIR / DJQ_BIN_DIR say otherwise.
+  if [[ -n "${DJQ_HOME:-}" ]]; then BASE="$DJQ_HOME"; SUPPORT="$DJQ_HOME/support"; else BASE="$HOME"; SUPPORT="$HOME/Library/Application Support/DJ Queue"; fi
+  APPS="${DJQ_APP_DIR:-$BASE/Applications}"
+  BINS="${DJQ_BIN_DIR:-$BASE/bin}"
+  PREV="$SUPPORT/autoupdate/previous"
+  mkdir -p "$APPS"
+  if [[ -d "$APPS/DJ Queue.app" ]]; then
+    mkdir -p "$PREV"
+    rm -rf "$PREV/DJ Queue.app"
+    mv "$APPS/DJ Queue.app" "$PREV/DJ Queue.app"
+    echo "kept previous: $PREV/DJ Queue.app"
+  fi
+  cp -R "$APP" "$APPS/"
+  echo "installed: $APPS/DJ Queue.app"
+  CLI="$APPS/DJ Queue.app/Contents/MacOS/djq"
+  LINK="$BINS/djq"
+  mkdir -p "$BINS"
   if [[ -e "$LINK" && ! -L "$LINK" ]]; then
     echo "warning: $LINK exists and is not a symlink — left alone (point it at $CLI yourself)" >&2
   else
