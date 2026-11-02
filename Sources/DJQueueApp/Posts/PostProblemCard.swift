@@ -12,19 +12,26 @@ struct PostFixes {
 
   static func canRetry(_ p: PlatformPost) -> Bool { p.state == .failed && p.resolution == nil }
 
+  /// Sent back to Edit: nothing of the clip may post until it's sent to the queue again.
+  var heldReason: String? { model.heldReason(post.videoId) }
+
   var fixReason: String? {
+    if let h = heldReason, Self.canRetry(post) { return h }
     if Self.canRetry(post) { return nil }
     if post.state.isCopyright { return "Copyright can't be fixed by editing — re-upload anyway, skip the platform or accept" }
     if post.state == .overdue { return "Nothing to fix — the slot was missed. Use Post now or Shift plan (⋯)" }
     return post.resolution.map { "Already handled (\($0))" } ?? "Only failed posts can be fixed"
   }
 
-  var reuploadReason: String? { copyrightOpen ? nil : post.state.isCopyright ? "Already handled" : "Only for copyright problems" }
+  var reuploadReason: String? {
+    copyrightOpen ? heldReason : post.state.isCopyright ? "Already handled" : "Only for copyright problems"
+  }
   var acceptReason: String? { copyrightOpen ? nil : post.state.isCopyright ? "Already handled" : "Only for copyright problems" }
   var skipReason: String? { model.canSkip(post) ? nil : "Already \(post.state.displayName.lowercased())" }
 
   var resetReason: String? {
     if model.canReset(post) { return nil }
+    if let h = heldReason { return h }
     if post.scheduledAt <= model.now { return "Its time has passed — a reset would make it miss again" }
     return "Already planned"
   }
@@ -94,9 +101,9 @@ struct PostProblemCard: View {
       HStack(spacing: DS.space.xs) {
         if post.state == .overdue {
           // A missed slot has nothing to edit: its two real fixes take the first places.
-          DSButton("Post now", icon: "bolt", variant: .outline, size: .sm,
+          DSButton("Post now", icon: "bolt", variant: .outline, size: .sm, disabledReason: fixes.heldReason,
                    tooltip: "Make it due now on today's \(post.platform.displayName) slot") { model.postNow(post) }
-          DSButton("Shift plan", icon: "calendar.badge.clock", variant: .ghost, size: .sm,
+          DSButton("Shift plan", icon: "calendar.badge.clock", variant: .ghost, size: .sm, disabledReason: fixes.heldReason,
                    tooltip: "Move it to the next free \(post.platform.displayName) slot") { model.shiftPlan(post) }
         } else {
           DSButton("Fix in editor", icon: "slider.horizontal.below.rectangle", variant: isPrimary ? .primary : .outline, size: .sm,
@@ -169,6 +176,8 @@ struct PostMoreMenu: View {
     Menu {
       if PostFixes.canRetry(post) {
         Button("Try again on the next slot", systemImage: "arrow.clockwise") { model.fixed(post.id) }
+          .disabled(model.heldReason(post.videoId) != nil)
+          .help(model.heldReason(post.videoId) ?? "A new attempt on the platform's next slot")
       }
       if !post.state.isTerminal { Button("Mark posted…", systemImage: "checkmark.circle") { model.markPostedTarget = post } }
       if !post.state.isTerminal || post.state == .posted {

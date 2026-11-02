@@ -194,7 +194,8 @@ struct TodayRow: View {
         more
       case .failed:
         DSButton("Fix…", variant: .ghost, size: .sm, tooltip: "Open the editor to fix it") { model.openEditor(post.videoId, fixPostId: post.id) }
-        DSButton("Re-queue", variant: .ghost, size: .sm, tooltip: "The cause is fixed: try again on the next day's slot") { model.fixed(post.id) }
+        DSButton("Re-queue", variant: .ghost, size: .sm, disabledReason: model.heldReason(post.videoId),
+                 tooltip: "The cause is fixed: try again on the next day's slot") { model.fixed(post.id) }
         more
       case .posted:
         if let u = post.url, let url = URL(string: u) {
@@ -229,7 +230,9 @@ struct TodayRow: View {
       }
       if post.state == .overdue {
         Button("Post now", systemImage: "bolt") { model.postNow(post) }
+          .disabled(model.heldReason(post.videoId) != nil).help(model.heldReason(post.videoId) ?? "Due now on today's slot")
         Button("Shift plan", systemImage: "calendar.badge.clock") { model.shiftPlan(post) }
+          .disabled(model.heldReason(post.videoId) != nil).help(model.heldReason(post.videoId) ?? "Next free slot")
       }
       if model.canReset(post) || model.canSkip(post) { Divider() }
       if model.canReset(post) { Button("Reset", systemImage: "arrow.counterclockwise") { model.reset(post) } }

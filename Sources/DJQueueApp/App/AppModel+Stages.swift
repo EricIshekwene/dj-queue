@@ -54,8 +54,8 @@ extension AppModel {
       .min(by: { ($0.postedAt ?? .distantFuture) < ($1.postedAt ?? .distantFuture) }) {
       return "Already posted on \(p.platform.displayName) — it can't leave the plan; skip or reset its posts in Posts"
     }
-    if [.posting, .posted, .partial].contains(v.state) {
-      return "Already \(v.state.displayName.lowercased()) — it can't leave the plan; skip or reset its posts in Posts"
+    if [.posted, .partial].contains(v.state) {
+      return "Every platform is finished — nothing left in the plan to remove; repost or reset a post in Posts instead"
     }
     return nil
   }

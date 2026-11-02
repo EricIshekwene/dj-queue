@@ -98,6 +98,66 @@ import Testing
     #expect(try f.doublePosts().isEmpty)
   }
 
+  /// Due / overdue posts make the derived state `posting`, but nothing posted: the clip can still leave the plan.
+  @Test func dueOrOverdueWithNothingPostedCanLeaveThePlan() throws {
+    let f = try Fixture.engine(3)
+    try Planner(store: f.store).approveWeek(f.week)
+    let mon = try slot(f, "2026-11-02"), tue = try slot(f, "2026-11-03")
+    for (s, st) in [(mon, PostState.due), (tue, PostState.overdue)] {
+      var p = try #require(try f.store.slotPosts(s.id).first { $0.platform == .x })
+      p.state = st
+      try f.store.save(p)
+      try f.store.refreshState(videoId: s.videoId)
+      #expect(try f.store.video(id: s.videoId)?.state == .posting)
+    }
+    let b = bulk(f)
+    let vMon = try #require(try f.store.video(id: mon.videoId))
+    #expect(try b.postedBlocker(vMon) == nil && b.blocker(vMon, .back) == nil)
+    let r = try b.removeFromQueue([mon.videoId])
+    #expect(r.changed == [mon.videoId] && r.unplanned?[mon.videoId]?.first?.platforms.count == 6)
+    #expect(try f.store.posts(where: "video_id=?", [mon.videoId]).isEmpty)
+    #expect(try f.store.video(id: mon.videoId)?.state == .needsEdit)
+    let back = try b.back([tue.videoId])
+    #expect(back.moves?[tue.videoId]?.to == .queue)
+    #expect(try f.store.posts(where: "video_id=?", [tue.videoId]).isEmpty && f.store.video(id: tue.videoId)?.state == .ready)
+  }
+
+  /// Nothing of a held clip can post: fix/retry, re-upload, reset, post now, shift plan and repost are refused.
+  @Test func heldClipCannotPost() throws {
+    let f = try Fixture.engine(2)
+    try Planner(store: f.store).approveWeek(f.week)
+    let mon = try slot(f, "2026-11-02")
+    let actions = PostActions(store: f.store)
+    let posts = try f.store.slotPosts(mon.id)
+    let x = try #require(posts.first { $0.platform == .x }), ig = try #require(posts.first { $0.platform == .instagram })
+    try actions.reportProblem(postId: x.id, type: .uploadFailed, message: "network")
+    try actions.reportProblem(postId: ig.id, type: .copyrightBlocked, message: "claim")
+    let r = try bulk(f).removeFromQueue([mon.videoId])  // failed/copyright are terminal, nothing posted → allowed
+    #expect(r.changed == [mon.videoId])
+    func refused(_ body: () throws -> Void) {
+      #expect { try body() } throws: { ($0 as? EngineError)?.description == PostActions.heldReason }
+    }
+    refused { _ = try actions.fixed(postId: x.id) }
+    refused { try actions.resolveCopyright(postId: ig.id, .reuploadAnyway(versionNo: nil)) }
+    refused { try actions.reset(postId: x.id) }
+    var v2 = Version(number: 2)
+    v2.text = "v2"
+    try f.store.save(v2, videoId: mon.videoId)
+    refused { _ = try actions.repost(videoId: mon.videoId, platform: .x) }
+    #expect(try f.store.posts(where: "video_id=?", [mon.videoId]).allSatisfy { $0.state.isTerminal })
+    // Post now / Shift plan on an in-flight post of a held clip (raw flag) are refused too.
+    let tue = try slot(f, "2026-11-03")
+    try f.store.setHeldInEdit(tue.videoId, true)
+    let live = try #require(try f.store.slotPosts(tue.id).first)
+    refused { try actions.postNow(postId: live.id) }
+    refused { try actions.shiftPlan(postId: live.id) }
+    // Skip stays possible (it never posts).
+    try actions.skip(postId: live.id)
+    // Once sent to the queue again, the fix works.
+    try bulk(f).sendToQueue([mon.videoId])
+    #expect(try actions.fixed(postId: x.id).kind == .retry)
+  }
+
   /// A clip held before this rule (or via the raw flag) that has a posted post keeps its real posted state.
   @Test func heldFlagNeverMasksPostedState() throws {
     let f = try Fixture.engine(2)

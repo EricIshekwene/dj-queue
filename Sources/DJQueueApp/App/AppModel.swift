@@ -635,6 +635,7 @@ final class AppModel {
 
   /// nil when a repost is possible; otherwise why not (the API needs the next version to exist).
   func repostBlocker(_ videoId: String, _ p: Platform) -> String? {
+    if let why = heldReason(videoId) { return why }
     let used = (postsByVideo[videoId] ?? []).filter { $0.platform == p }
     guard let maxUsed = used.map(\.versionNo).max() else { return "Not posted on \(p.displayName) yet" }
     return (versionCounts[videoId] ?? 1) > maxUsed ? nil : "Add v\(maxUsed + 1) first (Duplicate version)"
@@ -687,9 +688,14 @@ final class AppModel {
     perform("Moved to the next free \(post.platform.displayName) slot") { try postActions.shiftPlan(postId: post.id) }
   }
 
+  /// `PostActions.heldReason` when the clip was sent back to Edit (nothing of it may post), else nil.
+  func heldReason(_ videoId: String) -> String? { video(videoId)?.heldInEdit == true ? PostActions.heldReason : nil }
+
   /// What the real PostActions allow (skip refuses terminal posts; reset of a past post would make it miss again).
   func canSkip(_ p: PlatformPost) -> Bool { !p.state.isTerminal || (p.state.isCopyright && p.resolution == nil) }
-  func canReset(_ p: PlatformPost) -> Bool { p.scheduledAt > now && p.state != .planned && p.state != .rendering }
+  func canReset(_ p: PlatformPost) -> Bool {
+    heldReason(p.videoId) == nil && p.scheduledAt > now && p.state != .planned && p.state != .rendering
+  }
   func isResolved(_ p: PlatformPost) -> Bool { p.resolution != nil }
   func setMetrics(_ post: PlatformPost, views: Int?, likes: Int?) {
     perform("Metrics saved") { try postActions.setMetrics(postId: post.id, PostMetrics(views: views, likes: likes, at: now)) }

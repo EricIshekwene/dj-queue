@@ -229,7 +229,7 @@ struct PostBulkDialog: View {
     switch bulk.op {
     case .reset: model.canReset(p)
     case .skip: model.canSkip(p)
-    case .retry: PostFixes.canRetry(p)
+    case .retry: PostFixes.canRetry(p) && model.heldReason(p.videoId) == nil
     }
   }
 

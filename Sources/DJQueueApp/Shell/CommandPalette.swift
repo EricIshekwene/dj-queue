@@ -99,12 +99,15 @@ extension AppModel {
         })
       }
       c.append(.init(id: "post.reset", title: "Reset post (\(n))", symbol: "arrow.counterclockwise",
-                     disabled: canReset(post) ? nil : "Its time has passed or it's still planned") { [weak self] in self?.reset(post) })
+                     disabled: canReset(post) ? nil : heldReason(post.videoId) ?? "Its time has passed or it's still planned") { [weak self] in self?.reset(post) })
       c.append(.init(id: "post.skip", title: "Skip post (\(n))", symbol: "forward",
                      disabled: canSkip(post) ? nil : "Already \(post.state.displayName.lowercased())") { [weak self] in self?.skip(post) })
       if post.state == .overdue {
-        c.append(.init(id: "post.postNow", title: "Post now (\(n))", symbol: "bolt") { [weak self] in self?.postNow(post) })
-        c.append(.init(id: "post.shiftPlan", title: "Shift plan (\(n))", symbol: "calendar.badge.clock") { [weak self] in self?.shiftPlan(post) })
+        let held = heldReason(post.videoId)
+        c.append(.init(id: "post.postNow", title: "Post now (\(n))", symbol: "bolt", disabled: held) { [weak self] in self?.postNow(post) })
+        c.append(.init(id: "post.shiftPlan", title: "Shift plan (\(n))", symbol: "calendar.badge.clock", disabled: held) { [weak self] in
+          self?.shiftPlan(post)
+        })
       }
     }
 
@@ -516,7 +519,9 @@ struct PostContextMenu: View {
     }
     if post.state == .overdue {
       Button("Post now", systemImage: "bolt") { model.postNow(post) }
+        .disabled(model.heldReason(post.videoId) != nil).help(model.heldReason(post.videoId) ?? "Due now on today's slot")
       Button("Shift plan", systemImage: "calendar.badge.clock") { model.shiftPlan(post) }
+        .disabled(model.heldReason(post.videoId) != nil).help(model.heldReason(post.videoId) ?? "Next free slot")
     }
     if model.canReset(post) { Button("Reset post", systemImage: "arrow.counterclockwise") { model.reset(post) } }
     if model.canSkip(post) { Button("Skip this platform", systemImage: "forward") { model.skip(post) } }

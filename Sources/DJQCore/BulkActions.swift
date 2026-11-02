@@ -376,8 +376,10 @@ public final class BulkActions: @unchecked Sendable {
     if let p = try store.posts(where: "video_id=? AND kind IN ('regular','retry') AND state='posted'", [v.id], order: "posted_at").first {
       return "Already posted on \(p.platform.displayName) — it can't leave the plan; skip or reset its posts in Posts"
     }
-    if [.posting, .posted, .partial].contains(v.state) {
-      return "Already \(v.state.displayName.lowercased()) — it can't leave the plan; skip or reset its posts in Posts"
+    // `.posting` is derived from due/overdue posts too — only something actually posted blocks. A finished clip
+    // (every platform posted, skipped or failed) has nothing left in the plan to remove.
+    if [.posted, .partial].contains(v.state) {
+      return "Every platform is finished — nothing left in the plan to remove; repost or reset a post in Posts instead"
     }
     return nil
   }
