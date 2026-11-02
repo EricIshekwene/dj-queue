@@ -91,3 +91,25 @@ extension AppModel {
     }
   }
 }
+
+/// Copyright "Re-upload anyway" as one undoable step (AppModel.reupload predates the journal and isn't undoable).
+extension AppModel {
+  /// Same / later version: resolves the claim and queues a new attempt on the next day's slot. New version: copies
+  /// the latest version as vN+1, resolves the claim with it, then opens the editor. Both show "… · Undo" (⌘Z).
+  func reuploadAnyway(_ post: PlatformPost, version: Int?, newVersion: Bool = false) {
+    if newVersion {
+      let ok = undoable("Re-uploading as a new version — edit it now", "reupload-new-version", ids: [post.videoId], plan: true) {
+        let vs = try store.versions(videoId: post.videoId)
+        var v = vs.last ?? Version(number: 1)
+        v.number = (vs.map(\.number).max() ?? 0) + 1
+        try store.save(v, videoId: post.videoId)
+        try postActions.resolveCopyright(postId: post.id, .reuploadAnyway(versionNo: v.number))
+      }
+      if ok { openEditor(post.videoId) }
+    } else {
+      undoable("Re-upload queued\(version.map { " (v\($0))" } ?? "")", "reupload", ids: [post.videoId], plan: true) {
+        try postActions.resolveCopyright(postId: post.id, .reuploadAnyway(versionNo: version))
+      }
+    }
+  }
+}

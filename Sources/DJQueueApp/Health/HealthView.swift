@@ -18,9 +18,9 @@ struct HealthView: View {
     ScreenScaffold(model: model, screen: .health, subtitle: model.doctorReport.map { "Checked \(Fmt.relative($0.generatedAt, now: model.now))" },
                    readingColumn: true) {
       Menu {
-        Button("Run engine tick now", systemImage: "bolt.horizontal.circle") { model.runTick() }
+        Button("Run engine tick now (check, render, plan)", systemImage: "bolt.horizontal.circle") { model.runTick() }
         Button("Open engine log", systemImage: "doc.text") { model.openLog() }
-        Button("Run Doctor again", systemImage: "stethoscope") { runAgain() }
+        Button("Run Doctor again (read-only checks)", systemImage: "stethoscope") { runAgain() }
       } label: {
         Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium))
       }
@@ -28,7 +28,8 @@ struct HealthView: View {
       .buttonStyle(DSButtonStyle(variant: .ghost, size: .md, iconOnly: true))
       .menuIndicator(.hidden)
       .fixedSize()
-      .dsTooltip("Engine tick, log, Doctor")
+      .dsTooltip("Run a tick, open the log or re-run Doctor")
+      .accessibilityLabel("Engine actions")
     } content: {
       ScrollView {
         VStack(alignment: .leading, spacing: DS.space.xl) {
@@ -91,7 +92,7 @@ struct HealthView: View {
                tooltip: "Check everything again") { runAgain() }
       DSButton("Copy report", icon: "doc.on.clipboard", variant: .primary,
                disabledReason: model.doctorReport == nil ? "Doctor is still checking" : nil,
-               tooltip: "Copy the checks and Doctor findings as Markdown to paste to an agent") {
+               tooltip: "Copy the report as Markdown for an agent") {
         model.copy(model.healthReportMarkdown(checks))
         model.show(DSToastModel(message: "Report copied", detail: "Paste it to your agent", tone: .success, duration: 4))
       }

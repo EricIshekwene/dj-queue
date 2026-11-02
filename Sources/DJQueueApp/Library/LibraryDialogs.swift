@@ -78,21 +78,22 @@ struct LibraryQuickLook: View {
   @ViewBuilder private func footer(_ v: Video, missing: Bool, removed: Bool) -> some View {
     DSButton("Close", variant: .ghost, action: close).keyboardShortcut(.cancelAction)
     if missing {
-      DSButton(v.excluded ? "Include" : "Exclude", variant: .outline) { model.setExcluded([v.id], !v.excluded) }
+      DSButton(v.excluded ? "Include" : "Exclude", variant: .outline,
+               tooltip: v.excluded ? "Put it back into the plan" : "Keep it out of the plan while missing") { model.setExcluded([v.id], !v.excluded) }
       DSButton("Look for the file", icon: "magnifyingglass", variant: .primary,
-               tooltip: "Runs intake now; it relinks renamed or moved files by fingerprint") {
+               tooltip: "Run intake now to relink moved files") {
         model.runTick()
         close()
       }
     } else if removed {
-      DSButton("Exclude", variant: .outline) {
+      // Exclude is journaled (Undo restores posting); the "kept" flag that clears the warning isn't.
+      DSButton("Exclude", variant: .outline, tooltip: "Stop posting it; keep its history") {
         model.setExcluded([v.id], true)
         model.keepRemoved(v.id)
         close()
       }
-      DSButton("Keep posting it", variant: .primary) {
-        model.keepRemoved(v.id)
-        close()
+      DSButton("Keep posting it…", variant: .primary, tooltip: "Keep posting though it left videos.json") {
+        model.confirmKeepRemoved(v) { close() }
       }
     } else if v.type == .long {
       if let u = v.longformURL, let url = URL(string: u) {
@@ -160,7 +161,8 @@ struct LongformPostedDialog: View {
       }
     } footer: {
       DSButton("Cancel", variant: .ghost, action: close).keyboardShortcut(.cancelAction)
-      DSButton(one ? "Mark posted" : "Mark \(max(ready.count, 1)) posted", variant: .primary, disabledReason: blocker, action: save)
+      DSButton(one ? "Mark posted" : "Mark \(max(ready.count, 1)) posted", variant: .primary, disabledReason: blocker,
+               tooltip: "Save links; files move to Posted/Longform", shortcut: "↩", action: save)
         .keyboardShortcut(.defaultAction)
     }
   }

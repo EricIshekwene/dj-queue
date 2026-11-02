@@ -90,7 +90,8 @@ struct NextUpCard: View {
           }
           Text(v.map(model.displayName) ?? "Missing clip").font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(2)
           HStack(spacing: DS.space.xs) {
-            DSButton("Copy caption", icon: "text.quote", variant: .outline, size: .sm) { model.copyCaptionNamed(post) }
+            DSButton("Copy caption", icon: "text.quote", variant: .outline, size: .sm,
+                     tooltip: "Copy the \(post.platform.displayName) caption") { model.copyCaptionNamed(post) }
             if post.platform == .youtube {
               DSButton("Copy title", icon: "textformat", variant: .ghost, size: .sm, tooltip: "Copy the YouTube title") { model.copyTitleNamed(post) }
             }
@@ -187,41 +188,43 @@ struct TodayRow: View {
         more
       case .copyright:
         ReuploadMenu(model: model, post: post)
-        DSButton("Skip platform", variant: .ghost, size: .sm, tooltip: "Don't post this clip on \(post.platform.displayName)") {
+        DSButton("Skip \(post.platform.dsxCompactName)", variant: .ghost, size: .sm,
+                 tooltip: "Don't post this clip on \(post.platform.displayName)") {
           model.resolve(post, .skipPlatform)
         }
-        DSButton("Accept", variant: .ghost, size: .sm, tooltip: "Keep it as it is (e.g. muted)") { model.resolve(post, .accept) }
+        DSButton("Accept claim", variant: .ghost, size: .sm, tooltip: "Leave the post as it is (e.g. muted)") { model.resolve(post, .accept) }
         more
       case .failed:
-        DSButton("Fix…", variant: .ghost, size: .sm, tooltip: "Open the editor to fix it") { model.openEditor(post.videoId, fixPostId: post.id) }
+        DSButton("Fix in editor", variant: .ghost, size: .sm,
+                 tooltip: "Edit it; closing the editor re-queues it") { model.openEditor(post.videoId, fixPostId: post.id) }
         DSButton("Re-queue", variant: .ghost, size: .sm, disabledReason: model.heldReason(post.videoId),
-                 tooltip: "The cause is fixed: try again on the next day's slot") { model.fixed(post.id) }
+                 tooltip: "Try again on the next day's slot") { model.fixed(post.id) }
         more
       case .posted:
         if let u = post.url, let url = URL(string: u) {
-          DSIconButton("arrow.up.right.square", tooltip: "Open the post", size: .sm) { NSWorkspace.shared.open(url) }
+          DSIconButton("arrow.up.right.square", tooltip: "Open the live post in your browser", size: .sm) { NSWorkspace.shared.open(url) }
         }
         DSButton(post.metrics?.views.map { "\($0) views" } ?? "Metrics", icon: "chart.bar", variant: .ghost, size: .sm,
-                 tooltip: "Views and likes after 72 h") { showMetrics = true }
+                 tooltip: "Enter views and likes after 72 h") { showMetrics = true }
           .popover(isPresented: $showMetrics) { MetricsPopover(model: model, post: post) }
         more
       case .skipped:
         more
       default:
-        DSIconButton("text.quote", tooltip: "Copy caption", size: .sm) { model.copyCaptionNamed(post) }
+        DSIconButton("text.quote", tooltip: "Copy the \(post.platform.displayName) caption", size: .sm) { model.copyCaptionNamed(post) }
         if post.platform == .youtube {
-          DSIconButton("textformat", tooltip: "Copy title for YouTube", size: .sm) { model.copyTitleNamed(post) }
+          DSIconButton("textformat", tooltip: "Copy the YouTube title", size: .sm) { model.copyTitleNamed(post) }
         }
-        DSIconButton("doc.on.doc", tooltip: "Copy file", size: .sm) { model.copyFile(post) }
-        DSIconButton("folder", tooltip: "Reveal in Finder", size: .sm) { model.revealFile(post) }
-        DSIconButton("checkmark.circle", tooltip: "Mark posted…", size: .sm) { model.markPostedTarget = post }
+        DSIconButton("doc.on.doc", tooltip: "Copy the video file to paste in upload", size: .sm) { model.copyFile(post) }
+        DSIconButton("folder", tooltip: "Show the video file in Finder", size: .sm) { model.revealFile(post) }
+        DSIconButton("checkmark.circle", tooltip: "Paste the post URL to mark it posted", size: .sm) { model.markPostedTarget = post }
         more
       }
     }
   }
 
   private var more: some View {
-    DSXMenuButton(tooltip: "More", size: .sm) {
+    DSXMenuButton(tooltip: "Report, reschedule, reset or skip", size: .sm) {
       if !post.state.isTerminal || post.state == .posted {
         Button("Report problem…", systemImage: "exclamationmark.bubble") { model.reportTarget = post }
       }
@@ -229,14 +232,17 @@ struct TodayRow: View {
         Button("Open upload page", systemImage: "arrow.up.right") { model.openUploadPage(post) }
       }
       if post.state == .overdue {
-        Button("Post now", systemImage: "bolt") { model.postNow(post) }
-          .disabled(model.heldReason(post.videoId) != nil).help(model.heldReason(post.videoId) ?? "Due now on today's slot")
-        Button("Shift plan", systemImage: "calendar.badge.clock") { model.shiftPlan(post) }
-          .disabled(model.heldReason(post.videoId) != nil).help(model.heldReason(post.videoId) ?? "Next free slot")
+        // Disabled native menu items can't show a tooltip: the reason goes in the title.
+        let held = model.heldReason(post.videoId) != nil
+        Button(held ? "Post now — sent back to Edit" : "Post now (make it due today)", systemImage: "bolt") { model.postNow(post) }
+          .disabled(held)
+        Button(held ? "Shift to next free slot — sent back to Edit" : "Shift to next free \(post.platform.dsxCompactName) slot",
+               systemImage: "calendar.badge.clock") { model.shiftPlan(post) }
+          .disabled(held)
       }
       if model.canReset(post) || model.canSkip(post) { Divider() }
-      if model.canReset(post) { Button("Reset", systemImage: "arrow.counterclockwise") { model.reset(post) } }
-      if model.canSkip(post) { Button("Skip this platform", systemImage: "forward") { model.skip(post) } }
+      if model.canReset(post) { Button("Reset to Planned", systemImage: "arrow.counterclockwise") { model.reset(post) } }
+      if model.canSkip(post) { Button("Skip \(post.platform.dsxCompactName)", systemImage: "forward") { model.skip(post) } }
       if let v = video {
         Divider()
         Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(v.id) }

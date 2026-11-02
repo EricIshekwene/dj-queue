@@ -123,11 +123,11 @@ struct LibraryView: View {
                        .map { (Optional($0.id), Captions.setName($0.name)) },
                      tooltip: "Show one session")
     BrowseFilterMenu(placeholder: "Kind", selection: $ui.kind, anyValue: .any,
-                     options: LibraryKindFilter.allCases.map { ($0, $0.title) }, tooltip: "DJ vid or Talking")
+                     options: LibraryKindFilter.allCases.map { ($0, $0.title) }, tooltip: "Show only DJ vids or Talking clips")
     BrowseFilterMenu(placeholder: "Score", selection: $ui.score, anyValue: .any,
                      options: LibraryScoreFilter.allCases.map { ($0, $0.title) }, tooltip: "Filter short clips by score")
     if ui.libraryFiltered || model.librarySession != nil {
-      DSButton("Clear", variant: .ghost, size: .sm, tooltip: "Show every clip") { clearFilters() }
+      DSButton("Clear filters", variant: .ghost, size: .sm, tooltip: "Clear filters and search") { clearFilters() }
     }
     Spacer(minLength: DS.space.xs)
     BrowseFilterMenu(placeholder: LibrarySort.session.title, selection: $ui.sort, anyValue: .session,
@@ -205,24 +205,28 @@ struct LibraryView: View {
 
   @ViewBuilder private func actions(_ v: Video, mode: DSViewMode) -> some View {
     if mode == .grid {
-      Button { quickLook(v) } label: { Label("Quick look", systemImage: "eye") }.dsTooltip("Quick look", shortcut: "Space")
+      // Icon-only in Grid (DSMediaActionStyle): the tooltip names it. Space opens the first *selected* clip, so it
+      // isn't advertised on a hover button.
+      Button { quickLook(v) } label: { Label("Quick look", systemImage: "eye") }.dsTooltip("Preview the clip and its status")
     } else if mode == .single {
       HStack(spacing: DS.space.xs) {
-        DSButton("Quick look", icon: "eye", variant: .outline, size: .sm) { quickLook(v) }
-        DSButton(v.excluded ? "Include" : "Exclude", variant: .ghost, size: .sm) { model.setExcluded([v.id], !v.excluded) }
+        DSButton("Quick look", icon: "eye", variant: .outline, size: .sm, tooltip: "Preview the clip and its status") { quickLook(v) }
+        // AppModel.setExcluded is journaled: toast "Excluded · Undo", ⌘Z.
+        DSButton(v.excluded ? "Include" : "Exclude", variant: .ghost, size: .sm,
+                 tooltip: v.excluded ? "Put it back into the plan" : "Keep this clip out of the plan") { model.setExcluded([v.id], !v.excluded) }
       }
     } else {
-      DSIconButton("eye", tooltip: "Quick look", size: .sm, shortcut: "Space") { quickLook(v) }
+      DSIconButton("eye", tooltip: "Preview the clip and its status", size: .sm) { quickLook(v) }
     }
   }
 
   @ViewBuilder private func contextMenu(_ v: Video) -> some View {
     Button("Quick look", systemImage: "eye") { quickLook(v) }
     if model.libraryIsMissing(v) {
-      Button("Look for the file", systemImage: "magnifyingglass") { relink() }
+      Button("Look for the file (run intake now)", systemImage: "magnifyingglass") { relink() }
     }
     if model.libraryIsRemoved(v) {
-      Button("Keep posting it", systemImage: "checkmark.circle") { model.keepRemoved(v.id) }
+      Button("Keep posting it…", systemImage: "checkmark.circle") { model.confirmKeepRemoved(v) }
     }
     Divider()
     VideoContextMenu(model: model, video: v, ids: model.selectedIds(.library))
@@ -254,7 +258,8 @@ struct LibraryView: View {
     let allExcluded = !vids.isEmpty && vids.allSatisfy(\.excluded)
     return ScreenBulkBar(model: model, screen: .library) {
       if !shorts.isEmpty {
-        bulkButton("Score…", icon: "number", why: nil, tooltip: "Give the selected short clips one score") {
+        // Digits typed with clips selected also score them (LibraryView key handler) — said here, where it applies.
+        bulkButton("Score…", icon: "number", why: nil, tooltip: "Score the selection, or type a number 0–100") {
           ui.scoreTargets = shorts
         }
       }
@@ -274,7 +279,7 @@ struct LibraryView: View {
       .buttonStyle(DSBulkActionStyle())
       .menuIndicator(.hidden)
       .fixedSize()
-      .dsTooltip("Set the kind")
+      .dsTooltip("Set DJ vid or Talking for the selection")
       Button { setExcluded(sel, !allExcluded) } label: {
         Label(allExcluded ? "Include" : "Exclude", systemImage: allExcluded ? "plus.circle" : "minus.circle").lineLimit(1).fixedSize()
       }
@@ -291,10 +296,13 @@ struct LibraryView: View {
         Button("Mark \(unpostedLongs.count) long-form posted…") { ui.longformTargets = unpostedLongs }
         Divider()
       }
-      Button("Copy agent prompt for \(shorts.count) clip\(shorts.count == 1 ? "" : "s")") { model.copyAgentPrompt(shorts) }
+      // Disabled native menu items can't show a tooltip: the reason goes in the title.
+      Button(shorts.isEmpty ? "Copy agent prompt — select short clips"
+             : "Copy agent prompt to find titles (\(shorts.count) clip\(shorts.count == 1 ? "" : "s"))") { model.copyAgentPrompt(shorts) }
         .disabled(shorts.isEmpty)
-      Button("Re-render \(sel.count) clip\(sel.count == 1 ? "" : "s")") { reRender(sel) }
-      Button("Apply defaults to \(shorts.count) clip\(shorts.count == 1 ? "" : "s")…") { applyDefaults(shorts) }
+      Button("Re-render \(sel.count) clip\(sel.count == 1 ? "" : "s")…") { reRender(sel) }
+      Button(shorts.isEmpty ? "Apply defaults — select short clips"
+             : "Apply defaults (frame, trim, text, caption) to \(shorts.count) clip\(shorts.count == 1 ? "" : "s")…") { applyDefaults(shorts) }
         .disabled(shorts.isEmpty)
     }
   }
@@ -358,6 +366,18 @@ struct LibraryView: View {
         LibraryScoreDialog(model: model, ids: ui.scoreTargets)
       }
     }
+  }
+}
+
+extension AppModel {
+  /// "Keep posting it" for a clip that left videos.json. The kept flag isn't journaled (no Undo), so it asks first.
+  func confirmKeepRemoved(_ v: Video, then: (() -> Void)? = nil) {
+    confirm(ConfirmRequest(title: "Keep posting “\(displayName(v))”?",
+                           message: "It was removed from videos.json. Its warning goes away for good and it stays in the plan. You can't undo this; exclude it later to stop posting it.",
+                           verb: "Keep posting", icon: "checkmark.circle", destructive: false) { [weak self] in
+      self?.keepRemoved(v.id)
+      then?()
+    })
   }
 }
 

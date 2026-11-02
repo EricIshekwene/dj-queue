@@ -492,349 +492,368 @@ Also bugs: Queue Cards right-click "Pin N to days…" no-op (QueueCards.swift:58
 ### Toolbar
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| `chevron.left` (icon) | icon | WeekView.swift:50 | ✅ clear | Previous week | Show the previous week | — |
-| Today | text button | WeekView.swift:51-53 | ⚠️ reads like the Today screen | — (disabled: "Already showing this week") | Jump back to this week · Disabled: already showing this week | — |
-| `chevron.right` (icon) | icon | WeekView.swift:54 | ✅ clear | Next week | Show the next week | — |
-| Draft / Approved / Locked pill | chip | WeekView.swift:73-80 | ✅ clear | "Draft: nothing posts until you approve the week" (and Approved/Locked variants) | label is enough (keep tooltip) | — |
-| Runway N d approved · N d ready | text button | ToolbarControls.swift:14-31 (WeekView.swift:57) | ⚠️ "d approved / d ready" is jargon | Runway: how many days of posts are covered | Show how many days of posts are covered | — |
-| `ellipsis` (icon) | menu | WeekView.swift:58 | ❌ icon only, tooltip vague | Week actions | Rebuild, push or propose this week's plan | — |
-| Rebuild week | menu item | WeekView.swift:59-60 | ⚠️ hides that it un-approves | — (disabled with no reason) | Re-plan unpinned days and un-approve · Disabled: this week is over | ⚠️ RISKY: clears unpinned future slots + their posts, week back to Draft (Planner.swift:78-93) → Confirm sheet |
-| Push plan by a day | menu item | WeekView.swift:61 | ⚠️ scope (all weeks) not said | — | Move all unpinned posts from today +1 day | ⚠️ RISKY: shifts every unpinned slot from today on, all weeks → Confirm sheet |
-| Propose week | menu item | WeekView.swift:63-64 | ⚠️ "propose" vague | — (disabled with no reason) | Fill empty days from the queue · Disabled: week approved or over | ⚠️ RISKY: writes plan slots → Undo toast |
-| Approve week | text button | WeekView.swift:66-70 | ✅ clear | Approve: the engine prepares these posts · ⌘↩ (disabled: approveBlocker reasons) | Approve: the engine prepares these posts · ⌘↩ · Disabled: week over / already approved / nothing planned | ⚠️ RISKY: one click or ⌘↩ creates posts for the week; only way back is Rebuild → Undo toast ("Back to Draft") |
+| ✅ `chevron.left` (icon) | icon | WeekView.swift:50 | ✅ clear | Previous week | Show the previous week | — |
+| ✅ Today | text button | WeekView.swift:51-53 | ⚠️ reads like the Today screen | — (disabled: "Already showing this week") | Label → "This week" · Jump back to this week · Disabled: already showing this week | — |
+| ✅ `chevron.right` (icon) | icon | WeekView.swift:54 | ✅ clear | Next week | Show the next week | — |
+| ➖ Draft / Approved / Locked pill | chip | WeekView.swift:73-80 | ✅ clear | "Draft: nothing posts until you approve the week" (and Approved/Locked variants) | label is enough (keep tooltip) | — |
+| ⏭ Runway N d approved · N d ready | text button | ToolbarControls.swift:14-31 (WeekView.swift:57) | ⚠️ "d approved / d ready" is jargon | Runway: how many days of posts are covered | Show how many days of posts are covered | ⏭ Shared/ToolbarControls.swift (RunwayChip) is not in this pass's files; it already has a tooltip + explanatory popover |
+| ✅ `ellipsis` (icon) | menu | WeekView.swift:58 | ❌ icon only, tooltip vague | Week actions | Rebuild, push or propose this week's plan | — |
+| ✅ Rebuild week | menu item | WeekView.swift:59-60 | ⚠️ hides that it un-approves | — (disabled with no reason) | Title "Rebuild week…" · disabled title "Rebuild week — this week is over" | ok — AppModel.rebuildWeek asks first (confirm) + undo; no second confirm added |
+| ✅ Push plan by a day | menu item | WeekView.swift:61 | ⚠️ scope (all weeks) not said | — | Title "Push whole plan by a day…" | ok — AppModel.pushPlan asks first (confirm) + undo |
+| ✅ Propose week | menu item | WeekView.swift:63-64 | ⚠️ "propose" vague | — (disabled with no reason) | Title "Propose week (fill empty days)" · disabled title "Propose week — week already approved / this week is over" | ok — AppModel journal (toast · Undo, ⌘Z) |
+| ✅ Approve week | text button | WeekView.swift:66-70 | ✅ clear | Approve: the engine prepares these posts · ⌘↩ (disabled: approveBlocker reasons) | Approve: the engine prepares these posts · ⌘↩ · Disabled: week over / already approved / nothing planned | ok — AppModel journal (toast · Undo, ⌘Z) |
 
 ### Day grid and day card
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Day card double-click | gesture | WeekView.swift:338, 341 | ⚠️ hidden, tooltip-only | Double-click to edit · drag to another day to swap | Double-click to edit · drag to swap days | — |
-| Day card drag onto another day | gesture | WeekView.swift:339, 249-254 | ⚠️ hidden, tooltip-only | (same as above) | — | ⚠️ RISKY: swaps/moves the slot and its posts (even in an approved week) at once → Undo toast |
-| Backlog clip dropped on a planned day | gesture | WeekView.swift:255-259 | ✅ clear | — | — | ok (confirm) |
-| Backlog clip dropped on an empty day | gesture | WeekView.swift:261 | ✅ clear | — | — | ⚠️ RISKY: pins clip to that day (AppModel.swift:597) → Undo toast |
-| Score capsule | chip | WeekView.swift:293-298 | ✅ clear | Score N | label is enough | — |
-| `pin.fill` badge | icon | WeekView.swift:303-306 | ✅ clear | Pinned to this day | Pinned: stays here when the week is rebuilt | — |
-| Needs you badge | chip | WeekView.swift:308 | ⚠️ doesn't say what or where | — | A post failed or is late; see Posts | — (make it click through to Posts) |
-| `ellipsis` hover button | menu | WeekView.swift:313-319 | ⚠️ hover-only, vague tooltip | Clip actions | Swap, remove, pin or skip this clip | — |
-| Slot chip "TikTok 7:00 PM ●" | chip | Week+DSX.swift:85-122; WeekView.swift:359-360 | ⚠️ dot colours unexplained; actions right-click only | "<Platform> · <time> · <status>[ · platform paused]" | <Platform> · <time> · <status> · right-click for actions | — (actions: see Shared › Post context menu) |
-| Extra post chip (`arrow.uturn.forward` / `arrow.clockwise`) | chip | WeekView.swift:416-437 | ⚠️ glyphs unexplained without hover | "Repost of … (new version)" / "Re-queued attempt #N of …" | keep | — (actions: see Shared › Post context menu) |
-| Mute (video preview) | icon | DSVideoPreview.swift:93-104 | ✅ clear | Mute / Unmute | label is enough | — |
-| Awake strip | gesture | Week+DSX.swift:194-222 | ✅ clear | Mac awake (green) · off or asleep (hatched) | keep | — |
-| Add from queue (empty day) | text button | WeekView.swift:230-234 | ⚠️ which clip only on hover | Puts "<clip>" on this day (disabled: "Nothing ready in the queue") | Pin "<clip>" (next in queue) here · Disabled: nothing ready in the queue | ⚠️ RISKY: pins a clip to the day → Undo toast |
+| ✅ Day card double-click | gesture | WeekView.swift:338, 341 | ⚠️ hidden, tooltip-only | Double-click to edit · drag to another day to swap | Double-click to edit · drag to swap days (past/posted: "Double-click to edit") | — |
+| ✅ Day card drag onto another day | gesture | WeekView.swift:339, 249-254 | ⚠️ hidden, tooltip-only | (same as above) | — | ok — drop calls AppModel.swap / move (journaled, Undo) |
+| ➖ Backlog clip dropped on a planned day | gesture | WeekView.swift:255-259 | ✅ clear | — | — | ok (confirm) |
+| ✅ Backlog clip dropped on an empty day | gesture | WeekView.swift:261 | ✅ clear | — | — | ok — drop calls AppModel.pin (journaled, Undo) |
+| ➖ Score capsule | chip | WeekView.swift:293-298 | ✅ clear | Score N | label is enough | — |
+| ✅ `pin.fill` badge | icon | WeekView.swift:303-306 | ✅ clear | Pinned to this day | Pinned: stays here when the week is rebuilt | — |
+| ✅ Needs you badge | chip | WeekView.swift:308 | ⚠️ doesn't say what or where | — | Open Posts: a post failed or is late | — now clicks through to Posts |
+| ✅ `ellipsis` hover button | menu | WeekView.swift:313-319 | ⚠️ hover-only, vague tooltip | Clip actions | Swap, remove, pin or skip this clip | — |
+| ✅ Slot chip "TikTok 7:00 PM ●" | chip | Week+DSX.swift:85-122; WeekView.swift:359-360 | ⚠️ dot colours unexplained; actions right-click only | "<Platform> · <time> · <status>[ · platform paused]" | <Platform> · <time> · <status>[ · platform paused] · right-click for actions | — (actions: see Shared › Post context menu) |
+| ➖ Extra post chip (`arrow.uturn.forward` / `arrow.clockwise`) | chip | WeekView.swift:416-437 | ⚠️ glyphs unexplained without hover | "Repost of … (new version)" / "Re-queued attempt #N of …" | keep | — (actions: see Shared › Post context menu) |
+| ➖ Mute (video preview) | icon | DSVideoPreview.swift:93-104 | ✅ clear | Mute / Unmute | label is enough | — |
+| ➖ Awake strip | gesture | Week+DSX.swift:194-222 | ✅ clear | Mac awake (green) · off or asleep (hatched) | keep | — |
+| ✅ Add from queue (empty day) | text button | WeekView.swift:230-234 | ⚠️ which clip only on hover | Puts "<clip>" on this day (disabled: "Nothing ready in the queue") | Pin “<clip>” here (next in queue) · Disabled: nothing ready in the queue | ok — AppModel.pin (journaled, Undo) |
+| ➖ Stage ‹ (hover, compact `chevron.left`) | icon | WeekView.swift (StageControl compact) | ✅ clear | "<Back title> — <what happens>" · Disabled: <stage blocker> | keep (defined in App/AppModel+Stages, parent-owned) | ok — stageBack runs through the bulk flow (confirm + Undo) |
+| ➖ Stage › (hover, compact `chevron.right`) | icon | WeekView.swift (StageControl compact) | ✅ clear | "<Forward title> — <what happens>" · Disabled: <stage blocker> | keep (App/AppModel+Stages) | ok — stageForward via bulk flow (confirm + Undo) |
 
 ### Card ⋯ menu and right-click (WeekCardMenu; ⋯ on future days, right-click on all days)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Swap with ▸ <day · clip> | menu item | WeekView.swift:391-398 | ✅ clear | — (disabled on past days, no reason) | Swap days with this clip · Disabled: past days are fixed | ⚠️ RISKY: swaps two slots → Undo toast |
-| Remove from week | menu item | WeekView.swift:399 | ⚠️ unclear where the clip goes | — (disabled on past, no reason) | Put back in the queue; day stays empty · Disabled: past days are fixed | ⚠️ RISKY: deletes slot + its posts (Planner.swift:139-146) → Undo toast |
-| Pin to this day / Pinned to this day | menu item | WeekView.swift:400-401 | ⚠️ effect of pin unexplained | — | Keep it here when the week is rebuilt · Disabled: already pinned | ⚠️ RISKY: pins slot → Undo toast |
-| Skip platform ▸ <platform> | menu item | WeekView.swift:402-407 | ⚠️ disabled in Draft, no reason | — | Don't post this clip on <platform> · Disabled: approve the week first | ⚠️ RISKY: skips the post → Undo toast |
-| Open editor | menu item | WeekView.swift:409 | ✅ clear | — | label is enough | — |
-| Preview | menu item | WeekView.swift:410 | ✅ clear | — | label is enough | — |
-| Show in Queue | menu item | WeekView.swift:411 | ✅ clear | — | label is enough | — |
+| ✅ Swap with ▸ <day · clip> | menu item | WeekView.swift:391-398 | ✅ clear | — (disabled on past days, no reason) | Disabled title "Swap with — past days are fixed" | ok — AppModel.swap (Undo) |
+| ✅ Remove from week | menu item | WeekView.swift:399 | ⚠️ unclear where the clip goes | — (disabled on past, no reason) | Title "Remove from week (day stays empty)" · disabled "… — past days are fixed" | ok — AppModel.removeSlot (Undo) |
+| ✅ Pin to this day / Pinned to this day | menu item | WeekView.swift:400-401 | ⚠️ effect of pin unexplained | — | Title "Pin to this day (keeps it on rebuild)" · "Pinned to this day" · past: "… — past days are fixed" | ok — AppModel.pin (Undo) |
+| ✅ Skip platform ▸ <platform> | menu item | WeekView.swift:402-407 | ⚠️ disabled in Draft, no reason | — | Items "Skip <Platform>" · disabled titles "Skip platform — approve the week first" / "— nothing left to skip" | ok — AppModel.skip (Undo) |
+| ➖ Open editor | menu item | WeekView.swift:409 | ✅ clear | — | label is enough | — |
+| ➖ Preview | menu item | WeekView.swift:410 | ✅ clear | — | label is enough | — |
+| ➖ Show in Queue | menu item | WeekView.swift:411 | ✅ clear | — | label is enough | — |
+| ⏭ Back a stage / Forward a stage (StageMenuItems) | menu item | WeekView.swift (WeekCardMenu) | ✅ clear | native `.help` | — | ⏭ StageMenuItems lives in App/AppModel+Stages.swift (parent-owned) and still uses `.help`; disabled reason should move into the title there |
+| ✅ Remove from queue | menu item | WeekView.swift (WeekCardMenu) | ✅ clear | native `.help` (removed) | Title "Remove from queue (back to Edit)" · disabled "Remove from queue — already posted / this day has passed" | ok — removeFromQueue via bulk flow (confirm + Undo) |
 
 ### Backlog drawer
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Next up · N (`chevron.up/down`) | text button | WeekView.swift:452-467 | ⚠️ "Next up" = ready backlog unclear | Show the next ready clips / Hide the backlog | keep | — |
-| Backlog tile drag | gesture | WeekView.swift:510, 512 | ✅ clear | Drag onto a day | Drag onto a day to plan it | see drops above |
-| Backlog tile right-click | menu | WeekView.swift:511 | ⚠️ hidden | — | — | see Shared › Video context menu (RISKY items) |
+| ➖ Next up · N (`chevron.up/down`) | text button | WeekView.swift:452-467 | ⚠️ "Next up" = ready backlog unclear | Show the next ready clips / Hide the backlog | keep | — |
+| ✅ Backlog tile drag | gesture | WeekView.swift:510, 512 | ✅ clear | Drag onto a day | Drag onto a day to plan it | see drops above |
+| ➖ Backlog tile right-click | menu | WeekView.swift:511 | ⚠️ hidden | — | — | see Shared › Video context menu (journaled centrally) |
 
 ### Replace dialog / empty state
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Cancel | text button | WeekView.swift:103-104 | ✅ clear | — | label is enough · esc | — |
-| Replace | text button | WeekView.swift:105-109 | ✅ clear | — | label is enough · ↩ | ok (confirm) |
-| Go to Edit | text button | WeekView.swift:33-34 | ✅ clear | — | label is enough | — |
+| ➖ Cancel | text button | WeekView.swift:103-104 | ✅ clear | — | label is enough · esc | — |
+| ➖ Replace | text button | WeekView.swift:105-109 | ✅ clear | — | label is enough · ↩ | ok (confirm) + AppModel.pin (Undo) |
+| ➖ Go to Edit | text button | WeekView.swift:33-34 | ✅ clear | — | label is enough | — |
 
 ## Today
 
 ### Next-up card
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Thumb (file drag-out, `arrow.up.and.down.and.arrow.left.and.right`) | gesture | TodayView.swift:85; 247-271 | ⚠️ drag affordance tiny | "Drag <file> into the upload page" / "Preparing the file…" / "The file is still rendering" | keep | — |
-| Copy caption | text button | TodayView.swift:93 | ⚠️ which platform's caption | — | Copy the <Platform> caption | — |
-| Copy title | text button | TodayView.swift:95 | ✅ clear | Copy the YouTube title | keep | — |
-| Open upload page | text button | TodayView.swift:97-98 | ✅ clear | Open the <Platform> upload page in your browser | keep | — |
-| Mark posted | text button | TodayView.swift:100-103 | ✅ clear | "Paste the post URL" / "Not due yet — you can still mark it posted early" | keep | ok (confirm) — sheet |
+| ➖ Thumb (file drag-out, `arrow.up.and.down.and.arrow.left.and.right`) | gesture | TodayView.swift:85; 247-271 | ⚠️ drag affordance tiny | "Drag <file> into the upload page" / "Preparing the file…" / "The file is still rendering" | keep | — |
+| ✅ Copy caption | text button | TodayView.swift:93 | ⚠️ which platform's caption | — | Copy the <Platform> caption | — |
+| ➖ Copy title | text button | TodayView.swift:95 | ✅ clear | Copy the YouTube title | keep | — |
+| ➖ Open upload page | text button | TodayView.swift:97-98 | ✅ clear | Open the <Platform> upload page in your browser | keep | — |
+| ➖ Mark posted | text button | TodayView.swift:100-103 | ✅ clear | "Paste the post URL" / "Not due yet — you can still mark it posted early" | keep | ok (confirm) — sheet |
 
 ### Post row (default: planned / ready / due / late)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Status badge | chip | TodayView.swift:152-153 | ✅ clear | statusHelp() e.g. "Post it now, then mark it posted" | keep | — |
-| `text.quote` (icon) | icon | TodayView.swift:210 | ❌ glyph reads as a list | Copy caption | Copy the <Platform> caption | — |
-| `textformat` ("Aa") | icon | TodayView.swift:212 | ❌ unlabelled | Copy title for YouTube | Copy the YouTube title | — |
-| `doc.on.doc` (icon) | icon | TodayView.swift:214 | ❌ looks like "copy caption" | Copy file | Copy the video file to paste in upload | — |
-| `folder` (icon) | icon | TodayView.swift:215 | ⚠️ which file | Reveal in Finder | Show the video file in Finder | — |
-| `checkmark.circle` (icon) | icon | TodayView.swift:216 | ❌ looks like a done toggle | Mark posted… | Paste the post URL to mark it posted | ok (confirm) — sheet |
-| `ellipsis` (icon) | menu | TodayView.swift:223 | ❌ "More" says nothing | More | Report, reschedule, reset or skip | — |
-| Row right-click | menu | TodayView.swift:160 | ⚠️ hidden | — | — | see Shared › Post context menu |
+| ➖ Status badge | chip | TodayView.swift:152-153 | ✅ clear | statusHelp() e.g. "Post it now, then mark it posted" | keep | — |
+| ✅ `text.quote` (icon) | icon | TodayView.swift:210 | ❌ glyph reads as a list | Copy caption | Copy the <Platform> caption | — |
+| ✅ `textformat` ("Aa") | icon | TodayView.swift:212 | ❌ unlabelled | Copy title for YouTube | Copy the YouTube title | — |
+| ✅ `doc.on.doc` (icon) | icon | TodayView.swift:214 | ❌ looks like "copy caption" | Copy file | Copy the video file to paste in upload | — |
+| ✅ `folder` (icon) | icon | TodayView.swift:215 | ⚠️ which file | Reveal in Finder | Show the video file in Finder | — |
+| ✅ `checkmark.circle` (icon) | icon | TodayView.swift:216 | ❌ looks like a done toggle | Mark posted… | Paste the post URL to mark it posted | ok (confirm) — sheet |
+| ✅ `ellipsis` (icon) | menu | TodayView.swift:223 | ❌ "More" says nothing | More | Report, reschedule, reset or skip | — |
+| ➖ Row right-click | menu | TodayView.swift:160 | ⚠️ hidden | — | — | see Shared › Post context menu |
 
 ### Post row (copyright / failed / posted)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Re-upload anyway ▾ | menu | TodaySheets.swift:152 | ⚠️ version choice unexplained | Upload again despite the copyright claim | Upload again despite the claim; pick a version | — |
-| Same version (vN) / vN | menu item | TodaySheets.swift:153-156 | ⚠️ when it posts not said | — | Re-upload vN on the next day's slot | ⚠️ RISKY: resolves the claim + queues a new attempt → Undo toast |
-| New version (vN+1)… | menu item | TodaySheets.swift:158 | ✅ clear | — | Make vN+1, then open the editor | ⚠️ RISKY: creates a version + resolves the claim before editing (AppModel.swift:226-236) → Undo toast |
-| Skip platform | text button | TodayView.swift:190-192 | ✅ clear | Don't post this clip on <Platform> | keep | ⚠️ RISKY: resolves claim as skipped → Undo toast |
-| Accept | text button | TodayView.swift:193 | ⚠️ "Accept" what? | Keep it as it is (e.g. muted) | Accept the claim; leave the post as it is | ⚠️ RISKY: resolves claim as accepted → Undo toast |
-| Fix… | text button | TodayView.swift:196 | ⚠️ hides auto re-queue on close | Open the editor to fix it | Edit it; closing the editor re-queues it | ⚠️ RISKY: closing the editor calls fixed() (AppModel.swift:808-818) → Undo toast |
-| Re-queue | text button | TodayView.swift:197 | ⚠️ "when" unclear | The cause is fixed: try again on the next day's slot | Try again on the next day's slot | ⚠️ RISKY: creates a new attempt → Undo toast |
-| `arrow.up.right.square` (icon) | icon | TodayView.swift:201 | ✅ clear | Open the post | Open the live post in your browser | — |
-| N views / Metrics | text button | TodayView.swift:203-205 | ⚠️ opens an entry popover | Views and likes after 72 h | Enter views and likes after 72 h | — |
+| ✅ Re-upload anyway ▾ | menu | TodaySheets.swift:152 | ⚠️ version choice unexplained | Upload again despite the copyright claim | Upload again despite the claim; pick a version · Disabled: <held reason> | — |
+| ✅ Same version (vN) / vN | menu item | TodaySheets.swift:153-156 | ⚠️ when it posts not said | — | Titles "Same version (vN) on the next day's slot" / "vN on the next day's slot" | ok — new AppModel.reuploadAnyway (Today/AppModel+Today.swift) journals it: Undo · ⌘Z |
+| ✅ New version (vN+1)… | menu item | TodaySheets.swift:158 | ✅ clear | — | Title "New version (vN+1), then open the editor…" | ok — AppModel.reuploadAnyway journals version + resolve as one step (Undo) |
+| ✅ Skip platform | text button | TodayView.swift:190-192 | ✅ clear | Don't post this clip on <Platform> | Label → "Skip <Platform>" · Don't post this clip on <Platform> | ok — AppModel.resolve (Undo) |
+| ✅ Accept | text button | TodayView.swift:193 | ⚠️ "Accept" what? | Keep it as it is (e.g. muted) | Label → "Accept claim" · Leave the post as it is (e.g. muted) | ok — AppModel.resolve (Undo) |
+| ✅ Fix… | text button | TodayView.swift:196 | ⚠️ hides auto re-queue on close | Open the editor to fix it | Label → "Fix in editor" · Edit it; closing the editor re-queues it | ok — re-queue on close is AppModel.fixed (journaled, Undo); tooltip now says it |
+| ✅ Re-queue | text button | TodayView.swift:197 | ⚠️ "when" unclear | The cause is fixed: try again on the next day's slot | Try again on the next day's slot | ok — AppModel.fixed (Undo) |
+| ✅ `arrow.up.right.square` (icon) | icon | TodayView.swift:201 | ✅ clear | Open the post | Open the live post in your browser | — |
+| ✅ N views / Metrics | text button | TodayView.swift:203-205 | ⚠️ opens an entry popover | Views and likes after 72 h | Enter views and likes after 72 h | — |
 
 ### Row ⋯ menu
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Report problem… | menu item | TodayView.swift:225 | ✅ clear | — | label is enough | ok (confirm) — sheet |
-| Open upload page | menu item | TodayView.swift:228 | ✅ clear | — | label is enough | — |
-| Post now | menu item | TodayView.swift:231 | ⚠️ means "make due", not upload | — | Make it due now on today's slot | ⚠️ RISKY: reschedules the late post to now → Undo toast |
-| Shift plan | menu item | TodayView.swift:232 | ⚠️ jargon | — | Move it to the next free <Platform> slot | ⚠️ RISKY: reschedules → Undo toast |
-| Reset | menu item | TodayView.swift:235 | ⚠️ reset to what? | — | Back to Planned, error cleared | ⚠️ RISKY: resets post state → Undo toast |
-| Skip this platform | menu item | TodayView.swift:236 | ✅ clear | — | Don't post this clip on <Platform> | ⚠️ RISKY: post becomes Skipped (terminal) → Undo toast |
-| Open editor | menu item | TodayView.swift:239 | ✅ clear | — | label is enough | — |
+| ➖ Report problem… | menu item | TodayView.swift:225 | ✅ clear | — | label is enough | ok (confirm) — sheet |
+| ➖ Open upload page | menu item | TodayView.swift:228 | ✅ clear | — | label is enough | — |
+| ✅ Post now | menu item | TodayView.swift:231 | ⚠️ means "make due", not upload | — | Title "Post now (make it due today)" · disabled "Post now — sent back to Edit" (native .help removed) | ok — AppModel.postNow (Undo) |
+| ✅ Shift plan | menu item | TodayView.swift:232 | ⚠️ jargon | — | Title "Shift to next free <Platform> slot" · disabled "… — sent back to Edit" | ok — AppModel.shiftPlan (Undo) |
+| ✅ Reset | menu item | TodayView.swift:235 | ⚠️ reset to what? | — | Title "Reset to Planned" | ok — AppModel.reset (Undo) |
+| ✅ Skip this platform | menu item | TodayView.swift:236 | ✅ clear | — | Title "Skip <Platform>" | ok — AppModel.skip (Undo) |
+| ➖ Open editor | menu item | TodayView.swift:239 | ✅ clear | — | label is enough | — |
 
 ### Sheets and popover
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Mark posted › Post URL | field | TodaySheets.swift:29-32 | ✅ clear | hint "Must be a <host> link" | label is enough | — |
-| Mark posted › Posted at | field | TodaySheets.swift:36-39 | ✅ clear | When it went live | keep | — |
-| Mark posted › Cancel | text button | TodaySheets.swift:43 | ✅ clear | — | label is enough · esc | — |
-| Mark posted › Mark posted | text button | TodaySheets.swift:44-46 | ✅ clear | disabled: "Paste the post URL first" / URL error | label is enough · ↩ · Disabled: paste a valid <host> URL | ok (confirm) |
-| Report › Problem type chips | chip | TodaySheets.swift:85-88 | ⚠️ © consequence shown only after pick | — | Copyright types stop this platform, no retry | — |
-| Report › What happened? | field | TodaySheets.swift:91 | ✅ clear | — | label is enough | — |
-| Report › Add raw response | text button | TodaySheets.swift:95 | ✅ clear | — | label is enough | — |
-| Report › Raw response | field | TodaySheets.swift:93 | ✅ clear | — | label is enough | — |
-| Report › Cancel | text button | TodaySheets.swift:103 | ✅ clear | — | label is enough · esc | — |
-| Report › Save problem | text button | TodaySheets.swift:104-109 | ⚠️ doesn't say post becomes failed | — | Mark the post failed with this problem · ↩ | ok (confirm) |
-| Metrics › Views / Likes | field | TodaySheets.swift:175-176 | ✅ clear | — | label is enough | — |
-| Metrics › Save | text button | TodaySheets.swift:180-185 | ✅ clear | disabled: "Numbers only" | label is enough · ↩ · Disabled: numbers only | — |
-| LongformPostedSheet (whole sheet) | field | TodaySheets.swift:118-143 | — | — | — | — dead code: `model.longformTarget` is never set (only nil'd); Library uses LongformPostedDialog |
+| ➖ Mark posted › Post URL | field | TodaySheets.swift:29-32 | ✅ clear | hint "Must be a <host> link" | label is enough | — |
+| ➖ Mark posted › Posted at | field | TodaySheets.swift:36-39 | ✅ clear | When it went live | keep | — |
+| ➖ Mark posted › Cancel | text button | TodaySheets.swift:43 | ✅ clear | — | label is enough · esc | — |
+| ➖ Mark posted › Mark posted | text button | TodaySheets.swift:44-46 | ✅ clear | disabled: "Paste the post URL first" / URL error | label is enough · ↩ · Disabled: paste a valid <host> URL | ok (confirm) + AppModel.markPosted (Undo) |
+| ✅ Report › Problem type chips | chip | TodaySheets.swift:85-88 | ⚠️ © consequence shown only after pick | — | Copyright: stops this platform, no retry (copyright chips only) | — |
+| ➖ Report › What happened? | field | TodaySheets.swift:91 | ✅ clear | — | label is enough | — |
+| ➖ Report › Add raw response | text button | TodaySheets.swift:95 | ✅ clear | — | label is enough | — |
+| ➖ Report › Raw response | field | TodaySheets.swift:93 | ✅ clear | — | label is enough | — |
+| ➖ Report › Cancel | text button | TodaySheets.swift:103 | ✅ clear | — | label is enough · esc | — |
+| ✅ Report › Save problem | text button | TodaySheets.swift:104-109 | ⚠️ doesn't say post becomes failed | — | Mark the post failed with this problem · ↩ | ok (confirm) + AppModel.reportProblem (Undo) |
+| ➖ Metrics › Views / Likes | field | TodaySheets.swift:175-176 | ✅ clear | — | label is enough | — |
+| ➖ Metrics › Save | text button | TodaySheets.swift:180-185 | ✅ clear | disabled: "Numbers only" | label is enough · ↩ · Disabled: numbers only | — |
+| ⏭ LongformPostedSheet (whole sheet) | field | TodaySheets.swift:118-143 | — | — | — | ⏭ dead code, but MainWindowView.swift (parent-owned) still references it — not trivially safe to delete here |
 
 ### Empty state
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Open Week | text button | TodayView.swift:30-32 | ✅ clear | — | label is enough | — |
+| ➖ Open Week | text button | TodayView.swift:30-32 | ✅ clear | — | label is enough | — |
 
 ## Library
 
 ### Toolbar and filters
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Search clips | field | LibraryView.swift:29 | ✅ clear | — | label is enough | — |
-| `xmark.circle.fill` in search | icon | DSInputs.swift:129-131 | ✅ clear | Clear | Clear the search | — |
-| View mode (Cards / Grid / Single / List icons) | segmented | LibraryView.swift:30; DSChoice.swift:316-323, 333 | ⚠️ tooltip is just the mode name | Cards / Grid / Single / List | Show clips as cards / a grid / one at a time / a list | — |
-| All · Posted · Excluded · Missing · Long-form | chip | LibraryView.swift:114-119, 137-145 | ✅ clear | e.g. "File missing, or removed from videos.json" | keep | — |
-| Session ▾ | menu | LibraryView.swift:121-124 | ✅ clear | Show one session | keep | — |
-| Kind ▾ | menu | LibraryView.swift:125-126 | ⚠️ tooltip is a fragment | DJ vid or Talking | Show only DJ vids or Talking clips | — |
-| Score ▾ | menu | LibraryView.swift:127-128 | ✅ clear | Filter short clips by score | keep | — |
-| Clear | text button | LibraryView.swift:130 | ✅ clear | Show every clip | Clear filters and search | — |
-| Session order ▾ (sort) | menu | LibraryView.swift:133-134 | ✅ clear | Sort clips | keep | — |
-| Space key | gesture | LibraryView.swift:46-50 | ⚠️ acts on first selected, not hovered | (advertised as "Space" on eye buttons) | Quick look at the selected clip · Space | — |
-| Digit keys 0–9 | gesture | LibraryView.swift:51-56 | ❌ invisible: typing a number scores | — | — (list in ⌘/ shortcuts sheet) | ⚠️ RISKY: digits with clips selected set their score (setScore via perform, no undo) → Undo toast |
+| ➖ Search clips | field | LibraryView.swift:29 | ✅ clear | — | label is enough | — |
+| ⏭ `xmark.circle.fill` in search | icon | DSInputs.swift:129-131 | ✅ clear | Clear | Clear the search | ⏭ DesignSystem/DSInputs (DS-owned) |
+| ⏭ View mode (Cards / Grid / Single / List icons) | segmented | LibraryView.swift:30; DSChoice.swift:316-323, 333 | ⚠️ tooltip is just the mode name | Cards / Grid / Single / List | Show clips as cards / a grid / one at a time / a list | ⏭ DesignSystem/DSChoice DSViewModeSwitcher (DS-owned) |
+| ➖ All · Posted · Excluded · Missing · Long-form | chip | LibraryView.swift:114-119, 137-145 | ✅ clear | e.g. "File missing, or removed from videos.json" | keep | — |
+| ➖ Session ▾ | menu | LibraryView.swift:121-124 | ✅ clear | Show one session | keep | — |
+| ✅ Kind ▾ | menu | LibraryView.swift:125-126 | ⚠️ tooltip is a fragment | DJ vid or Talking | Show only DJ vids or Talking clips | — |
+| ➖ Score ▾ | menu | LibraryView.swift:127-128 | ✅ clear | Filter short clips by score | keep | — |
+| ✅ Clear | text button | LibraryView.swift:130 | ✅ clear | Show every clip | Label → "Clear filters" · Clear filters and search | — |
+| ➖ Session order ▾ (sort) | menu | LibraryView.swift:133-134 | ✅ clear | Sort clips | keep | — |
+| ✅ Space key | gesture | LibraryView.swift:46-50 | ⚠️ acts on first selected, not hovered | (advertised as "Space" on eye buttons) | Hover eye buttons no longer advertise Space (it opens the first *selected* clip) | — |
+| ✅ Digit keys 0–9 | gesture | LibraryView.swift:51-56 | ❌ invisible: typing a number scores | — | Hint on bulk "Score…": Score the selection, or type a number 0–100 | ok — typeDigit → AppModel.setScore (journaled, Undo) |
 
 ### Clip cards — hover actions per view mode
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Grid: `eye` (on hover, over media) | icon | LibraryView.swift:208; DSClipCard.swift:291-294 | ✅ clear | Quick look · Space | Preview the clip and its status · Space | — |
-| Cards: `eye` (always shown) | icon | LibraryView.swift:215; DSClipCard.swift:262 | ✅ clear | Quick look · Space | Preview the clip and its status · Space | — |
-| List: `eye` (on hover) | icon | LibraryView.swift:215; DSClipCard.swift:383 | ✅ clear | Quick look · Space | Preview the clip and its status · Space | — |
-| Single: Quick look | text button | LibraryView.swift:211 | ✅ clear | — | label is enough · Space | — |
-| Single: Exclude / Include | text button | LibraryView.swift:212 | ⚠️ consequence not stated | — | Keep this clip out of the plan / Put it back | ⚠️ RISKY: setExcluded via perform, no undo → Undo toast (use bulk.setExcluded) |
-| Single: `chevron.left` / `chevron.right` | icon | ClipCollection.swift:141-148 | ✅ clear | Previous clip · ← / Next clip · → (disabled first/last) | keep | — |
-| Select circle (Grid / Cards / List) | toggle | DSClipCard.swift:162-164 | ✅ clear | Select / Deselect | keep | — |
-| Card click | gesture | DSClipCard.swift:126, 134-139; LibraryView.swift:231-237 | ⚠️ editor vs quick look vs select | — | Click to edit · ⌘-click to select | — |
-| Mute (video preview) | icon | DSVideoPreview.swift:93-104 | ✅ clear | Mute / Unmute | label is enough | — |
-| Score "—" / date chip | chip | DSClipCard.swift:172, 199 | ✅ clear | Not scored / Pinned to this date / Not in the plan yet / Next post | keep | — |
+| ✅ Grid: `eye` (on hover, over media) | icon | LibraryView.swift:208; DSClipCard.swift:291-294 | ✅ clear | Quick look · Space | Preview the clip and its status | — |
+| ✅ Cards: `eye` (always shown) | icon | LibraryView.swift:215; DSClipCard.swift:262 | ✅ clear | Quick look · Space | Preview the clip and its status | — |
+| ✅ List: `eye` (on hover) | icon | LibraryView.swift:215; DSClipCard.swift:383 | ✅ clear | Quick look · Space | Preview the clip and its status | — |
+| ✅ Single: Quick look | text button | LibraryView.swift:211 | ✅ clear | — | Preview the clip and its status | — |
+| ✅ Single: Exclude / Include | text button | LibraryView.swift:212 | ⚠️ consequence not stated | — | Keep this clip out of the plan / Put it back into the plan | ok — AppModel.setExcluded (journaled, Undo) |
+| ➖ Single: `chevron.left` / `chevron.right` | icon | ClipCollection.swift:141-148 | ✅ clear | Previous clip · ← / Next clip · → (disabled first/last) | keep | — |
+| ➖ Select circle (Grid / Cards / List) | toggle | DSClipCard.swift:162-164 | ✅ clear | Select / Deselect | keep | — |
+| ⏭ Card click | gesture | DSClipCard.swift:126, 134-139; LibraryView.swift:231-237 | ⚠️ editor vs quick look vs select | — | Click to edit · ⌘-click to select | ⏭ DesignSystem/DSClipCard + Shared/ClipCollection (not in this pass's files) |
+| ➖ Mute (video preview) | icon | DSVideoPreview.swift:93-104 | ✅ clear | Mute / Unmute | label is enough | — |
+| ➖ Score "—" / date chip | chip | DSClipCard.swift:172, 199 | ✅ clear | Not scored / Pinned to this date / Not in the plan yet / Next post | keep | — |
 
 ### Card right-click
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Quick look | menu item | LibraryView.swift:220 | ✅ clear | — | label is enough · Space | — |
-| Look for the file | menu item | LibraryView.swift:222, 243-246 | ⚠️ runs a whole engine tick | — | Run intake now to relink moved files | — |
-| Keep posting it | menu item | LibraryView.swift:225 | ⚠️ context (left videos.json) missing | — | Keep posting though it left videos.json | ⚠️ RISKY: clears the removed warning for good → Undo toast |
-| VideoContextMenu items | menu | LibraryView.swift:228 | — | — | — | see Shared › Video context menu (RISKY items) |
+| ➖ Quick look | menu item | LibraryView.swift:220 | ✅ clear | — | label is enough · Space | — |
+| ✅ Look for the file | menu item | LibraryView.swift:222, 243-246 | ⚠️ runs a whole engine tick | — | Title "Look for the file (run intake now)" | — |
+| ✅ Keep posting it | menu item | LibraryView.swift:225 | ⚠️ context (left videos.json) missing | — | Title "Keep posting it…" | ok (confirm) — the kept flag (kv ui.keptRemoved) isn't journaled, so it asks first; Undo needs a core change |
+| ➖ VideoContextMenu items | menu | LibraryView.swift:228 | — | — | — | see Shared › Video context menu |
 
 ### Long-form section
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Tile select circle | toggle | LongformSection.swift:101-102 | ✅ clear | Select / Deselect | keep | — |
-| Tile / row click | gesture | LongformSection.swift:116, 164 | ⚠️ opens quick look, no hint | — | Click for quick look · ⌘-click to select | — |
-| Mark posted | text button | LongformSection.swift:77-81 | ✅ clear | Paste the YouTube link; the file moves to Posted/Longform (disabled: "Excluded — include it first") | keep | ok (confirm) — dialog |
-| `arrow.up.right.square` (icon) | icon | LongformSection.swift:75 | ✅ clear | Open on YouTube · <url> | keep | — |
-| Row select circle | toggle | LongformSection.swift:145-147 | ✅ clear | Select / Deselect | keep | — |
-| Right-click › Quick look | menu item | LongformSection.swift:175 | ✅ clear | — | label is enough | — |
-| Right-click › Open on YouTube | menu item | LongformSection.swift:177 | ✅ clear | — | label is enough | — |
-| Right-click › Copy YouTube link | menu item | LongformSection.swift:178 | ✅ clear | — | label is enough | — |
-| Right-click › Mark posted… | menu item | LongformSection.swift:180 | ✅ clear | — | label is enough | ok (confirm) — dialog |
-| Right-click › Exclude / Include | menu item | LongformSection.swift:183-185 | ⚠️ consequence not stated | — | Keep this clip out of posting / Put it back | ⚠️ RISKY: setExcluded via perform, no undo → Undo toast |
+| ➖ Tile select circle | toggle | LongformSection.swift:101-102 | ✅ clear | Select / Deselect | keep | — |
+| ✅ Tile / row click | gesture | LongformSection.swift:116, 164 | ⚠️ opens quick look, no hint | — | Click for quick look · ⌘-click to select | — |
+| ➖ Mark posted | text button | LongformSection.swift:77-81 | ✅ clear | Paste the YouTube link; the file moves to Posted/Longform (disabled: "Excluded — include it first") | keep | ok (confirm) — dialog |
+| ➖ `arrow.up.right.square` (icon) | icon | LongformSection.swift:75 | ✅ clear | Open on YouTube · <url> | keep | — |
+| ➖ Row select circle | toggle | LongformSection.swift:145-147 | ✅ clear | Select / Deselect | keep | — |
+| ➖ Right-click › Quick look | menu item | LongformSection.swift:175 | ✅ clear | — | label is enough | — |
+| ➖ Right-click › Open on YouTube | menu item | LongformSection.swift:177 | ✅ clear | — | label is enough | — |
+| ➖ Right-click › Copy YouTube link | menu item | LongformSection.swift:178 | ✅ clear | — | label is enough | — |
+| ➖ Right-click › Mark posted… | menu item | LongformSection.swift:180 | ✅ clear | — | label is enough | ok (confirm) — dialog |
+| ✅ Right-click › Exclude / Include | menu item | LongformSection.swift:183-185 | ⚠️ consequence not stated | — | Titles "Exclude (stop posting it)" / "Include (post it again)" | ok — AppModel.setExcluded (journaled, Undo) |
 
 ### Bulk bar
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| `xmark` (clear selection) | icon | DSOverlays.swift:340-344 | ✅ clear | Clear selection · esc | keep | — |
-| Select all | text button | DSOverlays.swift:347-348 | ✅ clear | Select every clip on this screen · ⌘A | keep | — |
-| Score… | text button | LibraryView.swift:257-259 | ✅ clear | Give the selected short clips one score | keep | ok (confirm + undo) |
-| Kind ▾ (DJ vid / Talking) | menu | LibraryView.swift:261-277 | ✅ clear | Set the kind | Set DJ vid or Talking for the selection | ok (confirm + undo) |
-| Exclude / Include | text button | LibraryView.swift:278-281 | ✅ clear | Keep these clips out of the plan / Put these clips back into the pipeline | keep | ok (confirm + undo) |
-| Mark long-form posted | text button | LibraryView.swift:283-288 | ✅ clear | Paste each YouTube link; the files move to Posted/Longform (disabled: already posted) | keep | ok (confirm) — dialog |
-| More ▾ | menu | ScreenBulkBar.swift:44-53 | ⚠️ "More" says nothing | More bulk actions | Agent prompt, re-render, apply defaults | — |
-| Mark N long-form posted… | menu item | LibraryView.swift:291 | ✅ clear | — | label is enough | ok (confirm) — dialog |
-| Copy agent prompt for N clips | menu item | LibraryView.swift:294-295 | ⚠️ "agent" jargon; disabled, no reason | — | Copy a prompt for an agent to find titles · Disabled: select short clips | — |
-| Re-render N clips | menu item | LibraryView.swift:296 | ✅ clear | — | Make the files again on the next tick | ok (confirm + undo) |
-| Apply defaults to N clips… | menu item | LibraryView.swift:297-298 | ⚠️ which defaults; disabled, no reason | — | Reset frame, trim, text, cover, caption · Disabled: select short clips | ok (confirm + undo) |
+| ➖ `xmark` (clear selection) | icon | DSOverlays.swift:340-344 | ✅ clear | Clear selection · esc | keep | — |
+| ➖ Select all | text button | DSOverlays.swift:347-348 | ✅ clear | Select every clip on this screen · ⌘A | keep | — |
+| ✅ Score… | text button | LibraryView.swift:257-259 | ✅ clear | Give the selected short clips one score | Score the selection, or type a number 0–100 | ok (confirm + undo) |
+| ✅ Kind ▾ (DJ vid / Talking) | menu | LibraryView.swift:261-277 | ✅ clear | Set the kind | Set DJ vid or Talking for the selection | ok (confirm + undo) |
+| ➖ Exclude / Include | text button | LibraryView.swift:278-281 | ✅ clear | Keep these clips out of the plan / Put these clips back into the pipeline | keep | ok (confirm + undo) |
+| ➖ Mark long-form posted | text button | LibraryView.swift:283-288 | ✅ clear | Paste each YouTube link; the files move to Posted/Longform (disabled: already posted) | keep | ok (confirm) — dialog |
+| ⏭ More ▾ | menu | ScreenBulkBar.swift:44-53 | ⚠️ "More" says nothing | More bulk actions | Agent prompt, re-render, apply defaults | ⏭ Shared/ScreenBulkBar (not in this pass's files) |
+| ➖ Mark N long-form posted… | menu item | LibraryView.swift:291 | ✅ clear | — | label is enough | ok (confirm) — dialog |
+| ✅ Copy agent prompt for N clips | menu item | LibraryView.swift:294-295 | ⚠️ "agent" jargon; disabled, no reason | — | Title "Copy agent prompt to find titles (N clips)" · disabled "Copy agent prompt — select short clips" | — |
+| ✅ Re-render N clips | menu item | LibraryView.swift:296 | ✅ clear | — | Title "Re-render N clips…" (opens the confirm) | ok (confirm + undo) |
+| ✅ Apply defaults to N clips… | menu item | LibraryView.swift:297-298 | ⚠️ which defaults; disabled, no reason | — | Title "Apply defaults (frame, trim, text, caption) to N clips…" · disabled "Apply defaults — select short clips" | ok (confirm + undo) |
 
 ### Dialogs
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Quick look › preview + scrubber | gesture | LibraryDialogs.swift:22-24 | ✅ clear | — | — | — |
-| Quick look › Close | text button | LibraryDialogs.swift:79 | ✅ clear | — | label is enough · esc | — |
-| Quick look › Exclude / Include (missing file) | text button | LibraryDialogs.swift:81 | ⚠️ consequence not stated | — | Keep it out of the plan while missing | ⚠️ RISKY: setExcluded, no undo → Undo toast |
-| Quick look › Look for the file | text button | LibraryDialogs.swift:82-86 | ✅ clear | Runs intake now; it relinks renamed or moved files by fingerprint | keep | — |
-| Quick look › Exclude (removed from videos.json) | text button | LibraryDialogs.swift:88-92 | ⚠️ also marks it kept | — | Stop posting it; keep its history | ⚠️ RISKY: excludes + keepRemoved, no undo → Undo toast |
-| Quick look › Keep posting it | text button | LibraryDialogs.swift:93-96 | ✅ clear | — | Keep posting though it left videos.json | ⚠️ RISKY: dismisses the removed state for good → Undo toast |
-| Quick look › Copy link | text button | LibraryDialogs.swift:99 | ✅ clear | — | label is enough | — |
-| Quick look › Open on YouTube | text button | LibraryDialogs.swift:100 | ✅ clear | — | label is enough | — |
-| Quick look › Mark posted… | text button | LibraryDialogs.swift:102-106 | ✅ clear | disabled: "Excluded — include it first" | label is enough · Disabled: excluded, include it first | ok (confirm) — dialog |
-| Quick look › Open editor | text button | LibraryDialogs.swift:109-112 | ✅ clear | — | label is enough | — |
-| Long-form posted › YouTube link field(s) | field | LibraryDialogs.swift:155-159 | ✅ clear | — | label is enough | — |
-| Long-form posted › Cancel | text button | LibraryDialogs.swift:162 | ✅ clear | — | label is enough · esc | — |
-| Long-form posted › Mark posted / Mark N posted | text button | LibraryDialogs.swift:163-164 | ✅ clear | disabled: "Fix the links marked in red" / "Paste … first" | Save links; files move to Posted/Longform · ↩ | ok (confirm) — no undo for the file move |
-| Score dialog › 0–100 field | field | LibraryDialogs.swift:192-193 | ✅ clear | — | label is enough | — |
-| Score dialog › Cancel | text button | LibraryDialogs.swift:195 | ✅ clear | — | label is enough · esc | — |
-| Score dialog › Set score | text button | LibraryDialogs.swift:196-197 | ✅ clear | disabled: "Type a score from 0 to 100" | label is enough · ↩ | ok (confirm + undo) |
+| ➖ Quick look › preview + scrubber | gesture | LibraryDialogs.swift:22-24 | ✅ clear | — | — | — |
+| ➖ Quick look › Close | text button | LibraryDialogs.swift:79 | ✅ clear | — | label is enough · esc | — |
+| ✅ Quick look › Exclude / Include (missing file) | text button | LibraryDialogs.swift:81 | ⚠️ consequence not stated | — | Keep it out of the plan while missing / Put it back into the plan | ok — AppModel.setExcluded (Undo) |
+| ✅ Quick look › Look for the file | text button | LibraryDialogs.swift:82-86 | ✅ clear | Runs intake now; it relinks renamed or moved files by fingerprint | Run intake now to relink moved files | — |
+| ✅ Quick look › Exclude (removed from videos.json) | text button | LibraryDialogs.swift:88-92 | ⚠️ also marks it kept | — | Stop posting it; keep its history | ok — exclusion is journaled (Undo); the kept flag it also sets isn't (core) |
+| ✅ Quick look › Keep posting it | text button | LibraryDialogs.swift:93-96 | ✅ clear | — | Label "Keep posting it…" · Keep posting though it left videos.json | ok (confirm) — not journaled, so it asks first |
+| ➖ Quick look › Copy link | text button | LibraryDialogs.swift:99 | ✅ clear | — | label is enough | — |
+| ➖ Quick look › Open on YouTube | text button | LibraryDialogs.swift:100 | ✅ clear | — | label is enough | — |
+| ➖ Quick look › Mark posted… | text button | LibraryDialogs.swift:102-106 | ✅ clear | disabled: "Excluded — include it first" | label is enough · Disabled: excluded, include it first | ok (confirm) — dialog |
+| ➖ Quick look › Open editor | text button | LibraryDialogs.swift:109-112 | ✅ clear | — | label is enough | — |
+| ➖ Long-form posted › YouTube link field(s) | field | LibraryDialogs.swift:155-159 | ✅ clear | — | label is enough | — |
+| ➖ Long-form posted › Cancel | text button | LibraryDialogs.swift:162 | ✅ clear | — | label is enough · esc | — |
+| ✅ Long-form posted › Mark posted / Mark N posted | text button | LibraryDialogs.swift:163-164 | ✅ clear | disabled: "Fix the links marked in red" / "Paste … first" | Save links; files move to Posted/Longform · ↩ | ok (confirm) — no undo for the file move |
+| ➖ Score dialog › 0–100 field | field | LibraryDialogs.swift:192-193 | ✅ clear | — | label is enough | — |
+| ➖ Score dialog › Cancel | text button | LibraryDialogs.swift:195 | ✅ clear | — | label is enough · esc | — |
+| ➖ Score dialog › Set score | text button | LibraryDialogs.swift:196-197 | ✅ clear | disabled: "Type a score from 0 to 100" | label is enough · ↩ | ok (confirm + undo) |
 
 ### Empty states
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Check for new clips | text button | LibraryView.swift:158-160 | ⚠️ runs an engine tick | — | Run intake now to find new clips | — |
-| Clear filters | text button | LibraryView.swift:162-164 | ✅ clear | — | label is enough | — |
+| ➖ Check for new clips | text button | LibraryView.swift:158-160 | ⚠️ runs an engine tick | — | label is enough | — |
+| ➖ Clear filters | text button | LibraryView.swift:162-164 | ✅ clear | — | label is enough | — |
 
 ## Posts
 
 ### Toolbar, tabs, empty states
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Search posts | field | PostsView.swift:23 | ✅ clear | — | label is enough | — |
-| Platform ▾ | menu | PostsView.swift:24-26 | ✅ clear | Show one platform | keep | — |
-| Problems · Scheduled · Posted · All | segmented | PostsView.swift:102-107 | ⚠️ "Scheduled" silently excludes missed | — | Failed, late or © posts / Posts still to go out / Posts that went live / Every attempt | — |
-| Open Week | text button | PostsView.swift:112-113 | ✅ clear | — | label is enough | — |
-| Show all posts | text button | PostsView.swift:116-117 | ✅ clear | — | label is enough | — |
-| Clear filters | text button | PostsView.swift:119-123 | ✅ clear | — | label is enough | — |
+| ➖ Search posts | field | PostsView.swift:23 | ✅ clear | — | label is enough | — |
+| ➖ Platform ▾ | menu | PostsView.swift:24-26 | ✅ clear | Show one platform | keep | — |
+| ✅ Problems · Scheduled · Posted · All | segmented | PostsView.swift:102-107 | ⚠️ "Scheduled" silently excludes missed | — | DSTabs has no per-tab tooltip → one caption line under the tabs describes the open tab (e.g. "Posts still to go out (missed ones are in Problems)") | — |
+| ➖ Open Week | text button | PostsView.swift:112-113 | ✅ clear | — | label is enough | — |
+| ➖ Show all posts | text button | PostsView.swift:116-117 | ✅ clear | — | label is enough | — |
+| ➖ Clear filters | text button | PostsView.swift:119-123 | ✅ clear | — | label is enough | — |
 
 ### Problem card
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Card body click | gesture | PostProblemCard.swift:86-87 | ⚠️ opens inspector, no hint | — | Click for details and attempt history | — |
-| Relative time | chip | PostProblemCard.swift:55-56 | ✅ clear | full date/time | keep | — |
-| Raw response (disclosure) | text button | PostProblemCard.swift:65-76 | ✅ clear | Show / Hide what the platform answered | keep | — |
-| Post now | text button | PostProblemCard.swift:91-92 | ⚠️ also jumps to Today | Make it due now on today's <Platform> slot | Make it due now and open Today | ⚠️ RISKY: reschedules to now (AppModel.swift:679-684) → Undo toast |
-| Shift plan | text button | PostProblemCard.swift:93-94 | ⚠️ jargon label | Move it to the next free <Platform> slot | keep | ⚠️ RISKY: reschedules → Undo toast |
-| Fix in editor | text button | PostProblemCard.swift:96-99 | ✅ clear | Open the editor; when you close it the post is tried again (disabled: fixReason) | keep | ⚠️ RISKY: closing the editor auto re-queues, no undo → Undo toast |
-| Re-upload anyway ▾ (disabled) | text button | PostProblemCard.swift:131-132 | ✅ clear | disabled: "Already handled" / "Only for copyright problems" | keep | — |
-| Re-upload anyway ▾ | menu | PostProblemCard.swift:135-152 | ✅ clear | Try again on the next day: same version, a later one, or a new one | keep | — |
-| Same version (vN) / vN | menu item | PostProblemCard.swift:136-139 | ⚠️ when it posts not said | — | Re-upload vN on the next day's slot | ⚠️ RISKY: resolves claim + new attempt → Undo toast |
-| New version (vN+1)… | menu item | PostProblemCard.swift:141 | ✅ clear | — | Make vN+1, then open the editor | ⚠️ RISKY: creates version + resolves claim → Undo toast |
-| Skip platform | text button | PostProblemCard.swift:102-103 | ✅ clear | Don't post this clip on <Platform> (disabled: skipReason) | keep | ⚠️ RISKY: skips / resolves → Undo toast |
-| Accept | text button | PostProblemCard.swift:104-105 | ⚠️ "Accept" what? | Leave it as it is (e.g. muted audio is fine) (disabled: acceptReason) | Accept the claim; leave the post as it is | ⚠️ RISKY: resolves claim → Undo toast |
-| Reset | text button | PostProblemCard.swift:106-107 | ⚠️ reset to what? | Back to planned, error cleared (disabled: resetReason) | keep | ⚠️ RISKY: resets post → Undo toast |
-| `ellipsis` (icon) | menu | PostProblemCard.swift:158-184 | ❌ icon only, vague tooltip | More actions | Retry, mark posted, report or copy details | — |
-| ⋯ › Try again on the next slot | menu item | PostProblemCard.swift:165 | ✅ clear | — | label is enough | ⚠️ RISKY: new attempt → Undo toast |
-| ⋯ › Mark posted… | menu item | PostProblemCard.swift:167 | ✅ clear | — | label is enough | ok (confirm) — sheet |
-| ⋯ › Report problem… | menu item | PostProblemCard.swift:169 | ✅ clear | — | label is enough | ok (confirm) — sheet |
-| ⋯ › Copy details | menu item | PostProblemCard.swift:171-174 | ✅ clear | — | Copy platform, error and raw response | — |
-| ⋯ › Open editor | menu item | PostProblemCard.swift:176 | ✅ clear | — | label is enough | — |
+| ✅ Card body click | gesture | PostProblemCard.swift:86-87 | ⚠️ opens inspector, no hint | — | Click for details and attempt history | — |
+| ➖ Relative time | chip | PostProblemCard.swift:55-56 | ✅ clear | full date/time | keep | — |
+| ➖ Raw response (disclosure) | text button | PostProblemCard.swift:65-76 | ✅ clear | Show / Hide what the platform answered | keep | — |
+| ✅ Post now | text button | PostProblemCard.swift:91-92 | ⚠️ also jumps to Today | Make it due now on today's <Platform> slot | Make it due now and open Today | ok — AppModel.postNow (Undo) |
+| ➖ Shift plan | text button | PostProblemCard.swift:93-94 | ⚠️ jargon label | Move it to the next free <Platform> slot | keep | ok — AppModel.shiftPlan (Undo) |
+| ✅ Fix in editor | text button | PostProblemCard.swift:96-99 | ✅ clear | Open the editor; when you close it the post is tried again (disabled: fixReason) | Edit it; closing the editor re-queues it | ok — re-queue on close = AppModel.fixed (journaled, Undo) |
+| ➖ Re-upload anyway ▾ (disabled) | text button | PostProblemCard.swift:131-132 | ✅ clear | disabled: "Already handled" / "Only for copyright problems" | keep | — |
+| ✅ Re-upload anyway ▾ | menu | PostProblemCard.swift:135-152 | ✅ clear | Try again on the next day: same version, a later one, or a new one | Upload again despite the claim; pick a version | — |
+| ✅ Same version (vN) / vN | menu item | PostProblemCard.swift:136-139 | ⚠️ when it posts not said | — | Shared ReuploadItems: "… on the next day's slot" | ok — AppModel.reuploadAnyway (Undo) |
+| ✅ New version (vN+1)… | menu item | PostProblemCard.swift:141 | ✅ clear | — | "New version (vN+1), then open the editor…" | ok — AppModel.reuploadAnyway (Undo) |
+| ✅ Skip platform | text button | PostProblemCard.swift:102-103 | ✅ clear | Don't post this clip on <Platform> (disabled: skipReason) | Label → "Skip <Platform>" | ok — AppModel.skip (Undo) |
+| ✅ Accept | text button | PostProblemCard.swift:104-105 | ⚠️ "Accept" what? | Leave it as it is (e.g. muted audio is fine) (disabled: acceptReason) | Label → "Accept claim" · Leave the post as it is (e.g. muted) | ok — AppModel.resolve (Undo) |
+| ✅ Reset | text button | PostProblemCard.swift:106-107 | ⚠️ reset to what? | Back to planned, error cleared (disabled: resetReason) | Back to Planned, error cleared | ok — AppModel.reset (Undo) |
+| ✅ `ellipsis` (icon) | menu | PostProblemCard.swift:158-184 | ❌ icon only, vague tooltip | More actions | Retry, mark posted, report or copy details | — |
+| ✅ ⋯ › Try again on the next slot | menu item | PostProblemCard.swift:165 | ✅ clear | — | Disabled title "… — sent back to Edit" (native .help removed) | ok — AppModel.fixed (Undo) |
+| ➖ ⋯ › Mark posted… | menu item | PostProblemCard.swift:167 | ✅ clear | — | label is enough | ok (confirm) — sheet |
+| ➖ ⋯ › Report problem… | menu item | PostProblemCard.swift:169 | ✅ clear | — | label is enough | ok (confirm) — sheet |
+| ✅ ⋯ › Copy details | menu item | PostProblemCard.swift:171-174 | ✅ clear | — | Title "Copy details (platform, error, raw response)" | — |
+| ➖ ⋯ › Open editor | menu item | PostProblemCard.swift:176 | ✅ clear | — | label is enough | — |
 
 ### Post rows (Scheduled / Posted / All)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Select circle | toggle | PostsView.swift:215-217 | ✅ clear | Select / Deselect | keep | — |
-| Row click | gesture | PostsView.swift:254, 259-270 | ⚠️ inspector vs toggle, no hint | — | Click for details · ⌘-click to select | — |
-| vN | chip | PostsView.swift:226-228 | ✅ clear | Version N | keep | — |
-| #N | chip | PostsView.swift:230-232 | ⚠️ "#" = attempt | Attempt N[ · retry/repost] | keep | — |
-| `arrow.up.right.square` (icon) | icon | PostsView.swift:238-243 | ✅ clear | Open post · <url> (disabled: "No link yet — not posted") | keep | — |
-| Row right-click | menu | PostsView.swift:255 | ⚠️ hidden | — | — | see Shared › Post context menu |
+| ➖ Select circle | toggle | PostsView.swift:215-217 | ✅ clear | Select / Deselect | keep | — |
+| ✅ Row click | gesture | PostsView.swift:254, 259-270 | ⚠️ inspector vs toggle, no hint | — | Click for details · ⌘-click to select | — |
+| ✅ vN | chip | PostsView.swift:226-228 | ✅ clear | Version N | Version N (native .help → dsTooltip) | — |
+| ✅ #N | chip | PostsView.swift:230-232 | ⚠️ "#" = attempt | Attempt N[ · retry/repost] | Attempt N[ · retry/repost] (native .help → dsTooltip) | — |
+| ✅ `arrow.up.right.square` (icon) | icon | PostsView.swift:238-243 | ✅ clear | Open post · <url> (disabled: "No link yet — not posted") | Open the live post · <url> · Disabled: no link yet — not posted | — |
+| ➖ Row right-click | menu | PostsView.swift:255 | ⚠️ hidden | — | — | see Shared › Post context menu |
+
+### Grouped post cards (PostGroupCard, round 3 F4) — new since the audit
+| Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
+|---|---|---|---|---|---|---|
+| ✅ Group select circle | toggle | PostGroupCard.swift (header) | ✅ clear | native `.help` | Select / Deselect these N posts (dsTooltip) | — |
+| ✅ Show / hide platforms (`chevron.down`) | icon | PostGroupCard.swift (header) | ⚠️ glyph only | native `.help` "Show platforms" | Show each platform's time and actions / Hide the per-platform rows | — |
+| ✅ Card header click | gesture | PostGroupCard.swift (header) | ⚠️ hidden | — | Click to show each platform / Click to hide the platforms | — |
+| ✅ Platform state chip (collapsed card) | chip | PostGroupCard.swift (PostPlatformChip) | ⚠️ colour only | native `.help` | <Platform> · <state> · <date>[ · attempt] (dsTooltip, hover target = capsule) | — |
+| ✅ Per-platform row click | gesture | PostGroupCard.swift (PostGroupRow) | ⚠️ hidden | — | Click for details · ⌘-click to select | — |
+| ✅ Per-platform row select circle | toggle | PostGroupCard.swift (PostGroupRow) | ✅ clear | native `.help` | Select / Deselect | — |
+| ✅ Per-platform row vN / #N / Retry · Repost badge | chip | PostGroupCard.swift (PostGroupRow) | ✅ clear | native `.help` | Version N / Attempt N · retry / "Tried again after a failure, same day" (dsTooltip) | — |
+| ✅ Per-platform row `arrow.up.right.square` | icon | PostGroupCard.swift (PostGroupRow) | ✅ clear | Open post · <url> | Open the live post · <url> · Disabled: no link yet — not posted | — |
+| ✅ Per-platform row right-click | menu | PostGroupCard.swift (PostGroupRow) | ⚠️ hidden | — | — | see Shared › Post context menu |
+| ✅ +N fine / Hide N fine (Problems) | text button | PostGroupCard.swift (problemBody) | ✅ clear | native `.help` | Show the platforms that posted fine / Hide the platforms without a problem | — |
+| ➖ Card right-click | menu | PostGroupCard.swift | ⚠️ hidden | — | — | Post context menu (one post) + Open editor |
 
 ### Bulk bar and bulk dialog
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| `xmark` (clear selection) | icon | DSOverlays.swift:340-344 | ✅ clear | Clear selection · esc | keep | — |
-| Select all | text button | DSOverlays.swift:347-348 | ⚠️ tooltip says "clip" on Posts | Select every clip on this screen · ⌘A | Select every post shown · ⌘A | — |
-| Reset (N) | text button | PostsView.swift:158-160 | ⚠️ reset to what? | only when disabled: "None of these can be reset (planned, or their time passed)" | Back to Planned, errors cleared · Disabled: none can be reset | ok (confirm) |
-| Skip (N) | text button | PostsView.swift:161-163 | ✅ clear | only when disabled: "These are already finished" | Don't post these on their platforms · Disabled: already finished | ok (confirm) |
-| Retry (N) | text button | PostsView.swift:164-166 | ✅ clear | only when disabled: "Only failed posts can be retried" | Try failed posts again on the next slot · Disabled: only failed posts | ok (confirm) |
-| Bulk dialog › Cancel | text button | PostInspector.swift:267 | ✅ clear | — | label is enough · esc | — |
-| Bulk dialog › Reset / Skip / Retry N | text button | PostInspector.swift:268-271 | ✅ clear | disabled: "Nothing to …" | label is enough · ↩ | ok (confirm) — dialog says no ⌘Z |
+| ➖ `xmark` (clear selection) | icon | DSOverlays.swift:340-344 | ✅ clear | Clear selection · esc | keep | — |
+| ⏭ Select all | text button | DSOverlays.swift:347-348 | ⚠️ tooltip says "clip" on Posts | Select every clip on this screen · ⌘A | Select every post shown · ⌘A | ⏭ DesignSystem/DSOverlays (DS-owned) — the "clip" wording needs a DS param |
+| ✅ Reset (N) | text button | PostsView.swift:158-160 | ⚠️ reset to what? | only when disabled: "None of these can be reset (planned, or their time passed)" | Back to Planned, errors cleared · Disabled: none can be reset | ok (confirm) |
+| ✅ Skip (N) | text button | PostsView.swift:161-163 | ✅ clear | only when disabled: "These are already finished" | Don't post these on their platforms · Disabled: already finished | ok (confirm) |
+| ✅ Retry (N) | text button | PostsView.swift:164-166 | ✅ clear | only when disabled: "Only failed posts can be retried" | Try failed posts again on the next slot · Disabled: only failed posts | ok (confirm) |
+| ➖ Bulk dialog › Cancel | text button | PostInspector.swift:267 | ✅ clear | — | label is enough · esc | — |
+| ✅ Bulk dialog › Reset / Skip / Retry N | text button | PostInspector.swift:268-271 | ✅ clear | disabled: "Nothing to …" | label is enough · ↩ | ok (confirm) + now journaled via AppModel.undoable (Undo · ⌘Z); dialog text says "You can undo this" |
 
 ### Inspector
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| `xmark` (close) | icon | PostInspector.swift:46-48 | ✅ clear | Close inspector · esc | Close details (esc is NOT bound — bind it or drop "esc") | — |
-| Link (URL) | text button | PostInspector.swift:92 | ✅ clear | <url> | Open the live post | — |
-| Render file name | text button | PostInspector.swift:99-101 | ⚠️ looks like it opens the file | Reveal in Finder | Show the rendered file in Finder | — |
-| Post ID | field | PostInspector.swift:107 | ✅ clear | — | — | — |
-| Metrics › Views / Likes | field | PostInspector.swift:130-131 | ✅ clear | — | label is enough | — |
-| Metrics › Save | text button | PostInspector.swift:132-135 | ✅ clear | disabled: "Whole numbers only" / "Nothing changed" | label is enough | — |
-| Attempt row | gesture | PostInspector.swift:156-158 | ✅ clear | This attempt / Show attempt #N | keep | — |
-| Repost (per platform) | text button | PostInspector.swift:195-196 | ✅ clear | Queue the next version on <Platform> (disabled: repostBlocker) | keep | ⚠️ RISKY: queues a public repost → Undo toast |
-| Mark posted… | text button | PostInspector.swift:205-208 | ✅ clear | disabled: "Already <state>" | label is enough · Disabled: already <state> | ok (confirm) — sheet |
-| Report problem… | text button | PostInspector.swift:209-212 | ✅ clear | disabled: "Already <state>" | label is enough | ok (confirm) — sheet |
-| Reset | text button | PostInspector.swift:213 | ⚠️ reset to what? | only disabled reason | Back to Planned, error cleared · Disabled: <resetReason> | ⚠️ RISKY: resets post → Undo toast |
-| Skip | text button | PostInspector.swift:214 | ⚠️ skip what? | only disabled reason | Don't post this clip on <Platform> · Disabled: already <state> | ⚠️ RISKY: post becomes Skipped → Undo toast |
-| Open editor | text button | PostInspector.swift:215 | ✅ clear | — | label is enough | — |
+| ✅ `xmark` (close) | icon | PostInspector.swift:46-48 | ✅ clear | Close inspector · esc | Close details (esc hint removed: the inspector never holds focus and esc already clears the selection) | — |
+| ✅ Link (URL) | text button | PostInspector.swift:92 | ✅ clear | <url> | Open the live post | — |
+| ✅ Render file name | text button | PostInspector.swift:99-101 | ⚠️ looks like it opens the file | Reveal in Finder | Show the rendered file in Finder | — |
+| ➖ Post ID | field | PostInspector.swift:107 | ✅ clear | — | — | — |
+| ➖ Metrics › Views / Likes | field | PostInspector.swift:130-131 | ✅ clear | — | label is enough | — |
+| ➖ Metrics › Save | text button | PostInspector.swift:132-135 | ✅ clear | disabled: "Whole numbers only" / "Nothing changed" | label is enough | — |
+| ➖ Attempt row | gesture | PostInspector.swift:156-158 | ✅ clear | This attempt / Show attempt #N | keep | — |
+| ➖ Repost (per platform) | text button | PostInspector.swift:195-196 | ✅ clear | Queue the next version on <Platform> (disabled: repostBlocker) | keep | ok — AppModel.repost (Undo) |
+| ➖ Mark posted… | text button | PostInspector.swift:205-208 | ✅ clear | disabled: "Already <state>" | label is enough · Disabled: already <state> | ok (confirm) — sheet |
+| ➖ Report problem… | text button | PostInspector.swift:209-212 | ✅ clear | disabled: "Already <state>" | label is enough | ok (confirm) — sheet |
+| ✅ Reset | text button | PostInspector.swift:213 | ⚠️ reset to what? | only disabled reason | Back to Planned, error cleared · Disabled: <resetReason> | ok — AppModel.reset (Undo) |
+| ✅ Skip | text button | PostInspector.swift:214 | ⚠️ skip what? | only disabled reason | Label → "Skip <Platform>" · Don't post this clip on <Platform> | ok — AppModel.skip (Undo) |
+| ➖ Open editor | text button | PostInspector.swift:215 | ✅ clear | — | label is enough | — |
 
 ## Health
 
 ### Toolbar ⋯
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| `ellipsis` (icon) | menu | HealthView.swift:20-31 | ⚠️ icon only | Engine tick, log, Doctor | Run a tick, open the log or re-run Doctor | — |
-| Run engine tick now | menu item | HealthView.swift:21 | ⚠️ "tick" is jargon | — | Make the engine check, render and plan now | — |
-| Open engine log | menu item | HealthView.swift:22 | ✅ clear | — | label is enough | — |
-| Run Doctor again | menu item | HealthView.swift:23 | ✅ clear | — | Re-run the read-only checks | — |
+| ✅ `ellipsis` (icon) | menu | HealthView.swift:20-31 | ⚠️ icon only | Engine tick, log, Doctor | Run a tick, open the log or re-run Doctor | — |
+| ✅ Run engine tick now | menu item | HealthView.swift:21 | ⚠️ "tick" is jargon | — | Title "Run engine tick now (check, render, plan)" | — |
+| ➖ Open engine log | menu item | HealthView.swift:22 | ✅ clear | — | label is enough | — |
+| ✅ Run Doctor again | menu item | HealthView.swift:23 | ✅ clear | — | Title "Run Doctor again (read-only checks)" | — |
 
 ### Header, checks, findings
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Run again | text button | HealthView.swift:90-91 | ✅ clear | Check everything again | keep | — |
-| Copy report | text button | HealthView.swift:92-97 | ✅ clear | Copy the checks and Doctor findings as Markdown to paste to an agent (66 chars) | Copy the report as Markdown for an agent · Disabled: Doctor is still checking | — |
-| Check row (`chevron.down`) | text button | HealthView.swift:185-199 | ✅ clear | Show details and fix / Hide details | keep | — |
-| Check action (Run tick now / Open engine log / Open engine settings) | text button | HealthView.swift:209-211 | ✅ clear | — | label is enough | — |
-| Severity icon | icon | HealthView.swift:236-238 | ✅ clear | Info / Warning / Error | keep | — |
-| Show all N / Show fewer | text button | HealthView.swift:253-254 | ✅ clear | — | label is enough | — |
-| Awake bar / missed tick | gesture | AwakeChartCard.swift:86, 91 | ✅ clear | Awake <start> – <end> / Missed: <Platform> <time> | keep | — |
+| ➖ Run again | text button | HealthView.swift:90-91 | ✅ clear | Check everything again | keep | — |
+| ✅ Copy report | text button | HealthView.swift:92-97 | ✅ clear | Copy the checks and Doctor findings as Markdown to paste to an agent (66 chars) | Copy the report as Markdown for an agent · Disabled: Doctor is still checking | — |
+| ➖ Check row (`chevron.down`) | text button | HealthView.swift:185-199 | ✅ clear | Show details and fix / Hide details | keep | — |
+| ➖ Check action (Run tick now / Open engine log / Open engine settings) | text button | HealthView.swift:209-211 | ✅ clear | — | label is enough | — |
+| ➖ Severity icon | icon | HealthView.swift:236-238 | ✅ clear | Info / Warning / Error | keep | — |
+| ➖ Show all N / Show fewer | text button | HealthView.swift:253-254 | ✅ clear | — | label is enough | — |
+| ➖ Awake bar / missed tick | gesture | AwakeChartCard.swift:86, 91 | ✅ clear | Awake <start> – <end> / Missed: <Platform> <time> | keep | — |
 
 ## Shared menus used by these screens
 
 ### Post context menu (PostContextMenu) — Week slot + extra chips (WeekView.swift:360, 436), Today rows (TodayView.swift:160), Posts rows (PostsView.swift:255)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Mark posted… | menu item | CommandPalette.swift:480 | ✅ clear | — | label is enough | ok (confirm) — sheet |
-| Copy caption | menu item | CommandPalette.swift:481 | ✅ clear | — | label is enough | — |
-| Copy title | menu item | CommandPalette.swift:482 | ✅ clear | — | label is enough | — |
-| Open upload page | menu item | CommandPalette.swift:483 | ✅ clear | — | label is enough | — |
-| Reveal in Finder | menu item | CommandPalette.swift:484 | ⚠️ may render first | — | Show the file in Finder (renders if needed) | — |
-| Copy file | menu item | CommandPalette.swift:485 | ⚠️ may render first | — | Copy the video file (renders if needed) | — |
-| Report problem… | menu item | CommandPalette.swift:489 | ✅ clear | — | label is enough | ok (confirm) — sheet |
-| Post now | menu item | CommandPalette.swift:492 | ⚠️ means "make due", jumps to Today | — | Make it due now and open Today | ⚠️ RISKY: reschedules → Undo toast |
-| Shift plan | menu item | CommandPalette.swift:493 | ⚠️ jargon | — | Move it to the next free <Platform> slot | ⚠️ RISKY: reschedules → Undo toast |
-| Reset post | menu item | CommandPalette.swift:495 | ⚠️ reset to what? | — | Back to Planned, error cleared | ⚠️ RISKY: resets post → Undo toast |
-| Skip this platform | menu item | CommandPalette.swift:496 | ✅ clear | — | Don't post this clip on <Platform> | ⚠️ RISKY: post becomes Skipped → Undo toast |
-| Edit video | menu item | CommandPalette.swift:499 | ✅ clear | — | label is enough | — |
+| ⏭ Mark posted… | menu item | CommandPalette.swift:480 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
+| ⏭ Copy caption | menu item | CommandPalette.swift:481 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
+| ⏭ Copy title | menu item | CommandPalette.swift:482 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
+| ⏭ Open upload page | menu item | CommandPalette.swift:483 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
+| ⏭ Reveal in Finder | menu item | CommandPalette.swift:484 | ⚠️ may render first | — | Show the file in Finder (renders if needed) | ⏭ owned by Shell/CommandPalette (agent A) |
+| ⏭ Copy file | menu item | CommandPalette.swift:485 | ⚠️ may render first | — | Copy the video file (renders if needed) | ⏭ owned by Shell/CommandPalette (agent A) |
+| ⏭ Report problem… | menu item | CommandPalette.swift:489 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
+| ✅ Post now | menu item | CommandPalette.swift:492 | ⚠️ means "make due", jumps to Today | — | Make it due now and open Today | ok — AppModel.postNow is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ✅ Shift plan | menu item | CommandPalette.swift:493 | ⚠️ jargon | — | Move it to the next free <Platform> slot | ok — AppModel.shiftPlan is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ✅ Reset post | menu item | CommandPalette.swift:495 | ⚠️ reset to what? | — | Back to Planned, error cleared | ok — AppModel.reset is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ✅ Skip this platform | menu item | CommandPalette.swift:496 | ✅ clear | — | Don't post this clip on <Platform> | ok — AppModel.skip is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ⏭ Edit video | menu item | CommandPalette.swift:499 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
 
 ### Video context menu (VideoContextMenu) — Week backlog tiles (WeekView.swift:511), Library cards (LibraryView.swift:228)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Edit | menu item | CommandPalette.swift:447 | ✅ clear | — | label is enough | — |
-| Preview | menu item | CommandPalette.swift:448 | ✅ clear | — | label is enough | — |
-| Post today | menu item | CommandPalette.swift:450 | ⚠️ which slot / what moves | — | Put it on today's slot; the plan shifts | ⚠️ RISKY: plan change, no undo → Undo toast (BulkActions.postToday exists) |
-| Pin to tomorrow | menu item | CommandPalette.swift:451 | ✅ clear | — | label is enough | ⚠️ RISKY: plan change → Undo toast (BulkActions.pinConsecutive) |
-| Skip next slot | menu item | CommandPalette.swift:452 | ⚠️ unclear who takes the slot | — | Let the next clip take its slot | ⚠️ RISKY: swaps plan → Undo toast |
-| Repost on ▸ <Platform> (blocked: "<Platform> — why", disabled) | menu item | CommandPalette.swift:453, 507-519 | ✅ clear | — (reason inline in title) | Queue the next version on <Platform> | ⚠️ RISKY: queues a public repost → Undo toast |
-| Duplicate version | menu item | CommandPalette.swift:455 | ⚠️ which version | — | Copy the latest version as vN+1 | ⚠️ RISKY: adds a version → Undo toast |
-| Re-render | menu item | CommandPalette.swift:456 | ✅ clear | — | Make the video file again now | — |
-| Add N to week (multi-select) | menu item | CommandPalette.swift:458 | ✅ clear | — | Put them on the next open days | ⚠️ RISKY: plans N clips, no confirm → Confirm sheet (BulkActions.addToWeek) |
-| Kind ▸ DJ vid / Talking | menu item | CommandPalette.swift:460-462 | ✅ clear | — | label is enough | ⚠️ RISKY: setKind via perform, no undo, no confirm for N → Undo toast (bulk.setKind) |
-| Score ▸ 90 … 30 / Clear | menu item | CommandPalette.swift:463-466 | ⚠️ presets only; "Clear" wipes | — | Set score; higher posts sooner | ⚠️ RISKY: setScore via perform, no undo, no confirm for N → Undo toast / Confirm sheet for >1 (bulk.setScore) |
-| Exclude / Include | menu item | CommandPalette.swift:468-470 | ✅ clear | — | Keep out of the plan / Put back | ⚠️ RISKY: setExcluded via perform, no undo → Undo toast (bulk.setExcluded) |
+| ⏭ Edit | menu item | CommandPalette.swift:447 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
+| ⏭ Preview | menu item | CommandPalette.swift:448 | ✅ clear | — | label is enough | ⏭ owned by Shell/CommandPalette (agent A) |
+| ✅ Post today | menu item | CommandPalette.swift:450 | ⚠️ which slot / what moves | — | Put it on today's slot; the plan shifts | ok — AppModel.postToday is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ✅ Pin to tomorrow | menu item | CommandPalette.swift:451 | ✅ clear | — | label is enough | ok — AppModel.pin is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ✅ Skip next slot | menu item | CommandPalette.swift:452 | ⚠️ unclear who takes the slot | — | Let the next clip take its slot | ok — AppModel.skipNext is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ✅ Repost on ▸ <Platform> (blocked: "<Platform> — why", disabled) | menu item | CommandPalette.swift:453, 507-519 | ✅ clear | — (reason inline in title) | Queue the next version on <Platform> | ok — AppModel.repost is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ✅ Duplicate version | menu item | CommandPalette.swift:455 | ⚠️ which version | — | Copy the latest version as vN+1 | ok — AppModel.duplicateVersion is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ⏭ Re-render | menu item | CommandPalette.swift:456 | ✅ clear | — | Make the video file again now | ⏭ owned by Shell/CommandPalette (agent A) |
+| ⏭ Add N to week (multi-select) | menu item | CommandPalette.swift:458 | ✅ clear | — | Put them on the next open days | ⏭ AppModel.addToWeek is journaled (Undo); the many-clip confirm is owned by Shell/CommandPalette (agent A) |
+| ✅ Kind ▸ DJ vid / Talking | menu item | CommandPalette.swift:460-462 | ✅ clear | — | label is enough | ok — AppModel.setKind is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ✅ Score ▸ 90 … 30 / Clear | menu item | CommandPalette.swift:463-466 | ⚠️ presets only; "Clear" wipes | — | Set score; higher posts sooner | ok — AppModel.setScore is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
+| ✅ Exclude / Include | menu item | CommandPalette.swift:468-470 | ✅ clear | — | Keep out of the plan / Put back | ok — AppModel.setExcluded is journaled centrally (toast · Undo, ⌘Z); label/confirm changes owned by Shell/CommandPalette (agent A) |
 
 ### Risky one-click actions
 - **Cross-cutting:** every `model.perform(...)` action (AppModel.swift:508-520) only shows a plain toast — no Undo and no batch id. ⌘Z (`undoLast`, AppModel+Bulk.swift:149-152) undoes the last *bulk* batch, so pressing ⌘Z after a Week swap, Skip, Reset… silently undoes an older, unrelated bulk edit. Fix: give plan/post actions a batch journal (or at least clear `lastBatchId`) and an Undo toast.
