@@ -12,8 +12,25 @@ usage: djq <command> [args]
   status                              runway, today, problems, engine
   queue [--platform P]                ready backlog in posting order
   today                               today's posts
-  posts [--problems]                  upcoming/recent posts (or unresolved problems)
-  week [--propose|--approve|--rebuild] [YYYY-MM-DD]
+  posts [--problems] [--json]         upcoming/recent posts (or unresolved problems)
+  week [--propose|--approve|--rebuild] [--json] [YYYY-MM-DD]
+  videos [--state S] [--json]         clips (S: a state, unscored, scored, needs-edit, all)
+  video <video> [--json]              one clip: title, suggestions, edit (+resolved), versions, captions, posts
+  defaults [--json]                   new clip defaults (Settings → New clip defaults)
+
+  title <video> "<title>" | --clear   set Eric's title (agents: prefer suggest)
+  suggest [<video>] --file <json>     add title suggestions (array of {video_id, title_suggestions} for many)
+  text <video> "<text>" | --none | --default [--version N]
+  caption <video> "<caption>" | --default [--platform P] [--version N]
+  kind <video> "dj vid"|talking
+  bulk <action> [args] (--ids a,b,c | --filter F) [--dry-run] [--json]
+       actions: make-ready | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
+       | score-adjust <±n> | kind <k> | exclude | include | caption-template <id|default> | hashtags <a,b|default>
+       | extra-hashtags "<#a #b>"|default | drop-hashtags <P> | skip-platform <P> | unskip-platform <P>
+       | accept-title | title "<t>"|--clear | add-to-week <YYYY-MM-DD> | pin-consecutive <YYYY-MM-DD>
+       | post-today | re-render
+  bulk undo <batch> [--force] | bulk batches [--json]
+  agent-prompt titles [--ids a,b | --needs-title] [--out FILE]
   pin <video> <YYYY-MM-DD> | post-today <video> | skip-next <video> | push <YYYY-MM-DD> <days>
   remove-slot <slot> | swap <slot> <slot> | move <slot> <YYYY-MM-DD>
   posted <post> <url>                 mark posted (URL host must match the platform)
@@ -24,11 +41,11 @@ usage: djq <command> [args]
   score <video> <0-100|clear> | exclude <video> | include <video>
   pause [platform] | resume [platform]
   intake | tick [--force] | doctor [--json] | health [--days N]
-  prefill "<tag>" [--kind talking]
   render <video> [--version N] [--platform P]
   agent install [--app PATH] [--load] [--force] | agent uninstall [--unload] | agent status
 
 Ids can be shortened to a unique prefix. Platforms: \(Platform.allCases.map(\.rawValue).joined(separator: " "))
+Title formatting from tags lives upstream: scripts/prefill_titles.py (docs/metadata.md).
 """
 
 struct CLIError: Error, CustomStringConvertible {
@@ -158,14 +175,7 @@ func run() throws -> Int32 {
   let paths = Paths.standard
   Log.shared.configure(paths)
   if cmd == "prefill" {
-    let kindRaw = option("--kind")
-    guard kindRaw == nil || Kind(rawValue: kindRaw!) != nil else { throw CLIError("--kind must be \"dj vid\" or talking") }
-    let kind: Kind = kindRaw.flatMap { Kind(rawValue: $0) } ?? .djVid
-    let tag = try arg(0, "tag")
-    let rules = PrefillRules.load(paths)
-    print(Prefill.text(tag: tag, kind: kind, rules: rules))
-    print("\n(rules: \(paths.prefillRules.path))")
-    return 0
+    throw CLIError("prefill moved out of the app (round 2): run scripts/prefill_titles.py --tag \"<tag>\" or on a videos.json")
   }
   let store = try Store(paths: paths)
   let settings = try store.settings()
@@ -175,8 +185,10 @@ func run() throws -> Int32 {
   let queue = Queue(store: store)
   let writes: Set<String> = ["week", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem",
                              "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted",
-                             "score", "exclude", "include", "pause", "resume", "intake", "tick", "render"]
-  var wrote = writes.contains(cmd) && (cmd != "week" || args.contains { $0.hasPrefix("--") })
+                             "score", "exclude", "include", "pause", "resume", "intake", "tick", "render",
+                             "title", "suggest", "text", "caption", "kind", "bulk"]
+  var wrote = writes.contains(cmd) && (cmd != "week" || args.contains { $0.hasPrefix("--") && $0 != "--json" })
+    && !(cmd == "bulk" && (args.contains("--dry-run") || args.first == "batches"))
   defer { if wrote { ChangeSignal.post() } }
 
   switch cmd {
@@ -212,6 +224,12 @@ func run() throws -> Int32 {
     printPosts(store, try actions.dueToday(now: store.clock.now), settings)
 
   case "posts":
+    if flag("--json") {
+      let since = dm.date(dm.addDays(dm.key(store.clock.now), -7))
+      let problems = flag("--problems")
+      printJSON(try AgentAPI.posts(store: store, problems: problems, since: problems ? nil : since))
+      return 0
+    }
     if flag("--problems") {
       print("Problems")
       printPosts(store, try actions.problems(), settings)
@@ -222,12 +240,129 @@ func run() throws -> Int32 {
     }
 
   case "week":
-    let propose = flag("--propose"), approve = flag("--approve"), rebuild = flag("--rebuild")
+    let propose = flag("--propose"), approve = flag("--approve"), rebuild = flag("--rebuild"), json = flag("--json")
     let week = try args.first.map { dm.weekStart(of: dm.date(try validDate($0))) } ?? dm.weekStart(of: store.clock.now)
     if propose { try planner.proposeWeek(week); wrote = true }
     if rebuild { try planner.rebuildWeek(week); wrote = true }
     if approve { try planner.approveWeek(week); wrote = true }
-    try printWeek(store, week)
+    if json { printJSON(try AgentAPI.week(week, store: store)) } else { try printWeek(store, week) }
+
+  case "videos":
+    let state = option("--state")
+    let list = try AgentAPI.videos(store: store, filter: state)
+    if flag("--json") { printJSON(list); return 0 }
+    for v in list {
+      print("  \(short(v.id))  \(pad(v.state, 11)) \(pad(v.score.map(String.init) ?? "–", 4))\(v.display_name)"
+            + (v.title == nil ? "" : "  (tag: \(v.raw_tag))") + (v.suggestion_count > 0 ? "  [\(v.suggestion_count) suggestion(s)]" : ""))
+    }
+    print("  \(list.count) clip(s)")
+
+  case "video":
+    let v = try resolveVideo(store, try arg(0, "video id"))
+    let d = try AgentAPI.video(v.id, store: store)
+    if flag("--json") { printJSON(d); return 0 }
+    print("\(d.video.display_name)  [\(v.id)]")
+    print("  tag \(d.video.raw_tag) · \(d.video.kind) · \(d.video.state) · score \(d.video.score.map(String.init) ?? "–")")
+    print("  title \(d.video.title.map { "\"\($0)\" (\(d.video.title_source ?? "?"))" } ?? "none")")
+    for s in d.title_suggestions {
+      print("  suggestion \"\(Captions.oneLine(s.text))\" \(s.confidence.map { String(format: "%.2f", $0) } ?? "?") \(s.source) [\(s.origin)]")
+    }
+    let re = d.resolved_edit
+    print("  trim \(EditorLogic.time(re.trimIn, tenths: true))–\(EditorLogic.time(re.trimOut, tenths: true))\(re.isDefault(.trimIn) && re.isDefault(.trimOut) ? " (default)" : "") · aspect \(re.aspect.rawValue) · crop \(re.cropConfirmed ? "confirmed" : "not confirmed")")
+    if let r = d.resolved_v1 { print("  text \(r.noText ? "(no text)" : "\"\(Captions.oneLine(r.text))\"")\(r.isDefault("text") ? " (default)" : "")") }
+    for i in d.issues { print("  issue  \(i.message)") }
+
+  case "defaults":
+    if flag("--json") { printJSON(settings.defaults); return 0 }
+    print(String(decoding: try AgentAPI.encoder.encode(settings.defaults), as: UTF8.self))
+
+  case "title":
+    let v = try resolveVideo(store, try arg(0, "video id"))
+    if flag("--clear") {
+      try store.setTitle(v.id, nil, source: "agent")
+      print("\(v.tag): title cleared")
+    } else {
+      let t = try arg(1, "title (or --clear)")
+      try store.setTitle(v.id, t, source: "agent")
+      print("\(v.tag) → \"\(t)\"")
+    }
+    wrote = true
+
+  case "suggest":
+    guard let file = option("--file") else { throw CLIError("suggest needs --file <json>") }
+    let vid = try args.first.map { try resolveVideo(store, $0).id }
+    let data = file == "-" ? FileHandle.standardInput.readDataToEndOfFile() : try Data(contentsOf: URL(fileURLWithPath: file))
+    let entries = try SuggestionImport.parse(data, videoId: vid)
+    var n = 0
+    try store.db.transaction {
+      for e in entries {
+        let id = try resolveVideo(store, e.videoId).id
+        n += try store.addSuggestions(videoId: id, e.suggestions, origin: "agent")
+      }
+    }
+    wrote = n > 0
+    print("added \(n) suggestion(s) for \(entries.count) clip(s)")
+
+  case "text":
+    let v = try resolveVideo(store, try arg(0, "video id"))
+    let n = try option("--version").map { try intArg($0, "--version", 1...99) } ?? 1
+    var ver = try store.versions(videoId: v.id).first { $0.number == n } ?? Version(number: n)
+    let existing = Set(try store.versions(videoId: v.id).map(\.number))
+    if n > 1, !existing.contains(n), !existing.contains(n - 1) { throw CLIError("v\(n - 1) doesn't exist yet") }
+    if flag("--none") { ver.noText = true; ver.text = nil }
+    else if flag("--default") { ver.noText = nil; ver.text = nil }
+    else { ver.text = try arg(1, "text (or --none / --default)"); ver.noText = false }
+    try store.save(ver, videoId: v.id)
+    wrote = true
+    print("\(v.tag) v\(n) text → \(ver.noText == true ? "No text" : ver.text.map { "\"\($0)\"" } ?? "default")")
+
+  case "caption":
+    let v = try resolveVideo(store, try arg(0, "video id"))
+    let n = try option("--version").map { try intArg($0, "--version", 1...99) } ?? 1
+    let p = try option("--platform").map(platform)
+    var ver = try store.versions(videoId: v.id).first { $0.number == n } ?? Version(number: n)
+    let value: String? = flag("--default") ? nil : try arg(1, "caption (or --default)")
+    if let p {
+      var pc = ver.platformCaptions ?? [:]
+      pc[p] = value
+      ver.platformCaptions = pc.isEmpty ? nil : pc
+    } else {
+      ver.caption = value
+    }
+    try store.save(ver, videoId: v.id)
+    wrote = true
+    print("\(v.tag) v\(n) caption\(p.map { " for \($0.displayName)" } ?? "") → \(value == nil ? "default" : "set")")
+
+  case "kind":
+    let v = try resolveVideo(store, try arg(0, "video id"))
+    guard let k = Kind(rawValue: try arg(1, "kind")) ?? Kind.allCases.first(where: { $0.displayName.lowercased() == args[1].lowercased() }) else {
+      throw CLIError("kind must be \"dj vid\" or talking")
+    }
+    try store.setKind(v.id, k)
+    wrote = true
+    print("\(v.tag) → \(k.displayName)")
+
+  case "bulk":
+    return try runBulk(store, &wrote)
+
+  case "agent-prompt":
+    guard try arg(0, "titles") == "titles" else { throw CLIError("agent-prompt titles [--ids a,b | --needs-title] [--out FILE]") }
+    let out = option("--out")
+    let ids: [String]
+    if let raw = option("--ids") {
+      ids = try raw.split(separator: ",").map { try resolveVideo(store, String($0)).id }
+    } else {
+      _ = flag("--needs-title")
+      ids = try AgentPrompts.clipsNeedingTitleHelp(store: store)
+      if ids.isEmpty { print("No clips need title help (every clip has a title or a confident suggestion)."); return 0 }
+    }
+    let md = try AgentPrompts.titles(for: ids, store: store)
+    if let out {
+      try md.write(toFile: out, atomically: true, encoding: .utf8)
+      print("wrote \(out) (\(ids.count) clip(s))")
+    } else {
+      print(md)
+    }
 
   case "pin":
     let v = try resolveVideo(store, try arg(0, "video id"))
@@ -435,6 +570,92 @@ func run() throws -> Int32 {
     throw CLIError("unknown command \(cmd)\n\n\(usage)")
   }
   return 0
+}
+
+func printJSON<T: Encodable>(_ v: T) {
+  print(String(decoding: (try? AgentAPI.encoder.encode(v)) ?? Data("null".utf8), as: UTF8.self))
+}
+
+func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
+  let bulk = BulkActions(store: store)
+  let json = flag("--json"), dry = flag("--dry-run"), force = flag("--force")
+  let action = try arg(0, "bulk action")
+  args.removeFirst()
+  if action == "batches" {
+    let list = try bulk.batches()
+    if json { printJSON(list); return 0 }
+    for b in list {
+      print("  \(short(b.id))  \(fmt(b.createdAt, try store.settings()))  \(pad(b.action, 16)) \(b.summary)\(b.undoneAt != nil ? "  (undone)" : "")")
+    }
+    return 0
+  }
+  if action == "undo" {
+    let raw = try arg(0, "batch id")
+    let m = try bulk.batches(limit: 1000).filter { $0.id.hasPrefix(raw) }
+    guard m.count == 1 else { throw CLIError(m.isEmpty ? "no batch \(raw)" : "\(raw) matches \(m.count) batches") }
+    let r = try bulk.undo(m[0].id, force: force, dryRun: dry)
+    wrote = !dry && !r.changed.isEmpty
+    if json { printJSON(r) } else { printBulk(r) }
+    return 0
+  }
+  let ids: [String]
+  if let raw = option("--ids") {
+    ids = try raw.split(separator: ",").map { try resolveVideo(store, String($0).trimmingCharacters(in: .whitespaces)).id }
+  } else if let f = option("--filter") {
+    ids = try bulk.ids(filter: f)
+  } else {
+    throw CLIError("bulk \(action) needs --ids a,b,c or --filter <state>")
+  }
+  func p() throws -> Platform { try platform(try arg(0, "platform")) }
+  let r: BulkResult
+  switch action {
+  case "make-ready": r = try bulk.makeReadyWithDefaults(ids, dryRun: dry)
+  case "apply-defaults":
+    let secs = try option("--sections").map { raw in
+      try Set(raw.split(separator: ",").map { s -> BulkSection in
+        guard let x = BulkSection(rawValue: String(s)) else { throw CLIError("unknown section \(s) (\(BulkSection.allCases.map(\.rawValue).joined(separator: ",")))") }
+        return x
+      })
+    } ?? Set(BulkSection.allCases)
+    r = try bulk.applyDefaults(ids, sections: secs, dryRun: dry)
+  case "score":
+    let raw = try arg(0, "score")
+    r = try bulk.setScore(ids, raw == "clear" ? nil : try intArg(raw, "score", 0...100), dryRun: dry)
+  case "score-adjust": r = try bulk.adjustScore(ids, by: try intArg(try arg(0, "delta"), "delta", -100...100), dryRun: dry)
+  case "kind":
+    guard let k = Kind(rawValue: try arg(0, "kind")) else { throw CLIError("kind must be \"dj vid\" or talking") }
+    r = try bulk.setKind(ids, k, dryRun: dry)
+  case "exclude", "include": r = try bulk.setExcluded(ids, action == "exclude", dryRun: dry)
+  case "caption-template":
+    let t = try arg(0, "template id|default")
+    r = try bulk.setCaptionTemplate(ids, t == "default" ? nil : t, dryRun: dry)
+  case "hashtags":
+    let t = try arg(0, "set ids|default")
+    r = try bulk.setHashtagSets(ids, t == "default" ? nil : t.split(separator: ",").map(String.init), dryRun: dry)
+  case "extra-hashtags":
+    let t = try arg(0, "\"#a #b\"|default")
+    r = try bulk.setExtraHashtags(ids, t == "default" ? nil : t.split(separator: " ").map(String.init), dryRun: dry)
+  case "drop-hashtags": r = try bulk.dropHashtags(ids, platform: try p(), dryRun: dry)
+  case "skip-platform", "unskip-platform": r = try bulk.setPlatform(ids, try p(), skipped: action == "skip-platform", dryRun: dry)
+  case "accept-title": r = try bulk.acceptTopTitleSuggestion(ids, dryRun: dry)
+  case "title": r = try bulk.setTitle(ids, flag("--clear") ? nil : try arg(0, "title"), dryRun: dry)
+  case "add-to-week": r = try bulk.addToWeek(ids, week: try dateArg(0), dryRun: dry)
+  case "pin-consecutive": r = try bulk.pinConsecutive(ids, from: try dateArg(0), dryRun: dry)
+  case "post-today": r = try bulk.postToday(ids, dryRun: dry)
+  case "re-render": r = try bulk.reRender(ids, dryRun: dry)
+  default: throw CLIError("unknown bulk action \(action)\n\n\(usage)")
+  }
+  wrote = !dry && !r.changed.isEmpty
+  if json { printJSON(r) } else { printBulk(r) }
+  return 0
+}
+
+func printBulk(_ r: BulkResult) {
+  print("\(r.dryRun ? "[dry run] " : "")\(r.summary)\(r.batchId.map { " · batch \(short($0)) (undo: djq bulk undo \(short($0)))" } ?? "")")
+  for (id, why) in r.skipped.sorted(by: { $0.key < $1.key }) { print("  skipped \(short(id))  \(why)") }
+  for (id, issues) in r.remainingIssues.sorted(by: { $0.key < $1.key }) where !issues.isEmpty {
+    print("  \(short(id)) still: \(issues.map(\.message).joined(separator: "; "))")
+  }
 }
 
 do {

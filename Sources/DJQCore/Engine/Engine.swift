@@ -11,7 +11,8 @@ public struct TickReport: Sendable {
     self.started = started; self.steps = steps; self.errors = errors
   }
   /// Step names in the order a tick runs them (for display).
-  public static let order = ["intake", "plan", "missed", "due", "platform", "alerts", "render", "move", "heartbeat", "backup"]
+  public static let order = ["intake", "plan", "missed", "due", "platform", "alerts", "render", "proxies", "move", "heartbeat",
+                              "backup"]
 }
 
 /// The background engine (spec §8). One `tick` does whatever is pending; it is safe to call at any time and never
@@ -39,6 +40,12 @@ public final class Engine: @unchecked Sendable {
   private var observers: [(NotificationCenter, NSObjectProtocol)] = []
   private let loop = DispatchQueue(label: "com.djlovd.queue.engine", qos: .utility)
 
+  /// Makes a clip's preview proxy (round 2 #12). Defaults to `Media.ensureProxy` when the engine has the real
+  /// `Renderer`; nil turns the "proxies" step off (tests with fake media).
+  public var proxyMaker: (@Sendable (Store, Video) throws -> URL)?
+  /// Proxies generated per idle tick (never while renders are due or waiting).
+  public var proxiesPerTick = 2
+
   /// Called after every tick (on the engine queue when started).
   public var onTick: (@Sendable (TickReport) -> Void)?
   /// Gap between heartbeats that means the Mac was asleep or off.
@@ -49,6 +56,7 @@ public final class Engine: @unchecked Sendable {
     self.renderer = renderer
     self.publisher = publisher
     self.notifier = notifier
+    if renderer is Renderer { proxyMaker = { try Media.ensureProxy(store: $0, video: $1) } }
   }
 
   public private(set) var lastTick: TickReport? {
@@ -133,6 +141,7 @@ public final class Engine: @unchecked Sendable {
     step("platform", &r) { try platformChecks() }
     step("alerts", &r) { try alerts() }
     step("render", &r) { try renderAhead(&ctx) }
+    step("proxies", &r) { try proxies(ctx) }
     step("move", &r) { try moveAndCleanup() }
     step("heartbeat", &r) { try heartbeat(started: started, last: lastBeat) }
     step("backup", &r) { try Backup.runIfDue(store: store).map { "backup \($0.lastPathComponent)" } ?? "up to date" }
@@ -144,6 +153,8 @@ public final class Engine: @unchecked Sendable {
 
   struct TickContext {
     var renderBudget = 1  // new renders per tick (earliest posts first, so due posts go first)
+    var rendered = 0
+    var rendersWaiting = 0
     var invalid: [String: String?] = [:]
   }
 
@@ -234,8 +245,42 @@ public final class Engine: @unchecked Sendable {
                                postId: p.id, videoId: v.id))
       }
     }
+    ctx.rendered = rendered
+    ctx.rendersWaiting = waiting
     return "rendered \(rendered) · attached \(attached) · waiting \(waiting)\(failed > 0 ? " · failed \(failed)" : "")"
       + (backedOff > 0 ? " · backing off \(backedOff)" : "")
+  }
+
+  /// Idle-time preview proxies (round 2 #12): a few per tick, lowest priority — skipped whenever this tick
+  /// rendered or a render is waiting. Order: clips to score, then needing edit, then ready/planned. A clip whose
+  /// proxy failed isn't retried until its crop/trim/file changes.
+  func proxies(_ ctx: TickContext) throws -> String {
+    guard let make = proxyMaker else { return "off" }
+    guard ctx.rendered == 0, ctx.rendersWaiting == 0, !isRendering else { return "waiting for renders" }
+    let rank: [VideoState: Int] = [.needsEdit: 1, .ready: 2, .planned: 2]
+    let vids = try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND state IN ('needs_edit','ready','planned')")
+      .sorted { a, b in
+        let ra = a.score == nil ? 0 : rank[a.state] ?? 3, rb = b.score == nil ? 0 : rank[b.state] ?? 3
+        return (ra, a.part ?? 0, a.start ?? 0, a.id) < (rb, b.part ?? 0, b.start ?? 0, b.id)
+      }
+    var made = 0, failed = 0, missingCount = 0
+    for v in vids {
+      guard let url = try? Media.proxyURL(store: store, video: v) else { continue }
+      if FileManager.default.fileExists(atPath: url.path) { continue }
+      let failKey = "proxyFail.\(v.id)"
+      if let last: String = try store.kv(failKey), last == url.lastPathComponent { continue }
+      missingCount += 1
+      guard made + failed < proxiesPerTick else { continue }
+      do {
+        _ = try make(store, v)
+        made += 1
+      } catch {
+        failed += 1
+        try store.setKV(failKey, url.lastPathComponent)
+        Log.shared.warn("proxy failed for \(v.id): \(error)")
+      }
+    }
+    return made + failed == 0 ? "up to date" : "made \(made)\(failed > 0 ? " · failed \(failed)" : "") · left \(max(0, missingCount - made - failed))"
   }
 
   /// A whole local day passed (and ≥ lateGraceHours late) → overdue; that platform's remaining regular posts at the
