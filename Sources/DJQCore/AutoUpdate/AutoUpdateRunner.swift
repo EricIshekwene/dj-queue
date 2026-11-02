@@ -277,6 +277,9 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     if let b = backupPath { say("database backed up to \(b)") }
 
     let hadPrevious = fm.fileExists(atPath: au.installedApp.path)
+    // The kept build's predecessor waits aside until verify passes, so a rollback leaves a kept build behind.
+    try? fm.removeItem(at: au.previousOlder.deletingLastPathComponent())
+    if hadPrevious, fm.fileExists(atPath: au.previous.path) { try? replace(au.previousOlder, with: au.previous, move: true) }
     do {
       if hadPrevious { try replace(au.previous, with: au.installedApp, move: true) }
       try replace(au.installedApp, with: au.staged, move: true)
@@ -321,6 +324,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
                                    schemaBefore: schemaBefore, schemaAfter: schemaAfter, backup: backupPath)
     }
 
+    try? fm.removeItem(at: au.previousOlder.deletingLastPathComponent())
     let build = AutoUpdateBuild(version: candidate.version, commit: candidate.commit, at: now())
     state.history.append(AutoUpdateInstall(to: build, from: current.map { b in AutoUpdateBuild(version: b.version, commit: b.commit ?? state.installed?.commit) },
                                            schemaBefore: schemaBefore, schemaAfter: schemaAfter, backup: backupPath, at: now()))
@@ -379,6 +383,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     do {
       try replace(au.failed, with: au.installedApp, move: true)
       try replace(au.installedApp, with: au.previous, move: true)
+      if fm.fileExists(atPath: au.previousOlder.path) { try replace(au.previous, with: au.previousOlder, move: true) }
       linkCLI()
     } catch {
       block("Checks after installing failed (\(why)) and the rollback failed: \(error).")

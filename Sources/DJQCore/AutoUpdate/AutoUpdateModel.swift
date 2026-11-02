@@ -52,6 +52,8 @@ public struct AutoUpdatePaths: Sendable {
   public var lock: URL { dir.appendingPathComponent("run.lock") }
   /// The bundle that was installed before the current one (kept for `djq autoupdate rollback`).
   public var previous: URL { dir.appendingPathComponent("previous/\(Self.appName)") }
+  /// The previous bundle's predecessor, held only during an install so a failed verify can restore both slots.
+  public var previousOlder: URL { dir.appendingPathComponent("previous-older/\(Self.appName)") }
   /// A gated build waiting for the window to close (or for "Restart & update").
   public var staged: URL { dir.appendingPathComponent("staged/\(Self.appName)") }
   /// The build a failed verify rolled back from (kept for a look; replaced by the next failure).

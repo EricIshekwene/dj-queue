@@ -271,6 +271,7 @@ import Testing
     #expect(r.kind == .rolledBack)
     #expect(e.installed?.commit == first)
     #expect(BundleInfo.build(e.au.failed)?.commit == v2)
+
     let s = e.files.state()
     #expect(s.blocked?.commit == v2)
     #expect(s.rolledBackFrom == v2)
@@ -278,6 +279,23 @@ import Testing
     // Not retried on the next trigger.
     e.extraEnv = [:]
     #expect(e.runner().run(trigger: .watch).kind != .installed)
+  }
+
+  @Test func aFailedUpdateKeepsTheOlderBuildForRollback() throws {
+    let e = try Env()
+    try e.setUp()
+    let first = e.git("rev-parse", "HEAD")
+    e.runner().run(trigger: .manual)
+    try e.write("Sources.swift", "// v2")
+    let v2 = e.commit("v2")
+    e.runner().run(trigger: .manual)
+    try e.write("Sources.swift", "// v3")
+    e.commit("v3")
+    e.extraEnv["DJQ_AUTOUPDATE_FAIL_VERIFY"] = "1"
+    #expect(e.runner().run(trigger: .watch).kind == .rolledBack)
+    #expect(e.installed?.commit == v2)
+    #expect(BundleInfo.build(e.au.previous)?.commit == first)
+    #expect(!FileManager.default.fileExists(atPath: e.au.previousOlder.path))
   }
 
   @Test func changedDataFailsVerify() throws {
