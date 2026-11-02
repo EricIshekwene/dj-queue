@@ -146,6 +146,87 @@ public final class Planner: @unchecked Sendable {
     }
   }
 
+  /// What "Remove from queue" takes out for one video, per day: its in-flight posts (planned, rendering, rendered,
+  /// due, overdue) grouped by their local day, plus its removable slots that have no posts yet (a proposed week).
+  public struct UnplanItem: Codable, Sendable, Hashable {
+    public var videoId: String
+    /// YYYY-MM-DD (the post's day — a platform shifted by a missed day keeps its own day).
+    public var date: String
+    /// Platforms whose post is removed that day (empty: a proposed slot that never got posts).
+    public var platforms: [Platform]
+    /// The slot that day was pinned (its pin goes too).
+    public var pinned: Bool
+  }
+
+  /// Read-only preview of `unplan(videoId:)`, in date order.
+  public func unplanPreview(videoId: String) throws -> [UnplanItem] {
+    let dm = try store.dayMath()
+    let (slots, live) = try unplanTargets(videoId: videoId, dm: dm)
+    var byDay: [String: UnplanItem] = [:]
+    for p in live {
+      let d = dm.key(p.scheduledAt)
+      var i = byDay[d] ?? UnplanItem(videoId: videoId, date: d, platforms: [], pinned: false)
+      if !i.platforms.contains(p.platform) { i.platforms.append(p.platform) }
+      byDay[d] = i
+    }
+    for s in slots {
+      var i = byDay[s.date] ?? UnplanItem(videoId: videoId, date: s.date, platforms: [], pinned: false)
+      i.pinned = i.pinned || s.pinned
+      byDay[s.date] = i
+    }
+    return byDay.values.map { i in
+      var i = i
+      i.platforms.sort { (Platform.allCases.firstIndex(of: $0) ?? 0) < (Platform.allCases.firstIndex(of: $1) ?? 0) }
+      return i
+    }.sorted { $0.date < $1.date }
+  }
+
+  /// Takes a video out of the plan ("Remove from queue", sends it back to Edit). Every slot of it from today on with
+  /// nothing posted is removed exactly like `remove(slotId:)` (un-posted regular posts deleted, failed/skipped
+  /// history and pending extras detached; a pinned slot goes with its pin), and so is a past slot that only held
+  /// in-flight posts. Then every post of the video still in flight — planned, rendering, rendered, due, overdue,
+  /// in any slot, retries and reposts too — is deleted, so nothing of it posts while it's held. Posted and other
+  /// terminal posts, slots with a posted post and post history stay. The other clips keep their days: like
+  /// `remove`, nothing is backfilled or reshuffled (a never-proposed week is still auto-proposed by the engine).
+  @discardableResult
+  public func unplan(videoId: String) throws -> [UnplanItem] {
+    let dm = try store.dayMath()
+    let preview = try unplanPreview(videoId: videoId)
+    try store.db.transaction {
+      let (slots, _) = try unplanTargets(videoId: videoId, dm: dm)
+      var touched: Set<String> = [videoId]
+      for s in slots {
+        touched.formUnion(try store.slotPosts(s.id).map(\.videoId))
+        try clearSlot(s)
+        try store.deletePlanSlot(s.id)
+      }
+      for p in try store.posts(where: "video_id=?", [videoId]) where !p.state.isTerminal {
+        try store.deletePost(p.id)
+      }
+      for v in touched { try store.refreshState(videoId: v) }
+    }
+    if !preview.isEmpty {
+      try store.logEvent("plan", "Removed from the plan: " + preview.map { i in
+        "\(i.date)" + (i.platforms.isEmpty ? " (proposed)" : " · \(i.platforms.count) platform\(i.platforms.count == 1 ? "" : "s")")
+      }.joined(separator: ", "), videoId: videoId)
+    }
+    return preview
+  }
+
+  /// Slots `unplan` removes (nothing posted; today on, or past with only in-flight posts) and the video's own
+  /// in-flight posts it deletes.
+  func unplanTargets(videoId: String, dm: DayMath) throws -> (slots: [PlanSlot], live: [PlatformPost]) {
+    let today = store.today(dm)
+    var slots: [PlanSlot] = []
+    for s in try store.planSlots(where: "video_id=?", [videoId]) {
+      let posts = try store.slotPosts(s.id)
+      if posts.contains(where: { $0.state == .posted }) { continue }
+      if s.date >= today || !posts.contains(where: { $0.state.isTerminal }) { slots.append(s) }
+    }
+    let live = try store.posts(where: "video_id=?", [videoId]).filter { !$0.state.isTerminal }
+    return (slots, live)
+  }
+
   /// Swaps the videos of two slots.
   public func swap(_ a: String, _ b: String) throws {
     let settings = try store.settings()

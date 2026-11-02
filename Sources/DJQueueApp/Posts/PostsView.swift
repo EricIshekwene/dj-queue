@@ -5,8 +5,10 @@ import SwiftUI
 /// posted, and fix problems.
 ///
 /// Toolbar "Posts" · search · Platform ▾. Tabs `Problems 2 · Scheduled · Posted · All` head the centred column.
-/// Problems are attention cards with their fixes; the other tabs are 52 pt rows (thumb, title, platform, version,
-/// attempt, state pill, date, link). Clicking a row opens the 360 pt inspector (attempt history, metrics, repost).
+/// Every tab shows one card per (clip, scheduled day) (`PostGroupCard`, round 3 F4): cover, title, day + time span,
+/// status summary and platform chips; "Show platforms" opens the per-platform rows (click one → the 360 pt
+/// inspector with attempt history, metrics, repost). Problems: cards open, the affected platforms as problem cards
+/// with their fixes, the rest folded into "+N fine".
 /// Bulk (checkbox / ⇧ / ⌘ / ⌘A): Reset · Skip · Retry, confirmed in a dialog, then a toast.
 struct PostsView: View {
   @Bindable var model: AppModel
@@ -122,27 +124,21 @@ struct PostsView: View {
             ui.postsPlatform = nil
           }
         }
-      } else if tab == .problems {
-        let primaryId = list.first { PostFixes(model: model, post: $0).fixReason == nil }?.id
+      } else {
+        let groups = PostGrouping.group(list, day: { model.dm.key($0) })
+        let ordered = list.map(\.id)
+        let primaryId = tab == .problems ? list.first { PostFixes(model: model, post: $0).fixReason == nil }?.id : nil
         ScrollView {
-          LazyVStack(spacing: DS.space.sm) {
-            ForEach(list) { p in PostProblemCard(model: model, post: p, isPrimary: p.id == primaryId) }
+          LazyVStack(spacing: DS.space.xs) {
+            ForEach(groups) { g in
+              PostGroupCard(model: model, group: g, ordered: ordered, compact: compact, problems: tab == .problems,
+                            primaryProblemId: primaryId)
+            }
           }
           .padding(.vertical, DS.space.xxs)
           .padding(.bottom, ScreenMetrics.bulkBarInset)
         }
         .scrollIndicators(.automatic)
-      } else {
-        ScrollView {
-          LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-            Section {
-              ForEach(list) { p in PostRowView(model: model, post: p, ordered: list.map(\.id), compact: compact) }
-            } header: {
-              PostListHeader(compact: compact).background(DS.color.background)
-            }
-          }
-          .padding(.bottom, ScreenMetrics.bulkBarInset)
-        }
       }
     }
   }

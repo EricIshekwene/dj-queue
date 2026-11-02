@@ -251,6 +251,9 @@ public struct Video: Codable, Sendable, Identifiable, Hashable {
   /// Source picture size, cached the first time the file is probed (nil = not probed yet).
   public var sourceWidth: Int? = nil
   public var sourceHeight: Int? = nil
+  /// Sent back to Edit from the Queue ("Remove from queue", app-owned, schema v3): the clip stays `needs_edit`
+  /// with the issue "Sent back from Queue" until "Send to queue" clears it.
+  public var heldInEdit: Bool = false
 
   /// The marker tag (the part of the name after the session), e.g. "yayo x johnny".
   public var tag: String { tags.first ?? name }

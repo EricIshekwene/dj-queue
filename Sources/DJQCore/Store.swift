@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 2
+  public static let schemaVersion = 3
 
   public init(paths: Paths, clock: Clock = SystemClock(), path: String? = nil) throws {
     self.paths = paths
@@ -83,6 +83,7 @@ public final class Store: @unchecked Sendable {
       try seedDefaults()
     }
     if v < 2 { try migrateToV2(from: v) }
+    if v < 3 { try migrateToV3(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -128,6 +129,26 @@ public final class Store: @unchecked Sendable {
         try db.run("UPDATE edits SET json=? WHERE video_id=?", [JSONCoding.string(e), id])
       }
       try db.exec("PRAGMA user_version = 2")
+    }
+  }
+
+  /// "Remove from queue" (sent back to Edit): one app-owned flag per clip, additive and lossless (every existing
+  /// clip starts not held, so no state changes). A file database with data is copied to `<app support>/backups/` first.
+  private func migrateToV3(from v: Int) throws {
+    if v >= 2, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-schema3-\(f.string(from: Date())).sqlite").path)
+    }
+    try db.transaction {
+      let cols = Set(try db.query("PRAGMA table_info(videos)").compactMap { $0.string("name") })
+      if !cols.contains("held_in_edit") {
+        try db.exec("ALTER TABLE videos ADD COLUMN held_in_edit INTEGER NOT NULL DEFAULT 0")
+      }
+      try db.exec("PRAGMA user_version = 3")
     }
   }
 
@@ -209,8 +230,9 @@ public final class Store: @unchecked Sendable {
     try db.run("""
       INSERT INTO videos(id,session_id,name,tags,type,content_type,kind,file,fingerprint,file_size,duration,
         marked_start,marked_end,start,"end",grace,audio,part,score,state,excluded,missing,in_manifest,notes,
-        already_posted_on,longform_url,created_at,updated_at,title,title_tracks,title_source,source_width,source_height)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        already_posted_on,longform_url,created_at,updated_at,title,title_tracks,title_source,source_width,source_height,
+        held_in_edit)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, name=excluded.name, tags=excluded.tags,
         type=excluded.type, content_type=excluded.content_type, kind=excluded.kind, file=excluded.file,
         fingerprint=excluded.fingerprint, file_size=excluded.file_size, duration=excluded.duration,
@@ -219,12 +241,12 @@ public final class Store: @unchecked Sendable {
         excluded=excluded.excluded, missing=excluded.missing, in_manifest=excluded.in_manifest, notes=excluded.notes,
         already_posted_on=excluded.already_posted_on, longform_url=excluded.longform_url, updated_at=excluded.updated_at,
         title=excluded.title, title_tracks=excluded.title_tracks, title_source=excluded.title_source,
-        source_width=excluded.source_width, source_height=excluded.source_height
+        source_width=excluded.source_width, source_height=excluded.source_height, held_in_edit=excluded.held_in_edit
       """, [v.id, v.sessionId, v.name, JSONCoding.string(v.tags), v.type.rawValue, v.contentType, v.kind.rawValue,
             v.file, v.fingerprint, v.fileSize, v.duration, v.markedStart, v.markedEnd, v.start, v.end, v.grace,
             v.audio, v.part, v.score, v.state.rawValue, v.excluded, v.missing, v.inManifest, v.notes,
             JSONCoding.string(v.alreadyPostedOn), v.longformURL, v.createdAt, v.updatedAt, v.title,
-            v.titleTracks.map { JSONCoding.string($0) }, v.titleSource, v.sourceWidth, v.sourceHeight])
+            v.titleTracks.map { JSONCoding.string($0) }, v.titleSource, v.sourceWidth, v.sourceHeight, v.heldInEdit])
   }
 
   /// Updates only the fields that come from videos.json / the file (spec §4: never overwrite app-owned fields).
@@ -262,6 +284,15 @@ public final class Store: @unchecked Sendable {
     try refreshState(videoId: id)  // "No text for Talking" can change readiness
   }
 
+  /// "Remove from queue" / "Send to queue": while held, the clip stays in Edit (state `needs_edit`, issue
+  /// "Sent back from Queue") even when everything else is valid, so the planner never picks it. Plan slots and
+  /// posts are not touched here — `BulkActions.removeFromQueue` does that with the planner's rules.
+  public func setHeldInEdit(_ id: String, _ held: Bool) throws {
+    try db.run("UPDATE videos SET held_in_edit=?, updated_at=? WHERE id=?", [held, now, id])
+    try logEvent("queue", held ? "Sent back to Edit from Queue" : "Sent to Queue", videoId: id)
+    try refreshState(videoId: id)
+  }
+
   public func setNotes(_ id: String, _ notes: String) throws {
     try db.run("UPDATE videos SET notes=?, updated_at=? WHERE id=?", [notes, now, id])
   }
@@ -278,7 +309,7 @@ public final class Store: @unchecked Sendable {
           notes: r.string("notes") ?? "", alreadyPostedOn: r.json("already_posted_on") ?? [],
           longformURL: r.string("longform_url"), createdAt: r.date("created_at")!, updatedAt: r.date("updated_at")!,
           title: r.string("title"), titleTracks: r.json("title_tracks"), titleSource: r.string("title_source"),
-          sourceWidth: r.int("source_width"), sourceHeight: r.int("source_height"))
+          sourceWidth: r.int("source_width"), sourceHeight: r.int("source_height"), heldInEdit: r.bool("held_in_edit"))
   }
 
   public func fileURL(for v: Video) throws -> URL? {
@@ -533,9 +564,19 @@ public final class Store: @unchecked Sendable {
     }
   }
 
+  /// The held flag counts only for a short clip with nothing posted (regular/retry).
+  public func isHeld(_ v: Video) throws -> Bool {
+    guard v.heldInEdit, v.type == .short else { return false }
+    return try db.one("SELECT 1 AS x FROM platform_posts WHERE video_id=? AND kind IN ('regular','retry') AND state='posted'",
+                      [v.id]) == nil
+  }
+
   public func computeState(_ v: Video) throws -> VideoState {
     if v.missing { return .missingFile }
     if v.excluded { return .excluded }
+    // Sent back from Queue: Edit until Eric sends it to the queue again (its future slots/posts were removed).
+    // Never masks a clip that already posted somewhere (Remove from queue refuses those).
+    if try isHeld(v) { return .needsEdit }
     // Latest attempt per platform; a retry (fix) supersedes the failed regular post. Reposts don't change state.
     let posts = try self.posts(where: "video_id=? AND kind IN ('regular','retry')", [v.id])
     if !posts.isEmpty {

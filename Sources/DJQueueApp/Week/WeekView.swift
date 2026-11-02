@@ -285,8 +285,8 @@ struct WeekDayCard: View {
     let p = model.playback
     VStack(alignment: .leading, spacing: 0) {
       DSVideoPreview(url: video.missing ? nil : model.proxyURLs[video.id], poster: model.poster(video),
-                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), unmuteOnHover: p.unmuteOnHover,
-                     muteAlignment: .bottomTrailing)
+                     isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), unmuteOnHover: p.hoverSound && !isPast,
+                     isHovered: hovering, muteAlignment: .bottomTrailing)
         .frame(width: width, height: width * 16 / 9)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: DS.radius.md, topTrailingRadius: DS.radius.md, style: .continuous))
         .overlay(alignment: .topTrailing) {
@@ -310,12 +310,18 @@ struct WeekDayCard: View {
           .padding(DS.space.xs)
         }
         .overlay(alignment: .bottomLeading) {
-          if hovering && !isPast {
-            DSXMenuButton(tooltip: "Clip actions", size: .sm, variant: .secondary) { WeekCardMenu(model: model, slot: slot, video: video,
-                                                                                                approved: approved, isPast: isPast,
-                                                                                                weekSlots: weekSlots, posts: posts) }
-              .padding(DS.space.xs)
-              .transition(.opacity)
+          if (hovering || SnapshotHover.id == video.id) && !isPast {
+            HStack(spacing: 4) {
+              DSXMenuButton(tooltip: "Clip actions", size: .sm, variant: .secondary) { WeekCardMenu(model: model, slot: slot, video: video,
+                                                                                                  approved: approved, isPast: isPast,
+                                                                                                  weekSlots: weekSlots, posts: posts) }
+              Spacer(minLength: 0)
+              StageControl(model: model, video: video, compact: true)
+                .padding(2)
+                .background(DS.color.surface.opacity(0.92), in: Capsule())
+            }
+            .padding(DS.space.xs)
+            .transition(.opacity)
           }
         }
       VStack(alignment: .leading, spacing: DS.space.xs) {
@@ -405,6 +411,11 @@ struct WeekCardMenu: View {
       }
     }
     .disabled(!approved)
+    Divider()
+    StageMenuItems(model: model, video: video, targets: [video.id])
+    Button("Remove from queue", systemImage: "arrow.uturn.backward") { model.removeFromQueue([video.id]) }
+      .disabled(isPast || model.removeFromQueueBlocker(video) != nil)
+      .help(model.removeFromQueueBlocker(video) ?? (isPast ? "This day has passed" : AppModel.removeFromQueueHelp))
     Divider()
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }
     Button("Preview", systemImage: "play.rectangle") { model.previewVideo = video }

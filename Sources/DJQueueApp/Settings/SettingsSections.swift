@@ -289,11 +289,20 @@ struct PlaybackSettings: View {
     SettingsRow("Autoplay previews", description: "Visible clips play muted from small preview copies made in the background.") {
       DSSwitch(isOn: model.playbackBinding(\.autoplay)).accessibilityLabel("Autoplay previews")
     }
-    SettingsRow("Unmute on hover", description: "Sound plays only for the clip under the pointer. Previews never unmute by themselves.",
+    SettingsRow("Unmute on hover", description: "Hovering a clip plays it with sound (one clip at a time); moving away mutes it again. Previews never unmute by themselves.",
                 disabledReason: off) {
-      DSSwitch(isOn: model.playbackBinding(\.unmuteOnHover)).accessibilityLabel("Unmute on hover")
+      DSSwitch(isOn: Binding(get: { model.playback.unmuteOnHover },
+                             set: { v in model.setPlayback { $0.chooseUnmuteOnHover(v) } }))
+        .accessibilityLabel("Unmute on hover")
     }
-    SettingsRow("Which clips play", description: "All visible clips play at most 4 at once.", disabledReason: off) {
+    SettingsRow("Grids: play on hover only", description: "Grid views show covers; a tile plays only while the pointer is on it.",
+                disabledReason: off) {
+      DSSwitch(isOn: Binding(get: { model.playback.gridHoverOnly },
+                             set: { v in model.setPlayback { $0.chooseGridHoverOnly(v) } }))
+        .accessibilityLabel("Grids: play on hover only")
+    }
+    SettingsRow("Which clips play", description: "Cards, List and Single views: all visible clips play, at most 4 at once.",
+                disabledReason: off) {
       SettingsSelect(label: "Which clips play", selection: model.playbackBinding(\.focusOnly), options: [
         DSSelectOption(value: false, title: "All visible (up to 4)"),
         DSSelectOption(value: true, title: "Only the focused clip"),

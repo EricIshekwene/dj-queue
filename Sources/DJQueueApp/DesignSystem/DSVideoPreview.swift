@@ -13,8 +13,39 @@ final class DSPlaybackBudget {
   var maxPlayers = 4
   private struct Request: Equatable { let id: UUID; var priority: Int }
   private var requests: [Request] = []
-  /// The one preview allowed to play sound. Never auto-unmuted.
+  /// The preview Eric unmuted with its button (sticky until muted or released).
   var audible: UUID?
+  /// The preview under the pointer while "Unmute on hover" is on. It wins over `audible`, so exactly one clip
+  /// is ever heard; it goes back to muted as soon as the pointer leaves.
+  private(set) var hoverAudible: UUID?
+  /// Muted with its button while hovered: stays muted until the pointer leaves.
+  private(set) var hoverMuted: UUID?
+
+  /// The single preview that plays sound right now.
+  var effectiveAudible: UUID? {
+    if let h = hoverAudible, h != hoverMuted { return h }
+    return audible
+  }
+
+  func setHover(_ id: UUID, _ on: Bool) {
+    if on {
+      hoverAudible = id
+    } else if hoverAudible == id {
+      hoverAudible = nil
+      if hoverMuted == id { hoverMuted = nil }
+    }
+  }
+
+  /// The mute button: mutes whatever of this preview is audible, or unmutes it (sticky).
+  func toggleSound(_ id: UUID) {
+    if effectiveAudible == id {
+      if hoverAudible == id { hoverMuted = id }
+      if audible == id { audible = nil }
+    } else {
+      if hoverMuted == id { hoverMuted = nil }
+      if hoverAudible != id { audible = id }
+    }
+  }
 
   func request(_ id: UUID, priority: Int = 0) {
     if let i = requests.firstIndex(where: { $0.id == id }) {
@@ -27,6 +58,7 @@ final class DSPlaybackBudget {
   func release(_ id: UUID) {
     requests.removeAll { $0.id == id }
     if audible == id { audible = nil }
+    setHover(id, false)
   }
 
   func isGranted(_ id: UUID) -> Bool {
@@ -50,7 +82,9 @@ final class DSPlaybackProgress {
 
 /// Muted looping preview of a proxy file with poster fallback (DESIGN-v2 §2.6/§4). Plays only while visible,
 /// `isActive` and granted a slot; releases the decoder when scrolled away. The proxy fades in over the poster in
-/// 200 ms. Mute toggle on hover; `unmuteOnHover` plays sound only while the pointer is over it.
+/// 200 ms. Mute toggle on hover. `unmuteOnHover`: while the pointer is over the preview or its card (`isHovered`) it
+/// plays with sound — starting playback (with a priority slot) when it wasn't playing, e.g. in focus-only mode — and
+/// mutes again on exit; `DSPlaybackBudget` keeps one clip audible at a time.
 struct DSVideoPreview: View {
   let url: URL?
   var poster: NSImage? = nil
@@ -61,6 +95,8 @@ struct DSVideoPreview: View {
   /// Loop only this range (trim) instead of the whole file.
   var loopRange: ClosedRange<Double>? = nil
   var unmuteOnHover = false
+  /// The parent card is hovered (counts as hovering the preview for sound and playback).
+  var isHovered = false
   var showsMuteButton = true
   var muteAlignment: Alignment = .bottomTrailing
   /// Thin scrub bar on hover (Single view).
@@ -76,9 +112,11 @@ struct DSVideoPreview: View {
   private var budget: DSPlaybackBudget { .shared }
 
   var body: some View {
-    let wantsPlay = url != nil && isActive && visible
+    let hoverSound = unmuteOnHover && (hovering || isHovered)
+    let wantsPlay = url != nil && visible && (isActive || hoverSound)
+    let priority = hoverSound ? 2 : isPriority ? 1 : 0
     let playing = wantsPlay && budget.isGranted(id)
-    let audible = budget.audible == id || (unmuteOnHover && hovering && playing)
+    let audible = playing && budget.effectiveAudible == id
     ZStack {
       posterView
       if playing, let url {
@@ -89,9 +127,9 @@ struct DSVideoPreview: View {
     }
     .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     .overlay(alignment: muteAlignment) {
-      if showsMuteButton && playing && (hovering || budget.audible == id) {
+      if showsMuteButton && playing && (hovering || audible) {
         Button {
-          budget.audible = budget.audible == id ? nil : id
+          budget.toggleSound(id)
         } label: {
           Image(systemName: audible ? "speaker.wave.2.fill" : "speaker.slash.fill")
             .font(.system(size: 10, weight: .semibold))
@@ -113,10 +151,11 @@ struct DSVideoPreview: View {
     .onDisappear { visible = false; budget.release(id) }
     .onScrollVisibilityChange(threshold: 0.3) { visible = $0 }
     .onChange(of: wantsPlay, initial: true) { _, w in
-      if w { budget.request(id, priority: isPriority ? 1 : 0) } else { budget.release(id); ready = false }
+      if w { budget.request(id, priority: priority) } else { budget.release(id); ready = false }
     }
-    .onChange(of: isPriority) { _, p in if wantsPlay { budget.request(id, priority: p ? 1 : 0) } }
-    .accessibilityLabel(playing ? "Video preview, playing muted" : "Video cover")
+    .onChange(of: priority) { _, p in if wantsPlay { budget.request(id, priority: p) } }
+    .onChange(of: hoverSound, initial: true) { _, h in budget.setHover(id, h) }
+    .accessibilityLabel(playing ? (audible ? "Video preview, playing with sound" : "Video preview, playing muted") : "Video cover")
   }
 
   @ViewBuilder private var posterView: some View {

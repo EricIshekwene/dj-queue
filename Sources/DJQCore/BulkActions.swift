@@ -33,6 +33,10 @@ public struct BulkResult: Codable, Sendable {
   public var summary: String
   /// Make-ready only: where each clip it looked at stands afterwards (from `remainingIssues`).
   public var outlook: ReadyOutlook? = nil
+  /// Remove from queue only: clip id → the days and platforms taken out of the plan (changed clips with any).
+  public var unplanned: [String: [Planner.UnplanItem]]? = nil
+  /// Stage moves only (`back` / `forward`): clip id → where it was, where it ended up, and what happened.
+  public var moves: [String: StageMove]? = nil
 }
 
 /// Where clips stand after "Make ready with defaults" (every non-skipped clip, changed or not).
@@ -105,17 +109,20 @@ public final class BulkActions: @unchecked Sendable {
   /// the UI can say truthfully how many end up ready and how many still need a title.
   @discardableResult
   public func makeReadyWithDefaults(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
-    try run("make-ready", ids: ids, dryRun: dryRun, reportsAll: true) { _, v, s in
-      guard v.type == .short else { return .skipped("long-form") }
-      if v.missing { return .skipped("file missing") }
-      var e = try store.edit(videoId: v.id)
-      guard e.crop == nil else { return .unchanged }
-      guard let size = try cachedOrProbedSize(v) else { return .skipped("can't read the clip's size to place the crop") }
-      e.crop = s.defaults.defaultCrop(source: size, aspect: e.aspectOverride ?? s.defaults.aspect,
-                                      lastUsed: s.defaults.cropAnchor == .lastUsed ? try store.lastCropCentre() : nil)
-      try store.save(e, videoId: v.id)
-      return .changed
-    }
+    try run("make-ready", ids: ids, dryRun: dryRun, reportsAll: true) { _, v, s in try confirmDefaultCrop(v, s) }
+  }
+
+  /// Make-ready's per-clip step: confirms the default crop when none is set.
+  func confirmDefaultCrop(_ v: Video, _ s: Settings) throws -> Outcome {
+    guard v.type == .short else { return .skipped("long-form") }
+    if v.missing { return .skipped("file missing") }
+    var e = try store.edit(videoId: v.id)
+    guard e.crop == nil else { return .unchanged }
+    guard let size = try cachedOrProbedSize(v) else { return .skipped("can't read the clip's size to place the crop") }
+    e.crop = s.defaults.defaultCrop(source: size, aspect: e.aspectOverride ?? s.defaults.aspect,
+                                    lastUsed: s.defaults.cropAnchor == .lastUsed ? try store.lastCropCentre() : nil)
+    try store.save(e, videoId: v.id)
+    return .changed
   }
 
   /// Clears the overrides of `sections` so the clips follow the defaults again.
@@ -336,6 +343,65 @@ public final class BulkActions: @unchecked Sendable {
     }
   }
 
+  /// "Remove from queue": sends each clip back to Edit (`Video.heldInEdit`, issue "Sent back from Queue") and takes
+  /// it out of the plan with `Planner.unplan` — slots from today on that have nothing posted, and every post of the
+  /// clip still in flight; posted/terminal posts and history stay, a pinned slot loses its pin, other clips keep
+  /// their days. `unplanned` lists what went per clip. Undo restores the flag, slots, weeks and posts exactly.
+  @discardableResult
+  public func removeFromQueue(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
+    let planner = Planner(store: store)
+    var removed: [String: [Planner.UnplanItem]] = [:]
+    var r = try run("unqueue", ids: ids, dryRun: dryRun, plan: true) { _, v, _ in
+      guard v.type == .short else { return .skipped("long-form — it's uploaded by hand, never queued") }
+      if v.excluded { return .skipped("excluded — it isn't in the queue") }
+      if v.score == nil { return .skipped("not scored yet — it isn't in the queue") }
+      if v.heldInEdit { return .unchanged }
+      if let why = try postedBlocker(v) { return .skipped(why) }
+      let items = try hold(v, planner: planner)
+      if !items.isEmpty { removed[v.id] = items }
+      return .changed
+    }
+    let kept = removed.filter { r.changed.contains($0.key) }
+    r.unplanned = kept
+    if !kept.isEmpty {
+      let n = kept.values.reduce(0) { $0 + $1.count }
+      r.summary += " · \(n) scheduled day\(n == 1 ? "" : "s") removed"
+    }
+    return r
+  }
+
+  /// Why a clip can't leave the plan (Remove from queue, Scheduled → Queue): something already posted, or every
+  /// platform finished. nil = it can.
+  public func postedBlocker(_ v: Video) throws -> String? {
+    if let p = try store.posts(where: "video_id=? AND kind IN ('regular','retry') AND state='posted'", [v.id], order: "posted_at").first {
+      return "Already posted on \(p.platform.displayName) — it can't leave the plan; skip or reset its posts in Posts"
+    }
+    // `.posting` is derived from due/overdue posts too — only something actually posted blocks. A finished clip
+    // (every platform posted, skipped or failed) has nothing left in the plan to remove.
+    if [.posted, .partial].contains(v.state) {
+      return "Every platform is finished — nothing left in the plan to remove; repost or reset a post in Posts instead"
+    }
+    return nil
+  }
+
+  /// Remove-from-queue's per-clip step: out of the plan, then held in Edit.
+  func hold(_ v: Video, planner: Planner) throws -> [Planner.UnplanItem] {
+    let items = try planner.unplan(videoId: v.id)
+    try store.setHeldInEdit(v.id, true)
+    return items
+  }
+
+  /// "Send to queue": clears the "sent back" flag. A clip whose edit is valid becomes ready (the planner may pick it
+  /// again); otherwise it stays in Edit with its real issues. Clips that weren't sent back are left alone.
+  @discardableResult
+  public func sendToQueue(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
+    try run("requeue", ids: ids, dryRun: dryRun) { _, v, _ in
+      guard v.heldInEdit else { return .unchanged }
+      try store.setHeldInEdit(v.id, false)
+      return .changed
+    }
+  }
+
   /// Forces a fresh render: the clip's current renders are retired (files stay until replaced) and the engine
   /// renders again on its next tick. Undo un-retires them while their files still exist.
   @discardableResult
@@ -461,6 +527,8 @@ public final class BulkActions: @unchecked Sendable {
     var edit: String?
     var versions: [String: String]
     var renders: [RenderSnap]?
+    /// Sent back to Edit (schema v3). nil = not held, so journals written before v3 compare equal.
+    var held: Bool? = nil
   }
 
   struct PlanSnap: Codable, Equatable {
@@ -471,7 +539,7 @@ public final class BulkActions: @unchecked Sendable {
 
   struct Snapshot: Codable { var clips: [ClipSnap]; var plan: PlanSnap? }
 
-  private func run(_ action: String, ids raw: [String], params: [String: String] = [:], dryRun: Bool, plan: Bool = false,
+  func run(_ action: String, ids raw: [String], params: [String: String] = [:], dryRun: Bool, plan: Bool = false,
                    renders: Bool = false, reportsAll: Bool = false, _ body: (Int, Video, Settings) throws -> Outcome) throws -> BulkResult {
     var seen = Set<String>()
     let ids = raw.filter { !$0.isEmpty && seen.insert($0).inserted }
@@ -551,7 +619,7 @@ public final class BulkActions: @unchecked Sendable {
   }
 
   func clipSnapshot(_ id: String, renders: Bool) throws -> ClipSnap {
-    let r = try store.db.one("SELECT score, kind, excluded, title, title_tracks, title_source FROM videos WHERE id=?", [id])
+    let r = try store.db.one("SELECT score, kind, excluded, title, title_tracks, title_source, held_in_edit FROM videos WHERE id=?", [id])
     let edit = try store.db.one("SELECT json FROM edits WHERE video_id=?", [id])?.string("json")
     var versions: [String: String] = [:]
     for row in try store.db.query("SELECT number, json FROM versions WHERE video_id=?", [id]) {
@@ -563,13 +631,14 @@ public final class BulkActions: @unchecked Sendable {
       : nil
     return ClipSnap(id: id, score: r?.int("score"), kind: r?.string("kind") ?? Kind.djVid.rawValue,
                     excluded: r?.bool("excluded") ?? false, title: r?.string("title"), titleTracks: r?.string("title_tracks"),
-                    titleSource: r?.string("title_source"), edit: edit, versions: versions, renders: rs)
+                    titleSource: r?.string("title_source"), edit: edit, versions: versions, renders: rs,
+                    held: r?.bool("held_in_edit") == true ? true : nil)
   }
 
   private func restore(_ c: ClipSnap) throws {
     let db = store.db
-    try db.run("UPDATE videos SET score=?, kind=?, excluded=?, title=?, title_tracks=?, title_source=?, updated_at=? WHERE id=?",
-               [c.score, c.kind, c.excluded, c.title, c.titleTracks, c.titleSource, store.clock.now, c.id])
+    try db.run("UPDATE videos SET score=?, kind=?, excluded=?, title=?, title_tracks=?, title_source=?, held_in_edit=?, updated_at=? WHERE id=?",
+               [c.score, c.kind, c.excluded, c.title, c.titleTracks, c.titleSource, c.held ?? false, store.clock.now, c.id])
     if let e = c.edit {
       try db.run("INSERT INTO edits(video_id,json,updated_at) VALUES(?,?,?) ON CONFLICT(video_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",
                  [c.id, e, store.clock.now])

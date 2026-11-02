@@ -71,6 +71,7 @@ extension AppModel {
     for i in list {
       let p = i.platform?.displayName ?? ""
       switch i.kind {
+      case .heldInEdit: issues.append("Sent back from Queue")
       case .noCrop: issues.append("No crop")
       case .noText: issues.append("No text")
       case .noCaption: issues.append("No caption")

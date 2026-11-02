@@ -102,8 +102,8 @@ struct QueueSortMenu: View {
   }
 }
 
-/// Queue bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Pin to days… · Post today · More (Skip platform ▸,
-/// Exclude, post on a platform again, Kind, re-render) · **Add to week**.
+/// Queue bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Pin to days… · Post today · More (Remove from queue,
+/// Back / Forward a stage, Skip platform ▸, Exclude, post on a platform again, Kind, re-render) · **Add to week**.
 private struct QueueBulkBar: View {
   @Bindable var model: AppModel
   let ids: [String]
@@ -123,6 +123,14 @@ private struct QueueBulkBar: View {
       }
       .dsTooltip("Put the selected clips on today (clips beyond today's free slots are skipped)")
     } more: {
+      Button("Remove from queue", systemImage: "arrow.uturn.backward") { model.removeFromQueue(ids) }
+        .disabled(model.removeFromQueueBlocker(ids) != nil)
+        .help(model.removeFromQueueBlocker(ids) ?? AppModel.removeFromQueueHelp + " (clips that already posted are skipped)")
+      Button("Back a stage", systemImage: "chevron.left") { model.stageBack(ids) }
+        .help("Planned clips go back to the Queue (unposted days removed); ready ones go back to Edit")
+      Button("Forward a stage", systemImage: "chevron.right") { model.stageForward(ids) }
+        .help("Ready clips go on the next open days, pinned; planned clips are skipped — mark them posted on Today")
+      Divider()
       Menu("Skip platform") {
         ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { setPlatform(p, skipped: true) } }
       }

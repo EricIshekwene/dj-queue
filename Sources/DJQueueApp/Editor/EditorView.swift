@@ -17,11 +17,15 @@ struct EditorView: View {
   @StateObject private var model: EditorModel
   private let videoIds: [String]
   private let onDone: () -> Void
+  /// Drawn in the header after the status chip for the clip being edited (the app's stage control).
+  var headerAccessory: ((String) -> AnyView)?
 
-  init(store: Store, videoId: String, videoIds: [String], onDone: @escaping () -> Void) {
+  init(store: Store, videoId: String, videoIds: [String], onDone: @escaping () -> Void,
+       headerAccessory: ((String) -> AnyView)? = nil) {
     _model = StateObject(wrappedValue: EditorModel(store: store, videoId: videoId))
     self.videoIds = videoIds
     self.onDone = onDone
+    self.headerAccessory = headerAccessory
   }
 
   /// Harness/snapshot initialiser with a pre-built model.
@@ -33,7 +37,7 @@ struct EditorView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      EditorHeader(model: model, videoIds: videoIds, done: done)
+      EditorHeader(model: model, videoIds: videoIds, done: done, accessory: headerAccessory)
       DSSeparator()
       HStack(alignment: .top, spacing: 0) {
         VStack(spacing: DS.space.sm) {
@@ -98,6 +102,7 @@ struct EditorHeader: View {
   @ObservedObject var model: EditorModel
   var videoIds: [String]
   var done: () -> Void
+  var accessory: ((String) -> AnyView)? = nil
   @State private var showVersions = false
 
   private var index: Int? { videoIds.firstIndex(of: model.videoId) }
@@ -134,6 +139,7 @@ struct EditorHeader: View {
         }
       }
       statusChip
+      if let accessory { accessory(model.videoId) }
       Spacer()
       saveIndicator
       versionPicker

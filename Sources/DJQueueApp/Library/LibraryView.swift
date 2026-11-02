@@ -381,7 +381,7 @@ struct LibrarySectionLabel: View {
 
 /// The state chip on Library tiles (DESIGN-v2 §6.6).
 enum LibraryClipState {
-  case unscored, needsEdit, ready, planned, posted, excluded, missing, removed
+  case unscored, needsEdit, sentBack, ready, planned, posted, excluded, missing, removed
 }
 
 extension AppModel {
@@ -396,6 +396,7 @@ extension AppModel {
     if libraryIsRemoved(v) { return .removed }
     if v.type == .long { return v.longformURL == nil ? .ready : .posted }
     if v.score == nil { return .unscored }
+    if v.heldInEdit { return .sentBack }
     switch v.state {
     case .needsEdit: return .needsEdit
     case .ready: return .ready
@@ -410,6 +411,7 @@ extension AppModel {
     switch libraryState(v) {
     case .unscored: DSClipTag(text: "Unscored", style: .outline)
     case .needsEdit: DSClipTag(text: "Needs edit", style: .soft(.warning))
+    case .sentBack: DSClipTag(text: "Sent back to Edit", style: .soft(.warning), icon: "arrow.uturn.backward")
     case .ready: DSClipTag(text: "Ready", style: .soft(.neutral))
     case .planned: DSClipTag(text: "Planned", style: .soft(.info))
     case .posted: DSClipTag(text: "Posted", style: .soft(.success))
