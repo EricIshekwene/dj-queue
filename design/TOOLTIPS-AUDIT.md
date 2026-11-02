@@ -1157,76 +1157,78 @@ Context: the editor autosaves 300 ms after each change (EditorModel.swift:793 `s
 
 ## DS components
 
+Status (Phase B): ✅ fixed · ➖ no change needed · ⏭ deferred (reason in the last column).
+
 ### DSButton / DSIconButton (DSButton.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| DSIconButton | icon | DSButton.swift:219-240 | ✅ guaranteed (`tooltip:` required; disabledReason replaces it) | caller text | keep | — |
-| DSButton | text button | DSButton.swift:168-204 | ⚠️ tooltip optional; `shortcut:` only shows text and binds no key | caller | caller must also add `.keyboardShortcut` (e.g. Save has a key but no hint) | — |
+| ➖ DSIconButton | icon | DSButton.swift:219-240 | ✅ guaranteed (`tooltip:` required; disabledReason replaces it) | caller text | keep | — |
+| ✅ DSButton | text button | DSButton.swift:168-204 | ⚠️ tooltip optional; `shortcut:` only shows text and binds no key | caller | caller must also add `.keyboardShortcut` (e.g. Save has a key but no hint) | — |
 
 ### DSClipCard (DSClipCard.swift), all four modes
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Select circle (built-in checkbox) | icon | DSClipCard.swift:163 | ✅ guaranteed | "Select" / "Deselect" | Select this clip · ⇧/⌘-click for more | — |
-| Drag handle `line.3.horizontal` (Cards, Queue) | gesture | DSClipCard.swift:234 | ✅ guaranteed on hover | "Drag to reorder" | Drag to change queue order | — |
-| Card body click | gesture | DSClipCard.swift:126 | ⚠️ relies on caller; no hint (opens? selects?) | — | caller: "Open in editor · ⌘E" | — |
-| Mute (DSVideoPreview) | icon | DSClipCard.swift:153 → DSVideoPreview.swift:93 | ✅ guaranteed | "Mute" / "Unmute" | Play/Mute this preview's sound | — |
-| Suggestion chips `text.badge.plus` | chip | DSClipCard.swift:216 / :410 | ⚠️ generic | "Use as title" | Set the Title to “X” | ok (confirm: ClipCollection.swift:183 → AppModel+Bulk.swift:157 "Set title?") |
-| Score (number) | gesture (info) | DSClipCard.swift:170 / :285 / :375 | ⚠️ bare number, no tooltip | only "Not scored" for "—" (:172) | Your score: higher posts sooner | — |
-| Date chip `calendar`/`pin.fill` | gesture (info) | DSClipCard.swift:199 | ✅ guaranteed | "Pinned to this date" / "Not in the plan yet" / "Next post" | keep | — |
-| Pin icon (no date) | gesture (info) | DSClipCard.swift:250 | ❌ no tooltip | — | Pinned to a date | — |
-| "File missing · Relink" | chip (badge) | DSClipCard.swift:212 | ❌ says Relink but can't be clicked | — | make it a button, or say "File missing" | — |
-| Issue / block / status / tag badges | chip (badge) | DSClipCard.swift:213-219 | ⚠️ no explanation on hover | — | e.g. "Confirm the crop in the editor" | — |
-| Platform icons | gesture (info) | DSClipCard.swift:225 / :337 / :380 | ✅ guaranteed (DSPlatformIcon) | "TikTok · Posted" | keep | — |
-| `actions` slot (hover actions, ⋯) | icon | DSClipCard.swift:262 / :293 / :345 / :383 | ❌ relies on caller; grid uses `DSMediaActionStyle` `.labelStyle(.iconOnly)` (:433), which hides labels | — | require DSIconButton in the slot | — |
+| ✅ Select circle (built-in checkbox) | icon | DSClipCard.swift:163 | ✅ guaranteed | "Select" / "Deselect" | Select this clip · ⇧/⌘-click for more | — |
+| ✅ Drag handle `line.3.horizontal` (Cards, Queue) | gesture | DSClipCard.swift:234 | ✅ guaranteed on hover | "Drag to reorder" | Drag to change queue order | — |
+| ⏭ Card body click | gesture | DSClipCard.swift:126 | ⚠️ relies on caller; no hint (opens? selects?) | — | caller: "Open in editor · ⌘E" | ⏭ per screen (Score/Edit/Queue/Library rows) |
+| ✅ Mute (DSVideoPreview) | icon | DSClipCard.swift:153 → DSVideoPreview.swift:93 | ✅ guaranteed | "Mute" / "Unmute" | Play/Mute this preview's sound | — |
+| ✅ Suggestion chips `text.badge.plus` | chip | DSClipCard.swift:216 / :410 | ⚠️ generic | "Use as title" | Set the Title to “X” | ok (confirm: ClipCollection.swift:183 → AppModel+Bulk.swift:157 "Set title?") |
+| ✅ Score (number) | gesture (info) | DSClipCard.swift:170 / :285 / :375 | ⚠️ bare number, no tooltip | only "Not scored" for "—" (:172) | Your score (0–100) — it sets the posting order | — |
+| ✅ Date chip `calendar`/`pin.fill` | gesture (info) | DSClipCard.swift:199 | ✅ guaranteed | "Pinned to this date" / "Not in the plan yet" / "Next post" | keep | — |
+| ✅ Pin icon (no date) | gesture (info) | DSClipCard.swift:250 | ❌ no tooltip | — | Pinned to a date | — |
+| ✅ "File missing · Relink" | chip (badge) | DSClipCard.swift:212 | ❌ says Relink but can't be clicked | — | shipped: chip says "File missing"; tooltip: The source file moved or was deleted — Health › Doctor relinks it | — |
+| ✅ Issue / block / status / tag badges | chip (badge) | DSClipCard.swift:213-219 | ⚠️ no explanation on hover | — | e.g. "Confirm the crop in the editor" | — |
+| ➖ Platform icons | gesture (info) | DSClipCard.swift:225 / :337 / :380 | ✅ guaranteed (DSPlatformIcon) | "TikTok · Posted" | keep | — |
+| ✅ `actions` slot (hover actions, ⋯) | icon | DSClipCard.swift:262 / :293 / :345 / :383 | ❌ relies on caller; grid uses `DSMediaActionStyle` `.labelStyle(.iconOnly)` (:433), which hides labels | — | callers give every slot action a `.dsTooltip` (grid renders icon-only) | — |
 
 ### DSVideoPreview (DSVideoPreview.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Mute `speaker.wave.2.fill`/`speaker.slash.fill` | icon | DSVideoPreview.swift:93 | ✅ guaranteed | "Mute" / "Unmute" | Turn this preview's sound on/off | — |
-| Scrubber (Single mode) | slider | DSVideoPreview.swift:140 | ❌ no tooltip | — | Drag to scrub the preview | — |
+| ✅ Mute `speaker.wave.2.fill`/`speaker.slash.fill` | icon | DSVideoPreview.swift:93 | ✅ guaranteed | "Mute" / "Unmute" | Turn this preview's sound on/off | — |
+| ✅ Scrubber (Single mode) | slider | DSVideoPreview.swift:140 | ❌ no tooltip | — | Drag to scrub the preview | — |
 
 ### DSOverlays (DSOverlays.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Bulk bar ✕ `xmark` | icon | DSOverlays.swift:340 | ✅ guaranteed | "Clear selection  esc" | keep · esc | — |
-| Bulk bar Select all | text button | DSOverlays.swift:347 | ✅ guaranteed | "Select every clip on this screen  ⌘A" | keep · ⌘A | — |
-| Bulk bar actions slot | text button | DSOverlays.swift:351 | ⚠️ relies on caller (no tooltip in DSBulkActionStyle) | — | caller | — |
-| Toast action ("Undo") | text button | DSOverlays.swift:240 | ✅ clear | — | label is enough | — |
-| Toast dismiss `xmark` | icon | DSOverlays.swift:243 | ✅ guaranteed | "Dismiss" | keep | — |
-| Editor toast (no action, no close) | gesture (status) | EditorView.swift:60 | ⚠️ the editor's DSToast passes no Undo | — | — | add Undo action support |
-| Dialog close `xmark` | icon | DSOverlays.swift:159 | ✅ guaranteed | "Close  esc" | keep · esc (binding is the caller's) | — |
-| Menu items (DSMenuRow) | menu item | DSOverlays.swift:88 | ⚠️ tooltip only when disabled; enabled rows rely on title | disabledReason | caller | — |
-| Toolbar trailing slot | icon | DSOverlays.swift:438 | ⚠️ relies on caller | — | caller | — |
-| Sidebar item | text button | DSOverlays.swift:477 | ✅ clear | title + shortcut only when a shortcut is passed | keep | — |
-| Attention card action | text button | DSOverlays.swift:528 | ⚠️ relies on caller (e.g. "Try again") | — | caller | — |
-| Attention card dismiss `xmark` | icon | DSOverlays.swift:529 | ✅ guaranteed | "Hide for 24 hours" | keep | — |
+| ➖ Bulk bar ✕ `xmark` | icon | DSOverlays.swift:340 | ✅ guaranteed | "Clear selection  esc" | keep · esc | — |
+| ➖ Bulk bar Select all | text button | DSOverlays.swift:347 | ✅ guaranteed | "Select every clip on this screen  ⌘A" | keep · ⌘A | — |
+| ➖ Bulk bar actions slot | text button | DSOverlays.swift:351 | ⚠️ relies on caller (no tooltip in DSBulkActionStyle) | — | caller | — |
+| ➖ Toast action ("Undo") | text button | DSOverlays.swift:240 | ✅ clear | — | label is enough | — |
+| ➖ Toast dismiss `xmark` | icon | DSOverlays.swift:243 | ✅ guaranteed | "Dismiss" | keep | — |
+| ⏭ Editor toast (no action, no close) | gesture (status) | EditorView.swift:60 | ⚠️ the editor's DSToast passes no Undo | — | — | ⏭ editor has its own ⌘Z/⇧⌘Z history (EditorUndo) + header Undo; toast Undo not needed |
+| ➖ Dialog close `xmark` | icon | DSOverlays.swift:159 | ✅ guaranteed | "Close  esc" | keep · esc (binding is the caller's) | — |
+| ➖ Menu items (DSMenuRow) | menu item | DSOverlays.swift:88 | ⚠️ tooltip only when disabled; enabled rows rely on title | disabledReason | caller | — |
+| ➖ Toolbar trailing slot | icon | DSOverlays.swift:438 | ⚠️ relies on caller | — | caller | — |
+| ➖ Sidebar item | text button | DSOverlays.swift:477 | ✅ clear | title + shortcut only when a shortcut is passed | keep | — |
+| ➖ Attention card action | text button | DSOverlays.swift:528 | ⚠️ relies on caller (e.g. "Try again") | — | caller | — |
+| ➖ Attention card dismiss `xmark` | icon | DSOverlays.swift:529 | ✅ guaranteed | "Hide for 24 hours" | keep | — |
 
 ### DSChoice (DSChoice.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| DSChip | chip | DSChoice.swift:39 | ⚠️ tooltip only for disabledReason; enabled relies on caller | disabledReason | caller | — |
-| DSChipGroup chips / None | chip | DSChoice.swift:96 / :99 | ⚠️ no per-option tooltip API except disabledReason | — | add `tooltip` to DSChipOption | — |
-| DSSegmented icon-only segment | segmented | DSChoice.swift:220 | ⚠️ tooltip "required" by comment only; nil compiles | seg.tooltip | make the tooltip non-optional for icon-only | — |
-| DSSegmented titled segment | segmented | DSChoice.swift:197 | ✅ clear | — (tooltip suppressed when titled) | allow an optional consequence tooltip | — |
-| DSTabs | segmented | DSChoice.swift:263 | ✅ clear | — | label is enough | — |
-| View mode switcher Cards/Grid/Single/List | segmented | DSChoice.swift:333 | ⚠️ tooltip is just the name | "Cards" / "Grid" / "Single" / "List" | Show clips as cards / a grid / one at a time / a list | — |
+| ✅ DSChip | chip | DSChoice.swift:39 | ⚠️ tooltip only for disabledReason; enabled relies on caller | disabledReason | caller | — |
+| ✅ DSChipGroup chips / None | chip | DSChoice.swift:96 / :99 | ⚠️ no per-option tooltip API except disabledReason | — | add `tooltip` to DSChipOption | — |
+| ✅ DSSegmented icon-only segment | segmented | DSChoice.swift:220 | ⚠️ tooltip "required" by comment only; nil compiles | seg.tooltip | make the tooltip non-optional for icon-only | — |
+| ✅ DSSegmented titled segment | segmented | DSChoice.swift:197 | ✅ clear | — (tooltip suppressed when titled) | allow an optional consequence tooltip | — |
+| ➖ DSTabs | segmented | DSChoice.swift:263 | ✅ clear | — | label is enough | — |
+| ✅ View mode switcher Cards/Grid/Single/List | segmented | DSChoice.swift:333 | ⚠️ tooltip is just the name | "Cards" / "Grid" / "Single" / "List" | Show clips as cards / a grid / one at a time / a list | — |
 
 ### DSInputs (DSInputs.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| Search/field clear `xmark.circle.fill` | icon | DSInputs.swift:128 | ✅ guaranteed (only when focused and non-empty) | "Clear" | Clear the search | — |
-| DSSelect | menu | DSInputs.swift:222 | ⚠️ tooltip only when disabled | disabledReason | caller | — |
-| DSToggle | toggle | DSInputs.swift:313 | ✅ label; tooltip only when disabled | disabledReason | caller | — |
-| DSSwitch | toggle | DSInputs.swift:343 | ⚠️ no label/tooltip/disabledReason API; relies on the row | — | add a disabledReason | — |
-| DSCheckbox | toggle | DSInputs.swift:400 | ⚠️ tooltip only when disabled | disabledReason | caller | — |
-| DSSlider | slider | DSInputs.swift:483 | ⚠️ tooltip only when disabled | disabledReason | caller · ←/→ when focused (:497) | — |
-| DSTextField / DSTextArea | field | DSInputs.swift:139 | ✅ placeholder; disabledReason tooltip | disabledReason | caller | — |
+| ✅ Search/field clear `xmark.circle.fill` | icon | DSInputs.swift:128 | ✅ guaranteed (only when focused and non-empty) | "Clear" | Clear the search | — |
+| ➖ DSSelect | menu | DSInputs.swift:222 | ⚠️ tooltip only when disabled | disabledReason | caller | — |
+| ➖ DSToggle | toggle | DSInputs.swift:313 | ✅ label; tooltip only when disabled | disabledReason | caller | — |
+| ⏭ DSSwitch | toggle | DSInputs.swift:343 | ⚠️ no label/tooltip/disabledReason API; relies on the row | — | add a disabledReason | ⏭ DSSwitch is only used inside DSToggle rows, which carry the reason |
+| ➖ DSCheckbox | toggle | DSInputs.swift:400 | ⚠️ tooltip only when disabled | disabledReason | caller | — |
+| ➖ DSSlider | slider | DSInputs.swift:483 | ⚠️ tooltip only when disabled | disabledReason | caller · ←/→ when focused (:497) | — |
+| ➖ DSTextField / DSTextArea | field | DSInputs.swift:139 | ✅ placeholder; disabledReason tooltip | disabledReason | caller | — |
 
 ### DSBadge (DSBadge.swift)
 | Control | Kind | Where | Clear today? | Today's tooltip | Proposed tooltip · shortcut | Risk / fix |
 |---|---|---|---|---|---|---|
-| DSPlatformIcon (generic glyphs: `music.note`=TikTok, `camera`, `person.2`, `play.rectangle`, `at`, `xmark`=X) | gesture (info) | DSBadge.swift:211 | ✅ guaranteed unless `showsLabel` | "TikTok · Posted" | keep. Note: X's `xmark` glyph reads as "close" | — |
-| DSBadge | chip (badge) | DSBadge.swift:20 | ⚠️ no tooltip API | — | add an optional `help:` | — |
+| ➖ DSPlatformIcon (generic glyphs: `music.note`=TikTok, `camera`, `person.2`, `play.rectangle`, `at`, `xmark`=X) | gesture (info) | DSBadge.swift:211 | ✅ guaranteed unless `showsLabel` | "TikTok · Posted" | keep. Note: X's `xmark` glyph reads as "close" | — |
+| ✅ DSBadge | chip (badge) | DSBadge.swift:20 | ⚠️ no tooltip API | — | add an optional `help:` | — |
 
 ### Risky one-click actions
 1. Settings › Platforms limit cells save on every keystroke (SettingsSections.swift:107-111 / SettingsRows+DSX.swift:221) → commit on ↩/blur.

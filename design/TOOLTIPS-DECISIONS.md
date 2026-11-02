@@ -65,3 +65,20 @@ Eric delegated these calls. Each decision gives a one-line reason. The component
       - Window flush with the screen's top-right corner.
     - It writes `probe.json` with every frame and the inside-window/inside-screen checks.
     - Limitation: SwiftUI hover doesn't react to events posted to the app's own queue, so the probe forwards each synthetic move to the same hover entry points (`hoverBegan`/`hoverEnded`) that `.onHover` calls. A real-pointer pass happens in Phase B, when the machine is free.
+
+## Phase B — page pass and undo (F5 + F8)
+26. **Every one-click data change is one journal entry (`BulkActions.record`).** It snapshots the touched clips, plus the whole plan (slots, weeks, posts) when the action can move it, plus the settings row when it changes settings, and records the batch only when something really changed. Why: the bulk journal already restored clips and the plan exactly, with conflict checks. Reusing it gives single actions the same safety ("changed since → skipped/refused") with no second undo system.
+27. **`UndoHistory` (core, tested) decides what ⌘Z undoes: always the most recent entry, then the one before.** A toast's own Undo removes its entry wherever it is. Why: this fixes the round-2 bug. `lastBatchId` was set only by bulk batches, so ⌘Z after, say, "Post today" undid an older, unrelated bulk edit. Writes that aren't journaled (notes, the long-form URL, an engine backup) are not undoable and never shift the stack.
+28. **The toast says what happened plus Undo ("Pinned to Thu 5 Nov · Undo"). After undoing, it says "Undone: <what>".** Why: Eric must see which change ⌘Z reverted.
+29. **Confirm instead of (or before) Undo only for plan-wide or destructive actions:**
+    - Rebuild week and Push plan, which ask inside AppModel, so ⌘K, ⋯ and buttons are all covered.
+    - Editor › Delete vN.
+    - Deleting caption templates or hashtag sets.
+    - Rendering cleanup that deletes files.
+    - Many-clip context-menu actions, through the existing bulk confirm sheet.
+
+    Everything else gets Undo with no prompt. Why: asking on every click adds friction, and Undo is the calmer safety net (ChatGPT, Linear).
+30. **The editor keeps its own history: a snapshot of edit + versions + title + kind before each change.** Changes less than 0.8 s apart (drags, sliders, typing a word) coalesce into one step. ⌘Z / ⇧⌘Z step through it and save. While a text field has focus, ⌘Z goes to the field's own typing undo. The app-level ⌘Z is off while the editor is open. Why: autosave every 300 ms made every reset, chip and trim permanent. Field-level undo is what an editor is expected to do.
+31. **Native help tags are pushed out of reach (`NSInitialToolTipDelay` 1 h) after every `.help()` became `.dsTooltip()`.** Why: no screen can show two bubbles, even from a stray `.help`.
+32. **Disabled native menu items carry their reason in the title ("Back to Queue — already posted on TikTok").** Why: macOS menus can't show hover tooltips.
+33. **`DSBadge(help:)`, `DSChip(tooltip:)` and `DSChipOption.tooltip` let status chips explain themselves.** The clip card's "File missing · Relink" became "File missing", with a tooltip pointing to Health › Doctor. Why: it said "Relink" but couldn't be clicked.
