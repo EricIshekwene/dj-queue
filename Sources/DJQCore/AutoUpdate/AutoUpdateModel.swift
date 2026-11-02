@@ -13,8 +13,26 @@ public enum AutoUpdate {
   /// a plain-launched app relaunches itself from the new bundle.
   public static let restartSignal = "com.djlovd.queue.autoupdate.restart"
 
-  public static func postChanged() {
-    DistributedNotificationCenter.default().postNotificationName(.init(changedSignal), object: nil, userInfo: nil, deliverImmediately: true)
+  /// Signals carry the app-support folder they're about, so a dev run never moves Eric's real app (and the other way).
+  public static let scopeKey = "appSupport"
+
+  public static func post(_ signal: String, _ paths: Paths) {
+    DistributedNotificationCenter.default().postNotificationName(.init(signal), object: nil,
+                                                                 userInfo: [scopeKey: paths.appSupport.standardizedFileURL.path],
+                                                                 deliverImmediately: true)
+  }
+
+  public static func postChanged(_ paths: Paths) { post(changedSignal, paths) }
+
+  /// True when a received signal is about this database (signals without a scope are ignored).
+  public static func isFor(_ userInfo: [AnyHashable: Any]?, _ paths: Paths) -> Bool {
+    (userInfo?[scopeKey] as? String) == paths.appSupport.standardizedFileURL.path
+  }
+
+  /// A dev run that sets DJQ_ROOT but not DJQ_HOME would back up, install and restore against the REAL app
+  /// support folder and app: auto-update refuses it.
+  public static func unsafeDevEnvironment(_ environment: [String: String]) -> Bool {
+    !(environment["DJQ_ROOT"] ?? "").isEmpty && (environment["DJQ_HOME"] ?? "").isEmpty
   }
 
   /// Docs-only = every changed path is Markdown or lives under design/, docs/, refs/ or screenshots/.
@@ -131,13 +149,28 @@ public struct AutoUpdateBlock: Codable, Equatable, Sendable {
   public var commit: String
   /// One plain sentence ("2 tests failed: RenderTests.overlay, …").
   public var reason: String
+  /// True when the build installed and then failed its checks (a gate block is false). Such a block only clears
+  /// when a newer build installs and verifies, never because the failed build is "up to date".
+  public var afterInstall: Bool = false
   /// Last lines of the failing step's output.
   public var detail: String
   /// Full output of the run.
   public var log: String?
   public var at: Date
-  public init(version: String, commit: String, reason: String, detail: String, log: String?, at: Date) {
+  public init(version: String, commit: String, reason: String, detail: String, log: String?, at: Date, afterInstall: Bool = false) {
     self.version = version; self.commit = commit; self.reason = reason; self.detail = detail; self.log = log; self.at = at
+    self.afterInstall = afterInstall
+  }
+
+  public init(from d: Decoder) throws {
+    let c = try d.container(keyedBy: CodingKeys.self)
+    version = try c.decode(String.self, forKey: .version)
+    commit = try c.decode(String.self, forKey: .commit)
+    reason = try c.decode(String.self, forKey: .reason)
+    afterInstall = try c.decodeIfPresent(Bool.self, forKey: .afterInstall) ?? false
+    detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
+    log = try c.decodeIfPresent(String.self, forKey: .log)
+    at = try c.decode(Date.self, forKey: .at)
   }
 }
 
@@ -336,12 +369,19 @@ public struct AutoUpdateStore: Sendable {
   }
 }
 
-/// Info.plist of a bundle: version + the commit build-app.sh stamps as `DJQGitCommit`.
+/// Info.plist of a bundle: version + what build-app.sh stamps (`DJQGitCommit`, `DJQSchemaVersion`).
 public enum BundleInfo {
   public static func build(_ app: URL) -> AutoUpdateBuild? {
     let plist = app.appendingPathComponent("Contents/Info.plist")
     guard let d = NSDictionary(contentsOf: plist), let v = d["CFBundleShortVersionString"] as? String else { return nil }
     return AutoUpdateBuild(version: v, commit: (d["DJQGitCommit"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+  }
+
+  /// The database schema the bundle's code expects (nil for bundles built before v0.6.0).
+  public static func schema(_ app: URL) -> Int? {
+    let d = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
+    if let n = d?["DJQSchemaVersion"] as? Int { return n }
+    return (d?["DJQSchemaVersion"] as? String).flatMap(Int.init)
   }
 }
 

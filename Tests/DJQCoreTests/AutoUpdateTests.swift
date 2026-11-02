@@ -11,7 +11,14 @@ import Testing
     let repo: URL
     let paths: Paths
     let videos: URL
-    var restarts = 0
+    final class Calls: @unchecked Sendable {
+      private let lock = NSLock()
+      private var list: [String] = []
+      func add(_ s: String) { lock.withLock { list.append(s) } }
+      var all: [String] { lock.withLock { list } }
+    }
+    let engineCalls = Calls()
+    var restarts: Int { engineCalls.all.filter { $0 == "restart" }.count }
     var extraEnv: [String: String] = [:]
 
     init() throws {
@@ -33,7 +40,11 @@ import Testing
           echo late >> "$REPO_UNDER_TEST/late.txt"
           git -C "$REPO_UNDER_TEST" add -A && git -C "$REPO_UNDER_TEST" commit -qm "late commit"
         fi
-        V="0.0.0-dev.$(git rev-list --count HEAD)"
+        if T=$(git describe --tags --abbrev=0 2>/dev/null); then
+          A=$(git rev-list --count "$T"..HEAD); V="${T#v}"; [ "$A" != "0" ] && V="$V-dev.$A"
+        else
+          V="0.0.0-dev.$(git rev-list --count HEAD)"
+        fi
         A="build/DJ Queue.app/Contents"
         mkdir -p "$A/MacOS"
         cat > "$A/Info.plist" <<EOF
@@ -101,7 +112,8 @@ import Testing
     func runner() -> AutoUpdateRunner {
       let r = AutoUpdateRunner(paths: paths, environment: environment)
       r.gate = [["/bin/sh", "gate.sh"]]
-      r.restartEngine = { [unowned self] in self.restarts += 1; return "restarted (test)" }
+      let calls = engineCalls
+      r.engine = .recording { calls.add($0) }
       r.settle = 0
       r.sleep = { _ in }
       r.progress = { _ in }
@@ -387,6 +399,150 @@ import Testing
     #expect(e.runner().run(trigger: .watch).message == "Auto-update is off.")
     #expect(e.installed == nil)
     #expect(e.runner().run(trigger: .manual).kind == .installed)
+  }
+
+  /// The new build's djq "migrates" the database (user_version 99) and, with `withPost`, records a post change
+  /// after the backup; DJQ_AUTOUPDATE_FAIL_VERIFY then fails its checks.
+  func migratingBuild(_ e: Env, withPost: Bool) throws {
+    let db = e.paths.database.path
+    let post = withPost ? "/usr/bin/sqlite3 '\(db)' \"INSERT INTO post_history(post_id,at,from_state,to_state,note) VALUES('p1', strftime('%s','now')+60, 'due', 'posted', NULL)\";" : ""
+    try e.write("djq.sh", """
+      #!/bin/sh
+      case "$1" in
+        videos) /usr/bin/sqlite3 '\(db)' 'PRAGMA user_version=99'; \(post) cat "$FAKE_VIDEOS" ;;
+        doctor) echo '{"findings":[]}' ;;
+        *) exit 0 ;;
+      esac
+      """)
+  }
+
+  func schema(_ e: Env) throws -> Int { try #require(try SQLite(path: e.paths.database.path).one("PRAGMA user_version")?.int("user_version")) }
+
+  @Test func aMigratedFailureWithNewPostsStaysInstalledAndFlagged() throws {
+    let e = try Env()
+    try e.setUp()
+    let first = e.git("rev-parse", "HEAD")
+    let before = try schema(e)
+    e.runner().run(trigger: .manual)
+    try migratingBuild(e, withPost: true)
+    let v2 = e.commit("migrating build")
+    e.extraEnv["DJQ_AUTOUPDATE_FAIL_VERIFY"] = "1"
+    var r = e.runner().run(trigger: .watch)
+    #expect(r.kind == .failed)
+    #expect(e.installed?.commit == v2)  // left installed: posts changed after the backup
+    var s = e.files.state()
+    #expect(s.blocked?.afterInstall == true)
+    #expect(s.history.last?.to.commit == v2)
+    #expect(s.rolledBackFrom == nil)
+    // The next trigger keeps the failure visible (no silent "up to date").
+    e.extraEnv = [:]
+    r = e.runner().run(trigger: .watch)
+    #expect(r.kind == .failed)
+    #expect(e.files.state().blocked?.commit == v2)
+    // Rollback is refused without --restore-db, then restores the pre-update backup with it.
+    #expect(try schema(e) == 99)
+    do {
+      _ = try e.runner().rollback(restoreDB: false)
+      Issue.record("rollback should be refused")
+    } catch let err as AutoUpdateRunner.RollbackError {
+      #expect(err.description.contains("1 post change"))
+    }
+    _ = try e.runner().rollback(restoreDB: true)
+    #expect(try schema(e) == before)
+    #expect(e.installed?.commit == first)
+    s = e.files.state()
+    #expect(s.blocked == nil)
+    #expect(e.engineCalls.all.suffix(2) == ["stop", "start"])
+  }
+
+  @Test func aMigratedFailureWithNoNewPostsRestoresTheBackup() throws {
+    let e = try Env()
+    try e.setUp()
+    let first = e.git("rev-parse", "HEAD")
+    let before = try schema(e)
+    e.runner().run(trigger: .manual)
+    try migratingBuild(e, withPost: false)
+    e.commit("migrating build")
+    e.extraEnv["DJQ_AUTOUPDATE_FAIL_VERIFY"] = "1"
+    #expect(e.runner().run(trigger: .watch).kind == .rolledBack)
+    #expect(try schema(e) == before)
+    #expect(e.installed?.commit == first)
+    #expect(e.engineCalls.all.suffix(2) == ["stop", "start"])
+  }
+
+  @Test func docsAfterARollbackDontBringItBack() throws {
+    let e = try Env()
+    try e.setUp()
+    let first = e.git("rev-parse", "HEAD")
+    e.runner().run(trigger: .manual)
+    try e.write("Sources.swift", "// v2")
+    e.commit("v2")
+    e.runner().run(trigger: .manual)
+    _ = try e.runner().rollback(restoreDB: false)
+    try e.write("README.md", "# docs")
+    e.commit("docs on top")
+    #expect(e.runner().run(trigger: .watch).kind == .skippedDocs)
+    #expect(e.installed?.commit == first)
+    try e.write("Sources.swift", "// v3")
+    let v3 = e.commit("v3")
+    #expect(e.runner().run(trigger: .watch).kind == .installed)
+    #expect(e.installed?.commit == v3)
+  }
+
+  @Test func renamesIntoDocsAreNotDocsOnlyAndTagsRelabel() throws {
+    let e = try Env()
+    try e.setUp()
+    e.runner().run(trigger: .manual)
+    try FileManager.default.createDirectory(at: e.repo.appendingPathComponent("docs"), withIntermediateDirectories: true)
+    e.git("mv", "Sources.swift", "docs/Sources.swift")
+    let moved = e.commit("move code into docs/")
+    #expect(e.runner().run(trigger: .watch).kind == .installed)
+    #expect(e.installed?.commit == moved)
+    // A tag on the installed commit changes the version label: same code, rebuilt and verified.
+    e.git("tag", "-a", "v9.9.0", "-m", "release")
+    let r = e.runner().run(trigger: .watch)
+    #expect(r.kind == .installed)
+    #expect(e.files.state().installed?.version == "9.9.0")
+  }
+
+  @Test func rollbackToAnUnstampedBuildWithoutARecordNeedsForce() throws {
+    let e = try Env()
+    try e.setUp()
+    let first = e.git("rev-parse", "HEAD")
+    e.runner().run(trigger: .manual)
+    try e.write("Sources.swift", "// v2")
+    e.commit("v2")
+    e.runner().run(trigger: .manual)
+    var s = e.files.state()
+    s.history = []  // e.g. installed by hand with build-app.sh
+    try e.files.saveState(s)
+    #expect(throws: AutoUpdateRunner.RollbackError.self) { try e.runner().rollback(restoreDB: false) }
+    _ = try e.runner().rollback(restoreDB: false, force: true)
+    #expect(e.installed?.commit == first)
+  }
+
+  @Test func aStaleReadyBuildClearsOnceInstalled() throws {
+    let e = try Env()
+    try e.setUp()
+    let first = e.git("rev-parse", "HEAD")
+    e.runner().run(trigger: .manual)
+    try e.write("Sources.swift", "// v2")
+    e.commit("v2")
+    e.runner().run(trigger: .manual)
+    var s = e.files.state()
+    s.ready = AutoUpdateCandidate(version: "old", commit: first, whatsNew: [], builtAt: Date())
+    s.handled = nil
+    try e.files.saveState(s)
+    #expect(e.runner().run(trigger: .watch).kind == .upToDate)
+    #expect(e.files.state().ready == nil)
+  }
+
+  @Test func devRootWithoutDevHomeIsRefused() throws {
+    let e = try Env()
+    try e.setUp()
+    e.extraEnv["DJQ_ROOT"] = e.paths.root.path
+    #expect(e.runner().run(trigger: .manual).message.hasPrefix("Refused"))
+    #expect(e.installed == nil)
   }
 
   @Test func neverSetUpCountsAsOffAndDevRunsStayInScratch() throws {

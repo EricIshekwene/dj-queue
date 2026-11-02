@@ -37,6 +37,9 @@ sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" Resources/Info.plist >
 # The commit the bundle was built from (auto-update compares it with main; "What's new" starts from it).
 COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
 plutil -replace DJQGitCommit -string "$COMMIT" "$APP/Contents/Info.plist"
+# The database schema this build expects: `djq autoupdate rollback` refuses a build older than the database.
+SCHEMA="$(sed -nE 's/.*static let schemaVersion = ([0-9]+).*/\1/p' Sources/DJQCore/Store.swift | head -1)"
+plutil -replace DJQSchemaVersion -integer "${SCHEMA:-0}" "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
 if [[ ! -f Resources/AppIcon.icns ]]; then
@@ -52,6 +55,10 @@ codesign --verify --strict "$APP"
 echo "built: $APP"
 
 if [[ "${1:-}" == "--install" ]]; then
+  if [[ -n "${DJQ_ROOT:-}" && -z "${DJQ_HOME:-}" ]]; then
+    echo "error: DJQ_ROOT is set without DJQ_HOME — a dev install would go over the real app. Set DJQ_HOME (or unset DJQ_ROOT)." >&2
+    exit 1
+  fi
   # With DJQ_HOME set (a dev run) the install stays in that scratch folder unless DJQ_APP_DIR / DJQ_BIN_DIR say otherwise.
   if [[ -n "${DJQ_HOME:-}" ]]; then BASE="$DJQ_HOME"; SUPPORT="$DJQ_HOME/support"; else BASE="$HOME"; SUPPORT="$HOME/Library/Application Support/DJ Queue"; fi
   APPS="${DJQ_APP_DIR:-$BASE/Applications}"

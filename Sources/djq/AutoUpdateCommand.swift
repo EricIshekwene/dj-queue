@@ -11,7 +11,8 @@ enum AutoUpdateCommand {
       on [--repo PATH] [--branch B]   turn auto-update on and load the watcher (installed app only)
       off                             turn it off and unload the watcher (nothing else changes)
       run [--force] [--trigger T]     check main now: gate → backup → install → restart → verify (T: manual|watch|launch)
-      rollback [--restore-db]         swap back to the previous build (refused after a schema migration unless --restore-db)
+      rollback [--restore-db] [--force]  swap back to the previous build (refused when the database is newer than it,
+                                      unless --restore-db; --force only for a build too old to say its schema)
       log [--lines N] [--run]         the auto-update log (or the newest run's full build/test output)
     """
 
@@ -106,7 +107,7 @@ enum AutoUpdateCommand {
       let runner = AutoUpdateRunner(paths: paths)
       runner.progress = { print($0); fflush(stdout) }
       do {
-        _ = try runner.rollback(restoreDB: flag("--restore-db"))
+        _ = try runner.rollback(restoreDB: flag("--restore-db"), force: flag("--force"))
       } catch let e as AutoUpdateRunner.RollbackError {
         throw AutoUpdateCLIError(e.description)
       }

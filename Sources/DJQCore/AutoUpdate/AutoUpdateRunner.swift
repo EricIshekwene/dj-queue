@@ -24,8 +24,10 @@ public final class AutoUpdateRunner: @unchecked Sendable {
   public var environment: [String: String]
   /// Commands run in order inside the scratch checkout; the last one must leave `build/DJ Queue.app`.
   public var gate: [[String]] = AutoUpdateRunner.defaultGate
-  /// Restarts the engine after an install or rollback; returns a one-line outcome for the log.
-  public var restartEngine: () -> String
+  /// How the runner restarts, stops and starts the engine (tests and dev runs swap this out).
+  public var engine: AutoUpdateEngineControl
+  /// Longest wait for the restarted engine's first heartbeat before verify fails.
+  public var heartbeatTimeout: TimeInterval = 90
   /// Longest wait for a running render before giving up until the next trigger.
   public var idleTimeout: TimeInterval = 2 * 3600
   public var pollInterval: TimeInterval = 10
@@ -45,26 +47,10 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     self.environment = environment
     au = AutoUpdatePaths(paths, environment: environment)
     files = AutoUpdateStore(au)
-    let env = environment
-    restartEngine = { AutoUpdateRunner.defaultRestart(environment: env) }
+    engine = .live(paths: paths, environment: environment)
   }
 
   var isDev: Bool { ["DJQ_HOME", "DJQ_ROOT"].contains { !(environment[$0] ?? "").isEmpty } }
-
-  /// Kickstarts the engine LaunchAgent when it's loaded; otherwise asks a plain-launched app to relaunch itself.
-  /// Dev environments (DJQ_HOME / DJQ_ROOT) never touch the real LaunchAgent.
-  public static func defaultRestart(environment: [String: String]) -> String {
-    if ["DJQ_HOME", "DJQ_ROOT"].contains(where: { !(environment[$0] ?? "").isEmpty }) {
-      DistributedNotificationCenter.default().postNotificationName(.init(AutoUpdate.restartSignal), object: nil, userInfo: nil, deliverImmediately: true)
-      return "engine restart skipped (dev environment); asked an open dev app to relaunch"
-    }
-    if LaunchAgent.isLoaded() {
-      let r = LaunchAgent.run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(LaunchAgent.label)"])
-      return r.status == 0 ? "engine restarted (launchctl kickstart)" : "engine restart failed: \(r.output.trimmingCharacters(in: .whitespacesAndNewlines))"
-    }
-    DistributedNotificationCenter.default().postNotificationName(.init(AutoUpdate.restartSignal), object: nil, userInfo: nil, deliverImmediately: true)
-    return "engine LaunchAgent not loaded; asked an open app to relaunch"
-  }
 
   // MARK: State helpers
 
@@ -72,7 +58,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
 
   private func save() {
     do { try files.saveState(state) } catch { files.log("ERROR can't write state: \(error)") }
-    AutoUpdate.postChanged()
+    AutoUpdate.postChanged(paths)
   }
 
   private func phase(_ p: AutoUpdateState.Phase, _ line: String? = nil) {
@@ -115,6 +101,10 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     }
     defer { lock.release() }
     state = files.state()
+    if AutoUpdate.unsafeDevEnvironment(environment) {
+      say("refused: DJQ_ROOT is set without DJQ_HOME, so this run would install over the real app")
+      return AutoUpdateResult(kind: .failed, message: "Refused: DJQ_ROOT is set without DJQ_HOME (a dev run would install over the real app).", commit: nil, at: now())
+    }
     let config = files.config()
     let request = takeRequest()
     // Never set up (no config.json) counts as off for automatic triggers: only `djq autoupdate on` (the v0.6.0
@@ -173,16 +163,28 @@ public final class AutoUpdateRunner: @unchecked Sendable {
 
     if installed?.commit == head, installed?.version == version, !force {
       state.handled = key
-      if let b = state.blocked, isAncestor(repo, b.commit, of: head) { state.blocked = nil }
-      if state.ready?.commit == head { state.ready = nil }
+      // A gate block on an older commit is over; a build that failed its checks and was left installed stays flagged.
+      if let b = state.blocked, !b.afterInstall || b.commit != head, isAncestor(repo, b.commit, of: head) { state.blocked = nil }
+      if let r = state.ready, isAncestor(repo, r.commit, of: head) { state.ready = nil }
+      if let b = state.blocked, b.afterInstall, b.commit == head {
+        return finish(.failed, "Installed \(version) (\(short)) failed its checks after install: \(b.reason)", commit: head)
+      }
       return finish(.upToDate, "Installed \(version) (\(short)) is the newest build.", commit: head)
     }
     if let ready = state.ready, ready.commit == head, ready.version == version, FileManager.default.fileExists(atPath: au.staged.path) {
       return installOrWait(repo: repo, candidate: ready, installNow: &installNow)
     }
-    if state.rolledBackFrom == head, !force {
-      state.handled = key
-      return finish(.upToDate, "\(short) was rolled back; the next commit installs as usual.", commit: head)
+    if let rb = state.rolledBackFrom, !force {
+      if rb == head {
+        state.handled = key
+        return finish(.upToDate, "\(short) was rolled back; the next commit installs as usual.", commit: head)
+      }
+      // Docs on top of a rolled-back commit don't bring its code back.
+      if isAncestor(repo, rb, of: head), AutoUpdate.isDocsOnly(changedFiles(repo, rb, head)) {
+        state.rolledBackFrom = head
+        state.handled = key
+        return finish(.skippedDocs, "Skipped \(short): only docs changed since the rolled-back \(String(rb.prefix(7))).", commit: head)
+      }
     }
     if state.handled == key, !force {
       if let ready = state.ready, FileManager.default.fileExists(atPath: au.staged.path) {
@@ -191,7 +193,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
       return state.last ?? finish(.upToDate, "Nothing new on main since \(short).", commit: head)
     }
     if let ic = installed?.commit, ic != head, isAncestor(repo, ic, of: head), !force {
-      let changed = (git(repo, ["diff", "--name-only", ic, head]) ?? "").split(separator: "\n").map(String.init)
+      let changed = changedFiles(repo, ic, head)
       if AutoUpdate.isDocsOnly(changed) {
         state.handled = key
         // A block on a commit this one contains is over: main is back to the installed code plus docs.
@@ -265,11 +267,16 @@ public final class AutoUpdateRunner: @unchecked Sendable {
 
     phase(.installing, "installing \(candidate.version) (\(short))")
     let fm = FileManager.default
+    let hasDB = fm.fileExists(atPath: paths.database.path)
+    // Fail closed: an unreadable schema would make every later rollback and restore guard guess.
+    guard let schemaBefore = hasDB ? userVersion() : 0 else {
+      save()
+      return finish(.failed, "Couldn't read the database schema, nothing installed (is the database locked or damaged?).", commit: candidate.commit)
+    }
     let current = BundleInfo.build(au.installedApp)
     let currentDJQ = djq(in: au.installedApp)
     let before = currentDJQ.flatMap { fingerprint($0) }
     let errorsBefore = currentDJQ.flatMap { doctorErrors($0) } ?? []
-    let schemaBefore = userVersion() ?? 0
     var backupPath: String?
     do {
       backupPath = try backupDatabase(label: candidate.version)?.path
@@ -288,18 +295,28 @@ public final class AutoUpdateRunner: @unchecked Sendable {
       try replace(au.installedApp, with: au.staged, move: true)
       linkCLI()
     } catch {
-      // Put the old bundle back if it moved.
-      if hadPrevious, !fm.fileExists(atPath: au.installedApp.path) { try? replace(au.installedApp, with: au.previous, move: false) }
+      // Put both slots back the way they were.
+      if hadPrevious, !fm.fileExists(atPath: au.installedApp.path), fm.fileExists(atPath: au.previous.path) {
+        try? replace(au.installedApp, with: au.previous, move: true)
+      }
+      if fm.fileExists(atPath: au.previousOlder.path) { try? replace(au.previous, with: au.previousOlder, move: true) }
+      linkCLI()
       save()
       return finish(.failed, "Install failed, previous build left in place: \(error)", commit: candidate.commit)
     }
-    say(restartEngine())
+    let restartedAt = now()
+    let restart = engine.restart()
+    say(restart.message)
     sleep(settle)
 
     phase(.verifying, "verifying \(candidate.version)")
     var problems: [String] = []
+    if !restart.ok { problems.append("the engine didn't restart (\(restart.message))") }
+    else if !engineCameBack(since: restartedAt) {
+      problems.append("the engine didn't start on the new build within \(Int(heartbeatTimeout)) s")
+    }
     let newBuild = BundleInfo.build(au.installedApp)
-    if newBuild?.version != candidate.version {
+    if newBuild?.version != candidate.version || newBuild?.commit.map({ $0 != candidate.commit }) == true {
       problems.append("the installed app reports \(newBuild?.version ?? "no version"), expected \(candidate.version)")
     }
     if let newDJQ = djq(in: au.installedApp) {
@@ -320,20 +337,20 @@ public final class AutoUpdateRunner: @unchecked Sendable {
       problems.append("the new build has no djq")
     }
     if environment["DJQ_AUTOUPDATE_FAIL_VERIFY"] == "1" { problems.append("forced verify failure (DJQ_AUTOUPDATE_FAIL_VERIFY=1)") }
-    let schemaAfter = userVersion() ?? schemaBefore
+    let schemaAfterRead = hasDB ? userVersion() : 0
+    if schemaAfterRead == nil { problems.append("the database schema couldn't be read after the update") }
+    // Unknown counts as migrated: the guards below then refuse rather than guess.
+    let schemaAfter = schemaAfterRead ?? Int.max
 
+    let record = AutoUpdateInstall(to: AutoUpdateBuild(version: candidate.version, commit: candidate.commit, at: now()),
+                                   from: current.map { b in AutoUpdateBuild(version: b.version, commit: b.commit ?? state.installed?.commit) },
+                                   schemaBefore: schemaBefore, schemaAfter: schemaAfter, backup: backupPath, at: now())
     if !problems.isEmpty {
-      return rollBackFailedInstall(candidate: candidate, previous: hadPrevious ? current : nil, problems: problems,
-                                   schemaBefore: schemaBefore, schemaAfter: schemaAfter, backup: backupPath)
+      return rollBackFailedInstall(candidate: candidate, previous: hadPrevious ? current : nil, problems: problems, record: record)
     }
 
     try? fm.removeItem(at: au.previousOlder.deletingLastPathComponent())
-    let build = AutoUpdateBuild(version: candidate.version, commit: candidate.commit, at: now())
-    state.history.append(AutoUpdateInstall(to: build, from: current.map { b in AutoUpdateBuild(version: b.version, commit: b.commit ?? state.installed?.commit) },
-                                           schemaBefore: schemaBefore, schemaAfter: schemaAfter, backup: backupPath, at: now()))
-    state.history = Array(state.history.suffix(20))
-    state.installed = build
-    state.ready = nil
+    recordInstall(record)
     if let b = state.blocked, isAncestor(repo, b.commit, of: candidate.commit) { state.blocked = nil }
     state.rolledBackFrom = nil
     state.reopenWindow = reopenWindow
@@ -346,60 +363,97 @@ public final class AutoUpdateRunner: @unchecked Sendable {
                   commit: candidate.commit)
   }
 
+  private func recordInstall(_ r: AutoUpdateInstall) {
+    state.history.append(r)
+    state.history = Array(state.history.suffix(20))
+    state.installed = r.to
+    state.ready = nil
+  }
+
+  /// The engine wrote a `start` heartbeat after `since` (it opened the database on the new build). Skipped when the
+  /// engine control says there's no engine to wait for (dev runs, tests, no LaunchAgent).
+  func engineCameBack(since: Date) -> Bool {
+    guard engine.expectsHeartbeat() else { return true }
+    var waited: TimeInterval = 0
+    while waited <= heartbeatTimeout {
+      if (scalar("SELECT count(*) FROM heartbeats WHERE kind='start' AND at > ?", since.timeIntervalSince1970 - 1) ?? 0) > 0 { return true }
+      sleep(2)
+      waited += 2
+    }
+    return false
+  }
+
   private func rollBackFailedInstall(candidate: AutoUpdateCandidate, previous: AutoUpdateBuild?, problems: [String],
-                                     schemaBefore: Int, schemaAfter: Int, backup: String?) -> AutoUpdateResult {
+                                     record: AutoUpdateInstall) -> AutoUpdateResult {
     let short = String(candidate.commit.prefix(7))
     let why = problems.joined(separator: "; ")
     phase(.rollingBack, "verify failed for \(candidate.version): \(why)")
     let fm = FileManager.default
-    func block(_ reason: String) {
-      state.blocked = AutoUpdateBlock(version: candidate.version, commit: candidate.commit, reason: reason, detail: why, log: au.log.path, at: now())
-      state.ready = nil
-      state.rolledBackFrom = candidate.commit
+    /// The failed build stays installed: record it (so `rollback --restore-db` finds its backup) and keep the block.
+    func leaveInstalled(_ reason: String, _ message: String) -> AutoUpdateResult {
+      recordInstall(record)
+      state.blocked = AutoUpdateBlock(version: candidate.version, commit: candidate.commit, reason: reason, detail: why,
+                                      log: au.log.path, at: now(), afterInstall: true)
+      try? fm.removeItem(at: au.previousOlder.deletingLastPathComponent())
+      notice("Update failed", "\(candidate.version) is still installed: \(why)", "failed", candidate.commit)
+      save()
+      return finish(.failed, message, commit: candidate.commit)
     }
     guard previous != nil, fm.fileExists(atPath: au.previous.path) else {
-      block("Checks after installing failed (\(why)); there's no previous build to roll back to.")
-      notice("Update failed", "\(candidate.version): \(why)", "failed", candidate.commit)
-      save()
-      return finish(.failed, "\(candidate.version) (\(short)) failed verify and no previous build is kept: \(why)", commit: candidate.commit)
+      return leaveInstalled("Checks after installing failed (\(why)); there's no previous build to roll back to.",
+                            "\(candidate.version) (\(short)) failed verify and no previous build is kept: \(why)")
     }
-    if schemaAfter > schemaBefore {
+    let migrated = record.schemaAfter != record.schemaBefore
+    if migrated {
       // The new build migrated the database. The old build can't open it, so the backup has to come back too —
-      // but only if nothing posted since (restoring would lose it and risk a double post).
-      let since = backupDate(backup)
-      let changed = since.map { postChanges(since: $0) } ?? 1
-      guard changed == 0, let backup else {
-        block("Checks after installing failed (\(why)). It migrated the database (schema \(schemaBefore) → \(schemaAfter)) and posts changed since, so it was left installed. `djq autoupdate rollback --restore-db` goes back if you accept losing those changes.")
-        notice("Update failed", "\(candidate.version) is still installed: \(why)", "failed", candidate.commit)
-        save()
-        return finish(.failed, "\(candidate.version) failed verify after migrating the database; left installed: \(why)", commit: candidate.commit)
+      // but only if nothing posted since (restoring would lose it and risk a double post). Unknown = changed.
+      let changed = backupDate(record.backup).flatMap { postChanges(since: $0) }
+      guard changed == 0, let backup = record.backup else {
+        return leaveInstalled("Checks after installing failed (\(why)). It migrated the database (schema \(record.schemaBefore) → \(record.schemaAfter == Int.max ? "unknown" : String(record.schemaAfter))) and posts changed since (or couldn't be counted), so it was left installed. `djq autoupdate rollback --restore-db` goes back if you accept losing those changes.",
+                              "\(candidate.version) failed verify after migrating the database; left installed: \(why)")
       }
+      // Stop the engine (it runs the new build) before the database goes back, then swap, then start it.
+      say(engine.stop())
       do {
         try restoreDatabase(from: URL(fileURLWithPath: backup), keepingCurrentAs: "after-failed-\(candidate.version)")
-        say("restored the database from \(backup) (schema \(schemaAfter) → \(schemaBefore))")
+        say("restored the database from \(backup) (schema → \(record.schemaBefore))")
       } catch {
-        block("Checks after installing failed (\(why)) and restoring the database backup failed: \(error). Left installed.")
-        save()
-        return finish(.failed, "\(candidate.version) failed verify; database restore failed: \(error)", commit: candidate.commit)
+        say(engine.start().message)
+        return leaveInstalled("Checks after installing failed (\(why)) and restoring the database backup failed: \(error). Left installed.",
+                              "\(candidate.version) failed verify; database restore failed: \(error)")
       }
     }
     do {
-      try replace(au.failed, with: au.installedApp, move: true)
-      try replace(au.installedApp, with: au.previous, move: true)
-      if fm.fileExists(atPath: au.previousOlder.path) { try replace(au.previous, with: au.previousOlder, move: true) }
-      linkCLI()
+      try swapBack()
     } catch {
-      block("Checks after installing failed (\(why)) and the rollback failed: \(error).")
-      save()
-      return finish(.failed, "rollback of \(candidate.version) failed: \(error)", commit: candidate.commit)
+      if migrated { say(engine.start().message) }
+      return leaveInstalled("Checks after installing failed (\(why)) and the rollback failed: \(error).",
+                            "rollback of \(candidate.version) failed: \(error)")
     }
-    say(restartEngine())
+    say(migrated ? engine.start().message : engine.restart().message)
     let back = previous?.version ?? "the previous build"
-    block("Checks after installing failed: \(why). Rolled back to \(back).")
+    state.blocked = AutoUpdateBlock(version: candidate.version, commit: candidate.commit, reason: "Checks after installing failed: \(why). Rolled back to \(back).",
+                                    detail: why, log: au.log.path, at: now())
+    state.ready = nil
+    state.rolledBackFrom = candidate.commit
     state.installed = previous.map { AutoUpdateBuild(version: $0.version, commit: $0.commit ?? state.installed?.commit, at: now()) }
     notice("Update rolled back", "\(candidate.version) failed its checks (\(why)); back on \(back).", "rolledback", candidate.commit)
     save()
     return finish(.rolledBack, "\(candidate.version) (\(short)) failed verify, rolled back to \(back): \(why)", commit: candidate.commit)
+  }
+
+  /// installed → failed/, previous → installed, previous-older → previous. On error the slots are put back.
+  private func swapBack() throws {
+    let fm = FileManager.default
+    try replace(au.failed, with: au.installedApp, move: true)
+    do {
+      try replace(au.installedApp, with: au.previous, move: true)
+    } catch {
+      try? replace(au.installedApp, with: au.failed, move: true)
+      throw error
+    }
+    if fm.fileExists(atPath: au.previousOlder.path) { try? replace(au.previous, with: au.previousOlder, move: true) }
+    linkCLI()
   }
 
   // MARK: Rollback (djq autoupdate rollback)
@@ -409,13 +463,17 @@ public final class AutoUpdateRunner: @unchecked Sendable {
   }
 
   /// Swaps the installed bundle with the kept previous one (so a second rollback rolls forward again). Refused
-  /// when the installed build migrated the database, unless `restoreDB` also restores the backup taken just
-  /// before that install (later changes are lost; the message says how many).
-  public func rollback(restoreDB: Bool) throws -> AutoUpdateResult {
+  /// when the database is newer than the kept build expects, unless `restoreDB` also restores the backup taken
+  /// just before that install (later changes are lost; the message says how many). When the kept build's schema
+  /// can't be known (it predates schema stamps and no install record exists) it's refused unless `force`.
+  public func rollback(restoreDB: Bool, force: Bool = false) throws -> AutoUpdateResult {
     guard let lock = AutoUpdateLock.acquire(au.lock) else {
       throw RollbackError(description: "An update run is in progress; try again when `djq autoupdate status` says idle.")
     }
     defer { lock.release() }
+    if AutoUpdate.unsafeDevEnvironment(environment) {
+      throw RollbackError(description: "Refused: DJQ_ROOT is set without DJQ_HOME (a dev run would touch the real app).")
+    }
     state = files.state()
     let fm = FileManager.default
     guard fm.fileExists(atPath: au.previous.path), let prev = BundleInfo.build(au.previous) else {
@@ -424,39 +482,68 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     let cur = BundleInfo.build(au.installedApp)
     let curCommit = cur?.commit ?? state.installed?.commit
     let record = state.history.last { $0.to.commit == curCommit && $0.to.version == cur?.version }
-    let schemaNow = userVersion() ?? 0
-    let schemaPrev = record?.schemaBefore ?? schemaNow
-    if schemaNow > schemaPrev {
+    let hasDB = fm.fileExists(atPath: paths.database.path)
+    guard let schemaNow = hasDB ? userVersion() : 0 else {
+      throw RollbackError(description: "Refused: the database schema couldn't be read (is it locked?). Try again in a moment.")
+    }
+    let schemaPrev = BundleInfo.schema(au.previous) ?? record?.schemaBefore
+    if schemaPrev == nil, !force {
+      throw RollbackError(description: """
+        Refused: \(prev.version) predates schema stamps and there's no install record, so it can't be checked against the database \
+        (schema \(schemaNow)). If you know \(prev.version) uses the same schema, run `djq autoupdate rollback --force`.
+        """)
+    }
+    let needsRestore = schemaNow > (schemaPrev ?? schemaNow)
+    if needsRestore {
+      let lost = record.flatMap { backupDate($0.backup) }.flatMap { postChanges(since: $0) }
       guard restoreDB else {
-        let lost = record.flatMap { backupDate($0.backup) }.map { postChanges(since: $0) }
         throw RollbackError(description: """
-          Refused: \(cur?.version ?? "the installed build") migrated the database (schema \(schemaPrev) → \(schemaNow)) and \(prev.version) can't open it. \
-          `djq autoupdate rollback --restore-db` also restores \(record?.backup ?? "the pre-update backup"), taken before that update\
-          \(lost.map { "; \($0) post change\($0 == 1 ? "" : "s") since then would be lost" } ?? "").
+          Refused: the database is at schema \(schemaNow) and \(prev.version) expects \(schemaPrev!), so it can't open it. \
+          `djq autoupdate rollback --restore-db` also restores \(record?.backup ?? "the pre-update backup"), taken before that update; \
+          \(lost.map { "\($0) post change\($0 == 1 ? "" : "s")" } ?? "an unknown number of post changes") since then would be lost.
           """)
       }
-      guard let b = record?.backup, fm.fileExists(atPath: b) else {
-        throw RollbackError(description: "The backup taken before \(cur?.version ?? "this update") is missing, so the database can't go back to schema \(schemaPrev).")
+      guard let b = record?.backup, fm.fileExists(atPath: b), record?.schemaBefore == schemaPrev else {
+        throw RollbackError(description: "The backup taken before \(cur?.version ?? "this update") is missing, so the database can't go back to schema \(schemaPrev!).")
       }
       try waitIdle()
-      try restoreDatabase(from: URL(fileURLWithPath: b), keepingCurrentAs: "before-rollback-\(cur?.version ?? "unknown")")
+      say(engine.stop())
+      do {
+        try restoreDatabase(from: URL(fileURLWithPath: b), keepingCurrentAs: "before-rollback-\(cur?.version ?? "unknown")")
+      } catch {
+        say(engine.start().message)
+        throw error
+      }
       say("restored the database from \(b)")
     } else {
       try waitIdle()
     }
     phase(.rollingBack, "rolling back \(cur?.version ?? "?") → \(prev.version)")
     let tmp = au.dir.appendingPathComponent("swap/\(AutoUpdatePaths.appName)")
-    try replace(tmp, with: au.installedApp, move: true)
-    try replace(au.installedApp, with: au.previous, move: true)
-    try replace(au.previous, with: tmp, move: true)
+    do {
+      try replace(tmp, with: au.installedApp, move: true)
+      do {
+        try replace(au.installedApp, with: au.previous, move: true)
+      } catch {
+        try? replace(au.installedApp, with: tmp, move: true)
+        throw error
+      }
+      try replace(au.previous, with: tmp, move: true)
+    } catch {
+      if needsRestore { say(engine.start().message) }
+      state.phase = .idle
+      save()
+      throw RollbackError(description: "The swap failed (\(error)); the installed build was put back.")
+    }
     linkCLI()
-    say(restartEngine())
+    say(needsRestore ? engine.start().message : engine.restart().message)
     let prevCommit = prev.commit ?? record?.from?.commit
     // Swapping back to a newer build (a second rollback) is a roll forward: nothing to skip then.
     let repo = files.config().repoPath(environment: environment)
     let forward = curCommit != nil && prevCommit != nil && curCommit != prevCommit && isAncestor(repo, curCommit!, of: prevCommit!)
     state.installed = AutoUpdateBuild(version: prev.version, commit: prevCommit, at: now())
     state.rolledBackFrom = forward ? nil : curCommit
+    if let b = state.blocked, b.afterInstall, b.commit == curCommit { state.blocked = nil }
     state.ready = nil
     state.phase = .idle
     state.runPid = nil
@@ -465,7 +552,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
       : "Rolled back \(cur?.version ?? "the installed build") → \(prev.version). Auto-update skips \(curCommit.map { String($0.prefix(7)) } ?? "that commit") until a newer commit lands."
     // A build older than auto-update has no `djq autoupdate`: the watcher would fail on every trigger.
     if let d = djq(in: au.installedApp), shell(d.path, ["autoupdate", "status"], cwd: nil).status != 0 {
-      try? AutoUpdateWatcher.uninstall(au, unload: !isDev)
+      try? AutoUpdateWatcher.uninstallHoldingLock(au, unload: AutoUpdateWatcher.isRealLaunchAgentsFolder(au))
       var c = files.config()
       c.enabled = false
       try? files.saveConfig(c)
@@ -578,6 +665,11 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     guard r.status == 0 else { return nil }
     let s = r.output.trimmingCharacters(in: .whitespacesAndNewlines)
     return s.isEmpty ? nil : s
+  }
+
+  /// Paths changed between two commits; renames count as a delete plus an add (code moved into docs/ isn't docs-only).
+  func changedFiles(_ repo: String, _ a: String, _ b: String) -> [String] {
+    (git(repo, ["diff", "--name-only", "--no-renames", a, b]) ?? "").split(separator: "\n").map(String.init)
   }
 
   func isAncestor(_ repo: String, _ a: String, of b: String) -> Bool {
@@ -711,8 +803,9 @@ public final class AutoUpdateRunner: @unchecked Sendable {
   func renderingCount() -> Int { scalar("SELECT count(*) FROM platform_posts WHERE state='rendering'") ?? 0 }
 
   /// Post history rows written after `date` (what a database restore would lose).
-  func postChanges(since date: Date) -> Int {
-    scalar("SELECT count(*) FROM post_history WHERE at > ?", date.timeIntervalSince1970) ?? 0
+  /// nil when it can't be counted (callers treat that as "changed").
+  func postChanges(since date: Date) -> Int? {
+    scalar("SELECT count(*) FROM post_history WHERE at > ?", date.timeIntervalSince1970)
   }
 
   func backupDate(_ path: String?) -> Date? {
@@ -786,11 +879,12 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     return f.string(from: now())
   }
 
-  /// Keeps the 10 newest pre-update backups (plus any a history entry still points at).
+  /// Keeps the 10 newest pre-update backups by time (plus any a history entry still points at).
   func pruneBackups() {
     let keep = Set(state.history.compactMap(\.backup))
+    func mtime(_ u: URL) -> Date { ((try? FileManager.default.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date) ?? .distantPast }
     let all = ((try? FileManager.default.contentsOfDirectory(at: au.backups, includingPropertiesForKeys: nil)) ?? [])
-      .filter { $0.pathExtension == "sqlite" }.sorted { $0.lastPathComponent > $1.lastPathComponent }
+      .filter { $0.pathExtension == "sqlite" }.sorted { mtime($0) > mtime($1) }
     for old in all.dropFirst(10) where !keep.contains(old.path) { try? FileManager.default.removeItem(at: old) }
   }
 
