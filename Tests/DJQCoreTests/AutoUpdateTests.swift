@@ -605,6 +605,19 @@ import Testing
     d.autoUpdateWatcherLoaded = { true }
     d.probeDurations = false
     #expect(d.run().findings.contains { $0.id == "autoupdate.failed" && $0.fix.contains("--restore-db") })
+    // Replaced by a build that verifies: the flag clears.
+    try FileManager.default.removeItem(at: e.repo.appendingPathComponent("FAIL_TESTS"))
+    try e.write("djq.sh", """
+      #!/bin/sh
+      case "$1" in
+        videos) cat "$FAKE_VIDEOS" ;;
+        doctor) echo '{"findings":[]}' ;;
+        *) exit 0 ;;
+      esac
+      """)
+    e.commit("fixed")
+    #expect(e.runner().run(trigger: .watch).kind == .installed)
+    #expect(e.files.state().failedInstall == nil)
   }
 
   @Test func devRootWithoutDevHomeIsRefused() throws {

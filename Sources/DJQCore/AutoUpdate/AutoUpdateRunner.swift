@@ -159,6 +159,8 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     let key = "\(head) \(version)"
     let installed = installedBuild(repo)
     state.working = head
+    // A failed-but-installed build that's no longer installed (rolled back, or replaced by hand) is over.
+    if let f = state.failedInstall, installed?.commit != f.commit { state.failedInstall = nil }
     phase(.checking)
 
     if installed?.commit == head, installed?.version == version, !force {

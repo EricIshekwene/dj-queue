@@ -413,8 +413,9 @@ final class AutoUpdateUI {
     return (s.isRunning && installing.contains(s.phase)) || installRequestedAt != nil
   }
 
-  /// What the blocked banner, dot and row show: a gate block, else a build that failed its checks and stayed installed.
-  var problem: AutoUpdateBlock? { state.blocked ?? state.failedInstall }
+  /// What the blocked banner, dot and row show: a build that failed its checks and stayed installed first (it's the
+  /// one running), else a gate block.
+  var problem: AutoUpdateBlock? { state.failedInstall ?? state.blocked }
 
   var workingLabel: String { state.isRunning && state.phase != .idle ? state.phase.label : "Starting the update" }
 

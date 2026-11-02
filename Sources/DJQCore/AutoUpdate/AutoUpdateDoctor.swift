@@ -21,7 +21,7 @@ extension Doctor {
                        fix: "`djq autoupdate on` reinstalls and loads it (installed app only)."))
     }
     let s = files.state()
-    if let b = s.blocked {
+    if let b = s.blocked, !(b.afterInstall && s.failedInstall?.commit == b.commit) {
       out.append(.init(id: "autoupdate.blocked", severity: .warning, title: "Update \(b.version) blocked",
                        detail: b.reason, where_: [b.log ?? au.log.path, String(b.commit.prefix(7))],
                        fix: "Fix the failing build or tests on main and commit; the watcher retries on the next commit. `djq autoupdate log` shows the run."))
