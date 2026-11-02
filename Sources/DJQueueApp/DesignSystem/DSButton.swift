@@ -201,7 +201,7 @@ struct DSButton: View {
     .buttonStyle(DSButtonStyle(variant: variant, size: size, fullWidth: fullWidth, softDisabled: disabledReason != nil))
     .dsTooltip(disabledReason ?? tooltip, shortcut: disabledReason == nil ? shortcut : nil)
     .accessibilityLabel(title)
-    .accessibilityAddTraits(blocked ? [] : .isButton)
+    .dsAccessibilityDisabled(disabledReason)
   }
 }
 
@@ -237,6 +237,7 @@ struct DSIconButton: View {
     .buttonStyle(DSButtonStyle(variant: isOn ? .secondary : variant, size: size, softDisabled: disabledReason != nil, iconOnly: true))
     .dsTooltip(disabledReason ?? tooltip, shortcut: disabledReason == nil ? shortcut : nil)
     .accessibilityLabel(tooltip)
+    .dsAccessibilityDisabled(disabledReason)
   }
 }
 
@@ -281,5 +282,16 @@ struct DSKeyHint: View {
                   in: RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
       .overlay(RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous).strokeBorder(inverted ? .clear : DS.color.border))
       .accessibilityLabel("Shortcut \(keys)")
+  }
+}
+
+extension View {
+  /// Soft-disabled controls stay hoverable (so the reason shows as a tooltip) but must still read as disabled to
+  /// VoiceOver: not interactive, value "dimmed", and the reason as the hint. nil = enabled (no change).
+  func dsAccessibilityDisabled(_ reason: String?) -> some View {
+    self
+      .accessibilityRespondsToUserInteraction(reason == nil)
+      .accessibilityValue(reason == nil ? Text("") : Text("dimmed"))
+      .accessibilityHint(reason.map { Text($0) } ?? Text(""))
   }
 }

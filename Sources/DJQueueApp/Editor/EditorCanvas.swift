@@ -113,7 +113,9 @@ struct EditorCanvas: View {
       .padding(.top, DS.space.sm)
 
       Group {
-        if model.fileMissing || model.video == nil {
+        if model.loading {
+          DSSpinner(size: 18)
+        } else if model.fileMissing || model.video == nil {
           missingState
         } else {
           switch model.canvasMode {
@@ -131,7 +133,7 @@ struct EditorCanvas: View {
   }
 
   @ViewBuilder private var bottomBar: some View {
-    if model.fileMissing || model.video == nil {
+    if model.loading || model.fileMissing || model.video == nil {
       Color.clear
     } else {
       switch model.canvasMode {

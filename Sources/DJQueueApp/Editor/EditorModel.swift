@@ -77,6 +77,12 @@ final class EditorModel: ObservableObject {
   @Published var toast: String?
   /// Bumped when Title should take keyboard focus (header title click).
   @Published var focusTitle = 0
+  /// True while a clip's data is being read (the canvas shows a spinner, not "not found").
+  @Published private(set) var loading = false
+  /// A typed Title that hasn't been committed yet (nil = not editing). Saved on ↩, blur, clip switch and Done.
+  @Published var titleDraft: String?
+  /// True while a trim handle is being dragged (expensive derived work waits for the drag end).
+  @Published private(set) var trimDragging = false
   @Published private var zoneSelections: [String: Set<Platform>] = [:]
 
   let playback = EditorPlayback()
@@ -99,9 +105,48 @@ final class EditorModel: ObservableObject {
 
   // MARK: Loading
 
+  /// Everything one clip needs, read off the main thread (on the save queue, so it lands after pending writes).
+  private struct Loaded: @unchecked Sendable {
+    var settings = Settings(), sets: [HashtagSet] = [], templates: [CaptionTemplate] = [], lastCrop: CGPoint?
+    var video: Video?, sessionName = "", fileURL: URL?, fileMissing = false, suggestions: [TitleSuggestion] = []
+    var edit = Edit(), versions: [Version] = [], posts: [PlatformPost] = [], issues: [ValidationIssue] = []
+    var error: String?, readOnly = false
+  }
+
+  private nonisolated static func read(_ store: Store, _ id: String) -> Loaded {
+    var l = Loaded()
+    do {
+      l.settings = try store.settings()
+      l.sets = try store.hashtagSets()
+      l.templates = try store.captionTemplates()
+      l.lastCrop = l.settings.defaults.cropAnchor == .lastUsed ? try store.lastCropCentre() : nil
+      guard let v = try store.video(id: id) else { l.error = "Clip not found"; return l }
+      l.video = v
+      l.sessionName = try store.session(id: v.sessionId)?.name ?? ""
+      let url = try store.fileURL(for: v)
+      l.fileURL = url
+      l.fileMissing = v.missing || url.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true
+      l.suggestions = (try? store.titleSuggestions(videoId: id)) ?? []
+      do {
+        l.edit = try store.edit(videoId: id)
+        l.versions = try store.versions(videoId: id)
+      } catch {
+        l.readOnly = true
+        throw error
+      }
+      l.posts = try store.posts(where: "video_id=?", [id])
+      l.issues = try Validation.issues(video: v, store: store)
+    } catch {
+      l.error = l.readOnly ? "This clip's saved edit can't be read, so editing is off to protect it. Run Doctor."
+        : "Couldn't load: \(error)"
+    }
+    return l
+  }
+
+  /// Switches to a clip. Pending edits (and a typed, uncommitted Title) are saved first; the store is read on the
+  /// save queue — never on the main thread — except in snapshot mode, which renders synchronously.
   func load(_ id: String) {
-    flush()
-    Self.saveQueue.sync {}  // the previous video's last write lands before anything is re-read
+    flush()  // commits the title draft too; queued before the read below on the same serial queue
     videoId = id
     versionNo = 1
     loadError = nil
@@ -114,52 +159,41 @@ final class EditorModel: ObservableObject {
     suggestions = []
     fileURL = nil
     openPlatformCaption = nil
-    do {
-      settings = try store.settings()
-      sets = try store.hashtagSets()
-      templates = try store.captionTemplates()
-      lastCrop = settings.defaults.cropAnchor == .lastUsed ? try store.lastCropCentre() : nil
-      guard let v = try store.video(id: id) else {
-        video = nil; loadError = "Video not found"; return
+    titleDraft = nil
+    loading = true
+    playback.unload()
+    let store = store
+    if snapshotMode {
+      apply(Self.saveQueue.sync { Self.read(store, id) }, id: id)
+    } else {
+      Self.saveQueue.async { [weak self] in
+        let l = Self.read(store, id)
+        DispatchQueue.main.async { self?.apply(l, id: id) }
       }
-      video = v
-      if let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
-      sessionName = try store.session(id: v.sessionId)?.name ?? ""
-      let url = try store.fileURL(for: v)
-      fileURL = url
-      fileMissing = v.missing || url.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true
-      suggestions = (try? store.titleSuggestions(videoId: id)) ?? []
-      do {
-        edit = try store.edit(videoId: id)
-        versions = try store.versions(videoId: id)
-      } catch {
-        readOnly = true
-        throw error
-      }
-      posts = try store.posts(where: "video_id=?", [id])
-      issues = try Validation.issues(video: v, store: store)
-    } catch {
-      loadError = readOnly ? "This clip's saved edit can't be read, so editing is off to protect it. Run Doctor."
-        : "Couldn't load: \(error)"
     }
+  }
+
+  private func apply(_ l: Loaded, id: String) {
+    guard videoId == id else { return }  // a newer load won
+    loading = false
+    settings = l.settings; sets = l.sets; templates = l.templates; lastCrop = l.lastCrop
+    video = l.video; sessionName = l.sessionName; fileURL = l.fileURL; fileMissing = l.fileMissing
+    suggestions = l.suggestions; edit = l.edit; versions = l.versions; posts = l.posts; issues = l.issues
+    readOnly = l.readOnly; loadError = l.error
+    if let v = l.video, let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
     if !posting(previewPlatform) { previewPlatform = postingPlatforms.first ?? .tiktok }
     refreshOverlay()
     if let url = fileURL, !fileMissing {
       if snapshotMode {
         if let p = try? Media.probe(url) { apply(p) }
+        playback.loadStill(url: url, at: trim.start, maxSize: CGSize(width: 1920, height: 1080))
       } else {
         Task.detached(priority: .userInitiated) { [weak self] in
           guard let p = try? Media.probe(url) else { return }
           await self?.applyProbe(p, url: url)
         }
-      }
-      if snapshotMode {
-        playback.loadStill(url: url, at: trim.start, maxSize: CGSize(width: 1920, height: 1080))
-      } else {
         playback.load(url: url, start: trim.start)
       }
-    } else {
-      playback.unload()
     }
     playback.trimProvider = { [weak self] in self?.trim ?? TrimRange(start: 0, end: 0) }
   }
@@ -406,6 +440,7 @@ final class EditorModel: ObservableObject {
   /// After a trim drag ends: cover time stays inside the trim, and every version's text timing (relative to
   /// the trim start) stays inside the new trim length.
   func commitTrim() {
+    trimDragging = false
     guard !readOnly, video != nil else { return }
     keepInsideTrim()
     scheduleSave()
@@ -430,11 +465,13 @@ final class EditorModel: ObservableObject {
 
   /// Trim in (absolute seconds); the default value clears the override so the field reads Default again.
   func setTrimIn(_ t: Double, live: Bool = false) {
+    if live && !trimDragging { trimDragging = true }
     let d = defaultTrim.start
     updateEdit(live: live) { $0.trimIn = EditorGeometry.override(max(0, t), default: d) }
   }
 
   func setTrimOut(_ t: Double, live: Bool = false) {
+    if live && !trimDragging { trimDragging = true }
     let d = defaultTrim.end
     updateEdit(live: live) { $0.trimOut = EditorGeometry.override(min(duration, t), default: d) }
   }
@@ -526,7 +563,15 @@ final class EditorModel: ObservableObject {
     }
   }
 
-  func accept(_ s: TitleSuggestion) { setTitle(s.text, tracks: s.tracks.isEmpty ? nil : s.tracks, source: "suggestion") }
+  /// Saves a typed Title that hasn't been committed (↩ / blur don't happen on ⌘] or Done).
+  func commitTitleDraft() {
+    guard let d = titleDraft else { return }
+    titleDraft = nil
+    let t = d.trimmingCharacters(in: .whitespacesAndNewlines)
+    if t != (title ?? "") { setTitle(t.isEmpty ? nil : t) }
+  }
+
+  func accept(_ s: TitleSuggestion) { titleDraft = nil; setTitle(s.text, tracks: s.tracks.isEmpty ? nil : s.tracks, source: "suggestion") }
 
   /// Copies the "Ask an agent" prompt for this clip (a deterministic template; the agent answers via `djq suggest`).
   func copyAgentPrompt() {
@@ -568,6 +613,59 @@ final class EditorModel: ObservableObject {
     pendingVersions.insert(versionNo)
     scheduleSave()
     refreshOverlay()
+  }
+
+  /// What `kp` resolves to on this version if this version didn't set it (an earlier version's value or the default).
+  func fallback<T>(_ kp: WritableKeyPath<Version, T?>, _ resolvedKP: KeyPath<ResolvedVersion, T>) -> T {
+    var vs = versions.isEmpty ? [Version(number: 1)] : versions
+    if let i = vs.firstIndex(where: { $0.number == versionNo }) { vs[i][keyPath: kp] = nil }
+    return VersionResolver.resolve(vs, number: versionNo, settings: settings, video: video)[keyPath: resolvedKP]
+  }
+
+  /// Sets a version field; a value equal to what it would fall back to is stored as nil, so clicking the current
+  /// default never creates a "Custom" override (#10).
+  func setVersionField<T: Equatable>(_ kp: WritableKeyPath<Version, T?>, _ resolvedKP: KeyPath<ResolvedVersion, T>, _ value: T) {
+    let fb = fallback(kp, resolvedKP)
+    updateVersion { $0[keyPath: kp] = value == fb ? nil : value }
+  }
+
+  /// Hashtag sets: same rule, compared as a set (order follows the Settings list).
+  func setHashtagSets(_ ids: [String]) {
+    let fb = fallback(\.hashtagSetIds, \.hashtagSetIds)
+    updateVersion { $0.hashtagSetIds = Set(ids) == Set(fb) ? nil : ids }
+  }
+
+  func setExtraHashtags(_ tags: [String]) {
+    let fb = fallback(\.extraHashtags, \.extraHashtags)
+    updateVersion { $0.extraHashtags = tags == fb ? nil : tags }
+  }
+
+  /// Caption template: picking the default template (or "Default") follows the default.
+  func setCaptionTemplate(_ id: String?) {
+    var vs = versions.isEmpty ? [Version(number: 1)] : versions
+    if let i = vs.firstIndex(where: { $0.number == versionNo }) { vs[i].captionTemplateId = nil }
+    let fb = VersionResolver.resolve(vs, number: versionNo, settings: settings, video: video).captionTemplateId
+    let value = id.flatMap { $0.isEmpty ? nil : $0 }
+    updateVersion { $0.captionTemplateId = value == fb || (fb == nil && value == defaults.captionTemplateId) ? nil : value }
+  }
+
+  /// Typed overlay text. An empty field is an explicit "empty" (it must not snap back to the Title); "Follow the
+  /// Title" is the reset (`resetVersion(["text"])`).
+  func setText(_ t: String) {
+    updateVersion { v in
+      if t.isEmpty { v.text = ""; v.noText = false } else { v.text = t; v.noText = nil }
+    }
+  }
+
+  /// "No text" on/off. Off goes back to following the default text when nothing was typed (a talking clip, whose
+  /// default is "No text", gets an explicit off).
+  func setNoText(_ on: Bool) {
+    if on { updateVersion { $0.noText = true }; return }
+    updateVersion { v in
+      v.noText = nil
+      if (v.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { v.text = nil }
+    }
+    if resolved.noText { updateVersion { $0.noText = false } }
   }
 
   /// Clears this version's own value for the fields (they fall back to an earlier version or the defaults).
@@ -699,6 +797,7 @@ final class EditorModel: ObservableObject {
 
   /// Writes pending changes now (still off the main thread) — used before switching videos and on Done.
   func flush() {
+    commitTitleDraft()
     saveTask?.cancel()
     guard pendingEdit || !pendingVersions.isEmpty, let video else { saving = false; return }
     let store = store, id = videoId, e = pendingEdit ? edit : nil

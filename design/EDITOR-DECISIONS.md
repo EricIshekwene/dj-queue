@@ -58,3 +58,11 @@ Eric delegated every decision for this round. Each line gives the call and a one
 - **The mode is called "Zones" and the third is "Preview" (not "Safe zones" / "Phone").** Why: the brief's names, and they're shorter.
 - **The safe-zone chips are multi-select under the canvas only** (DESIGN-v2 also lists them in the Platforms section, see 23).
 - **The timeline is a floating card (r.lg, e1) rather than a full-width band.** Why: it matches the floating inspector and the Arcade reference.
+
+## Review fixes (NEEDS_FIX round)
+36. **The typed Title draft lives on the model and commits in `flush()`.** `flush()` runs on clip switch (⌘] / ‹ ›), Done / ⌘↩, ↩ and blur. Why: keyboard shortcuts and buttons don't blur the field, so the draft was being lost. `DJQ_EDITOR_SELFTEST=1` checks both paths.
+37. **Clicking a value equal to what the field falls back to stores nil** (style, alignment, size, hashtag sets compared as a set, extra hashtags, caption template). DSSegmented skips assigning an unchanged value. Why: a no-op click must not create a "Custom" override.
+38. **Clearing the Text field leaves an explicit empty text (`noText = false`) instead of refilling the Title.** "Follow the Title" (and ↺) is the explicit reset. Turning "No text" off goes back to following the default when nothing was typed. Why: deleting text must not look ignored.
+39. **`load()` reads the store on the save queue, after any pending writes, and never on the main thread.** Snapshot mode stays synchronous. The canvas shows a spinner while loading. Why: the main thread no longer blocks on SQLite or on the save queue.
+40. **The cover filmstrip regenerates when a trim drag ends, not on every tick.** Why: it was churning the CPU while dragging.
+41. **[DS] Soft-disabled DSButton/DSIconButton read as dimmed and non-interactive to VoiceOver**, with the reason as the hint (`dsAccessibilityDisabled`). DSSlider gains `accessibilityName:`, and the Size slider passes "Text size". Why: accessibility. The changes are backward compatible.

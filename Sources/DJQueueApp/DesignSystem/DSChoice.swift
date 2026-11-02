@@ -171,7 +171,7 @@ struct DSSegmented<Value: Hashable>: View {
     HStack(spacing: 2) {
       ForEach(segments) { seg in
         DSSegmentButton(seg: seg, selected: seg.value == selection, height: h - 6, size: size, fullWidth: fullWidth, ns: ns) {
-          dsWithAnimation { selection = seg.value }
+          if selection != seg.value { dsWithAnimation { selection = seg.value } }
         }
       }
     }

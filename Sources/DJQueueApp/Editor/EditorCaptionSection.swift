@@ -23,6 +23,10 @@ struct EditorCaptionSection: View {
     .onAppear { syncDrafts() }
     .onChange(of: model.versionNo) { _, _ in syncDrafts() }
     .onChange(of: model.videoId) { _, _ in syncDrafts() }
+    .onChange(of: model.resolved.extraHashtags) { _, tags in
+      // Reset / version switch / undo: re-sync the field unless it already says the same thing.
+      if parse(extra) != tags { extra = tags.joined(separator: " ") }
+    }
     .onChange(of: model.openPlatformCaption) { _, p in if p != nil { showOwn = true } }
   }
 
@@ -44,7 +48,7 @@ struct EditorCaptionSection: View {
                        inheritedFrom: model.source(of: "captionTemplateId"), resetHelp: "Back to the default template",
                        onReset: resetter(["captionTemplateId"])) {
       DSSelect(selection: Binding(get: { r.captionTemplateId ?? "" },
-                                  set: { id in model.updateVersion { $0.captionTemplateId = id.isEmpty ? nil : id } }),
+                                  set: { id in model.setCaptionTemplate(id) }),
                options: options, size: .sm,
                disabledReason: r.caption.isEmpty ? nil : "A typed caption is used instead — clear it to use a template")
     }
@@ -143,7 +147,7 @@ struct EditorCaptionSection: View {
                 DSChip(s.name, isSelected: on, size: .sm) {
                   var ids = model.sets.map(\.id).filter { r.hashtagSetIds.contains($0) }
                   if on { ids.removeAll { $0 == s.id } } else { ids.append(s.id) }
-                  model.updateVersion { $0.hashtagSetIds = ids }
+                  model.setHashtagSets(ids)
                 }
                 .help(s.tags.joined(separator: " "))
               }
@@ -160,10 +164,14 @@ struct EditorCaptionSection: View {
     }
   }
 
+  private func parse(_ s: String) -> [String] {
+    s.split(whereSeparator: { $0 == " " || $0 == "," || $0.isNewline }).map(String.init)
+  }
+
   private func commitExtra() {
-    let tags = extra.split(whereSeparator: { $0 == " " || $0 == "," || $0.isNewline }).map(String.init)
+    let tags = parse(extra)
     guard tags != model.resolved.extraHashtags else { return }
-    model.updateVersion { $0.extraHashtags = tags }
+    model.setExtraHashtags(tags)
   }
 
   // MARK: YouTube title

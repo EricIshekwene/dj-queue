@@ -441,6 +441,8 @@ struct DSSlider: View {
   var format: (Double) -> String = { String(Int($0.rounded())) }
   var showsValue = true
   var disabledReason: String? = nil
+  /// VoiceOver name when there's no visible `label` (e.g. the label sits in a surrounding field header).
+  var accessibilityName: String? = nil
   @State private var dragging = false
   @State private var hovering = false
   @FocusState private var focused: Bool
@@ -497,7 +499,7 @@ struct DSSlider: View {
     .onHover { hovering = $0 }
     .dsTooltip(disabledReason)
     .accessibilityElement()
-    .accessibilityLabel(label ?? "Slider")
+    .accessibilityLabel(label ?? accessibilityName ?? "Slider")
     .accessibilityValue(format(value))
     .accessibilityAdjustableAction { d in nudge(d == .increment ? step : -step) }
   }

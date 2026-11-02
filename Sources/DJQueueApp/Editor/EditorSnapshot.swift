@@ -42,6 +42,7 @@ enum EditorSnapshot {
       }()
       let ids = shorts.map(\.id)
 
+      if env["DJQ_EDITOR_SELFTEST"] != nil { return selfTest(store: store, ids: ids, start: pick.id) }
       if let secs = env["DJQ_EDITOR_LIVE"].flatMap(Double.init) { return await live(store: store, video: pick.id, ids: ids, seconds: secs) }
 
       let model = EditorModel(store: store, videoId: pick.id, snapshotMode: true)
@@ -114,6 +115,60 @@ enum EditorSnapshot {
     }
   }
 
+  /// `DJQ_EDITOR_SELFTEST=1`: exercises the model paths the header/keyboard use (⌘] = `load(next)`, Done/⌘↩ =
+  /// `flushAndWait()`) and the "no-op click stores nothing" rules against the throwaway DB. Prints PASS/FAIL.
+  private static func selfTest(store: Store, ids: [String], start: String) -> Int32 {
+    var failures = 0
+    func check(_ name: String, _ ok: Bool) {
+      print("editor-selftest: \(ok ? "PASS" : "FAIL") \(name)")
+      if !ok { failures += 1 }
+    }
+    guard let i = ids.firstIndex(of: start), ids.count > 2 else { print("editor-selftest: need 3 clips"); return 1 }
+    let next = ids[(i + 1) % ids.count], third = ids[(i + 2) % ids.count]
+    let m = EditorModel(store: store, videoId: start, snapshotMode: true)
+    // Typed title, then ⌘] (no blur): the header calls load(next).
+    m.titleDraft = "Typed then next clip"
+    m.load(next)
+    m.flushAndWait()
+    check("typed Title survives ⌘] / ‹ › (load)", (try? store.video(id: start))??.title == "Typed then next clip")
+    check("next clip starts without the draft", m.titleDraft == nil && m.videoId == next)
+    // Typed title, then Done / ⌘↩: EditorView.done() = flushAndWait().
+    m.titleDraft = "Typed then Done"
+    m.flushAndWait()
+    check("typed Title survives Done / ⌘↩ (flushAndWait)", (try? store.video(id: next))??.title == "Typed then Done")
+    m.load(third)
+    // No-op clicks store nothing.
+    m.setVersionField(\.style, \.style, m.resolved.style)
+    check("clicking the default style stays Default", m.resolved.isDefault("style"))
+    m.setVersionField(\.align, \.align, m.resolved.align)
+    check("clicking the default alignment stays Default", m.resolved.isDefault("align"))
+    m.setVersionField(\.size, \.size, m.resolved.size)
+    check("dragging size back to the default stays Default", m.resolved.isDefault("size"))
+    let sets = m.resolved.hashtagSetIds
+    if let extra = m.sets.first(where: { !sets.contains($0.id) }) {
+      m.setHashtagSets(sets + [extra.id])
+      check("adding a hashtag set is Custom", !m.resolved.isDefault("hashtagSetIds"))
+      m.setHashtagSets(sets)
+      check("removing it again is Default", m.resolved.isDefault("hashtagSetIds"))
+    }
+    m.setCaptionTemplate(m.defaults.captionTemplateId)
+    check("choosing the default template stays Default", m.resolved.isDefault("captionTemplateId"))
+    m.setExtraHashtags(["#a"]); m.resetVersion(["hashtagSetIds", "extraHashtags"])
+    check("hashtag reset clears extra hashtags", m.resolved.extraHashtags == m.defaults.extraHashtags)
+    // Clearing the text field is an explicit empty, not the Title again; "Follow the Title" resets.
+    m.setTitle("Some title")
+    m.setText("typed")
+    m.setText("")
+    check("cleared text stays empty (no Title refill)", m.resolved.text.isEmpty && !m.resolved.isDefault("text"))
+    m.resetVersion(["text"])
+    check("Follow the Title restores the default", m.resolved.isDefault("text") && m.resolved.text == "Some title")
+    m.setNoText(true); m.setNoText(false)
+    check("No text on → off follows the Title again", m.resolved.isDefault("text") && m.resolved.text == "Some title")
+    m.flushAndWait()
+    print("editor-selftest: \(failures == 0 ? "all passed" : "\(failures) failed")")
+    return failures == 0 ? 0 : 1
+  }
+
   /// Opens the real editor (live AVPlayer) in a normal window for `seconds`, printing its window number.
   private static func live(store: Store, video: String, ids: [String], seconds: Double) async -> Int32 {
     let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 1440, height: 900),
@@ -132,6 +187,8 @@ enum EditorSnapshot {
     // Screen Recording permission) — `DJQ_EDITOR_LIVE_PNG=<file>`, taken after 8 s.
     if let png = ProcessInfo.processInfo.environment["DJQ_EDITOR_LIVE_PNG"] {
       try? await Task.sleep(for: .seconds(8))
+      let fr = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+      print("editor-live: first responder \(fr) (text field focused: \(window.firstResponder is NSTextView))")
       if let data = WindowCapture.png(window) {
         try? data.write(to: URL(fileURLWithPath: png))
         print("editor-live: captured \(png)")

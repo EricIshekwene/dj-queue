@@ -6,7 +6,6 @@ import SwiftUI
 /// YouTube title and display name follow the Title mechanically.
 struct EditorTitleSection: View {
   @ObservedObject var model: EditorModel
-  @State private var draft = ""
   @State private var editing = false
   @FocusState private var focused: Bool
 
@@ -34,9 +33,6 @@ struct EditorTitleSection: View {
         kindRow
       }
     }
-    .onAppear { draft = model.title ?? "" }
-    .onChange(of: model.videoId) { _, _ in draft = model.title ?? "" }
-    .onChange(of: model.title) { _, t in if !focused { draft = t ?? "" } }
     .onChange(of: model.focusTitle) { _, _ in focused = true }
   }
 
@@ -53,7 +49,7 @@ struct EditorTitleSection: View {
         }
         Spacer(minLength: 0)
         EditorCustomTag(isCustom: model.title != nil, resetHelp: "Clear the Title (screens show the raw tag again)") {
-          draft = ""
+          model.titleDraft = nil
           model.setTitle(nil)
         }
       }
@@ -133,7 +129,7 @@ struct EditorTitleSection: View {
 
   private var field: some View {
     HStack(spacing: DS.space.xs) {
-      TextField(model.title == nil ? "Type a title" : "Title", text: $draft)
+      TextField(model.title == nil ? "Type a title" : "Title", text: draftBinding)
         .textFieldStyle(.plain)
         .font(DS.type.body)
         .focused($focused)
@@ -145,15 +141,20 @@ struct EditorTitleSection: View {
         DSButton("Set", variant: .outline, size: .md, tooltip: "Save this Title (↩)", action: commit)
       }
     }
-    .onChange(of: focused) { _, f in if !f, draftDiffers { commit() } }
+    .onChange(of: focused) { _, f in if !f { model.commitTitleDraft() } }
   }
 
-  private var draftDiffers: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines) != (model.title ?? "") }
-
-  private func commit() {
-    let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    model.setTitle(t.isEmpty ? nil : t)
+  /// The draft lives on the model so ⌘] / Done (which don't blur the field) still save it.
+  private var draftBinding: Binding<String> {
+    Binding(get: { model.titleDraft ?? model.title ?? "" }, set: { model.titleDraft = $0 })
   }
+
+  private var draftDiffers: Bool {
+    guard let d = model.titleDraft else { return false }
+    return d.trimmingCharacters(in: .whitespacesAndNewlines) != (model.title ?? "")
+  }
+
+  private func commit() { model.commitTitleDraft() }
 
   // MARK: Kind
 

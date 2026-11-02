@@ -102,12 +102,19 @@ struct EditorTextSection: View {
           VStack(alignment: .leading, spacing: DS.space.xs) {
             DSTextArea(placeholder: r.noText ? "No text on this clip" : "Text on the video",
                        text: Binding(get: { r.noText ? "" : r.text },
-                                     set: { t in model.updateVersion { $0.text = t; if !t.isEmpty { $0.noText = nil } } }),
+                                     set: { t in model.setText(t) }),
                        minHeight: 60, maxHeight: 120)
               .disabled(r.noText)
               .opacity(r.noText ? 0.55 : 1)
-            EditorHint(textHint(r))
-            DSToggle("No text", description: nil, isOn: Binding(get: { r.noText }, set: { v in model.updateVersion { $0.noText = v } }),
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+              EditorHint(textHint(r))
+              Spacer(minLength: 0)
+              if !r.isDefault("text") && model.ownsField(["text"]) && model.defaults.textSource == .title && !r.noText {
+                DSButton("Follow the Title", variant: .ghost, size: .sm,
+                         tooltip: "Drop the typed text and use the Title again") { model.resetVersion(["text"]) }
+              }
+            }
+            DSToggle("No text", description: nil, isOn: Binding(get: { r.noText }, set: { v in model.setNoText(v) }),
                      size: .sm)
               .help("Post this clip without any text on the video")
           }
@@ -121,13 +128,13 @@ struct EditorTextSection: View {
         .disabled(r.noText)
         EditorField(label: "Size", value: "\(Self.sizeName(r.size)) · \(Int(r.size))", isCustom: !r.isDefault("size"), inheritedFrom: model.source(of: "size"),
                     onReset: resetter(["size"])) {
-          DSSlider(value: Binding(get: { r.size }, set: { v in model.updateVersion { $0.size = v.rounded() } }),
+          DSSlider(value: Binding(get: { r.size }, set: { v in model.setVersionField(\.size, \.size, v.rounded()) }),
                    range: 40...110, step: 1, format: { "\(Self.sizeName($0)) · \(Int($0))" }, showsValue: false,
-                   disabledReason: r.noText ? "No text on this clip" : nil)
+                   disabledReason: r.noText ? "No text on this clip" : nil, accessibilityName: "Text size")
         }
         EditorField(label: "Alignment", isCustom: !r.isDefault("align"), inheritedFrom: model.source(of: "align"),
                     onReset: resetter(["align"])) {
-          DSSegmented(selection: Binding(get: { r.align }, set: { a in model.updateVersion { $0.align = a } }),
+          DSSegmented(selection: Binding(get: { r.align }, set: { a in model.setVersionField(\.align, \.align, a) }),
                       segments: [DSSegment(value: TextAlign.left, title: "Left", icon: "text.alignleft"),
                                  DSSegment(value: TextAlign.center, title: "Centre", icon: "text.aligncenter"),
                                  DSSegment(value: TextAlign.right, title: "Right", icon: "text.alignright")],
@@ -183,7 +190,7 @@ struct EditorTextSection: View {
   static func sizeName(_ s: Double) -> String { s < 54 ? "Small" : s <= 76 ? "Medium" : "Large" }
 
   private func styleTile(_ s: TextStyle, selected: Bool) -> some View {
-    Button { model.updateVersion { $0.style = s } } label: {
+    Button { model.setVersionField(\.style, \.style, s) } label: {
       VStack(spacing: 5) {
         ZStack {
           RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous)
@@ -267,7 +274,8 @@ struct EditorCoverSection: View {
       }
     }
     .onAppear { reload() }
-    .onChange(of: model.trim) { _, _ in reload() }
+    .onChange(of: model.trim) { _, _ in if !model.trimDragging { reload() } }  // regenerate once the drag ends
+    .onChange(of: model.trimDragging) { _, dragging in if !dragging { reload() } }
     .onChange(of: model.videoId) { _, _ in reload() }
     .onChange(of: model.coverTime) { _, _ in loadCover() }
   }
