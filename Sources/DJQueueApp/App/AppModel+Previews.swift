@@ -26,6 +26,8 @@ struct ClipPreview {
   var isUpdating: Bool
   /// `cover` is the current render's cover (Posts/Week).
   var isRenderCover = false
+  /// Width ÷ height of the clip as posted (9:16 unless its edit says otherwise).
+  var aspectRatio: Double = Aspect.r9x16.ratio
 }
 
 /// Resolved, per (clip, version, stamp): what the overlay and its timing need. Loaded off the main thread.
@@ -69,6 +71,12 @@ extension AppModel {
       proxyPending.remove(id)
     }
     previewInfo = previewInfo.filter { k, _ in !ids.contains(String(k.split(separator: "|").first ?? "")) }
+    // Older covers of these clips can never show again (their keys are gone): free them.
+    posters = posters.filter { k, _ in
+      let parts = k.split(separator: "|", maxSplits: 2)
+      let owner = parts.first == "render" && parts.count > 1 ? parts[1] : parts.first ?? ""
+      return parts.first == "orig" || !ids.contains(String(owner))
+    }
     renderCoverKeys = renderCoverKeys.filter { _, k in !ids.contains(String(k.split(separator: "|").dropFirst().first ?? "")) }
     let again = recentPreviewIds.filter(ids.contains)
     for id in again {
@@ -110,7 +118,9 @@ extension AppModel {
     var p = ClipPreview(stamp: stamp, proxyURL: proxy, cover: version == 1 ? poster(v) : poster(v, version: version),
                         overlay: nil, textWindow: nil, loopRange: nil,
                         isUpdating: proxy == nil && previewUpdating.contains(v.id))
-    if v.type == .short, let info = previewInfo[Self.infoKey(v.id, version)], info.stamp == stamp, info.textKey != "none" {
+    if v.type == .short, let info = previewInfo[Self.infoKey(v.id, version)], info.stamp == stamp {
+      p.aspectRatio = info.aspect.ratio
+      guard info.textKey != "none" else { return p }
       p.overlay = Self.overlayCache.value(info.overlayKey)
       let offset = playback.loop == .wholeFile ? info.trimIn : 0
       p.textWindow = info.textWindow.map { ($0.lowerBound + offset)...($0.upperBound + offset) }
@@ -167,6 +177,17 @@ extension AppModel {
     }
   }
 
+  /// The current render's file for version 1 (editHash matches, file exists), else nil. Off the main thread.
+  func currentRenderFile(_ v: Video, version: Int = 1) async -> URL? {
+    guard v.type == .short, !v.missing else { return nil }
+    let r = renderer, id = v.id
+    return await Task.detached(priority: .userInitiated) { () -> URL? in
+      guard let render = try? r.currentRender(videoId: id, versionNo: version, platform: nil), let path = render.outputPath,
+            FileManager.default.fileExists(atPath: path) else { return nil }
+      return URL(fileURLWithPath: path)
+    }.value
+  }
+
   /// Loads (or refreshes after a cache eviction) the overlay + timing of `v` at `version`.
   func requestPreviewInfo(_ v: Video, version: Int) {
     guard v.type == .short, !v.missing else { return }
@@ -204,6 +225,30 @@ extension AppModel {
       overlayCache.set(img, for: info.overlayKey, cost: img.bytesPerRow * img.height)
     }
     return info
+  }
+
+  /// A 16:9 frame of the source at the clip's marker in-point ("Original" in Quick look / Library), no I/O.
+  func originalPoster(_ v: Video) -> NSImage? { posters["orig|\(v.id)|\(v.fingerprint ?? v.file)"] }
+
+  /// Loads `originalPoster` off-main once.
+  func requestOriginalPoster(_ v: Video) {
+    let k = "orig|\(v.id)|\(v.fingerprint ?? v.file)"
+    guard posters[k] == nil, !posterPending.contains(k), !v.missing, let url = clipURL(v) else { return }
+    posterPending.insert(k)
+    let t = (v.markerIn ?? 0) + 0.5
+    let load: @Sendable () -> NSImage? = {
+      guard let cg = Media.frame(url, at: t, maxSize: CGSize(width: 960, height: 540)) else { return nil }
+      return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+    }
+    let land: (NSImage?) -> Void = { img in
+      self.posterPending.remove(k)
+      if let img { self.posters[k] = img }
+    }
+    if frozen { land(load()); return }
+    Task.detached(priority: .userInitiated) {
+      let img = load()
+      await MainActor.run { land(img) }
+    }
   }
 
   /// A JPEG/PNG decoded at most `maxPixel` on its long side.

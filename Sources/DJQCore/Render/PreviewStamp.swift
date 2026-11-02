@@ -33,12 +33,11 @@ public struct PreviewStampTable: Sendable, Equatable {
     return PreviewKeys.short(raw)
   }
 
-  /// The clip-row fields a preview depends on.
+  /// The clip-row fields a preview depends on. (Not the cached source size: filling it in changes no pixels.)
   static func videoPart(_ v: Video) -> String {
     func d(_ x: Double?) -> String { x.map { String(format: "%.3f", $0) } ?? "-" }
     return [v.file, v.fingerprint ?? "", d(v.duration), d(v.markedStart), d(v.markedEnd), d(v.start), d(v.end), d(v.grace),
-            v.titleText ?? "", v.tag, v.kind.rawValue, v.type.rawValue, v.missing ? "m" : "",
-            "\(v.sourceWidth ?? 0)x\(v.sourceHeight ?? 0)"].joined(separator: "|")
+            v.titleText ?? "", v.tag, v.kind.rawValue, v.type.rawValue, v.missing ? "m" : ""].joined(separator: "|")
   }
 }
 

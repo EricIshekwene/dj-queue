@@ -84,9 +84,14 @@ final class DSPlaybackProgress {
 /// or nothing (tiny list thumbnails).
 enum DSPreviewUpdatingStyle: Sendable { case label, icon, none }
 
-/// Evidence runs only: draw the text overlay over the poster too (a still can't show the playing preview).
-enum DSVideoPreviewDebug {
-  nonisolated(unsafe) static var overlayOnPoster = false
+/// Evidence runs only (snapshots): draw the text overlay over the poster too, since a still can't show the playing
+/// preview's text window. `.environment(\.dsPreviewOverlayOnPoster, true)`.
+private struct DSPreviewOverlayOnPosterKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+  var dsPreviewOverlayOnPoster: Bool {
+    get { self[DSPreviewOverlayOnPosterKey.self] }
+    set { self[DSPreviewOverlayOnPosterKey.self] = newValue }
+  }
 }
 
 /// Muted looping preview of a proxy file with poster fallback (DESIGN-v2 §2.6/§4). Plays only while visible,
@@ -129,6 +134,7 @@ struct DSVideoPreview: View {
   @State private var hovering = false
   @State private var ready = false
   @State private var progress = DSPlaybackProgress()
+  @Environment(\.dsPreviewOverlayOnPoster) private var overlayOnPoster
   private var budget: DSPlaybackBudget { .shared }
 
   var body: some View {
@@ -203,7 +209,7 @@ struct DSVideoPreview: View {
       Image(nsImage: poster).resizable().aspectRatio(contentMode: gravity == .resizeAspect ? .fit : .fill)
         .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
         .overlay {
-          if DSVideoPreviewDebug.overlayOnPoster, let overlay {
+          if overlayOnPoster, let overlay {
             Image(decorative: overlay, scale: 1).resizable().aspectRatio(contentMode: gravity == .resizeAspect ? .fit : .fill)
               .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
           }
