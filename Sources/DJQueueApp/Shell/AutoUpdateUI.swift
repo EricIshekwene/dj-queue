@@ -334,7 +334,7 @@ final class AutoUpdateUI {
 
   /// Hides the blocked banner (and the menu-bar dot) for this commit; the menu-bar row stays.
   func dismissBlocked() {
-    guard let b = state.blocked else { return }
+    guard let b = problem else { return }
     dismissedBlocked = b.commit
     if fake == nil { UserDefaults.standard.set(b.commit, forKey: Key.dismissed) }
   }
@@ -349,7 +349,7 @@ final class AutoUpdateUI {
   /// The run log of the block, else the auto-update log.
   var logURL: URL? {
     let fm = FileManager.default
-    if let l = state.blocked?.log, fm.fileExists(atPath: l) { return URL(fileURLWithPath: l) }
+    if let l = problem?.log, fm.fileExists(atPath: l) { return URL(fileURLWithPath: l) }
     guard let paths else { return nil }
     let log = AutoUpdatePaths(paths).log
     return fm.fileExists(atPath: log.path) ? log : nil
@@ -413,18 +413,21 @@ final class AutoUpdateUI {
     return (s.isRunning && installing.contains(s.phase)) || installRequestedAt != nil
   }
 
+  /// What the blocked banner, dot and row show: a gate block, else a build that failed its checks and stayed installed.
+  var problem: AutoUpdateBlock? { state.blocked ?? state.failedInstall }
+
   var workingLabel: String { state.isRunning && state.phase != .idle ? state.phase.label : "Starting the update" }
 
   var banner: Banner? {
     if isWorking { return .working(label: workingLabel, version: state.ready?.version) }
     if let r = state.ready, !r.later, hiddenReady != r.commit { return .ready(r) }
-    if let b = state.blocked, dismissedBlocked != b.commit { return .blocked(b) }
+    if let b = problem, dismissedBlocked != b.commit { return .blocked(b) }
     return nil
   }
 
   var dot: Dot {
     if let r = state.ready { return .ready(r.version) }
-    if let b = state.blocked, dismissedBlocked != b.commit { return .blocked(b.version) }
+    if let b = problem, dismissedBlocked != b.commit { return .blocked(b.version) }
     return .none
   }
 
@@ -432,7 +435,7 @@ final class AutoUpdateUI {
   var statusText: String? {
     if isWorking { return "Updating: \(workingLabel.lowercased())" }
     if let r = state.ready { return "Update \(r.version) ready" }
-    if let b = state.blocked { return "Update \(b.version) blocked" }
+    if let b = problem { return b.afterInstall ? "Update \(b.version) failed its checks" : "Update \(b.version) blocked" }
     return nil
   }
 

@@ -82,9 +82,11 @@ struct UpdateBannerRow: View {
 
   @ViewBuilder private func blocked(_ b: AutoUpdateBlock) -> some View {
     Image(systemName: DSTone.warning.symbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(DS.color.warning)
-    Text("Update blocked: \(b.version)").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+    Text(b.afterInstall ? "Update failed: \(b.version)" : "Update blocked: \(b.version)").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
     Text(b.reason).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1).truncationMode(.tail)
-      .dsTooltip("\(b.reason). Nothing was installed; you're still on the build you had.")
+      .dsTooltip(b.afterInstall
+        ? "\(b.reason) \(b.version) is installed but failed its checks; `djq autoupdate rollback --restore-db` goes back."
+        : "\(b.reason) Nothing was installed; you're still on the build you had.")
     Spacer(minLength: DS.space.sm)
     DSButton("Show log", variant: .ghost, size: .sm, disabledReason: updates.logURL == nil ? "No log written yet." : nil,
              tooltip: "Open the full test and build output") { updates.openLog() }

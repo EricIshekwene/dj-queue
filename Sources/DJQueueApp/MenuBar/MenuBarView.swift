@@ -150,8 +150,8 @@ struct MenuBarState {
       update = .working(u.workingLabel)
     } else if let r = u.state.ready {
       update = .ready(r.version)
-    } else if let b = u.state.blocked {
-      update = .blocked(version: b.version, reason: b.reason)
+    } else if let b = u.problem {
+      update = .blocked(version: b.version, reason: b.afterInstall ? "\(b.reason) It's still installed (failed its checks)." : "\(b.reason) Nothing was installed.")
     }
   }
 }
@@ -435,7 +435,7 @@ struct MenuBarContent: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .dsTooltip("\(reason). Nothing was installed. Open DJ Queue to see the reason and the log.")
+      .dsTooltip("\(reason) Open DJ Queue to see the reason and the log.")
     }
   }
 
