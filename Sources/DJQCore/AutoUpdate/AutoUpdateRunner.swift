@@ -448,12 +448,18 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     try replace(au.previous, with: tmp, move: true)
     linkCLI()
     say(restartEngine())
-    state.installed = AutoUpdateBuild(version: prev.version, commit: prev.commit ?? record?.from?.commit, at: now())
-    state.rolledBackFrom = curCommit
+    let prevCommit = prev.commit ?? record?.from?.commit
+    // Swapping back to a newer build (a second rollback) is a roll forward: nothing to skip then.
+    let repo = files.config().repoPath(environment: environment)
+    let forward = curCommit != nil && prevCommit != nil && curCommit != prevCommit && isAncestor(repo, curCommit!, of: prevCommit!)
+    state.installed = AutoUpdateBuild(version: prev.version, commit: prevCommit, at: now())
+    state.rolledBackFrom = forward ? nil : curCommit
     state.ready = nil
     state.phase = .idle
     state.runPid = nil
-    var message = "Rolled back \(cur?.version ?? "the installed build") → \(prev.version). Auto-update skips \(curCommit.map { String($0.prefix(7)) } ?? "that commit") until a newer commit lands."
+    var message = forward
+      ? "Rolled forward \(cur?.version ?? "the installed build") → \(prev.version)."
+      : "Rolled back \(cur?.version ?? "the installed build") → \(prev.version). Auto-update skips \(curCommit.map { String($0.prefix(7)) } ?? "that commit") until a newer commit lands."
     // A build older than auto-update has no `djq autoupdate`: the watcher would fail on every trigger.
     if let d = djq(in: au.installedApp), shell(d.path, ["autoupdate", "status"], cwd: nil).status != 0 {
       try? AutoUpdateWatcher.uninstall(au, unload: !isDev)
@@ -462,7 +468,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
       try? files.saveConfig(c)
       message += " \(prev.version) has no auto-update, so the watcher is off."
     }
-    notice("Rolled back to \(prev.version)", message, "rollback", curCommit)
+    notice(forward ? "Rolled forward to \(prev.version)" : "Rolled back to \(prev.version)", message, "rollback", curCommit)
     let r = finish(.rolledBack, message, commit: curCommit)
     save()
     return r

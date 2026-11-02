@@ -340,6 +340,8 @@ import Testing
     #expect(e.installed?.commit == first)
     r = try e.runner().rollback(restoreDB: false)  // roll forward again
     #expect(e.installed?.commit == v2)
+    #expect(r.message.hasPrefix("Rolled forward"))
+    #expect(e.files.state().rolledBackFrom == nil)
 
     // Pretend v2 migrated the database: the rollback is refused unless the backup is restored too.
     var s = e.files.state()
