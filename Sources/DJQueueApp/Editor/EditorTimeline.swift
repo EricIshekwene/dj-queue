@@ -1,239 +1,339 @@
 import DJQCore
 import SwiftUI
 
-/// E.S2: transport, text-timing bar, filmstrip with trim handles + marker ticks, per-platform trim lanes.
+/// Timeline card (DESIGN-v2 §7, #5): playback controls centred on top, the text-timing bar, then the filmstrip of
+/// the whole clip file with yellow trim handles that start on Eric's markers (the default trim). The grace seconds
+/// beyond the markers are a striped, dimmed zone the handles can be dragged into. Per-platform trim lanes appear
+/// only when used.
 struct EditorTimeline: View {
   @ObservedObject var model: EditorModel
   let playback: EditorPlayback
   @StateObject private var strip = EditorFrameStrip()
 
-  static let gutter: CGFloat = 40
-  private let textH: CGFloat = 20, filmH: CGFloat = 46, laneH: CGFloat = 18, gap: CGFloat = 8
+  static let gutter: CGFloat = 34
+  static let textH: CGFloat = 20, filmH: CGFloat = 48, laneH: CGFloat = 18, gap: CGFloat = 8
 
-  private var lanes: [Platform] { Platform.allCases.sorted().filter { model.edit.platformTrims[$0] != nil } }
+  private var lanes: [Platform] { EditorPlatforms.order.filter { model.edit.platformTrims[$0] != nil } }
+  private var tracksHeight: CGFloat {
+    Self.textH + Self.gap + Self.filmH + (lanes.isEmpty ? 0 : Self.gap + CGFloat(lanes.count) * (Self.laneH + 4) - 4)
+  }
 
   var body: some View {
-    VStack(spacing: 6) {
-      transport
+    VStack(spacing: DS.space.xs) {
+      EditorTransport(model: model, playback: playback)
       GeometryReader { g in
         let w = max(g.size.width - Self.gutter, 1)
         HStack(spacing: 0) {
           gutterLabels
           ZStack(alignment: .topLeading) {
-            textBar(width: w)
-            filmstrip(width: w).offset(y: textH + gap)
+            EditorTextBar(model: model, playback: playback, width: w)
+            EditorFilmTrack(model: model, playback: playback, strip: strip, width: w)
+              .offset(y: Self.textH + Self.gap)
             ForEach(Array(lanes.enumerated()), id: \.element) { i, p in
-              lane(p, width: w).offset(y: textH + gap + filmH + gap + CGFloat(i) * (laneH + 4))
+              EditorTrimLane(model: model, platform: p, width: w)
+                .offset(y: Self.textH + Self.gap + Self.filmH + Self.gap + CGFloat(i) * (Self.laneH + 4))
             }
-            EditorPlayhead(playback: playback, duration: model.duration, width: w,
-                           height: textH + gap + filmH + (lanes.isEmpty ? 0 : gap + CGFloat(lanes.count) * (laneH + 4)))
+            EditorPlayhead(playback: playback, duration: model.duration, width: w, height: tracksHeight)
               .allowsHitTesting(false)
           }
           .frame(width: w, alignment: .topLeading)
           .coordinateSpace(name: "track")
         }
       }
-      .frame(height: textH + gap + filmH + (lanes.isEmpty ? 0 : gap + CGFloat(lanes.count) * (laneH + 4) - 4))
+      .frame(height: tracksHeight)
     }
-    .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 12)
+    .padding(.horizontal, DS.space.sm).padding(.top, DS.space.xs).padding(.bottom, DS.space.sm)
     .onAppear { reloadStrip() }
     .onChange(of: model.videoId) { _, _ in reloadStrip() }
     .onChange(of: model.fileURL) { _, _ in reloadStrip() }
   }
 
   private func reloadStrip() {
-    strip.load(url: model.fileMissing ? nil : model.fileURL, from: 0, to: model.duration, count: 16, sync: model.snapshotMode)
-  }
-
-  // MARK: Transport
-
-  private var transport: some View {
-    HStack(spacing: 10) {
-      Button { playback.toggle() } label: { EditorPlayIcon(playback: playback) }
-        .buttonStyle(.borderless).help("Play / pause (space)").accessibilityLabel("Play or pause")
-      EditorTimeLabel(playback: playback, duration: model.duration)
-      Divider().frame(height: 14)
-      let t = model.trim
-      HStack(spacing: 6) {
-        Image(systemName: "scissors").font(.system(size: 11)).foregroundStyle(.secondary)
-        Text("\(EditorGeometry.time(t.start, tenths: true)) – \(EditorGeometry.time(t.end, tenths: true))")
-          .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
-        Text(String(format: "%.1f s", t.duration)).font(.system(size: 11, weight: .semibold, design: .monospaced))
-      }
-      Spacer()
-      if let a = model.video?.markerIn, let b = model.video?.markerOut, abs(t.start - a) > 0.05 || abs(t.end - b) > 0.05 {
-        Button("Trim to markers") { model.updateEdit { $0.trimIn = max(0, a); $0.trimOut = min(model.duration, b) } }
-          .controlSize(.small).help("Use your in/out markers")
-      }
-      if model.edit.trimIn != nil || model.edit.trimOut != nil {
-        Button("Whole clip") { model.updateEdit { $0.trimIn = nil; $0.trimOut = nil } }.controlSize(.small)
-      }
-    }
-    .frame(height: 24)
+    strip.load(url: model.fileMissing ? nil : model.fileURL, from: 0, to: model.duration, count: 18, sync: model.snapshotMode)
   }
 
   private var gutterLabels: some View {
     VStack(alignment: .leading, spacing: 0) {
-      Image(systemName: "textformat").font(.system(size: 11)).foregroundStyle(.secondary).frame(height: textH)
-      Spacer().frame(height: gap)
-      Image(systemName: "film").font(.system(size: 11)).foregroundStyle(.secondary).frame(height: filmH)
-      if !lanes.isEmpty { Spacer().frame(height: gap) }
+      Image(systemName: "textformat").frame(height: Self.textH).help("Text: when the overlay text shows")
+      Spacer().frame(height: Self.gap)
+      Image(systemName: "film").frame(height: Self.filmH).help("The clip file — trim handles, markers, grace zones")
+      if !lanes.isEmpty { Spacer().frame(height: Self.gap) }
       ForEach(lanes, id: \.self) { p in
-        HStack(spacing: 2) {
-          EditorPlatformBadge(platform: p)
-          Button { model.updateEdit { $0.platformTrims[p] = nil } } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
-            .buttonStyle(.borderless).foregroundStyle(.secondary).help("Remove the \(p.displayName) trim")
-            .accessibilityLabel("Remove the \(p.displayName) trim")
-        }
-        .frame(height: laneH).padding(.bottom, 4)
+        DSPlatformIcon(platform: p, size: Self.laneH).frame(height: Self.laneH).padding(.bottom, 4)
       }
     }
+    .font(.system(size: 11, weight: .medium))
+    .foregroundStyle(DS.color.textTertiary)
     .frame(width: Self.gutter, alignment: .topLeading)
   }
+}
 
-  // MARK: Helpers
+/// Shared x ↔ time mapping and snapping for the tracks.
+struct EditorTrackMath {
+  var duration: Double
+  var width: CGFloat
+  var markers: [Double?]
 
-  private func x(_ t: Double, _ w: CGFloat) -> CGFloat { model.duration > 0 ? CGFloat(t / model.duration) * w : 0 }
-  private func t(_ x: CGFloat, _ w: CGFloat) -> Double { min(max(Double(x / w) * model.duration, 0), model.duration) }
+  func x(_ t: Double) -> CGFloat { duration > 0 ? CGFloat(t / duration) * width : 0 }
+  func t(_ x: CGFloat) -> Double { min(max(Double(x / max(width, 1)) * duration, 0), duration) }
 
-  /// Snap to markers and clip ends (plus `extra`). The playhead is a target only when the drag doesn't move it
-  /// (trim drags seek, so including it would pin the handle to its own last position).
-  private func snapped(_ x: CGFloat, _ w: CGFloat, extra: [Double] = [], playhead: Bool = false) -> Double {
-    let c = extra + EditorGeometry.trimSnapTargets(duration: model.duration, markers: [model.video?.markerIn, model.video?.markerOut])
-      + (playhead ? [playback.time] : [])
-    return EditorGeometry.snap(t(x, w), to: c, tolerance: Double(8 / w) * model.duration).value
+  /// Snap to markers and clip ends (plus `extra`) within 8 pt.
+  func snapped(_ x: CGFloat, extra: [Double] = []) -> Double {
+    let c = extra + EditorGeometry.trimSnapTargets(duration: duration, markers: markers)
+    return EditorGeometry.snap(t(x), to: c, tolerance: Double(8 / max(width, 1)) * duration).value
   }
+}
 
-  // MARK: Filmstrip + trim (yellow handles, marker ticks)
+// MARK: - Transport
 
-  private func filmstrip(width w: CGFloat) -> some View {
+struct EditorTransport: View {
+  @ObservedObject var model: EditorModel
+  @ObservedObject var playback: EditorPlayback
+
+  var body: some View {
+    let t = model.trim
+    ZStack {
+      HStack(spacing: DS.space.xs) {
+        Image(systemName: "scissors").font(.system(size: 11)).foregroundStyle(DS.color.textTertiary)
+        Text("\(EditorGeometry.time(t.start, tenths: true)) – \(EditorGeometry.time(t.end, tenths: true))")
+          .font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+        Text(String(format: "%.1f s", t.duration)).font(DS.type.captionMedium.monospacedDigit()).foregroundStyle(DS.color.text)
+        if !model.trimIsDefault {
+          DSBadge("Custom", style: .soft(.neutral), size: .sm).help("Trim changed from your markers")
+        } else if model.video?.markerIn != nil {
+          Text("· markers").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+        }
+        Spacer()
+        if !model.trimIsDefault {
+          DSButton(model.video?.markerIn != nil ? "Trim to markers" : "Whole file", icon: "arrow.uturn.backward", variant: .ghost,
+                   size: .sm, tooltip: "Reset the trim to the default (your in/out markers)") {
+            model.resetEdit(.trimIn, .trimOut); model.commitTrim()
+          }
+        }
+      }
+      HStack(spacing: 4) {
+        DSIconButton("gobackward.5", tooltip: "Back 5 seconds", size: .sm) { playback.skip(-5) }
+        DSIconButton(playback.isPlaying ? "pause.fill" : "play.fill", tooltip: playback.isPlaying ? "Pause" : "Play the trim",
+                     variant: .secondary, size: .md, shortcut: "Space",
+                     disabledReason: playback.player == nil ? "The clip isn't loaded" : nil) { playback.toggle() }
+        DSIconButton("goforward.5", tooltip: "Forward 5 seconds", size: .sm) { playback.skip(5) }
+        EditorTimeLabel(playback: playback, duration: model.duration).padding(.leading, 6)
+      }
+    }
+    .frame(height: 34)
+  }
+}
+
+private struct EditorTimeLabel: View {
+  @ObservedObject var playback: EditorPlayback
+  var duration: Double
+  var body: some View {
+    HStack(spacing: 3) {
+      Text(EditorGeometry.time(playback.time, tenths: true)).foregroundStyle(DS.color.text)
+      Text("/ \(EditorGeometry.time(duration, tenths: true))").foregroundStyle(DS.color.textTertiary)
+    }
+    .font(DS.type.caption.monospacedDigit())
+  }
+}
+
+// MARK: - Filmstrip + trim + markers + grace zones
+
+struct EditorFilmTrack: View {
+  @ObservedObject var model: EditorModel
+  let playback: EditorPlayback
+  @ObservedObject var strip: EditorFrameStrip
+  var width: CGFloat
+
+  private let h = EditorTimeline.filmH
+  private static let handle = Color(light: 0xF5C400, dark: 0xFFD60A)
+
+  var body: some View {
+    let m = EditorTrackMath(duration: model.duration, width: width, markers: [model.video?.markerIn, model.video?.markerOut])
     let tr = model.trim
-    let a = x(tr.start, w), b = x(tr.end, w)
-    return ZStack(alignment: .topLeading) {
-      EditorFilmstripImages(strip: strip, width: w, height: filmH)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+    let a = m.x(tr.start), b = m.x(tr.end)
+    let grace = EditorGeometry.graceZones(duration: model.duration, markerIn: model.video?.markerIn, markerOut: model.video?.markerOut)
+    ZStack(alignment: .topLeading) {
+      EditorFilmstripImages(strip: strip, width: width, height: h)
+        .clipShape(RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track"))
-          .onChanged { v in playback.pause(); playback.seek(t(v.location.x, w)) }
-          .onEnded { v in playback.seek(t(v.location.x, w), exact: true) })
+          .onChanged { v in playback.pause(); playback.seek(m.t(v.location.x)) }
+          .onEnded { v in playback.seek(m.t(v.location.x), exact: true) })
+        .help("Click or drag to move the playhead")
+      // Grace zones: the seconds the file keeps beyond the markers (striped; extendable).
+      ForEach(grace, id: \.start) { z in
+        EditorGraceZone(width: max(1, m.x(z.end) - m.x(z.start)), height: h, leading: z.start < 0.01)
+          .offset(x: m.x(z.start)).allowsHitTesting(false)
+      }
       // Dim outside the trim.
-      Rectangle().fill(Color.black.opacity(0.55)).frame(width: max(0, a), height: filmH).allowsHitTesting(false)
-      Rectangle().fill(Color.black.opacity(0.55)).frame(width: max(0, w - b), height: filmH).offset(x: b).allowsHitTesting(false)
-      // Trim frame.
-      Rectangle().stroke(Color.yellow, lineWidth: 2.5)
-        .frame(width: max(0, b - a), height: filmH - 2).offset(x: a, y: 1).allowsHitTesting(false)
-      markerTicks(width: w)
-      trimHandle(at: a, leading: true)
+      Rectangle().fill(Color.black.opacity(0.5)).frame(width: max(0, a), height: h).allowsHitTesting(false)
+      Rectangle().fill(Color.black.opacity(0.5)).frame(width: max(0, width - b), height: h).offset(x: b).allowsHitTesting(false)
+      RoundedRectangle(cornerRadius: 3).stroke(Self.handle, lineWidth: 2.5)
+        .frame(width: max(0, b - a), height: h - 2).offset(x: a, y: 1).allowsHitTesting(false)
+      markerTicks(m)
+      handleView(leading: true).offset(x: a - 11)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
-          let nt = min(snapped(v.location.x, w), model.trim.end - 0.5)
-          model.updateEdit(live: true) { $0.trimIn = nt <= 0.01 ? nil : nt }
+          let nt = min(m.snapped(v.location.x), model.trim.end - 0.5)
+          model.setTrimIn(nt, live: true)
           playback.pause(); playback.seek(nt)
         }.onEnded { _ in model.commitTrim() })
-      trimHandle(at: b, leading: false)
+        .help("Trim in (I) — snaps to your markers; drag left into the grace zone to start earlier")
+      handleView(leading: false).offset(x: b)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
-          let nt = max(snapped(v.location.x, w), model.trim.start + 0.5)
-          model.updateEdit(live: true) { $0.trimOut = nt >= model.duration - 0.01 ? nil : nt }
+          let nt = max(m.snapped(v.location.x), model.trim.start + 0.5)
+          model.setTrimOut(nt, live: true)
           playback.pause(); playback.seek(nt)
         }.onEnded { _ in model.commitTrim() })
+        .help("Trim out (O) — snaps to your markers; drag right into the grace zone to end later")
     }
-    .frame(width: w, height: filmH, alignment: .topLeading)
+    .frame(width: width, height: h, alignment: .topLeading)
   }
 
-  private func trimHandle(at x: CGFloat, leading: Bool) -> some View {
+  private func handleView(leading: Bool) -> some View {
     UnevenRoundedRectangle(topLeadingRadius: leading ? 5 : 0, bottomLeadingRadius: leading ? 5 : 0,
                            bottomTrailingRadius: leading ? 0 : 5, topTrailingRadius: leading ? 0 : 5)
-      .fill(Color.yellow)
-      .overlay(Capsule().fill(Color.black.opacity(0.55)).frame(width: 2, height: 16))
-      .frame(width: 11, height: filmH)
-      .offset(x: leading ? x - 11 : x)
+      .fill(Self.handle)
+      .overlay(Capsule().fill(Color.black.opacity(0.5)).frame(width: 2, height: 16))
+      .frame(width: 11, height: h)
+      .contentShape(Rectangle())
       .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-      .help(leading ? "Trim in (I)" : "Trim out (O)")
   }
 
-  @ViewBuilder private func markerTicks(width w: CGFloat) -> some View {
-    ForEach([model.video?.markerIn, model.video?.markerOut].compactMap { $0 }.filter { $0 >= 0 && $0 <= model.duration }, id: \.self) { m in
+  @ViewBuilder private func markerTicks(_ m: EditorTrackMath) -> some View {
+    let marks = [model.video?.markerIn, model.video?.markerOut].compactMap { $0 }.filter { $0 >= 0 && $0 <= model.duration }
+    ForEach(marks, id: \.self) { t in
       VStack(spacing: 0) {
         Image(systemName: "arrowtriangle.down.fill").font(.system(size: 7)).foregroundStyle(.white)
-          .shadow(color: .black.opacity(0.6), radius: 1)
-        Rectangle().fill(Color.white).frame(width: 1.5).shadow(color: .black.opacity(0.6), radius: 1)
+        Rectangle().fill(Color.white).frame(width: 1.5)
       }
-      .frame(width: 10, height: filmH)
-      .offset(x: x(m, w) - 5)
+      .shadow(color: .black.opacity(0.6), radius: 1)
+      .frame(width: 10, height: h)
+      .offset(x: m.x(t) - 5)
       .allowsHitTesting(false)
-      .help("Your marker")
     }
   }
+}
 
-  // MARK: Text timing bar
+/// Striped band over the grace seconds beyond a marker.
+struct EditorGraceZone: View {
+  var width: CGFloat
+  var height: CGFloat
+  var leading: Bool
 
-  private func textBar(width w: CGFloat) -> some View {
+  var body: some View {
+    Canvas { ctx, size in
+      ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.25)))
+      var p = Path()
+      var x: CGFloat = -size.height
+      while x < size.width { p.move(to: CGPoint(x: x, y: size.height)); p.addLine(to: CGPoint(x: x + size.height, y: 0)); x += 7 }
+      ctx.stroke(p, with: .color(.white.opacity(0.28)), lineWidth: 1)
+    }
+    .overlay(alignment: leading ? .bottomLeading : .bottomTrailing) {
+      if width > 46 {
+        Text("Grace").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
+          .padding(.horizontal, 5).padding(.vertical, 1).background(Color.black.opacity(0.45), in: Capsule()).padding(4)
+      }
+    }
+    .frame(width: width, height: height)
+    .clipShape(UnevenRoundedRectangle(topLeadingRadius: leading ? 6 : 0, bottomLeadingRadius: leading ? 6 : 0,
+                                      bottomTrailingRadius: leading ? 0 : 6, topTrailingRadius: leading ? 0 : 6))
+  }
+}
+
+// MARK: - Text timing bar
+
+struct EditorTextBar: View {
+  @ObservedObject var model: EditorModel
+  let playback: EditorPlayback
+  var width: CGFloat
+  private let h = EditorTimeline.textH
+
+  var body: some View {
+    let m = EditorTrackMath(duration: model.duration, width: width, markers: [model.video?.markerIn, model.video?.markerOut])
     let r = model.resolved, tr = model.trim
-    let s = tr.start + (r.textStart ?? 0), e = r.textEnd.map { tr.start + $0 } ?? tr.end
-    let a = x(min(max(s, tr.start), tr.end), w), b = x(min(max(e, tr.start), tr.end), w)
+    let s = tr.start + (r.textStart ?? 0)
+    let e = r.textEnd.map { tr.start + $0 } ?? tr.end
+    let a = m.x(min(max(s, tr.start), tr.end)), b = m.x(min(max(e, tr.start), tr.end))
     let on = r.hasText
-    return ZStack(alignment: .leading) {
-      RoundedRectangle(cornerRadius: 5)
-        .fill(on ? Color.accentColor.opacity(0.22) : Color.secondary.opacity(0.1))
-        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(on ? Color.accentColor.opacity(0.8) : Color.secondary.opacity(0.3), lineWidth: 1))
-        .overlay(alignment: .leading) {
-          Label(on ? Captions.oneLine(r.text) : "No text", systemImage: "textformat")
-            .font(.system(size: 10, weight: .medium)).lineLimit(1)
-            .foregroundStyle(on ? Color.primary : Color.secondary)
-            .padding(.leading, 10).padding(.trailing, 8)
-        }
-        .frame(width: max(12, b - a), height: textH)
+    ZStack(alignment: .leading) {
+      bar(on: on, text: on ? Captions.oneLine(r.text) : (r.noText ? "No text" : "No text yet"))
+        .frame(width: max(14, b - a), height: h)
         .offset(x: a)
-        .contentShape(Rectangle())
-        .onTapGesture { model.tab = .text }
+        .onTapGesture { model.scrollTarget = .text }
+        .help("Overlay text — click to edit it")
       if on {
-        barGrip().offset(x: a)
+        grip.offset(x: a)
           .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
-            let t = min(max(snapped(v.location.x, w, extra: [tr.start], playhead: true), tr.start), e - 0.3)
+            let t = min(max(m.snapped(v.location.x, extra: [tr.start, playback.time]), tr.start), e - 0.3)
             model.updateVersion { $0.textStart = t - tr.start < 0.02 ? 0 : t - tr.start }
           })
-        barGrip().offset(x: b - 6)
+        grip.offset(x: b - 6)
           .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
-            let t = max(min(snapped(v.location.x, w, extra: [tr.end], playhead: true), tr.end), s + 0.3)
+            let t = max(min(m.snapped(v.location.x, extra: [tr.end, playback.time]), tr.end), s + 0.3)
             model.updateVersion { $0.textEnd = t - tr.start }
           })
       }
     }
-    .frame(width: w, height: textH, alignment: .leading)
+    .frame(width: width, height: h, alignment: .leading)
   }
 
-  private func barGrip() -> some View {
-    RoundedRectangle(cornerRadius: 2).fill(Color.accentColor).frame(width: 6, height: textH)
+  private func bar(on: Bool, text: String) -> some View {
+    RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous)
+      .fill(on ? DS.color.selected : DS.color.surfaceSunken)
+      .overlay(RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous)
+        .strokeBorder(on ? DS.color.borderStrong : DS.color.border, lineWidth: 1))
+      .overlay(alignment: .leading) {
+        Text(text).font(DS.type.micro).lineLimit(1)
+          .foregroundStyle(on ? DS.color.text : DS.color.textTertiary)
+          .padding(.leading, 10).padding(.trailing, 8)
+      }
+  }
+
+  private var grip: some View {
+    RoundedRectangle(cornerRadius: 2).fill(DS.color.text.opacity(0.7)).frame(width: 6, height: h)
       .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
       .help("Drag to set when the text shows")
   }
+}
 
-  // MARK: Per-platform trim lane
+// MARK: - Per-platform trim lane
 
-  private func lane(_ p: Platform, width w: CGFloat) -> some View {
-    let r = model.edit.platformTrims[p] ?? model.trim
-    let a = x(r.start, w), b = x(r.end, w)
-    let lim = model.settings.limits[p]?.maxDuration ?? .infinity
+struct EditorTrimLane: View {
+  @ObservedObject var model: EditorModel
+  var platform: Platform
+  var width: CGFloat
+  private let h = EditorTimeline.laneH
+
+  var body: some View {
+    let m = EditorTrackMath(duration: model.duration, width: width, markers: [model.video?.markerIn, model.video?.markerOut])
+    let r = model.edit.platformTrims[platform] ?? model.trim
+    let a = m.x(r.start), b = m.x(r.end)
+    let lim = model.settings.limits[platform]?.maxDuration ?? .infinity
     let over = r.duration > lim + 0.05
-    let tint: Color = over ? .orange : .yellow
-    return ZStack(alignment: .leading) {
-      RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.08)).frame(width: w, height: laneH)
-      RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.3))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(tint, lineWidth: 1))
-        .overlay(Text("\(p.displayName) · \(Validation.fmt(r.duration)) / \(Validation.fmt(lim))")
-          .font(.system(size: 9, weight: .semibold)).lineLimit(1).padding(.horizontal, 8), alignment: .leading)
-        .frame(width: max(10, b - a), height: laneH).offset(x: a)
-      RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 6, height: laneH).offset(x: a)
+    let tint = over ? DS.color.warning : DS.color.textSecondary
+    ZStack(alignment: .leading) {
+      RoundedRectangle(cornerRadius: 4).fill(DS.color.surfaceSunken).frame(width: width, height: h)
+      RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.18))
+        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(tint.opacity(0.7), lineWidth: 1))
+        .overlay(alignment: .leading) {
+          Text("\(platform.displayName) · \(Validation.fmt(r.duration)) / \(Validation.fmt(lim))")
+            .font(.system(size: 9.5, weight: .semibold)).foregroundStyle(DS.color.text).lineLimit(1).padding(.horizontal, 8)
+        }
+        .frame(width: max(10, b - a), height: h).offset(x: a)
+      RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 6, height: h).offset(x: a)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
-          let t = min(snapped(v.location.x, w), r.end - 0.5)
-          model.updateEdit { $0.platformTrims[p]?.start = t }
+          let t = min(m.snapped(v.location.x), r.end - 0.5)
+          model.updateEdit { $0.platformTrims[platform]?.start = t }
         })
-      RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 6, height: laneH).offset(x: b - 6)
+        .help("\(platform.displayName) trim in")
+      RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 6, height: h).offset(x: b - 6)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
-          let t = max(snapped(v.location.x, w, extra: [r.start + lim]), r.start + 0.5)
-          model.updateEdit { $0.platformTrims[p]?.end = t }
+          let t = max(m.snapped(v.location.x, extra: [r.start + lim]), r.start + 0.5)
+          model.updateEdit { $0.platformTrims[platform]?.end = t }
         })
+        .help("\(platform.displayName) trim out — snaps to the \(Validation.fmt(lim)) limit")
     }
-    .frame(width: w, height: laneH, alignment: .leading)
+    .frame(width: width, height: h, alignment: .leading)
   }
 }
 
@@ -244,8 +344,8 @@ private struct EditorFilmstripImages: View {
   var body: some View {
     HStack(spacing: 0) {
       if strip.frames.isEmpty {
-        Rectangle().fill(Color.secondary.opacity(0.15))
-          .overlay { if strip.loading { ProgressView().controlSize(.small) } }
+        Rectangle().fill(DS.color.surfaceSunken)
+          .overlay { if strip.loading { DSSpinner(size: 14) } }
       } else {
         ForEach(Array(strip.frames.enumerated()), id: \.offset) { _, f in
           Image(decorative: f.image, scale: 1).resizable().aspectRatio(contentMode: .fill)
@@ -265,26 +365,10 @@ private struct EditorPlayhead: View {
   var body: some View {
     let x = duration > 0 ? CGFloat(playback.time / duration) * width : 0
     VStack(spacing: 0) {
-      Image(systemName: "arrowtriangle.down.fill").font(.system(size: 9)).foregroundStyle(Color.primary)
-      Rectangle().fill(Color.primary).frame(width: 1.5)
+      Circle().fill(DS.color.text).frame(width: 8, height: 8)
+      Rectangle().fill(DS.color.text).frame(width: 1.5)
     }
-    .frame(width: 10, height: height + 10)
-    .offset(x: x - 5, y: -10)
-  }
-}
-
-struct EditorPlayIcon: View {
-  @ObservedObject var playback: EditorPlayback
-  var body: some View {
-    Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 14)).frame(width: 22)
-  }
-}
-
-private struct EditorTimeLabel: View {
-  @ObservedObject var playback: EditorPlayback
-  var duration: Double
-  var body: some View {
-    Text("\(EditorGeometry.time(playback.time, tenths: true)) / \(EditorGeometry.time(duration, tenths: true))")
-      .font(.system(size: 12, design: .monospaced)).monospacedDigit()
+    .frame(width: 10, height: height + 8)
+    .offset(x: x - 5, y: -8)
   }
 }

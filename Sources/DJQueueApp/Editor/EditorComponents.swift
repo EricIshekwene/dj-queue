@@ -2,116 +2,114 @@ import AVFoundation
 import DJQCore
 import SwiftUI
 
-/// Status capsule (DESIGN.md: 11 pt semibold, tinted background).
-struct EditorPill: View {
-  var text: String
-  var color: Color = .secondary
-  var systemImage: String?
+// MARK: - Inspector building blocks (DESIGN-v2 §7, built from DS components)
+
+/// "Custom" tag + ↺ reset, shown only when a field differs from its default (decision #10). Nothing otherwise.
+/// `inheritedFrom` shows "from v1" instead when a later version carries an earlier version's value.
+struct EditorCustomTag: View {
+  var isCustom: Bool
+  var inheritedFrom: Int? = nil
+  var resetHelp = "Reset to the default"
+  /// nil = the value is inherited, so there's nothing on this version to reset.
+  var onReset: (() -> Void)?
+
   var body: some View {
-    HStack(spacing: 4) {
-      if let systemImage { Image(systemName: systemImage).font(.system(size: 10, weight: .semibold)) }
-      Text(text).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+    HStack(spacing: 2) {
+      if let v = inheritedFrom {
+        DSBadge("from v\(v)", style: .outline, size: .sm)
+          .help("Carried forward from v\(v) — change it here to make this version different")
+      } else if isCustom {
+        DSBadge("Custom", style: .soft(.neutral), size: .sm)
+          .help("Changed from your New clip defaults")
+        if let onReset {
+          DSIconButton("arrow.uturn.backward", tooltip: resetHelp, size: .sm, action: onReset)
+            .scaleEffect(0.86)
+        }
+      }
     }
-    .foregroundStyle(color)
-    .padding(.horizontal, 8).padding(.vertical, 3)
-    .background(Capsule().fill(color.opacity(0.14)))
+    .frame(height: 22)
   }
 }
 
-/// Inspector section: small eyebrow title + content.
-struct EditorSection<Content: View, Accessory: View>: View {
-  var title: String
-  @ViewBuilder var accessory: Accessory
+/// One labelled field in an inspector section: label (callout medium) + Custom tag on the right, then the control.
+struct EditorField<Content: View>: View {
+  var label: String
+  var help: String? = nil
+  var isCustom = false
+  var inheritedFrom: Int? = nil
+  var resetHelp = "Reset to the default"
+  var onReset: (() -> Void)? = nil
   @ViewBuilder var content: Content
-  init(_ title: String, @ViewBuilder accessory: () -> Accessory = { EmptyView() }, @ViewBuilder content: () -> Content) {
-    self.title = title; self.accessory = accessory(); self.content = content()
-  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 6) {
-        Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+        Text(label).font(DS.type.calloutMedium).foregroundStyle(DS.color.text)
+          .help(help ?? "")
+        Spacer(minLength: 0)
+        EditorCustomTag(isCustom: isCustom, inheritedFrom: inheritedFrom, resetHelp: resetHelp, onReset: onReset)
+      }
+      content
+    }
+  }
+}
+
+/// Inspector section: `headline` title + optional trailing accessory, content below, 24 pt between sections.
+struct EditorSectionView<Content: View, Accessory: View>: View {
+  var section: EditorSection
+  @ViewBuilder var accessory: Accessory
+  @ViewBuilder var content: Content
+
+  init(_ section: EditorSection, @ViewBuilder accessory: () -> Accessory = { EmptyView() }, @ViewBuilder content: () -> Content) {
+    self.section = section; self.accessory = accessory(); self.content = content()
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: DS.space.sm) {
+      HStack(spacing: 6) {
+        Text(section.rawValue).font(DS.type.headline).foregroundStyle(DS.color.text)
         Spacer(minLength: 0)
         accessory
       }
       content
     }
-    .padding(.horizontal, 16).padding(.vertical, 12)
+    .padding(.horizontal, DS.space.md)
+    .id(section)
   }
 }
 
-/// "from v1" marker for carried-forward fields (E.S4).
-struct EditorInheritedTag: View {
-  var from: Int?
+/// Small helper line under a control (`caption`, secondary).
+struct EditorHint: View {
+  var text: String
+  var icon: String? = nil
+  var tone: DSTone? = nil
+  init(_ text: String, icon: String? = nil, tone: DSTone? = nil) { self.text = text; self.icon = icon; self.tone = tone }
   var body: some View {
-    if let from {
-      Text("from v\(from)").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-        .padding(.horizontal, 5).padding(.vertical, 1)
-        .overlay(Capsule().strokeBorder(.secondary.opacity(0.4), lineWidth: 0.5))
+    HStack(alignment: .firstTextBaseline, spacing: 5) {
+      if let icon { Image(systemName: icon).font(.system(size: 10.5, weight: .semibold)) }
+      Text(text).fixedSize(horizontal: false, vertical: true)
     }
+    .font(DS.type.caption)
+    .foregroundStyle(tone?.color ?? DS.color.textSecondary)
   }
 }
 
-/// Monochrome platform badge (short name in a rounded square).
-struct EditorPlatformBadge: View {
-  var platform: Platform
-  var color: Color = .secondary
-  var body: some View {
-    Text(platform.shortName).font(.system(size: 9, weight: .bold, design: .rounded))
-      .frame(width: 20, height: 16)
-      .foregroundStyle(color)
-      .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(0.14)))
+extension Platform {
+  /// Subtle, non-brand tint for this platform's safe-zone overlay (hues chosen to stay distinct when stacked;
+  /// never the platform's own brand colour).
+  var editorZoneTint: Color {
+    switch self {
+    case .tiktok: Color(light: 0x7C5CFA, dark: 0x9B85FF)
+    case .instagram: Color(light: 0x0F9F8F, dark: 0x2DD4BF)
+    case .facebook: Color(light: 0xD97706, dark: 0xF5A524)
+    case .youtube: Color(light: 0x16A34A, dark: 0x4ADE80)
+    case .threads: Color(light: 0xDB2777, dark: 0xF472B6)
+    case .x: Color(light: 0x0891B2, dark: 0x22D3EE)
+    }
   }
-}
 
-/// Multi-line text field with a placeholder (TextEditor has none on macOS).
-struct EditorTextArea: View {
-  @Binding var text: String
-  var placeholder: String
-  var height: CGFloat
-  var secondary = false
-  var body: some View {
-    ZStack(alignment: .topLeading) {
-      TextEditor(text: $text)
-        .font(.system(size: 13))
-        .foregroundStyle(secondary ? .secondary : .primary)
-        .scrollContentBackground(.hidden)
-        .padding(.horizontal, 4).padding(.vertical, 6)
-      if text.isEmpty {
-        Text(placeholder).font(.system(size: 13)).foregroundStyle(.tertiary)
-          .padding(.horizontal, 9).padding(.vertical, 6)
-          .allowsHitTesting(false)
-      }
-    }
-    .frame(height: height)
-    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
-  }
-}
-
-/// Wrapping layout for chips.
-struct EditorFlowLayout: Layout {
-  var spacing: CGFloat = 6
-  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-    let w = proposal.width ?? 280
-    var x: CGFloat = 0, y: CGFloat = 0, row: CGFloat = 0
-    for s in subviews {
-      let z = s.sizeThatFits(.unspecified)
-      if x > 0, x + z.width > w { x = 0; y += row + spacing; row = 0 }
-      x += z.width + spacing
-      row = max(row, z.height)
-    }
-    return CGSize(width: w, height: y + row)
-  }
-  func placeSubviews(in b: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-    var x = b.minX, y = b.minY, row: CGFloat = 0
-    for s in subviews {
-      let z = s.sizeThatFits(.unspecified)
-      if x > b.minX, x + z.width > b.maxX { x = b.minX; y += row + spacing; row = 0 }
-      s.place(at: CGPoint(x: x, y: y), proposal: .init(z))
-      x += z.width + spacing
-      row = max(row, z.height)
-    }
-  }
+  /// Short label for chips in tight rows ("YouTube" instead of "YouTube Shorts").
+  var editorShortName: String { self == .youtube ? "YouTube" : displayName }
 }
 
 /// Shows the part of a full-frame still that `crop` (source pixels) selects.
