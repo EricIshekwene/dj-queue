@@ -138,6 +138,14 @@ file path. To answer:
 
 Low certainty → still suggest, with a low `confidence` and the reason in `source`.
 
+## Auto-update (installs, not data)
+
+`djq autoupdate status [--json]` says whether commits to main install themselves, which build is installed, and
+whether one is ready (waiting for Eric's window to close) or blocked (failing tests, reason included). `djq autoupdate
+log [--run]` shows what happened. Leave `on`/`off`, `run` and `rollback` to Eric or a build session unless Eric asks:
+they change which app is installed. `rollback` is refused when the database is newer than the kept build unless
+`--restore-db`, which loses changes since that backup — never run it on your own.
+
 ## Rules the app applies (so you don't fight them)
 
 - Clips store only overrides; everything else follows Settings → New clip defaults (trim = Eric's markers, text

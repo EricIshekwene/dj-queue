@@ -97,7 +97,21 @@ Requires macOS 15+, a Swift 6 toolchain (Xcode or Command Line Tools) and `ffmpe
 ```bash
 swift build && swift test                  # 208 tests
 scripts/build-app.sh                       # builds "build/DJ Queue.app" with the djq CLI inside
-scripts/build-app.sh --install             # copies to ~/Applications and links ~/bin/djq
+scripts/build-app.sh --install             # copies to ~/Applications and links ~/bin/djq (keeps the replaced build)
+```
+
+**Auto-update (v0.6.0+).** Once installed, every commit to `main` installs itself. A LaunchAgent watches the branch; the
+runner builds and tests the commit in a scratch checkout (never the working tree or the real database), backs up the
+database, installs, restarts the engine and checks that every clip's id, score and title survived and Doctor found no
+new errors. A failed check rolls back to the previous build. Docs-only commits are skipped. With the window open it
+waits as **Update ready** (What's new · Restart & update · Later); failing tests show **Update blocked**.
+
+```bash
+djq autoupdate status                      # on/off, installed build, main, ready/blocked, last result
+djq autoupdate on | off                    # load / unload the watcher
+djq autoupdate run                         # check main now (the same path a commit takes)
+djq autoupdate rollback [--restore-db]     # back to the kept previous build
+djq autoupdate log [--run]                 # the log, or the last run's build and test output
 ```
 
 The app reads session folders at `~/Movies/DJ Video/Sessions/<date – name>/videos.json` (written by my CapCut export scripts). To run against a scratch copy instead of real data, set `DJQ_ROOT` (the "DJ Video" folder) and `DJQ_HOME` (database and logs) and launch the binary inside the bundle directly. `DJQueueApp --snapshot <dir>` renders every screen in light and dark.
@@ -119,7 +133,7 @@ design/                 inventory, design specs v1/v2, design system, decision l
 
 ## Status
 
-Phase 1 (manual publishing) is in daily use (v0.5.0), redesigned in round 2 and refined in rounds 3 and 4 (tooltips and undo everywhere; stage = readiness, one list header with a Filters popover, lists that show the edited clip). Next: auto-update on every commit to main, then a Postiz publisher so posts go out with the Mac off, analytics and opt-in reposting of underperforming posts.
+Phase 1 (manual publishing) is in daily use (v0.6.0), redesigned in round 2 and refined in rounds 3 and 4 (tooltips and undo everywhere; stage = readiness, one list header with a Filters popover, lists that show the edited clip; auto-update on every commit to main). Next: a Postiz publisher so posts go out with the Mac off, analytics and opt-in reposting of underperforming posts.
 
 ## License
 
