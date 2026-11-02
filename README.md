@@ -2,28 +2,36 @@
 
 A native macOS app that runs my DJ content pipeline: it turns raw 4K clips from a DJ set into vertical short-form videos, plans what posts where and when across six platforms, renders the final files in the background, and tracks every post — including missed slots, failures and copyright blocks.
 
-Built for my own use as DJ Lovd (TikTok, Instagram, Facebook, YouTube Shorts, Threads, X). SwiftUI + AVFoundation + SQLite + ffmpeg, ~18k lines, 142 automated tests. Designed, specified and shipped in one day with a team of AI coding agents that I directed — see [How it was built](#how-it-was-built).
+Built for my own use as DJ Lovd (TikTok, Instagram, Facebook, YouTube Shorts, Threads, X). SwiftUI + AVFoundation + SQLite + ffmpeg, 187 automated tests. Designed, specified and shipped with a team of AI coding agents that I directed — v1 in one day, then a full redesign the next — see [How it was built](#how-it-was-built).
 
 ![Queue](docs/screenshots/queue.jpg)
 
 ## What it does
 
+The app follows a clip's life — **Score → Edit → Queue → Week → Today** — with one job and one primary action per screen, on a calm, rounded design system modelled on ChatGPT's look and shadcn/ui component anatomy.
+
 - **Intake** — watches my session folders; every clip exported from my CapCut markers shows up automatically. Renamed files are re-found by content fingerprint; deleted files are flagged, never lost.
-- **Score & queue** — I score each clip 0–100; the queue orders the backlog worst → best (to warm up new accounts) or best → worst.
-- **Vertical editor** — crop a 4K 16:9 frame to 9:16, trim to my original markers, add overlay text (prefilled from the clip's tag), captions with per-platform character limits and auto hashtags, a cover frame, and versions for reposts.
+- **Score & queue** — I score each clip 0–100 on a large autoplaying preview; the queue orders the backlog worst → best (to warm up new accounts) or best → worst. Every list has Cards / Grid / Single / List views with muted autoplay from small background-generated proxies.
+- **Vertical editor** — crop a 4K 16:9 frame to 9:16, trim starting on my original markers (with grace to extend), overlay text, captions with per-platform limits, a cover frame, versions for reposts, multi-platform safe zones and realistic phone previews of each platform's UI with the real caption and handle.
+- **No intelligence in the app, by design** — the app is a UI over scripts. Song names and titles come from metadata my agents write (`title_suggestions` in the manifest) and show up as chips; when a name is ambiguous, *Ask an agent* copies a ready-made prompt. Outside agents read and change everything through the `djq` CLI (JSON in/out), documented as a Claude skill.
+- **Defaults + bulk editing** — new-clip defaults for frame, trim, text, cover, captions and platforms (clips store only overrides, so changing a default updates every untouched clip); bulk actions with a confirmation sheet showing exactly what changes and one-step undo.
 - **Weekly approval** — the app proposes the next 7 days; I drag, swap, pin and approve. Only approved weeks ever post.
 - **Background engine** — runs at login, renders the approved week ahead of time (1080×1920 H.264, loudness-normalised to −14 LUFS), and notifies me when each platform post is due.
 - **Manual publisher (phase 1)** — a Today screen: drag the file into the upload page, copy the platform-specific caption, mark posted with the URL. Built behind a `Publisher` interface so an API publisher (Postiz) can replace it later without touching the rest.
 - **Failure handling** — missed slots shift that platform's plan without ever double-posting; failed posts re-queue the next day after a fix; copyright blocks are shown loudly and never auto-retried.
 - **Doctor** — `djq doctor` checks everything (manifests, missing files, renders, overdue posts, runway, DB integrity, disk, tools) and prints a report an AI agent can act on, paired with a skill that documents the safe fix for every finding.
 
-| Editor — text | Editor — captions |
+| Score | Edit |
 |---|---|
-| ![Editor text](docs/screenshots/editor-text.jpg) | ![Editor captions](docs/screenshots/editor-caption.jpg) |
+| ![Score](docs/screenshots/score.jpg) | ![Edit](docs/screenshots/edit.jpg) |
+| **Editor — platform previews** | **Editor — safe zones** |
+| ![Editor previews](docs/screenshots/editor-preview.jpg) | ![Editor zones](docs/screenshots/editor-zones.jpg) |
 | **Week** | **Today** |
 | ![Week](docs/screenshots/week.jpg) | ![Today](docs/screenshots/today.jpg) |
-| **Health** | **Menu bar** |
-| ![Health](docs/screenshots/health.jpg) | ![Menu bar](docs/screenshots/menubar.jpg) |
+| **Library** | **Settings — new clip defaults** |
+| ![Library](docs/screenshots/library.jpg) | ![Settings](docs/screenshots/settings-defaults.jpg) |
+
+*Screenshots use sample data and titles.*
 
 ## Architecture
 
@@ -73,6 +81,7 @@ I wrote the product spec, then directed AI coding agents (Claude Code) through a
 2. **Contracts, then parallel work** — a foundation layer and an API contract (`ARCHITECTURE.md`), then four agents building in parallel on separate branches with disjoint file ownership: renderer, engine + CLI + Doctor, main UI, editor.
 3. **Independent review on every branch** — a fresh reviewer agent per milestone checked spec fidelity and code quality, with probes. Real bugs caught this way: a double-post path after a missed day, an edit hash that would have re-rendered and overwritten files whenever a platform was toggled, a DST off-by-an-hour, trim handles that stuck, crop maths 1 px off the export.
 4. **Integration and a final end-to-end review** against the spec's acceptance criteria on my real clips, with screenshots of every screen beside its reference, then ship.
+5. **Round 2 — redesign from my own usage notes.** After scoring my first set I staged 14 changes (too "rectangly", no bulk editing, unclear controls, the app guessing names). They were turned into a new design lock (`design/DESIGN-v2.md`), a SwiftUI design system (`design/DESIGN-SYSTEM.md`), a core rework (defaults with override semantics, bulk ops with an undo journal, proxies, an agent API) and rebuilt screens — again in parallel branches with independent reviews, a lossless schema migration verified against my real data, and a final end-to-end review. Decisions are logged in `DECISIONS-R2.md` and `design/*-DECISIONS*.md`.
 
 The commit history shows that flow (`Co-Authored-By` lines mark agent-written commits). Design artifacts are in `design/` (`INVENTORY.md`, `DESIGN.md`, `REFS.md`, text-style mockups) and the decision page is `DECISIONS.html` (its third-party reference images aren't published).
 
@@ -81,7 +90,7 @@ The commit history shows that flow (`Co-Authored-By` lines mark agent-written co
 Requires macOS 15+, a Swift 6 toolchain (Xcode or Command Line Tools) and `ffmpeg` (`brew install ffmpeg`).
 
 ```bash
-swift build && swift test                  # 142 tests
+swift build && swift test                  # 187 tests
 scripts/build-app.sh                       # builds "build/DJ Queue.app" with the djq CLI inside
 scripts/build-app.sh --install             # copies to ~/Applications and links ~/bin/djq
 ```
@@ -97,13 +106,15 @@ Sources/DJQCore/        core library — models, store, intake, captions, valida
 Sources/djq/            CLI
 Sources/DJQueueApp/     SwiftUI app — queue, week, today, library, posts, health, settings, editor, menu bar
 Tests/DJQCoreTests/     Swift Testing suite
-skills/                 Claude skill for the Doctor report
-design/                 inventory, design spec, mockups
+Sources/DJQueueApp/DesignSystem/  tokens + components (shadcn-style anatomy in SwiftUI)
+skills/                 Claude skills: Doctor report, agent access via djq
+scripts/prefill_titles.py  upstream title-suggestion formatter for agents
+design/                 inventory, design specs v1/v2, design system, decision logs
 ```
 
 ## Status
 
-Phase 1 (manual publishing) is in daily use. Next: a Postiz publisher so posts go out with the Mac off, then analytics and opt-in reposting of underperforming posts.
+Phase 1 (manual publishing) is in daily use, redesigned in round 2. Next: a Postiz publisher so posts go out with the Mac off, then analytics and opt-in reposting of underperforming posts.
 
 ## License
 
