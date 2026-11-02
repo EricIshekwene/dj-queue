@@ -119,6 +119,15 @@ public enum StageWording {
     "Moved to Edit: " + reasonsText(issues)
   }
 
+  /// Event logged when an Edit clip becomes valid again and goes to the Queue.
+  public static let movedToQueue = "Moved to the Queue: nothing missing any more"
+
+  /// Event logged instead of "Moved to Edit" for a clip pinned to a day: it stays on that day and can't post until
+  /// fixed. `day` is already formatted ("Tue 10 Nov").
+  public static func cantPost(on day: String, _ issues: [ValidationIssue]) -> String {
+    "Can't post on \(day): " + reasonsText(issues)
+  }
+
   /// "No crop · Too long for X" (chip texts in chip order, de-duplicated).
   public static func reasonsText(_ issues: [ValidationIssue]) -> String {
     var seen = Set<String>()

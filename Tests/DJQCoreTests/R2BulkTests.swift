@@ -41,6 +41,7 @@ import Testing
   @Test func makeReadyOutlookMatchesRemainingIssues() throws {
     let f = try Fixture()
     try f.intake()
+    for id in ["clip-0", "clip-2", "clip-3"] { try f.store.setScore(id, 50) }  // round 4: unscored clips go to Score, not the Queue
     try f.store.setTitle("clip-0", "Yayo x Johnny")
     var custom = Edit()
     custom.crop = CropRect(x: 0, y: 0, w: 1216, h: 2160)

@@ -41,14 +41,18 @@ public final class Queue: @unchecked Sendable {
       .sorted { ($0.part ?? 0, $0.start ?? 0, $0.name) < ($1.part ?? 0, $1.start ?? 0, $1.name) }
   }
 
-  /// Scored but the edit isn't finished.
+  /// The Edit stage (`ClipStage.of == .edit`): scored, something still missing (or sent back), plus scored clips whose
+  /// file is missing and that aren't scheduled or posted (round 4: they show in Edit with "File missing").
   public func needsEdit() throws -> [Video] {
-    try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND score IS NOT NULL AND state='needs_edit'")
+    try store.videos(where: """
+      type='short-form' AND excluded=0 AND score IS NOT NULL AND
+      ((missing=0 AND state='needs_edit') OR (missing=1 AND state IN ('needs_edit','ready','missing_file')))
+      """)
       .sorted { ($0.score ?? 0, $0.part ?? 0, $0.start ?? 0) < ($1.score ?? 0, $1.part ?? 0, $1.start ?? 0) }
   }
 
   /// approvedDays = consecutive days from today with an approved slot; readyDays = ready backlog ÷ posts/day;
-  /// totalDays = approvedDays + (ready + scored needs-edit) ÷ posts/day.
+  /// totalDays = approvedDays + (ready + Edit clips with their file) ÷ posts/day.
   public func runway() throws -> Runway {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
@@ -66,7 +70,8 @@ public final class Queue: @unchecked Sendable {
       d = dm.addDays(d, 1)
     }
     let ready = try ordered().count
-    let edit = try needsEdit().count
+    // Missing-file clips are in Edit but can't become posting days until relinked, so runway leaves them out.
+    let edit = try needsEdit().filter { !$0.missing }.count
     return Runway(approvedDays: approved, readyDays: ready / perDay, totalDays: approved + (ready + edit) / perDay)
   }
 

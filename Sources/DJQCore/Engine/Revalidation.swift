@@ -55,13 +55,25 @@ public final class Revalidation: @unchecked Sendable {
           r.movedToEdit[v.id] = try Validation.issues(video: after, store: store, context: ctx).map(\.chipText)
         } else if was == .edit, now == .queue {
           r.movedToQueue.append(v.id)
-          try store.logEvent("stage", "Back in the Queue: nothing missing any more", videoId: v.id)
+          try store.logEvent("stage", StageWording.movedToQueue, videoId: v.id)
         } else {
           r.otherChanges += 1
         }
       }
-      if adjustPlan { r.draftSlotsRemoved = try Planner(store: store).dropNotReadyDraftSlots() }
+      if adjustPlan { r.draftSlotsRemoved = try Planner(store: store).dropNotReadyDraftSlots(revalidate: false) }
     }
     return r
+  }
+
+  /// `djq`'s after-write hook (every command that wrote, before ChangeSignal): runs the pass; a failure is logged,
+  /// never thrown, so the write itself still counts. Returns the report (nil on failure).
+  @discardableResult
+  public static func afterWrite(store: Store, command: String) -> Report? {
+    do {
+      return try Revalidation(store: store).run()
+    } catch {
+      Log.shared.warn("stage check after \(command): \(error)")
+      return nil
+    }
   }
 }
