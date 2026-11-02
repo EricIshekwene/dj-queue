@@ -14,10 +14,16 @@ struct UpdateBanner: View {
   var updates = AutoUpdateUI.shared
 
   var body: some View {
-    if let b = updates.banner {
-      UpdateBannerRow(updates: updates, banner: b)
-        .transition(.move(edge: .top).combined(with: .opacity))
+    VStack(spacing: 0) {
+      // Zero-height anchor so onAppear fires even with no banner to show.
+      Color.clear.frame(height: 0)
+      if let b = updates.banner {
+        UpdateBannerRow(updates: updates, banner: b)
+          .transition(.move(edge: .top).combined(with: .opacity))
+      }
     }
+    // Idempotent; the menu-bar label starts it too (whichever appears first).
+    .onAppear { updates.start(host: AppHost.shared) }
   }
 }
 
@@ -69,7 +75,7 @@ struct UpdateBannerRow: View {
     Spacer(minLength: DS.space.sm)
     let why = "The update is already under way; DJ Queue restarts when it's installed."
     DSButton("Later", variant: .ghost, size: .sm, disabledReason: why) {}
-    DSButton("Restart & update", icon: "arrow.clockwise", variant: .outline, size: .sm, isLoading: true, disabledReason: why) {}
+    DSButton("Restart & update", icon: "arrow.clockwise", variant: .outline, size: .sm, disabledReason: why) {}
   }
 
   // MARK: Blocked

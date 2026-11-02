@@ -7,7 +7,10 @@ import SwiftUI
 /// grey when the engine is stopped; pause glyph while posting is paused. Drawn at display time so the colours
 /// follow the menu bar's appearance (template unless a coloured dot has to keep its colour).
 enum MenuBarIcon {
-  static func image(days: Int, errors: Int, engineOn: Bool, paused: Bool, update: AutoUpdateUI.Dot = .none) -> NSImage {
+  /// `appearance` forces the ink (the snapshot icon sheet); nil = the appearance the image is drawn in (the status
+  /// button's), so a coloured-dot icon reads white on a dark menu bar and black on a light one.
+  static func image(days: Int, errors: Int, engineOn: Bool, paused: Bool, update: AutoUpdateUI.Dot = .none,
+                    appearance: NSAppearance? = nil) -> NSImage {
     let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
     let text = "\(days)d" as NSString
     let textSize = text.size(withAttributes: [.font: font])
@@ -25,7 +28,11 @@ enum MenuBarIcon {
     let template = errors == 0 && updateColor == nil
     let img = NSImage(size: size, flipped: false) { _ in
       let alpha: CGFloat = engineOn ? 1 : 0.4
-      let ink = template ? NSColor.black.withAlphaComponent(alpha) : NSColor.labelColor.withAlphaComponent(alpha)
+      // Template: AppKit tints it. Otherwise pick white or black from the drawing appearance, resolved here at draw
+      // time (a dynamic labelColor resolved elsewhere can come out black on a dark bar).
+      let ap = appearance ?? NSAppearance.currentDrawing()
+      let dark = ap.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark]).map { $0 == .darkAqua || $0 == .vibrantDark } ?? false
+      let ink = template || !dark ? NSColor.black.withAlphaComponent(alpha * (template ? 1 : 0.85)) : NSColor.white.withAlphaComponent(alpha)
       if let symbol {
         let tinted = NSImage(size: symbol.size, flipped: false) { r in
           symbol.draw(in: r)

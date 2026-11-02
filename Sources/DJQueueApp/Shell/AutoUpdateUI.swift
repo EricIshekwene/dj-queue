@@ -53,6 +53,15 @@ final class AutoUpdateUI {
   @ObservationIgnored private var observers: [NSObjectProtocol] = []
   @ObservationIgnored private var distributed: [NSObjectProtocol] = []
   @ObservationIgnored private var timer: Timer?
+  /// Every AutoUpdateClient call goes through one serial queue, so window.json and request.json writes land in the
+  /// order they were made (window state before the launch check; a fast close + reopen ends "open").
+  @ObservationIgnored private let client = DispatchQueue(label: "djq.autoupdate.client", qos: .utility)
+
+  /// The build this process runs, read once at launch: after an install the bundle path on disk holds the new
+  /// build, so re-reading its Info.plist would say "already up to date" in the old process.
+  let launchBuild: AutoUpdateBuild? = AutoUpdateUI.readLaunchBuild()
+  /// Where this process runs from, captured at launch (standardised).
+  let launchBundlePath = Bundle.main.bundleURL.standardizedFileURL.path
 
   private enum Key {
     static let later = "djq.autoupdate.laterCommit"
@@ -62,8 +71,9 @@ final class AutoUpdateUI {
   }
 
   static let mainWindowName = "DJQueueMain"
-  /// How long the banner shows "Starting the update" before the runner reports a phase.
-  static let requestGrace: TimeInterval = 20
+  /// Longest the banner shows "Starting the update" when no run reports back (launchd throttles the watcher to one
+  /// start per 30 s, so a request can wait that long). A finished run newer than the request clears it sooner.
+  static let requestGrace: TimeInterval = 120
 
   private init() {
     fake = ProcessInfo.processInfo.environment["DJQ_AUTOUPDATE_FAKE"].flatMap(Fake.init(rawValue:))
@@ -81,9 +91,17 @@ final class AutoUpdateUI {
 
   private static let env = ProcessInfo.processInfo.environment
   static var isDev: Bool { ["DJQ_HOME", "DJQ_ROOT"].contains { !(env[$0] ?? "").isEmpty } }
-  /// A dev run (scratch DJQ_HOME / DJQ_ROOT) that hasn't redirected the installed app and the `djq` link: asking the
-  /// runner from here could replace the real installed app, so the app never asks.
-  static var devUnsafe: Bool { isDev && ["DJQ_APP_DIR", "DJQ_BIN_DIR"].contains { (env[$0] ?? "").isEmpty } }
+  /// A dev run with DJQ_ROOT but no DJQ_HOME (and no DJQ_APP_DIR + DJQ_BIN_DIR): its app-support folder, installed
+  /// app and LaunchAgents are the real ones, so the app never asks the runner or changes the setting from here.
+  /// (With DJQ_HOME set, the core puts the app and the `djq` link under $DJQ_HOME.)
+  static var devUnsafe: Bool {
+    isDev && (env["DJQ_HOME"] ?? "").isEmpty && ["DJQ_APP_DIR", "DJQ_BIN_DIR"].contains { (env[$0] ?? "").isEmpty }
+  }
+
+  static func readLaunchBuild() -> AutoUpdateBuild? {
+    guard let info = Bundle.main.infoDictionary, let v = info["CFBundleShortVersionString"] as? String else { return nil }
+    return AutoUpdateBuild(version: v, commit: (info["DJQGitCommit"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+  }
 
   /// The `djq` that runs the runner when the watcher isn't loaded: the one inside this bundle, else the one beside
   /// this executable (a dev `.build/debug` run).
@@ -98,23 +116,26 @@ final class AutoUpdateUI {
 
   // MARK: Start
 
-  /// Idempotent. Called from the menu-bar label (every launch mode shows it except snapshots) and the popover.
+  /// Idempotent. Called from the menu-bar label (every launch mode but snapshots shows it), the banner and the popover.
   func start(host: AppHost) {
     guard !started, fake == nil else { return }
     if case .snapshot = host.mode { return }
     guard let p = host.model?.store.paths else { return }
     started = true
     paths = p
+    Log.shared.info("autoupdate: app side started (\(host.mode == .agent ? "agent" : "normal") launch, build \(launchBuild?.version ?? "dev"))")
     refresh()
     observe()
     timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
-      Task { @MainActor in AutoUpdateUI.shared.refresh() }
+      Task { @MainActor in
+        AutoUpdateUI.shared.refresh()
+        AutoUpdateUI.shared.evaluateWindow()
+      }
     }
-    // S5-R4: a launch runs the same check a commit does (only once auto-update is set up and on).
+    // Window state first (the client queue is serial), then the launch check (S5-R4: a launch runs the same check a
+    // commit does, once auto-update is set up and on), so the runner never reads a stale window.json.
+    evaluateWindow()
     if configured, enabled { ask(.check) }
-    // The window may already be open (plain launch shows it before the menu-bar label appears).
-    let open = NSApp.windows.contains { $0.frameAutosaveName == Self.mainWindowName && $0.isVisible }
-    setWindow(open: open)
   }
 
   /// Settings → Engine in a snapshot (no `start`): read state for these paths without any side effects.
@@ -139,7 +160,8 @@ final class AutoUpdateUI {
     let c = store.configIfSet()
     if configured != (c != nil) { configured = c != nil }
     if enabled != (c?.enabled ?? false) { enabled = c?.enabled ?? false }
-    if let t = installRequestedAt, !state.isRunning, Date().timeIntervalSince(t) > Self.requestGrace { installRequestedAt = nil }
+    if let t = installRequestedAt, !state.isRunning,
+       (state.last?.at ?? .distantPast) > t || Date().timeIntervalSince(t) > Self.requestGrace { installRequestedAt = nil }
     guard started else { return }
     deliverNotices()
     reopenIfAsked()
@@ -162,7 +184,7 @@ final class AutoUpdateUI {
   private func reopenIfAsked() {
     guard state.reopenWindow, let installed = state.installed, let at = installed.at else { return }
     guard at.timeIntervalSince1970 > UserDefaults.standard.double(forKey: Key.reopened) else { return }
-    guard let mine = BundleInfo.build(Bundle.main.bundleURL), mine.commit == installed.commit else { return }
+    guard let mine = launchBuild, mine.commit == installed.commit, mine.version == installed.version else { return }
     UserDefaults.standard.set(at.timeIntervalSince1970, forKey: Key.reopened)
     guard Date().timeIntervalSince(at) < 600 else { return }
     WindowManager.shared.showMain()
@@ -172,14 +194,23 @@ final class AutoUpdateUI {
 
   private func observe() {
     let nc = NotificationCenter.default
-    for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification, NSWindow.willCloseNotification] {
+    // Any of these can change whether the main window is on screen; the state is re-read from the window itself.
+    let names = [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification, NSWindow.didChangeOcclusionStateNotification,
+                 NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification, NSWindow.didExposeNotification]
+    for name in names {
       observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { note in
         MainActor.assumeIsolated {
           guard let w = note.object as? NSWindow, w.frameAutosaveName == AutoUpdateUI.mainWindowName else { return }
-          AutoUpdateUI.shared.setWindow(open: note.name != NSWindow.willCloseNotification)
+          AutoUpdateUI.shared.evaluateWindow()
         }
       })
     }
+    observers.append(nc.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
+      MainActor.assumeIsolated {
+        guard let w = note.object as? NSWindow, w.frameAutosaveName == AutoUpdateUI.mainWindowName else { return }
+        AutoUpdateUI.shared.evaluateWindow(closing: w)
+      }
+    })
     observers.append(nc.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
       MainActor.assumeIsolated { AutoUpdateUI.shared.setWindow(open: false, now: true) }
     })
@@ -192,6 +223,15 @@ final class AutoUpdateUI {
     })
   }
 
+  /// The main window counts as in use while it's on screen (visible, even if another app has focus or it's covered)
+  /// or minimised; it stops when it closes. Re-read from the window, so close-then-reopen ends "open".
+  func evaluateWindow(closing: NSWindow? = nil) {
+    guard started else { return }
+    let w = NSApp.windows.first { $0.frameAutosaveName == Self.mainWindowName }
+    let open = w.map { $0 !== closing && ($0.isVisible || $0.isMiniaturized) } ?? false
+    setWindow(open: open)
+  }
+
   /// Tells the runner whether the main window is in use (Later = "install when the window closes").
   /// `now` writes synchronously (app termination).
   private func setWindow(open: Bool, now: Bool = false) {
@@ -199,43 +239,43 @@ final class AutoUpdateUI {
     windowOpen = open
     let djq = Self.djqURL
     if now {
-      AutoUpdateClient.windowChanged(open: open, paths: paths, djq: djq)
+      client.sync { AutoUpdateClient.windowChanged(open: open, paths: paths, djq: djq) }
     } else {
-      Task.detached(priority: .utility) { AutoUpdateClient.windowChanged(open: open, paths: paths, djq: djq) }
+      client.async { AutoUpdateClient.windowChanged(open: open, paths: paths, djq: djq) }
     }
   }
 
-  /// The runner installed a build but the engine LaunchAgent isn't loaded, so nothing can kickstart us: relaunch from
-  /// the installed bundle. Under the loaded LaunchAgent launchd restarts us (and the runner never posts this), so a
-  /// process ignores the signal while the agent is loaded. A copy this method relaunched without the window runs as
-  /// `--agent` (menu bar only) and must still follow the next update, hence the check is on the agent, not the mode.
+  /// The runner installed a build but no engine LaunchAgent could restart us: relaunch from the installed bundle.
+  /// Acts only in the installed app itself (this process runs from the runner's installed-app path) and never in a
+  /// dev run (DJQ_HOME / DJQ_ROOT) or a `.build` binary; under the loaded LaunchAgent launchd restarts us, so a
+  /// process ignores the signal then. A copy relaunched without its window runs as `--agent` and must still follow
+  /// the next update, hence the check is on the agent, not the launch mode.
   private func handleRestart() {
-    guard fake == nil, let paths else { return }
+    guard fake == nil, !Self.isDev, let paths, let mine = launchBuild else { return }
     if case .snapshot = AppHost.shared.mode { return }
     let app = AutoUpdatePaths(paths).installedApp
-    let dev = Self.isDev
+    guard app.standardizedFileURL.path == launchBundlePath else { return }
     // Keep the window as it was: open → plain launch (it opens its window); closed → menu bar only.
-    let windowOpen = NSApp.windows.contains { $0.frameAutosaveName == Self.mainWindowName && $0.isVisible }
+    let windowOpen = NSApp.windows.contains { $0.frameAutosaveName == Self.mainWindowName && ($0.isVisible || $0.isMiniaturized) }
     Task {
       let relaunch = await Task.detached(priority: .userInitiated) { () -> Bool in
-        if !dev, LaunchAgent.isLoaded() { return false }
+        if LaunchAgent.isLoaded() { return false }
+        // The installed bundle now holds a different build than the one this process started with.
         guard let installed = BundleInfo.build(app) else { return false }
-        // Only when the installed build isn't the one running (a dev runner's signal reaches every copy).
-        let mine = BundleInfo.build(Bundle.main.bundleURL)
-        return mine?.commit != installed.commit || mine?.version != installed.version
+        return installed.commit != mine.commit || installed.version != mine.version
       }.value
       guard relaunch else { return }
+      Log.shared.info("autoupdate: relaunching from the installed \(BundleInfo.build(app)?.version ?? "?")")
       Self.relaunch(app, agent: !windowOpen)
       NSApp.terminate(nil)
     }
   }
 
-  /// `open -n <bundle>` after this process quit (a second copy would otherwise hand off to this one), keeping the
-  /// DJQ_* environment so a dev run relaunches into the same scratch folders.
+  /// Opens the bundle once this process has exited (it waits for our pid), so there's never a second copy:
+  /// a plain `open` (no `-n`) then launches the new build.
   private static func relaunch(_ app: URL, agent: Bool) {
-    var args = ["-c", "sleep 1.5; exec /usr/bin/open -n \"$@\"", "sh"]
-    for (k, v) in env.sorted(by: { $0.key < $1.key }) where k.hasPrefix("DJQ_") { args += ["--env", "\(k)=\(v)"] }
-    args.append(app.path)
+    var args = ["-c", "while /bin/kill -0 \"$0\" 2>/dev/null; do /bin/sleep 0.2; done; exec /usr/bin/open \"$@\"",
+                String(getpid()), app.path]
     if agent { args += ["--args", "--agent"] }
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -252,7 +292,7 @@ final class AutoUpdateUI {
   var actionBlockedReason: String? {
     if fake != nil { return nil }
     if paths == nil { return "DJ Queue is still starting." }
-    if Self.devUnsafe { return "Dev run: set DJQ_APP_DIR and DJQ_BIN_DIR first, so an update can't replace the installed app." }
+    if Self.devUnsafe { return "Dev run with DJQ_ROOT only: set DJQ_HOME too, so an update can't touch the installed app." }
     return nil
   }
 
@@ -268,10 +308,6 @@ final class AutoUpdateUI {
     guard state.ready != nil, actionBlockedReason == nil else { return }
     installRequestedAt = Date()
     ask(.install)
-    Task {
-      try? await Task.sleep(for: .seconds(Self.requestGrace + 1))
-      refresh()
-    }
   }
 
   /// "Later": hide the banner for this build; it installs when the window closes.
@@ -317,7 +353,7 @@ final class AutoUpdateUI {
   private func ask(_ action: AutoUpdateRequest.Action) {
     guard fake == nil, let paths, !Self.devUnsafe else { return }
     let djq = Self.djqURL
-    Task.detached(priority: .utility) { AutoUpdateClient.ask(action, paths: paths, djq: djq) }
+    client.async { AutoUpdateClient.ask(action, paths: paths, djq: djq) }
   }
 
   /// Settings → Engine "Install updates from main": saves the config, then installs or removes the watcher.
@@ -325,6 +361,11 @@ final class AutoUpdateUI {
   func setEnabled(_ on: Bool) {
     guard fake == nil, let paths else { return }
     settingsError = nil
+    if Self.devUnsafe {
+      // DJQ_ROOT without DJQ_HOME: these are the real config and LaunchAgents folders.
+      settingsError = "Not changed: this dev run (DJQ_ROOT without DJQ_HOME) would edit the installed app's setting and watcher."
+      return
+    }
     let store = AutoUpdateStore(paths)
     var c = store.config()
     c.enabled = on
