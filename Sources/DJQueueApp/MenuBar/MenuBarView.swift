@@ -169,7 +169,8 @@ struct MenuBarContent: View {
         Spacer(minLength: 0)
       }
       HStack(spacing: DS.space.xs) {
-        DSButton("Copy caption", icon: "text.quote", variant: .outline, size: .sm) { model.copyCaptionNamed(p) }
+        DSButton("Copy caption", icon: "text.quote", variant: .outline, size: .sm,
+                 tooltip: "Copy the \(p.platform.displayName) caption") { model.copyCaptionNamed(p) }
         if p.platform == .youtube {
           DSIconButton("textformat", tooltip: "Copy title for YouTube", variant: .ghost, size: .sm) { model.copyTitleNamed(p) }
         }
@@ -217,8 +218,8 @@ struct MenuBarContent: View {
                 .foregroundStyle(p.state == .overdue ? DS.color.warning : DS.color.textSecondary)
             }
             Spacer(minLength: 0)
-            DSIconButton("text.quote", tooltip: "Copy caption", size: .sm) { model.copyCaptionNamed(p) }
-            DSIconButton("checkmark.circle", tooltip: "Mark posted", size: .sm, isOn: urlFor == p.id) { toggleURL(p) }
+            DSIconButton("text.quote", tooltip: "Copy this post's caption", size: .sm) { model.copyCaptionNamed(p) }
+            DSIconButton("checkmark.circle", tooltip: "Mark posted (paste its URL)", size: .sm, isOn: urlFor == p.id) { toggleURL(p) }
           }
           .frame(height: 36)
           if urlFor == p.id { urlField(p) }
@@ -244,20 +245,29 @@ struct MenuBarContent: View {
     HStack(alignment: .top, spacing: DS.space.xs) {
       DSTextField(placeholder: "Paste the \(p.platform.displayName) URL", text: $url, error: urlError, size: .sm) { save(p) }
         .onChange(of: url) { urlError = nil }
-      DSButton("Save", variant: .outline, size: .sm, disabledReason: url.isEmpty ? "Paste the post URL first" : nil) { save(p) }
+      DSButton("Save", variant: .outline, size: .sm, disabledReason: url.isEmpty ? "Paste the post URL first" : nil,
+               tooltip: "Mark this post as posted (undoable)", shortcut: "↩") { save(p) }
     }
   }
 
-  /// Validated inline: on a bad URL the field stays open with the reason (the main window may be closed).
+  /// Validated inline: on a bad URL the field stays open with the reason (the main window may be closed). A good
+  /// one is journaled like AppModel.markPosted: "<Platform> marked posted · Undo" toast, and ⌘Z undoes it.
   private func save(_ p: PlatformPost) {
     let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
     do {
-      try model.postActions.markPosted(postId: p.id, url: u, at: Date())
+      let r = try model.bulk.record("mark-posted", ids: [p.videoId], plan: true) {
+        try model.postActions.markPosted(postId: p.id, url: u, at: Date())
+      }
       ChangeSignal.post()
       model.refresh()
       urlFor = nil
       urlError = nil
       url = ""
+      let label = "\(p.platform.displayName) marked posted"
+      if let b = r.batchId {
+        model.undoHistory.push(b, label: label)
+        model.show(DSToastModel(message: label, tone: .neutral, actionTitle: "Undo", action: { [model] in model.undo(batch: b) }, duration: 6))
+      }
     } catch {
       urlError = error.localizedDescription
     }
@@ -317,7 +327,7 @@ struct MenuBarContent: View {
         Text("Pause all posting?").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
         Spacer(minLength: 0)
         DSButton("Cancel", variant: .ghost, size: .sm) { confirmPause = false }
-        DSButton("Pause", variant: .outline, size: .sm, tooltip: "Nothing is handed to you or posted until you resume") {
+        DSButton("Pause", variant: .outline, size: .sm, tooltip: "Stop handing out posts until you resume") {
           model.setPaused(true)
           confirmPause = false
         }
@@ -326,24 +336,29 @@ struct MenuBarContent: View {
       .frame(height: 52)
     } else {
       HStack(spacing: DS.space.xs) {
-        DSButton("Open DJ Queue", variant: .ghost, size: .sm) { WindowManager.shared.showMain() }
+        DSButton("Open DJ Queue", variant: .ghost, size: .sm, tooltip: "Open the main window", shortcut: "⌘0") {
+          WindowManager.shared.showMain()
+        }
         Spacer(minLength: 0)
         Text("Pause posting").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
         DSSwitch(isOn: Binding(get: { state.paused }, set: { on in
           if on { confirmPause = true } else { model.setPaused(false) }
         }), small: true)
-        .dsTooltip(state.paused ? "Posting is paused — switch off to resume" : "Pause all posting (asks first)")
+        .dsTooltip(state.paused ? "Resume posting (switch off)" : "Pause all posting (asks first)")
         .accessibilityLabel("Pause posting")
-        DSXMenuButton(tooltip: "More", size: .sm) {
-          Menu("Pause one platform") {
+        DSXMenuButton(tooltip: "Pause a platform, open Health or quit", size: .sm) {
+          // Item titles say what a click does (native menu items show no tooltip); each change is undoable.
+          Menu("Pause or resume one platform") {
             ForEach(model.settings.activePlatforms) { p in
-              Toggle(p.displayName, isOn: Binding(get: { model.settings.pausedPlatforms.contains(p) }, set: { model.setPlatformPaused(p, $0) }))
+              let paused = model.settings.pausedPlatforms.contains(p)
+              Button(paused ? "Resume \(p.displayName) (paused)" : "Pause \(p.displayName)") { model.setPlatformPaused(p, !paused) }
             }
           }
           Button("Open Health", systemImage: "heart") { WindowManager.shared.showMain(screen: .health) }
           Divider()
-          Button("Quit DJ Queue", systemImage: "power") { NSApp.terminate(nil) }
-            .help("The background engine restarts it automatically. To stop it, use Settings → Engine.")
+          Section("The engine reopens it — stop it in Settings → Engine") {
+            Button("Quit DJ Queue", systemImage: "power") { NSApp.terminate(nil) }
+          }
         }
       }
       .padding(.leading, DS.space.xs)

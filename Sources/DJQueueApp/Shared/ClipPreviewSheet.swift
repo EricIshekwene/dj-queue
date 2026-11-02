@@ -30,8 +30,8 @@ struct ClipPreviewSheet: View {
         .frame(maxHeight: 560)
         .background(Color.black, in: RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
     } footer: {
-      DSButton("Close", variant: .ghost, action: close).keyboardShortcut(.cancelAction)
-      DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .primary) {
+      DSButton("Close", variant: .ghost, shortcut: "esc", action: close).keyboardShortcut(.cancelAction)
+      DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .primary, tooltip: "Edit crop, text, caption and cover") {
         close()
         model.openEditor(video.id)
       }

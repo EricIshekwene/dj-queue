@@ -12,7 +12,8 @@ struct QueueCardList: View {
   @Bindable var model: AppModel
   let videos: [Video]
   let positions: [String: Int]
-  let onPin: (String) -> Void
+  /// Opens the pin dialog for these clips (one → "Pin to date", several → "Pin N to days", consecutive).
+  let onPin: ([String]) -> Void
 
   @State private var visible: Set<String> = []
   @State private var hovered: String?
@@ -51,11 +52,11 @@ struct QueueCardList: View {
                         guard model.select(v.id, modifiers: m, ordered: ids, screen: .queue) == .plainClick else { return }
                         if model.selected(.queue).isEmpty { model.openEditor(v.id, in: ids) } else { model.toggleSelection(v.id, screen: .queue) }
                       }) {
-      QueueClipActions(model: model, video: v, mode: .wide, ids: ids, onPin: { onPin(v.id) })
+      QueueClipActions(model: model, video: v, mode: .wide, ids: ids, onPin: { onPin([v.id]) })
         .opacity(hot ? 1 : 0)
         .allowsHitTesting(hot)
     }
-    .contextMenu { QueueClipMenu(model: model, video: v, ids: ids, onPin: { t in t.count == 1 ? onPin(t[0]) : () }) }
+    .contextMenu { QueueClipMenu(model: model, video: v, ids: ids, onPin: onPin) }
     .draggable(v.id) {
       Text(model.displayName(v)).font(DS.type.calloutMedium).foregroundStyle(DS.color.text)
         .padding(.horizontal, 12).frame(height: 32)
@@ -103,33 +104,44 @@ struct QueueClipActions: View {
   var body: some View {
     switch mode {
     case .grid:
-      Button(model.stageBackTitle(video), systemImage: "chevron.left") { model.stageBack([video.id]) }
-        .disabled(model.stageBlocker(video, .back) != nil)
-        .help(model.stageBlocker(video, .back) ?? model.stageBackHelp(video))
-      Button("Post today", systemImage: "bolt") { postToday() }.help("Post today")
-      Button("Pin to date…", systemImage: "pin") { onPin() }.help("Pin to date…")
+      // Grid hover buttons render icon-only (DSMediaActionStyle): each one names its consequence in a tooltip. Back
+      // is soft-disabled (dimmed, still hoverable so the tooltip says why; a click says it again).
+      let back = model.stageBlocker(video, .back)
+      Button(model.stageBackTitle(video), systemImage: "chevron.left") {
+        if let back { model.show(back, error: true) } else { model.stageBack([video.id]) }
+      }
+      .opacity(back == nil ? 1 : 0.45)
+      .dsTooltip(model.stageBackTitle(video), disabledReason: back)
+      Button("Post today", systemImage: "bolt") { postToday() }.dsTooltip(Self.postTodayHelp)
+      Button("Pin to date…", systemImage: "pin") { onPin() }.dsTooltip(Self.pinHelp)
     case .single:
       VStack(alignment: .leading, spacing: DS.space.sm) {
-        DSButton("Post today", icon: "bolt", variant: .outline, tooltip: "Put it on today; the rest of the plan moves a day") { postToday() }
-        DSButton("Pin to date…", icon: "pin", variant: .ghost, tooltip: "Pin it to a day the planner won't change") { onPin() }
+        DSButton("Post today", icon: "bolt", variant: .outline, tooltip: Self.postTodayHelp) { postToday() }
+        DSButton("Pin to date…", icon: "pin", variant: .ghost, tooltip: Self.pinHelp) { onPin() }
         StageControl(model: model, video: video, size: .md)
         HStack(spacing: 4) {
-          DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .ghost) { model.openEditor(video.id, in: ids) }
-          PipelineMoreMenu { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
+          DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .ghost, tooltip: EditClipActions.openHelp) {
+            model.openEditor(video.id, in: ids)
+          }
+          PipelineMoreMenu(tooltip: Self.moreHelp) { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
         }
       }
     case .list:
       StageControl(model: model, video: video, compact: true)
-      DSIconButton("bolt", tooltip: "Post today", size: .sm) { postToday() }
-      DSIconButton("pin", tooltip: "Pin to date…", size: .sm) { onPin() }
-      PipelineMoreMenu { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
+      DSIconButton("bolt", tooltip: Self.postTodayHelp, size: .sm) { postToday() }
+      DSIconButton("pin", tooltip: Self.pinHelp, size: .sm) { onPin() }
+      PipelineMoreMenu(tooltip: Self.moreHelp) { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
     default:
       StageControl(model: model, video: video)
-      DSIconButton("bolt", tooltip: "Post today", size: .sm) { postToday() }
-      DSIconButton("pin", tooltip: "Pin to date…", size: .sm) { onPin() }
-      PipelineMoreMenu { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
+      DSIconButton("bolt", tooltip: Self.postTodayHelp, size: .sm) { postToday() }
+      DSIconButton("pin", tooltip: Self.pinHelp, size: .sm) { onPin() }
+      PipelineMoreMenu(tooltip: Self.moreHelp) { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
     }
   }
+
+  static let postTodayHelp = "Post today; later posts move a day"
+  static let pinHelp = "Pin to a day the planner won't change"
+  static let moreHelp = "Show more: move later, remove, exclude"
 
   private func postToday() {
     let id = video.id
@@ -137,9 +149,9 @@ struct QueueClipActions: View {
   }
 }
 
-/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Skip next · Remove from queue · stage moves ·
-/// Open editor · Exclude. Acts on the
-/// selection (where it makes sense) when the clip is part of it.
+/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Move one slot later · Remove from queue · stage
+/// moves · Open editor · Exclude. Acts on the selection (where it makes sense) when the clip is part of it. Native
+/// items show no tooltip, so a disabled item says why in its title.
 struct QueueClipMenu: View {
   @Bindable var model: AppModel
   let video: Video
@@ -157,25 +169,27 @@ struct QueueClipMenu: View {
     }
     Button(targets.count == 1 ? "Pin to date…" : "Pin \(n) to days…", systemImage: "pin") { onPin(targets) }
     if targets.count == 1 {
-      Button("Skip next", systemImage: "forward.end") { model.skipNext(video.id) }
-        .help(model.nextSlotByVideo[video.id] == nil ? "Moves it one place later in the backlog" : "Swaps it with the next open slot")
+      Button(model.nextSlotByVideo[video.id] == nil ? "Move one place later" : "Move one slot later", systemImage: "forward.end") {
+        model.skipNext(video.id)
+      }
     }
     Divider()
-    Button(targets.count == 1 ? "Remove from queue" : "Remove \(n) from queue", systemImage: "arrow.uturn.backward") {
+    let removeWhy = model.removeFromQueueBlocker(targets)
+    Button((targets.count == 1 ? "Remove from queue" : "Remove \(n) from queue") + AppModel.menuReason(removeWhy),
+           systemImage: "arrow.uturn.backward") {
       model.removeFromQueue(targets)
     }
-    .disabled(model.removeFromQueueBlocker(targets) != nil)
-    .help(model.removeFromQueueBlocker(targets) ?? AppModel.removeFromQueueHelp)
+    .disabled(removeWhy != nil)
     if targets.count == 1 && ClipStage.of(video) != .queue {
       StageMenuItems(model: model, video: video, targets: targets)
     } else {
       // Back for a Queue clip IS "Remove from queue" (above); only forward is left.
       let fwd = targets.count == 1 ? model.stageBlocker(video, .forward) : nil
-      Button(targets.count == 1 ? model.stageForwardTitle(video) : "Forward a stage (\(targets.count))", systemImage: "arrow.forward") {
+      Button((targets.count == 1 ? model.stageForwardTitle(video) : "Forward a stage (\(targets.count))") + AppModel.menuReason(fwd),
+             systemImage: "arrow.forward") {
         model.stageForward(targets)
       }
       .disabled(fwd != nil)
-      .help(fwd ?? (targets.count == 1 ? model.stageForwardHelp(video) : "Each clip moves forward one stage"))
     }
     Divider()
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id, in: ids) }

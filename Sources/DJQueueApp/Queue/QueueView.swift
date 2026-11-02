@@ -7,7 +7,7 @@ import SwiftUI
 /// writes `Settings.sort`) · view toggle. No filled primary: the primary act is direct manipulation.
 /// Order = the upcoming plan (date order) then the ready backlog in sort order. Cards: position · ⋮⋮ on hover ·
 /// thumb · title + meta · score · next-date chip · platform icons only when planned/posted · pin glyph. Hover
-/// actions: Post today, Pin to date…, ⋯ (Skip next, Exclude, Open editor). Drag a card onto a planned clip to take
+/// actions: Post today, Pin to date…, ⋯ (Move one slot later, Exclude, Open editor). Drag a card onto a planned clip to take
 /// its day (pinned); the backlog itself follows the sort. Bulk: Pin to days… · Post today · Skip platform ▾ ·
 /// Exclude · More · **Add to week**. Hidden: unscored / not-ready / excluded clips, versions.
 struct QueueView: View {
@@ -23,7 +23,7 @@ struct QueueView: View {
     ScreenScaffold(model: model, screen: .queue, subtitle: subtitle(list), readingColumn: mode == .wide || mode == .list) {
       RunwayChip(model: model)
       QueueSortMenu(model: model)
-      DSViewModeSwitcher(mode: model.viewModeBinding(.queue))
+      PipelineViewModeSwitcher(mode: model.viewModeBinding(.queue))
     } content: {
       if !model.loaded {
         Color.clear
@@ -31,7 +31,7 @@ struct QueueView: View {
         DSEmptyState(icon: "list.bullet", title: "Nothing ready yet", message: "Clips appear here once they're scored and edited.",
                      actionTitle: "Go to Edit") { model.screen = .edit }
       } else if mode == .wide {
-        QueueCardList(model: model, videos: list, positions: positions, onPin: { pinTarget = [$0] })
+        QueueCardList(model: model, videos: list, positions: positions, onPin: { pinTarget = $0 })
       } else {
         ClipCollection(model: model, screen: .queue, videos: list, mode: mode, clip: { v in
           var c = model.dsClip(v, for: .queue)
@@ -98,7 +98,7 @@ struct QueueSortMenu: View {
     .buttonStyle(DSButtonStyle(variant: .ghost, size: .sm))
     .menuIndicator(.hidden)
     .fixedSize()
-    .dsTooltip("Order of the ready backlog by score")
+    .dsTooltip("Order unplanned ready clips by score")
   }
 }
 
@@ -113,7 +113,7 @@ private struct QueueBulkBar: View {
     let n = AppModel.pipelineClips(ids.count)
     ScreenBulkBar(model: model, screen: .queue) {
       Button("Pin to days…", systemImage: "pin") { onPin() }
-        .dsTooltip("Pin the selected clips to consecutive days, in the order shown")
+        .dsTooltip("Pin to consecutive days, in order shown")
       Button("Post today", systemImage: "bolt") {
         let ids = ids
         model.pipelineBulk("Post \(n) today?", verb: "Post today", ids: ids,
@@ -121,15 +121,16 @@ private struct QueueBulkBar: View {
           try b.postToday(ids, dryRun: dry)
         }
       }
-      .dsTooltip("Put the selected clips on today (clips beyond today's free slots are skipped)")
+      .dsTooltip("Post these today; extras are skipped")
     } more: {
-      Button("Remove from queue", systemImage: "arrow.uturn.backward") { model.removeFromQueue(ids) }
-        .disabled(model.removeFromQueueBlocker(ids) != nil)
-        .help(model.removeFromQueueBlocker(ids) ?? AppModel.removeFromQueueHelp + " (clips that already posted are skipped)")
-      Button("Back a stage", systemImage: "chevron.left") { model.stageBack(ids) }
-        .help("Planned clips go back to the Queue (unposted days removed); ready ones go back to Edit")
-      Button("Forward a stage", systemImage: "chevron.right") { model.stageForward(ids) }
-        .help("Ready clips go on the next open days, pinned; planned clips are skipped — mark them posted on Today")
+      // Native items show no tooltip: titles carry the consequence (or why not); each asks first and can be undone.
+      let removeWhy = model.removeFromQueueBlocker(ids)
+      Button("Remove from queue (back to Edit)" + AppModel.menuReason(removeWhy), systemImage: "arrow.uturn.backward") {
+        model.removeFromQueue(ids)
+      }
+      .disabled(removeWhy != nil)
+      Button("Back a stage (planned → Queue, ready → Edit)", systemImage: "chevron.left") { model.stageBack(ids) }
+      Button("Forward a stage (pin ready ones to open days)", systemImage: "chevron.right") { model.stageForward(ids) }
       Divider()
       Menu("Skip platform") {
         ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { setPlatform(p, skipped: true) } }
@@ -141,7 +142,7 @@ private struct QueueBulkBar: View {
           try b.setExcluded(ids, true, dryRun: dry)
         }
       }
-      Menu("Post on a platform again") {
+      Menu("Turn a skipped platform back on") {
         ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { setPlatform(p, skipped: false) } }
       }
       Menu("Kind") {
@@ -153,7 +154,7 @@ private struct QueueBulkBar: View {
           }
         }
       }
-      Button("Re-render", systemImage: "arrow.triangle.2.circlepath") {
+      Button("Re-render (make the post videos again)", systemImage: "arrow.triangle.2.circlepath") {
         let ids = ids
         model.pipelineBulk("Re-render \(n)?", verb: "Re-render", ids: ids,
                            changes: [.init(field: "Renders", value: "Made again on the next engine tick")]) { b, dry in
@@ -161,7 +162,7 @@ private struct QueueBulkBar: View {
         }
       }
     } primary: {
-      DSButton("Add to week", variant: .primary, size: .sm, tooltip: "Plan the selected clips on the first free days") { addToWeek() }
+      DSButton("Add to week", variant: .primary, size: .sm, tooltip: "Pin to free days of the next open week") { addToWeek() }
     }
   }
 
@@ -207,9 +208,10 @@ struct QueuePinDialog: View {
         .labelsHidden()
         .frame(maxWidth: .infinity)
     } footer: {
-      DSButton("Cancel", variant: .ghost) { onClose() }
+      DSButton("Cancel", variant: .ghost, shortcut: "esc") { onClose() }
         .keyboardShortcut(.cancelAction)
-      DSButton(multi ? "Pin \(ids.count)" : "Pin", variant: .primary) { pin(pick) }
+      DSButton(multi ? "Pin \(ids.count)" : "Pin", variant: .primary,
+               tooltip: multi ? "Pin them one a day from this day" : "Pin it to this day", shortcut: "↩") { pin(pick) }
         .keyboardShortcut(.defaultAction)
     }
     .dsFloatingSurface(radius: DS.radius.lg, elevation: DS.elevation.e3)

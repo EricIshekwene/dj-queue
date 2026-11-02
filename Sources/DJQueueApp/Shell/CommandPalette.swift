@@ -59,10 +59,11 @@ extension AppModel {
     }
     if !shorts.isEmpty {
       c.append(.init(id: "selection.agentPrompt", title: "Copy agent prompt for \(shorts.count) clip\(shorts.count == 1 ? "" : "s")",
-                     symbol: "text.bubble") { [weak self] in self?.copyAgentPrompt(shorts) })
+                     symbol: "text.bubble", subtitle: "Ask your agent for song-name titles") { [weak self] in self?.copyAgentPrompt(shorts) })
     }
-    c.append(.init(id: "post.pauseAll", title: settings.paused ? "Resume all posting" : "Pause all posting",
-                   symbol: settings.paused ? "play.circle" : "pause.circle") { [weak self] in
+    c.append(.init(id: "post.pauseAll", title: settings.paused ? "Resume all posting" : "Pause all posting…",
+                   symbol: settings.paused ? "play.circle" : "pause.circle",
+                   subtitle: settings.paused ? "Hand posts to you again from now (undoable)" : "Asks first") { [weak self] in
       guard let self else { return }
       if self.settings.paused { self.setPaused(false) } else { self.confirmPause = true }
     })
@@ -73,18 +74,25 @@ extension AppModel {
     }
 
     let nextWeek = dm.addDays(planner.weekStart(for: now), 7)
-    c.append(.init(id: "week.approveNext", title: "Approve next week", symbol: "checkmark.seal", hint: "⌘↩",
+    c.append(.init(id: "week.approveNext", title: "Approve next week", symbol: "checkmark.seal",
+                   subtitle: "Lock its plan and create its posts (undoable)",
                    disabled: weekStates[nextWeek] == .approved ? "Next week is already approved" : nil) { [weak self] in self?.approveWeek(nextWeek) })
     if weekStates[nextWeek] != .approved {
-      c.append(.init(id: "week.proposeNext", title: "Propose next week", symbol: "wand.and.stars") { [weak self] in self?.proposeWeek(nextWeek) })
+      c.append(.init(id: "week.proposeNext", title: "Propose next week", symbol: "wand.and.stars",
+                     subtitle: "Fill next week with ready clips as a draft") { [weak self] in self?.proposeWeek(nextWeek) })
     }
-    c.append(.init(id: "week.rebuild", title: "Rebuild next week", symbol: "arrow.clockwise") { [weak self] in self?.rebuildWeek(nextWeek) })
-    c.append(.init(id: "week.push", title: "Push plan by a day", symbol: "calendar.badge.clock") { [weak self] in self?.pushPlan(days: 1) })
+    c.append(.init(id: "week.rebuild", title: "Rebuild next week…", symbol: "arrow.clockwise",
+                   subtitle: "Clear its unpinned days and plan them again") { [weak self] in self?.rebuildWeek(nextWeek) })
+    c.append(.init(id: "week.push", title: "Push plan by a day…", symbol: "calendar.badge.clock",
+                   subtitle: "Move every unpinned planned day one day later") { [weak self] in self?.pushPlan(days: 1) })
 
     for p in settings.activePlatforms {
       let paused = settings.pausedPlatforms.contains(p)
       c.append(.init(id: "post.pause.\(p.rawValue)", title: paused ? "Resume \(p.displayName)" : "Pause \(p.displayName)",
-                     symbol: paused ? "play" : "pause") { [weak self] in self?.setPlatformPaused(p, !paused) })
+                     symbol: paused ? "play" : "pause",
+                     subtitle: paused ? "Hand out its posts again" : "Stop its posts; other platforms keep going") { [weak self] in
+        self?.setPlatformPaused(p, !paused)
+      })
     }
 
     let post = postsSelection.flatMap { id in posts.first { $0.id == id } } ?? highlightPostId.flatMap { id in posts.first { $0.id == id } }
@@ -99,20 +107,24 @@ extension AppModel {
         })
       }
       c.append(.init(id: "post.reset", title: "Reset post (\(n))", symbol: "arrow.counterclockwise",
+                     subtitle: "Put this post back to planned",
                      disabled: canReset(post) ? nil : heldReason(post.videoId) ?? "Its time has passed or it's still planned") { [weak self] in self?.reset(post) })
       c.append(.init(id: "post.skip", title: "Skip post (\(n))", symbol: "forward",
                      disabled: canSkip(post) ? nil : "Already \(post.state.displayName.lowercased())") { [weak self] in self?.skip(post) })
       if post.state == .overdue {
         let held = heldReason(post.videoId)
-        c.append(.init(id: "post.postNow", title: "Post now (\(n))", symbol: "bolt", disabled: held) { [weak self] in self?.postNow(post) })
-        c.append(.init(id: "post.shiftPlan", title: "Shift plan (\(n))", symbol: "calendar.badge.clock", disabled: held) { [weak self] in
+        c.append(.init(id: "post.postNow", title: "Post now (\(n))", symbol: "bolt", subtitle: "Make it due now and open Today",
+                       disabled: held) { [weak self] in self?.postNow(post) })
+        c.append(.init(id: "post.shiftPlan", title: "Shift plan (\(n))", symbol: "calendar.badge.clock",
+                       subtitle: "Move it to the next free slot", disabled: held) { [weak self] in
           self?.shiftPlan(post)
         })
       }
     }
 
-    c.append(.init(id: "health.tick", title: "Run engine tick now", symbol: "bolt.horizontal.circle") { [weak self] in self?.runTick() })
-    c.append(.init(id: "health.doctor", title: "Open Doctor", symbol: "stethoscope") { [weak self] in
+    c.append(.init(id: "health.tick", title: "Run engine tick now", symbol: "bolt.horizontal.circle",
+                   subtitle: "Check and prepare due posts now") { [weak self] in self?.runTick() })
+    c.append(.init(id: "health.doctor", title: "Open Doctor", symbol: "stethoscope", subtitle: "Check the app for problems") { [weak self] in
       self?.screen = .health
       self?.runDoctor()
     })
@@ -158,7 +170,7 @@ extension AppModel {
                    disabled: !short ? "Long-form clips aren't edited here" : missing ? "File missing — relink it first" : nil) { [weak self] in
       self?.openEditor(v.id)
     })
-    c.append(.init(id: "clip.\(v.id).preview", title: "Quick look", symbol: "eye", hint: "Space",
+    c.append(.init(id: "clip.\(v.id).preview", title: "Quick look", symbol: "eye",
                    disabled: missing ? "File missing" : nil) { [weak self] in self?.previewVideo = v })
     c.append(.init(id: "clip.\(v.id).score", title: v.score == nil ? "Set score…" : "Change score (\(v.score!))…", symbol: "number",
                    disabled: longWhy) { [weak self] in self?.scorePrompt = v })
@@ -170,15 +182,17 @@ extension AppModel {
       guard let self else { return }
       self.pin(v.id, dayKey: self.dm.addDays(self.todayKey, 1))
     })
-    c.append(.init(id: "clip.\(v.id).postToday", title: "Post today", symbol: "bolt", disabled: longWhy ?? (v.excluded ? "Excluded" : nil)) {
+    c.append(.init(id: "clip.\(v.id).postToday", title: "Post today", symbol: "bolt", subtitle: "The rest of the plan moves a day later",
+                   disabled: longWhy ?? (v.excluded ? "Excluded" : nil)) {
       [weak self] in self?.postToday(v.id)
     })
     let notPlanned = nextSlotByVideo[v.id] == nil ? "Not planned — order follows score; change the score to move it" : nil
-    c.append(.init(id: "clip.\(v.id).moveUp", title: "Move up", symbol: "arrow.up",
+    c.append(.init(id: "clip.\(v.id).moveUp", title: "Move up", symbol: "arrow.up", subtitle: "Swap days with the clip before it",
                    disabled: longWhy ?? notPlanned ?? (neighbourSlot(v.id, -1) == nil ? "Already first" : nil)) { [weak self] in self?.moveVideo(v.id, by: -1) })
-    c.append(.init(id: "clip.\(v.id).moveDown", title: "Move down", symbol: "arrow.down",
+    c.append(.init(id: "clip.\(v.id).moveDown", title: "Move down", symbol: "arrow.down", subtitle: "Swap days with the clip after it",
                    disabled: longWhy ?? notPlanned ?? (neighbourSlot(v.id, 1) == nil ? "Already last" : nil)) { [weak self] in self?.moveVideo(v.id, by: 1) })
-    c.append(.init(id: "clip.\(v.id).skipNext", title: "Skip next slot", symbol: "forward.end", disabled: longWhy ?? notPlanned) {
+    c.append(.init(id: "clip.\(v.id).skipNext", title: "Move one slot later", symbol: "forward.end",
+                   subtitle: "Swap with the next open slot", disabled: longWhy ?? notPlanned) {
       [weak self] in self?.skipNext(v.id)
     })
     if short {
@@ -188,21 +202,26 @@ extension AppModel {
       c.append(.init(id: "clip.\(v.id).stageForward", title: "\(stageForwardTitle(v)) (forward a stage)", symbol: "chevron.right",
                      subtitle: fwd == nil ? stageForwardHelp(v) : nil, disabled: fwd) { [weak self] in self?.stageForward([v.id]) })
     }
-    c.append(.init(id: "clip.\(v.id).exclude", title: v.excluded ? "Include" : "Exclude", symbol: v.excluded ? "plus.circle" : "minus.circle") {
+    c.append(.init(id: "clip.\(v.id).exclude", title: v.excluded ? "Include" : "Exclude", symbol: v.excluded ? "plus.circle" : "minus.circle",
+                   subtitle: v.excluded ? "Let the planner post this clip again" : "Never post this clip") {
       [weak self] in self?.setExcluded([v.id], !v.excluded)
     })
     if short {
-      c.append(.init(id: "clip.\(v.id).agentPrompt", title: "Copy agent prompt", symbol: "text.bubble") { [weak self] in self?.copyAgentPrompt([v.id]) })
+      c.append(.init(id: "clip.\(v.id).agentPrompt", title: "Copy agent prompt", symbol: "text.bubble",
+                     subtitle: "Ask your agent for a title") { [weak self] in self?.copyAgentPrompt([v.id]) })
       for k in Kind.allCases where k != v.kind {
         c.append(.init(id: "clip.\(v.id).kind.\(k.rawValue)", title: "Set kind: \(k.displayName)", symbol: "tag") { [weak self] in self?.setKind([v.id], k) })
       }
       c.append(.init(id: "clip.\(v.id).rerender", title: "Re-render", symbol: "arrow.triangle.2.circlepath",
-                     disabled: missing ? "File missing" : nil) { [weak self] in self?.reRender(v.id) })
-      c.append(.init(id: "clip.\(v.id).duplicateVersion", title: "Duplicate latest version", symbol: "plus.square.on.square") { [weak self] in
+                     subtitle: "Make the post video again on the next tick",
+                     disabled: missing ? "File missing" : nil) { [weak self] in self?.forceReRender([v.id]) })
+      c.append(.init(id: "clip.\(v.id).duplicateVersion", title: "Duplicate latest version", symbol: "plus.square.on.square",
+                   subtitle: "Copy its edits into a new version (for reposts)") { [weak self] in
         self?.duplicateVersion(v.id)
       })
       for p in settings.activePlatforms where repostBlocker(v.id, p) == nil {
-        c.append(.init(id: "clip.\(v.id).repost.\(p.rawValue)", title: "Repost on \(p.displayName)", symbol: "arrow.uturn.forward") { [weak self] in
+        c.append(.init(id: "clip.\(v.id).repost.\(p.rawValue)", title: "Repost on \(p.displayName)", symbol: "arrow.uturn.forward",
+                       subtitle: "Plan a new \(p.displayName) post of the latest version") { [weak self] in
           self?.repost(v.id, p)
         })
       }
@@ -231,6 +250,51 @@ extension AppModel {
       cmd = PaletteCommand(id: cmd.id, title: "\(cmd.title) · \(displayName(vid))", symbol: cmd.symbol, hint: cmd.hint, group: "Recents",
                            subtitle: nil, disabled: cmd.disabled, keepsOpen: cmd.keepsOpen, run: cmd.run)
       return cmd
+    }
+  }
+}
+
+// MARK: - Clip actions shared by ⌘K and the context menus
+
+extension AppModel {
+  /// Re-render (⌘K, right-click): the same forced fresh render as the bulk bars' Re-render (BulkActions.reRender —
+  /// current renders retired, the engine makes them again on its next tick). One clip applies at once with Undo;
+  /// several ask first.
+  func forceReRender(_ ids: [String]) {
+    let n = AppModel.pipelineClips(ids.count)
+    pipelineBulk("Re-render \(n)?", verb: "Re-render", ids: ids, changes: [.init(field: "Renders", value: "Made again on the next engine tick")],
+                 done: "Re-render queued for \(n)") { b, dry in try b.reRender(ids, dryRun: dry) }
+  }
+
+  /// Context-menu Kind / Score / Exclude for one or many clips: one batch, asks first for several, Undo either way.
+  func menuSetKind(_ ids: [String], _ k: Kind) {
+    let n = AppModel.pipelineClips(ids.count)
+    pipelineBulk("Set \(n) to \(k.displayName)?", verb: "Set kind", ids: ids, changes: [.init(field: "Kind", value: k.displayName)],
+                 done: "Kind set to \(k.displayName)") { b, dry in try b.setKind(ids, k, dryRun: dry) }
+  }
+
+  func menuSetScore(_ ids: [String], _ score: Int?) {
+    let n = AppModel.pipelineClips(ids.count)
+    pipelineBulk(score.map { "Score \(n) \($0)?" } ?? "Clear the score of \(n)?", verb: score == nil ? "Clear score" : "Set score", ids: ids,
+                 changes: [.init(field: "Score", value: score.map(String.init) ?? "None · back to Score")],
+                 done: score.map { "Score \($0)" } ?? "Score cleared") { b, dry in try b.setScore(ids, score, dryRun: dry) }
+  }
+
+  func menuSetExcluded(_ ids: [String], _ ex: Bool) {
+    let n = AppModel.pipelineClips(ids.count)
+    pipelineBulk("\(ex ? "Exclude" : "Include") \(n)?", verb: ex ? "Exclude" : "Include", ids: ids,
+                 changes: [.init(field: "Posting", value: ex ? "Excluded · never posts" : "Included · can be planned again")],
+                 done: ex ? "Excluded" : "Included") { b, dry in try b.setExcluded(ids, ex, dryRun: dry) }
+  }
+
+  /// "Add N to week" (right-click on several clips): the first free days of the next week with room, pinned — the
+  /// Queue bulk bar's Add to week (asks first, Undo).
+  func menuAddToWeek(_ ids: [String]) {
+    let week = pipelineWeekWithRoom()
+    let label = Fmt.day(dm.date(week), tz: tz, style: "d MMM")
+    pipelineBulk("Add \(AppModel.pipelineClips(ids.count)) to the week of \(label)?", verb: "Add to week", ids: ids,
+                 changes: [.init(field: "Plan", value: "First free days of the week of \(label), pinned")]) { b, dry in
+      try b.addToWeek(ids, week: week, dryRun: dry)
     }
   }
 }
@@ -329,7 +393,7 @@ struct CommandPalette: View {
           .fixedSize()
         }
         .buttonStyle(.plain)
-        .dsTooltip("Back to all commands")
+        .dsTooltip("Back to all commands", shortcut: "esc")
       }
       TextField(clip == nil ? "Search clips and commands…" : "Filter actions…", text: $ui.paletteQuery)
         .textFieldStyle(.plain)
@@ -469,33 +533,38 @@ struct VideoContextMenu: View {
 
   var body: some View {
     let targets = ids.count > 1 && ids.contains(video.id) ? ids : [video.id]
-    if targets.count == 1 {
-      Button("Edit", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id, in: model.selectedVideoIds) }
+    let many = targets.count > 1
+    let n = many ? " \(targets.count)" : ""
+    if !many {
+      Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id, in: model.selectedVideoIds) }
       Button("Preview", systemImage: "play.rectangle") { model.previewVideo = video }
       Divider()
       Button("Post today", systemImage: "bolt") { model.postToday(video.id) }
       Button("Pin to tomorrow", systemImage: "pin") { model.pin(video.id, dayKey: model.dm.addDays(model.todayKey, 1)) }
-      Button("Skip next slot", systemImage: "forward.end") { model.skipNext(video.id) }
+      Button("Move one slot later", systemImage: "forward.end") { model.skipNext(video.id) }
       RepostMenu(model: model, videoId: video.id)
       Divider()
       StageMenuItems(model: model, video: video, targets: targets)
       Divider()
       Button("Duplicate version", systemImage: "plus.square.on.square") { model.duplicateVersion(video.id) }
-      Button("Re-render", systemImage: "arrow.triangle.2.circlepath") { model.reRender(video.id) }
+      Button(model.libraryIsMissing(video) ? "Re-render — file missing" : "Re-render", systemImage: "arrow.triangle.2.circlepath") {
+        model.forceReRender([video.id])
+      }
+      .disabled(model.libraryIsMissing(video))
     } else {
-      Button("Add \(targets.count) to week", systemImage: "calendar.badge.plus") { model.addToWeek(targets) }
+      Button("Add\(n) to week…", systemImage: "calendar.badge.plus") { model.menuAddToWeek(targets) }
       StageMenuItems(model: model, video: video, targets: targets)
     }
-    Menu("Kind") {
-      ForEach(Kind.allCases, id: \.self) { k in Button(k.displayName) { model.setKind(targets, k) } }
+    Menu(many ? "Kind (\(targets.count))" : "Kind") {
+      ForEach(Kind.allCases, id: \.self) { k in Button(k.displayName) { model.menuSetKind(targets, k) } }
     }
-    Menu("Score") {
-      ForEach([90, 80, 70, 60, 50, 40, 30], id: \.self) { s in Button("\(s)") { model.setScore(targets, s) } }
-      Button("Clear") { model.setScore(targets, nil) }
+    Menu(many ? "Score (\(targets.count))" : "Score") {
+      ForEach([90, 80, 70, 60, 50, 40, 30], id: \.self) { s in Button("\(s)") { model.menuSetScore(targets, s) } }
+      Button("Clear") { model.menuSetScore(targets, nil) }
     }
     Divider()
-    Button(video.excluded ? "Include" : "Exclude", systemImage: video.excluded ? "plus.circle" : "minus.circle") {
-      model.setExcluded(targets, !video.excluded)
+    Button(video.excluded ? "Include\(n)" : "Exclude\(n)", systemImage: video.excluded ? "plus.circle" : "minus.circle") {
+      model.menuSetExcluded(targets, !video.excluded)
     }
   }
 }
@@ -518,10 +587,14 @@ struct PostContextMenu: View {
       Button("Report problem…", systemImage: "exclamationmark.bubble") { model.reportTarget = post }
     }
     if post.state == .overdue {
-      Button("Post now", systemImage: "bolt") { model.postNow(post) }
-        .disabled(model.heldReason(post.videoId) != nil).help(model.heldReason(post.videoId) ?? "Due now on today's slot")
-      Button("Shift plan", systemImage: "calendar.badge.clock") { model.shiftPlan(post) }
-        .disabled(model.heldReason(post.videoId) != nil).help(model.heldReason(post.videoId) ?? "Next free slot")
+      // Native menu items can't show a tooltip: the consequence (or why not) is in the title.
+      let held = model.heldReason(post.videoId) != nil
+      Button(held ? "Post now — sent back to Edit" : "Post now (due on today's slot)", systemImage: "bolt") { model.postNow(post) }
+        .disabled(held)
+      Button(held ? "Shift plan — sent back to Edit" : "Shift plan (to the next free slot)", systemImage: "calendar.badge.clock") {
+        model.shiftPlan(post)
+      }
+      .disabled(held)
     }
     if model.canReset(post) { Button("Reset post", systemImage: "arrow.counterclockwise") { model.reset(post) } }
     if model.canSkip(post) { Button("Skip this platform", systemImage: "forward") { model.skip(post) } }
@@ -565,8 +638,9 @@ struct ScorePromptSheet: View {
       DSTextField(placeholder: "0–100", text: $text, error: !text.isEmpty && value == nil ? "Type a whole number from 0 to 100" : nil,
                   size: .lg, onSubmit: save)
     } footer: {
-      DSButton("Cancel", variant: .ghost) { dismiss() }.keyboardShortcut(.cancelAction)
-      DSButton("Save", variant: .primary, disabledReason: value == nil ? "Type a score from 0 to 100" : nil, action: save)
+      DSButton("Cancel", variant: .ghost, shortcut: "esc") { dismiss() }.keyboardShortcut(.cancelAction)
+      DSButton("Save", variant: .primary, disabledReason: value == nil ? "Type a score from 0 to 100" : nil,
+               tooltip: "Save score; higher posts sooner", shortcut: "↩", action: save)
         .keyboardShortcut(.defaultAction)
     }
     .background(DS.color.surfaceRaised)
@@ -594,8 +668,8 @@ struct PinPromptSheet: View {
         .datePickerStyle(.graphical).labelsHidden()
         .frame(maxWidth: .infinity)
     } footer: {
-      DSButton("Cancel", variant: .ghost) { dismiss() }.keyboardShortcut(.cancelAction)
-      DSButton("Pin", variant: .primary) {
+      DSButton("Cancel", variant: .ghost, shortcut: "esc") { dismiss() }.keyboardShortcut(.cancelAction)
+      DSButton("Pin", variant: .primary, tooltip: "Post it on this day; the plan flows around", shortcut: "↩") {
         model.pin(video.id, date: date)
         dismiss()
       }

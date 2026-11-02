@@ -24,20 +24,22 @@ struct EditView: View {
     let templates = model.captionTemplates
     ScreenScaffold(model: model, screen: .edit, subtitle: all.isEmpty ? nil : "\(all.count) need work",
                    readingColumn: mode == .wide || mode == .list) {
-      DSViewModeSwitcher(mode: model.viewModeBinding(.edit))
+      PipelineViewModeSwitcher(mode: model.viewModeBinding(.edit))
       DSButton("Make ready with defaults", variant: sel.isEmpty ? .primary : .outline,
                disabledReason: list.isEmpty ? "Nothing to edit" : nil,
-               tooltip: sel.isEmpty ? "Confirm the default crop for the \(AppModel.pipelineClips(ids.count)) shown"
-                 : "Confirm the default crop for the \(AppModel.pipelineClips(sel.count)) selected") {
+               tooltip: sel.isEmpty ? "Confirm default crop for \(AppModel.pipelineClips(ids.count)) shown"
+                 : "Confirm default crop for \(AppModel.pipelineClips(sel.count)) selected") {
         makeReady(sel.isEmpty ? ids : sel)
       }
     } subToolbar: {
       if !all.isEmpty {
         DSChip("All", isSelected: active == nil, count: all.count, showsCheck: false) { ui.editFilter = nil }
+          .dsTooltip("Show every clip that needs work")
         ForEach(filters, id: \.filter) { f in
           DSChip(f.filter.title, isSelected: active == f.filter, count: f.count, showsCheck: false) {
             ui.editFilter = active == f.filter ? nil : f.filter
           }
+          .dsTooltip(active == f.filter ? "Show every clip again" : "Show only clips with this issue")
         }
       }
     } content: {
@@ -112,17 +114,19 @@ private struct EditBulkBar: View {
     let n = AppModel.pipelineClips(ids.count)
     ScreenBulkBar(model: model, screen: .edit) {
       let noSuggestions = !ids.contains { !(model.suggestionsByVideo[$0] ?? []).isEmpty }
+      let noTitlesWhy = "No title suggestions yet — More › Copy agent prompt asks your agent"
+      // Soft-disabled (dimmed, still hoverable so the tooltip can say why; a click says it again).
       Button("Top title", systemImage: "text.badge.checkmark") {
+        if noSuggestions { model.show(noTitlesWhy, error: true); return }
         let ids = ids
         model.pipelineBulk("Accept the top title for \(n)?", verb: "Accept titles", ids: ids,
                            changes: [.init(field: "Title", value: "Top suggestion from metadata (clips without a title)")]) { b, dry in
           try b.acceptTopTitleSuggestion(ids, dryRun: dry)
         }
       }
-      .disabled(noSuggestions)
-      .dsTooltip(noSuggestions ? "None of the selected clips has title suggestions yet — Copy agent prompt (More) asks your agent for some"
-                 : "Accept top title: each clip's best suggestion becomes its title (clips with a title keep it)")
-      PipelineBulkMenu("Caption", tooltip: "Caption template and hashtag set for the selected clips") {
+      .opacity(noSuggestions ? 0.45 : 1)
+      .dsTooltip("Use each clip's top suggested title", disabledReason: noSuggestions ? noTitlesWhy : nil)
+      PipelineBulkMenu("Caption", tooltip: "Set caption template or hashtags") {
         Section("Caption template") {
           Button("Default template") { setTemplate(nil, "Default") }
           ForEach(templates) { t in Button(t.name) { setTemplate(t.id, t.name) } }
@@ -132,7 +136,7 @@ private struct EditBulkBar: View {
           ForEach(hashtagSets) { s in Button(s.name) { setHashtags([s.id], s.name) } }
         }
       }
-      PipelineBulkMenu("Kind", tooltip: "DJ vid or Talking for the selected clips") {
+      PipelineBulkMenu("Kind", tooltip: "Set DJ vid or Talking") {
         ForEach(Kind.allCases, id: \.self) { k in
           Button(k.displayName) {
             let ids = ids
@@ -142,10 +146,9 @@ private struct EditBulkBar: View {
         }
       }
     } more: {
+      // Native items show no tooltip: titles carry the consequence.
       Button("Send to queue", systemImage: "chevron.right") { model.stageForward(ids) }
-        .help("Confirms the default crop where missing and sends them to the Queue; clips still missing something stay here and say what")
-      Button("Back to Score", systemImage: "chevron.left") { model.stageBack(ids) }
-        .help("Clears their scores and sends them back to Score")
+      Button("Back to Score (clears their scores)", systemImage: "chevron.left") { model.stageBack(ids) }
       Divider()
       Button("Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") { model.copyAgentPrompt(ids) }
       EditApplyDefaultsMenu(model: model, ids: ids)
@@ -160,7 +163,7 @@ private struct EditBulkBar: View {
           }
         }
       }
-      Button("Re-render", systemImage: "arrow.triangle.2.circlepath") {
+      Button("Re-render (make the post videos again)", systemImage: "arrow.triangle.2.circlepath") {
         let ids = ids
         model.pipelineBulk("Re-render \(n)?", verb: "Re-render", ids: ids,
                            changes: [.init(field: "Renders", value: "Made again on the next engine tick")]) { b, dry in
@@ -169,7 +172,7 @@ private struct EditBulkBar: View {
       }
     } primary: {
       DSButton("Make ready", variant: .primary, size: .sm,
-               tooltip: "Make ready with defaults: confirm the default crop for the \(n) selected", action: makeReady)
+               tooltip: "Confirm default crop for \(n) selected", action: makeReady)
     }
   }
 
@@ -191,13 +194,14 @@ private struct EditBulkBar: View {
   }
 }
 
-/// "Apply defaults ▸" — clears the overrides of one section (or all) so the clips follow New clip defaults.
+/// "Reset to New clip defaults ▸" — clears the overrides of one section (or all) so the clips follow New clip defaults.
 struct EditApplyDefaultsMenu: View {
   @Bindable var model: AppModel
   let ids: [String]
 
   var body: some View {
-    Menu("Apply defaults") {
+    // The title says what happens: the section's own edits go and New clip defaults apply (asks for > 1, undoable).
+    Menu("Reset to New clip defaults") {
       ForEach(BulkSection.allCases, id: \.self) { s in Button(Self.title(s)) { apply([s]) } }
       Divider()
       Button("Every section") { apply(Set(BulkSection.allCases)) }
