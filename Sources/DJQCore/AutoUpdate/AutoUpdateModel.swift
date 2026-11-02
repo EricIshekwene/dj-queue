@@ -39,7 +39,9 @@ public struct AutoUpdatePaths: Sendable {
     dir = paths.appSupport.appendingPathComponent("autoupdate")
     logs = paths.logs
     launchAgents = paths.launchAgents
-    let home = URL(fileURLWithPath: LaunchAgent.realHome)
+    // A dev run (DJQ_HOME set) never installs over the real app: without DJQ_APP_DIR / DJQ_BIN_DIR it uses
+    // $DJQ_HOME/Applications and $DJQ_HOME/bin.
+    let home = environment["DJQ_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) } ?? URL(fileURLWithPath: LaunchAgent.realHome)
     appDir = environment["DJQ_APP_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) } ?? home.appendingPathComponent("Applications")
     binDir = environment["DJQ_BIN_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) } ?? home.appendingPathComponent("bin")
   }

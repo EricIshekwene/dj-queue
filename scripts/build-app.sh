@@ -1,8 +1,8 @@
 #!/bin/zsh
 # Builds "build/DJ Queue.app" (release, ad-hoc signed) with the djq CLI inside (Contents/MacOS/djq).
 # `--install` copies it to ~/Applications and points ~/bin/djq at the bundled CLI; the bundle it replaces is kept in
-# <app support>/autoupdate/previous for `djq autoupdate rollback`. DJQ_APP_DIR / DJQ_BIN_DIR redirect the install
-# (dev runs; with DJQ_HOME set the previous bundle goes under $DJQ_HOME/support).
+# <app support>/autoupdate/previous for `djq autoupdate rollback`. DJQ_APP_DIR / DJQ_BIN_DIR redirect the install;
+# with DJQ_HOME set (dev) everything defaults to that scratch folder, never the real ~/Applications.
 # djq finds ffmpeg by absolute path (/opt/homebrew/bin, /usr/local/bin) and uses the same Paths.standard as the app.
 # Does not install or load the LaunchAgent — do that from Settings → Engine or `djq agent install`.
 set -euo pipefail
@@ -52,9 +52,10 @@ codesign --verify --strict "$APP"
 echo "built: $APP"
 
 if [[ "${1:-}" == "--install" ]]; then
-  APPS="${DJQ_APP_DIR:-$HOME/Applications}"
-  BINS="${DJQ_BIN_DIR:-$HOME/bin}"
-  if [[ -n "${DJQ_HOME:-}" ]]; then SUPPORT="$DJQ_HOME/support"; else SUPPORT="$HOME/Library/Application Support/DJ Queue"; fi
+  # With DJQ_HOME set (a dev run) the install stays in that scratch folder unless DJQ_APP_DIR / DJQ_BIN_DIR say otherwise.
+  if [[ -n "${DJQ_HOME:-}" ]]; then BASE="$DJQ_HOME"; SUPPORT="$DJQ_HOME/support"; else BASE="$HOME"; SUPPORT="$HOME/Library/Application Support/DJ Queue"; fi
+  APPS="${DJQ_APP_DIR:-$BASE/Applications}"
+  BINS="${DJQ_BIN_DIR:-$BASE/bin}"
   PREV="$SUPPORT/autoupdate/previous"
   mkdir -p "$APPS"
   if [[ -d "$APPS/DJ Queue.app" ]]; then

@@ -389,6 +389,15 @@ import Testing
     #expect(e.runner().run(trigger: .manual).kind == .installed)
   }
 
+  @Test func neverSetUpCountsAsOffAndDevRunsStayInScratch() throws {
+    let e = try Env()
+    #expect(e.runner().run(trigger: .launch).message == "Auto-update is off.")
+    #expect(e.installed == nil)
+    let au = AutoUpdatePaths(e.paths, environment: ["DJQ_HOME": "/tmp/djq-dev-home"])
+    #expect(au.appDir.path == "/tmp/djq-dev-home/Applications")
+    #expect(au.binDir.path == "/tmp/djq-dev-home/bin")
+  }
+
   @Test func doctorReportsBlockedAndMissingWatcher() throws {
     let e = try Env()
     try e.setUp()

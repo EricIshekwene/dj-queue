@@ -117,7 +117,10 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     state = files.state()
     let config = files.config()
     let request = takeRequest()
-    if !config.enabled, trigger != .manual, request?.action != .install {
+    // Never set up (no config.json) counts as off for automatic triggers: only `djq autoupdate on` (the v0.6.0
+    // install runs it) starts installing on its own.
+    let on = config.enabled && files.configIfSet() != nil
+    if !on, trigger != .manual, request?.action != .install {
       say("\(trigger.rawValue): auto-update is off (djq autoupdate on turns it back on)")
       return AutoUpdateResult(kind: .upToDate, message: "Auto-update is off.", commit: nil, at: now())
     }
