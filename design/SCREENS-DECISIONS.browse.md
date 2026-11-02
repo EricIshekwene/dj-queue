@@ -1,0 +1,27 @@
+# R2-SCREENS decisions
+
+## BROWSE
+
+- **Browse UI state (Library filters/sort/search, Posts tab/search/platform, palette query/clip page, in-screen dialogs) lives in a shared `BrowseUI` observable, not AppModel.** Why: AppModel is foundation-owned; the state survives screen switches and snapshot shots can set it.
+- **Library long-form clips get their own 16:9 section (tiles in Grid/Cards, rows in List) in ClipCollection's `header`; short clips go through ClipCollection.** Why: DSClipCard's grid tile is fixed 9:16 and ClipCollection is shared; the spec wants 16:9 long-form tiles. Single view shows shorts only (long-form opens a quick look); a long-form-only result renders the section in every mode.
+- **Long-form selection is the same `selection[.library]`, but ⌘A selects only the short clips** (ClipCollection registers `visibleIds`). Why: no edit to the shared ClipCollection; long-form clips are few and selected by checkbox.
+- **Library cards hide validation issues and show one state chip** (Unscored / Needs edit / Ready / Planned / Posted / Excluded / Missing, plus "Not in videos.json"); List view puts the state in the row's kind badge. Why: Library's job is "find any clip in any state"; issues belong to Edit.
+- **Missing filter = file missing or removed from videos.json (not kept); the Missing pill turns danger-tinted when it has clips.** Why: round-1 behaviour; a missing file is the one Library state that needs action.
+- **"Relink" = "Look for the file", which runs an engine tick (intake relinks by fingerprint).** Why: the core has no per-clip relink; intake already finds moved/renamed files.
+- **Clicks: short clip → editor; long-form, missing or removed → in-screen quick look with the one fitting primary (Mark posted / Look for the file / Keep posting it / Open editor). Space = quick look, digits score the selected shorts** (round-1 keys kept). Why: spec §6.6 + keep round-1 behaviours.
+- **Browse dialogs (quick look, Mark posted, bulk Score…, post bulk confirm) are in-screen overlays (`BrowseModal`), not window-level.** Why: the window-level ModalHost list is in the foundation's MainWindowView; in-screen overlays also render in snapshots.
+- **Mark long-form posted: DSDialog with one empty YouTube field per clip; empty rows are skipped, invalid ones block.** Why: each part has its own link; no prefilled text (round-1 sheet read the clipboard — dropped).
+- **Library bulk bar adapts to the selection: shorts → Score… · Kind ▾ · Exclude/Include (+ "Mark N long-form posted…" in More when long-form clips are also selected); long-form only → Kind · Exclude · Mark long-form posted.** Why: four labelled actions + Select all overflowed DSBulkBar's 720 pt max and wrapped.
+- **Bulk Score… asks for the number in a small dialog, then goes through the foundation confirmation sheet.** Why: #11 (every >1-clip action is confirmed and undoable).
+- **Posts tabs sit at the top of the list column; search + Platform ▾ in the toolbar. When a row is selected the column shrinks and a 360 pt inspector card sits beside it** (compact rows: platform glyph only, no attempt column). Why: keeps tabs aligned with the list; version stays visible in rows and inspector.
+- **`postsFilter = .problems` (attention card "Review") is consumed once: it opens the Problems tab and resets to `.all`.** Why: PostsFilter is foundation-owned and has no Scheduled case.
+- **Only the first fixable problem card gets the primary "Fix in editor"; the rest are outline.** Why: one primary per screen.
+- **Missed-slot cards replace Fix in editor / Re-upload with Post now / Shift plan and use the warning tint.** Why: a missed slot has nothing to edit; amber = late (DESIGN-v2 §2.1).
+- **Bulk post ops implemented: Reset, Skip (copyright → skip platform), Retry (failed → `fixed`), each confirmed in a DSDialog listing the posts and ending with a toast; no Undo.** Why: PostActions has no batch journal; the dialog says it can't be undone.
+- **Health facts (LaunchAgent, disk, last backup, awake timeline) load off-main in a shared `HealthProbe`; snapshots set `override`.** Why: no I/O on the main thread; deterministic shots.
+- **Health header counts checks needing attention plus Doctor warnings/errors ("3 checks and 8 findings need attention"), red if any is an error; rows needing attention open expanded.** Why: the report Eric pastes covers both; the fix is visible at once.
+- **Copy report = the eight checks as Markdown + Doctor's Markdown.** Why: "give Eric a report to paste".
+- **Run tick / Open log / Run Doctor live in the Health toolbar ⋯ and in the relevant check rows.** Why: keeps one primary (Copy report) + one outlined (Run again) in the header.
+- **⌘K: typing searches clips by display name/raw tag and commands; a clip opens a second page with its actions (open, quick look, score, pin, post today, move, skip next, exclude, agent prompt, kind, re-render, duplicate, repost, long-form posted); Esc/⌫ go back.** Why: score/pin/move/exclude "for clips found by displayName" without listing five commands per match.
+- **The palette's search field is a DS-token capsule built in place (DSFieldBox), not DSTextField.** Why: it needs programmatic focus and arrow-key handling that DSTextField doesn't expose. Selected row uses `selected` fill (hover is invisible on raised dark surfaces).
+- **Kept names other files call: `VideoContextMenu`, `PostContextMenu`, `RepostMenu`, `ScorePromptSheet`, `PinPromptSheet` (the two sheets now use DSDialog), `librarySelection`.** Why: other leaves and MainWindowView use them.
