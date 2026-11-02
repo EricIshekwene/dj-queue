@@ -178,14 +178,16 @@ struct GalleryButtons: View {
         }
       }
       HStack(alignment: .top, spacing: DS.space.xxxl) {
-        GSection("Tooltip", note: "hover 450 ms · inverse bubble · shortcut optional") {
+        GSection("Tooltip", note: "native .help on hover · styled bubble shown for reference") {
           HStack(spacing: DS.space.xxxl) {
-            DSIconButton("calendar.badge.plus", tooltip: "Add to week", variant: .outline) {}
-              .dsTooltip("Add to week", shortcut: "⌘W", forceVisible: true)
-            DSButton("Post today", icon: "bolt", variant: .outline, disabledReason: "Instagram isn't rendered yet") {}
-              .dsTooltip("Instagram isn't rendered yet", forceVisible: true)
+            DSTooltipDemo(text: "Add to week", shortcut: "⌘W") {
+              DSIconButton("calendar.badge.plus", tooltip: "Add to week", variant: .outline) {}
+            }
+            DSTooltipDemo(text: "Instagram isn't rendered yet") {
+              DSButton("Post today", icon: "bolt", variant: .outline, disabledReason: "Instagram isn't rendered yet") {}
+            }
           }
-          .padding(.top, 44).padding(.bottom, 8).padding(.horizontal, 60)
+          .padding(.top, 4)
         }
         GSection("Key hints") {
           HStack(spacing: 6) {
@@ -436,6 +438,19 @@ struct GalleryStatus: View {
             .dsSurface(DS.color.background, radius: DS.radius.lg, border: DS.color.border)
         }
       }
+    }
+  }
+}
+
+/// Gallery: trigger with its tooltip bubble stacked above (static, no overlay positioning).
+struct DSTooltipDemo<C: View>: View {
+  let text: String
+  var shortcut: String? = nil
+  @ViewBuilder var content: C
+  var body: some View {
+    VStack(spacing: 6) {
+      DSTooltipBubble(text: text, shortcut: shortcut)
+      content
     }
   }
 }
