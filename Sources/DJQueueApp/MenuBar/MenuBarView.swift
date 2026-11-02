@@ -2,11 +2,12 @@ import AppKit
 import DJQCore
 import SwiftUI
 
-/// MB.ICON (DESIGN-v2 §6.10): template glyph + approved-runway days ("5d"); a red dot when posts need attention;
+/// MB.ICON (DESIGN-v2 §6.10): template glyph + approved-runway days ("5d"); a red dot (top right) when posts need
+/// attention; a smaller update dot (bottom right: blue = an update is ready, amber = one is blocked, round 4 S5);
 /// grey when the engine is stopped; pause glyph while posting is paused. Drawn at display time so the colours
-/// follow the menu bar's appearance (template unless the red dot has to stay red).
+/// follow the menu bar's appearance (template unless a coloured dot has to keep its colour).
 enum MenuBarIcon {
-  static func image(days: Int, errors: Int, engineOn: Bool, paused: Bool) -> NSImage {
+  static func image(days: Int, errors: Int, engineOn: Bool, paused: Bool, update: AutoUpdateUI.Dot = .none) -> NSImage {
     let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
     let text = "\(days)d" as NSString
     let textSize = text.size(withAttributes: [.font: font])
@@ -15,8 +16,13 @@ enum MenuBarIcon {
       .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))
     let symW = symbol?.size.width ?? 16
     let dot: CGFloat = 6
-    let size = NSSize(width: ceil(symW + 4 + textSize.width + (errors > 0 ? dot + 1 : 0)), height: 18)
-    let template = errors == 0
+    let updateColor: NSColor? = switch update {
+    case .none: nil
+    case .ready: .systemBlue
+    case .blocked: .systemOrange
+    }
+    let size = NSSize(width: ceil(symW + 4 + textSize.width + (errors > 0 || updateColor != nil ? dot + 1 : 0)), height: 18)
+    let template = errors == 0 && updateColor == nil
     let img = NSImage(size: size, flipped: false) { _ in
       let alpha: CGFloat = engineOn ? 1 : 0.4
       let ink = template ? NSColor.black.withAlphaComponent(alpha) : NSColor.labelColor.withAlphaComponent(alpha)
@@ -34,6 +40,11 @@ enum MenuBarIcon {
         NSColor.systemRed.setFill()
         NSBezierPath(ovalIn: NSRect(x: size.width - dot, y: 18 - dot - 2, width: dot, height: dot)).fill()
       }
+      if let updateColor {
+        let d: CGFloat = 5
+        updateColor.setFill()
+        NSBezierPath(ovalIn: NSRect(x: size.width - dot + (dot - d) / 2, y: 2, width: d, height: d)).fill()
+      }
       return true
     }
     img.isTemplate = template
@@ -41,6 +52,11 @@ enum MenuBarIcon {
     if errors > 0 { desc += ", \(errors) need attention" }
     if paused { desc += ", posting paused" }
     if !engineOn { desc += ", engine stopped" }
+    switch update {
+    case .none: break
+    case .ready(let v): desc += ", update \(v) ready"
+    case .blocked(let v): desc += ", update \(v) blocked"
+    }
     img.accessibilityDescription = desc
     return img
   }
@@ -56,15 +72,19 @@ struct MenuBarLabel: View {
     if m.settings.paused { parts.append("Posting is paused") }
     if !m.engineRunning { parts.append("The engine is stopped") }
     if !m.problems.isEmpty { parts.append("Something needs attention (\(m.problems.count))") }
+    if let u = AutoUpdateUI.shared.statusText { parts.append(u) }
     return parts.joined(separator: " · ")
   }
 
   var body: some View {
     if let m = host.model {
-      Image(nsImage: MenuBarIcon.image(days: m.runway.approvedDays, errors: m.problems.count, engineOn: m.engineRunning, paused: m.settings.paused))
+      Image(nsImage: MenuBarIcon.image(days: m.runway.approvedDays, errors: m.problems.count, engineOn: m.engineRunning, paused: m.settings.paused,
+                                       update: AutoUpdateUI.shared.dot))
         // The status item lives in the system menu bar, outside our windows, so DSTooltip can't reach it: the one
         // place a native help tag is right.
         .help(Self.help(m))  // native-help-ok
+        // Auto-update (S5) starts with the status item: every launch mode but snapshots shows it.
+        .task { AutoUpdateUI.shared.start(host: host) }
     } else {
       Image(systemName: "exclamationmark.triangle")
     }
@@ -101,6 +121,14 @@ struct MenuBarState {
   var engineRunning: Bool
   var paused: Bool
   var lastTick: Date?
+  /// Auto-update row (round 4 S5): ready / installing / blocked; nil = nothing to say.
+  var update: UpdateRow? = nil
+
+  enum UpdateRow: Equatable {
+    case ready(String)
+    case working(String)
+    case blocked(version: String, reason: String)
+  }
 
   @MainActor init(model m: AppModel) {
     let dueNow = m.dueNow.filter { $0.resolution == nil }.sorted { $0.scheduledAt < $1.scheduledAt }
@@ -110,6 +138,14 @@ struct MenuBarState {
     engineRunning = m.engineRunning
     paused = m.settings.paused
     lastTick = m.lastHeartbeat?.at
+    let u = AutoUpdateUI.shared
+    if u.isWorking {
+      update = .working(u.workingLabel)
+    } else if let r = u.state.ready {
+      update = .ready(r.version)
+    } else if let b = u.state.blocked {
+      update = .blocked(version: b.version, reason: b.reason)
+    }
   }
 }
 
@@ -121,7 +157,12 @@ struct MenuBarView: View {
 
   var body: some View {
     MenuBarContent(model: model, state: MenuBarState(model: model))
-      .onAppear { model.popoverVisible = true; model.refresh() }
+      .onAppear {
+        model.popoverVisible = true
+        model.refresh()
+        AutoUpdateUI.shared.start(host: AppHost.shared)
+        AutoUpdateUI.shared.refresh()
+      }
       .onDisappear { model.popoverVisible = false }
   }
 }
@@ -142,10 +183,11 @@ struct MenuBarContent: View {
         if !state.due.isEmpty { dueList }
       }
       .padding(DS.space.md)
-      if !state.problems.isEmpty || !state.engineRunning {
+      if !state.problems.isEmpty || !state.engineRunning || state.update != nil {
         VStack(spacing: DS.space.xs) {
           if !state.problems.isEmpty { problemsRow }
           if !state.engineRunning { engineRow }
+          if let u = state.update { updateRow(u) }
         }
         .padding(.horizontal, DS.space.sm)
         .padding(.bottom, DS.space.sm)
@@ -332,6 +374,62 @@ struct MenuBarContent: View {
     }
     .buttonStyle(.plain)
     .dsTooltip("Nothing is posted or handed to you while the engine is stopped. Open Health to see why.")
+  }
+
+  /// "Update ready: 0.6.0 · Restart & update" / "Updating · Installing" / "Update blocked · Show why" (round 4 S5).
+  @ViewBuilder private func updateRow(_ u: MenuBarState.UpdateRow) -> some View {
+    switch u {
+    case .ready(let v):
+      HStack(spacing: DS.space.xs) {
+        DSStatusDot(tone: .accent, size: 7)
+        // The version goes first when space runs out (the button's tooltip names it too).
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: DS.space.xs) {
+            Text("Update ready").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+            Text(v).font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+          }
+          Text("Update ready").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        DSButton("Restart & update", variant: .ghost, size: .sm, disabledReason: AutoUpdateUI.shared.actionBlockedReason,
+                 tooltip: "Restart DJ Queue now and install \(v). Waits for any render to finish.") { AutoUpdateUI.shared.restartAndUpdate() }
+          .fixedSize()
+      }
+      .padding(.leading, DS.space.sm)
+      .padding(.trailing, DS.space.xxs)
+      .frame(height: 40)
+      .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+    case .working(let label):
+      HStack(spacing: DS.space.xs) {
+        DSSpinner(size: 12, color: DS.color.textSecondary)
+        Text("Updating").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+        Text(label).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal, DS.space.sm)
+      .frame(height: 40)
+      .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+      .dsTooltip("DJ Queue restarts by itself once the update is installed.")
+    case .blocked(let v, let reason):
+      Button {
+        AutoUpdateUI.shared.showBlocked()
+      } label: {
+        HStack(spacing: DS.space.xs) {
+          Image(systemName: DSTone.warning.symbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(DS.color.warning)
+          Text("Update blocked").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+          Text(v).font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+          Spacer(minLength: 0)
+          Text("Show why").font(DS.type.calloutMedium).foregroundStyle(DS.color.textSecondary)
+          Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(DS.color.textTertiary)
+        }
+        .padding(.horizontal, DS.space.sm)
+        .frame(height: 40)
+        .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .dsTooltip("\(reason). Nothing was installed. Open DJ Queue to see the reason and the log.")
+    }
   }
 
   // MARK: Footer
