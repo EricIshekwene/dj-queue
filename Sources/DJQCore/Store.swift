@@ -572,11 +572,24 @@ public final class Store: @unchecked Sendable {
   }
 
   public func computeState(_ v: Video) throws -> VideoState {
-    if v.missing { return .missingFile }
+    if v.missing {
+      // Round 4 (S1): a short clip whose file went missing after it was scheduled or posted keeps that state (it
+      // stays in Scheduled/Posted and shows "File missing"); otherwise it is `missing_file` (stage Edit when scored).
+      if !v.excluded, v.type == .short, let s = try planOrPostState(v) { return s }
+      return .missingFile
+    }
     if v.excluded { return .excluded }
     // Sent back from Queue: Edit until Eric sends it to the queue again (its future slots/posts were removed).
     // Never masks a clip that already posted somewhere (Remove from queue refuses those).
     if try isHeld(v) { return .needsEdit }
+    if let s = try planOrPostState(v) { return s }
+    if v.type == .long { return v.longformURL == nil ? .ready : .posted }
+    return try Validation.isReady(video: v, store: self) ? .ready : .needsEdit
+  }
+
+  /// The state that comes from posts (posted / partial / posting / planned) or an approved-week slot (planned);
+  /// nil when the clip is in neither.
+  func planOrPostState(_ v: Video) throws -> VideoState? {
     // Latest attempt per platform; a retry (fix) supersedes the failed regular post. Reposts don't change state.
     let posts = try self.posts(where: "video_id=? AND kind IN ('regular','retry')", [v.id])
     if !posts.isEmpty {
@@ -590,13 +603,12 @@ public final class Store: @unchecked Sendable {
       if relevant.contains(where: { $0.state == .posted || $0.state == .due || $0.state == .overdue }) { return .posting }
       return .planned
     }
-    if v.type == .long { return v.longformURL == nil ? .ready : .posted }
+    if v.type == .long { return nil }
     // Planned = in an APPROVED week (spec §3); draft proposals don't count.
     let inApproved = try db.one(
       "SELECT 1 AS x FROM plan_slots s JOIN weeks w ON w.week_start=s.week_start AND w.state='approved' WHERE s.video_id=?",
       [v.id]) != nil
-    if inApproved { return .planned }
-    return try Validation.isReady(video: v, store: self) ? .ready : .needsEdit
+    return inApproved ? .planned : nil
   }
 }
 

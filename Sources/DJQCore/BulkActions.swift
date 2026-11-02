@@ -63,9 +63,10 @@ public struct ReadyOutlook: Codable, Sendable, Equatable {
     return o
   }
 
-  /// "3 ready · 58 still need a title · 2 other issues" (zero parts dropped, except "0 ready" when alone).
+  /// "3 to the Queue · 58 still need a title · 2 other issues" (zero parts dropped, except "0 to the Queue" when
+  /// alone). Round 4: no "ready" wording — readiness is the stage.
   public var summary: String {
-    var parts = ["\(ready.count) ready"]
+    var parts = ["\(ready.count) to the Queue"]
     if !needTitle.isEmpty { parts.append("\(needTitle.count) still need\(needTitle.count == 1 ? "s" : "") a title") }
     if !other.isEmpty { parts.append("\(other.count) other issue\(other.count == 1 ? "" : "s")") }
     return parts.joined(separator: " · ")

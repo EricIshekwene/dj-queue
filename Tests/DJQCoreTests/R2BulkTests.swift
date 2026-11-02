@@ -57,7 +57,7 @@ import Testing
     let o = try #require(r.outlook)
     #expect(o.ready == ["clip-0"])
     #expect(Set(o.needTitle) == ["clip-2", "clip-3"] && o.other.isEmpty)
-    #expect(o.summary == "1 ready · 2 still need a title")
+    #expect(o.summary == "1 to the Queue · 2 still need a title")
     // "Use raw tag as title" sets the tag verbatim; those clips are then ready.
     let t = try bulk(f).useRawTagAsTitle(o.needTitle + ["clip-0"])
     #expect(t.skipped["clip-0"] == "already has a title")
