@@ -6,3 +6,5 @@
 3. Badges are now linted like icon-only buttons; the component gallery is exempt because it shows the bare component. Why: S2 says badges explain themselves too.
 4. Snapshot evidence for a few modes/states (Score list, Edit single, paused, empty, problem tooltips) stays a documented gap rather than new pass cases. Why: the code walk covers them and the release isn't blocked on screenshots of hover bubbles.
 5. Captions "Add template" / "Add set" stay without undo. Why: harmless additions that can be deleted (with confirmation).
+6. Splitting the editor session first flushes the on-screen editor's debounced save (review r4 L6), so an edit made just before an action lands in the right entry. This last small fix was checked by tests, not by another review round. Why: it only adds a flush before a wait that was already there.
+7. A toast Undo pressed after further editor edits stays "skipped · changed since" (review r4 L7). Why: it's conservative (nothing is lost), and it behaved this way before this release.

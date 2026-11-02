@@ -922,7 +922,7 @@ final class AppModel {
   /// (review r4 M1: folding the action into one session entry made its own undo skip the clip).
   func splitEditorSession() {
     guard let e = editorSession else { return }
-    EditorModel.waitForSaves()
+    EditorModel.flushLiveAndWait()
     do {
       let (r, next) = try bulk.split(e)
       if let b = r.batchId {

@@ -98,6 +98,13 @@ final class EditorModel: ObservableObject {
 
   /// Blocks until every queued editor write has landed (the app journals the session after it).
   static func waitForSaves() { saveQueue.sync {} }
+  /// The editor on screen (not snapshot copies): a journaled action flushes its debounced save first (review r4 L6).
+  static weak var live: EditorModel?
+  /// Writes the on-screen editor's pending (debounced) changes and waits for every save to land.
+  static func flushLiveAndWait() {
+    live?.flush()
+    waitForSaves()
+  }
   nonisolated(unsafe) static var defaults = UserDefaults.standard
 
   init(store: Store, videoId: String, snapshotMode: Bool = false) {
@@ -105,6 +112,7 @@ final class EditorModel: ObservableObject {
     self.videoId = videoId
     self.snapshotMode = snapshotMode
     canvasMode = Self.defaults.string(forKey: "editor.canvasMode").flatMap(EditorCanvasMode.init) ?? .zones
+    if !snapshotMode { Self.live = self }
     load(videoId)
   }
 
