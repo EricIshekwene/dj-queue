@@ -289,9 +289,21 @@ extension View {
   /// Soft-disabled controls stay hoverable (so the reason shows as a tooltip) but must still read as disabled to
   /// VoiceOver: not interactive, value "dimmed", and the reason as the hint. nil = enabled (no change).
   func dsAccessibilityDisabled(_ reason: String?) -> some View {
-    self
-      .accessibilityRespondsToUserInteraction(reason == nil)
-      .accessibilityValue(reason == nil ? Text("") : Text("dimmed"))
-      .accessibilityHint(reason.map { Text($0) } ?? Text(""))
+    modifier(DSAccessibilityDisabled(reason: reason))
+  }
+
+}
+
+private struct DSAccessibilityDisabled: ViewModifier {
+  let reason: String?
+  func body(content: Content) -> some View {
+    if let reason {
+      content
+        .accessibilityRespondsToUserInteraction(false)
+        .accessibilityValue(Text("dimmed"))
+        .accessibilityHint(Text(reason))
+    } else {
+      content
+    }
   }
 }
