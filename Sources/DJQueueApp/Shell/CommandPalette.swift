@@ -41,6 +41,19 @@ extension AppModel {
       c.append(paletteClipRow(v, title: "Actions for “\(displayName(v))”"))
     }
     let shorts = selectedVideoIds.compactMap(video).filter { $0.type == .short }.map(\.id)
+    let queued = selectedVideoIds.compactMap(video).filter { [.queue, .scheduled].contains(ClipStage.of($0)) && !$0.heldInEdit }.map(\.id)
+    if !queued.isEmpty {
+      c.append(.init(id: "selection.unqueue", title: "Remove \(queued.count) from queue", symbol: "arrow.uturn.backward",
+                     subtitle: Self.removeFromQueueHelp) { [weak self] in self?.removeFromQueue(queued) })
+    }
+    if shorts.count > 1 {
+      c.append(.init(id: "selection.stageBack", title: "Move \(shorts.count) back a stage", symbol: "chevron.left") { [weak self] in
+        self?.stageBack(shorts)
+      })
+      c.append(.init(id: "selection.stageForward", title: "Move \(shorts.count) forward a stage", symbol: "chevron.right") { [weak self] in
+        self?.stageForward(shorts)
+      })
+    }
     if !shorts.isEmpty {
       c.append(.init(id: "selection.agentPrompt", title: "Copy agent prompt for \(shorts.count) clip\(shorts.count == 1 ? "" : "s")",
                      symbol: "text.bubble") { [weak self] in self?.copyAgentPrompt(shorts) })
@@ -162,6 +175,13 @@ extension AppModel {
     c.append(.init(id: "clip.\(v.id).skipNext", title: "Skip next slot", symbol: "forward.end", disabled: longWhy ?? notPlanned) {
       [weak self] in self?.skipNext(v.id)
     })
+    if short {
+      let back = stageBlocker(v, .back), fwd = stageBlocker(v, .forward)
+      c.append(.init(id: "clip.\(v.id).stageBack", title: "\(stageBackTitle(v)) (back a stage)", symbol: "chevron.left",
+                     subtitle: back == nil ? stageBackHelp(v) : nil, disabled: back) { [weak self] in self?.stageBack([v.id]) })
+      c.append(.init(id: "clip.\(v.id).stageForward", title: "\(stageForwardTitle(v)) (forward a stage)", symbol: "chevron.right",
+                     subtitle: fwd == nil ? stageForwardHelp(v) : nil, disabled: fwd) { [weak self] in self?.stageForward([v.id]) })
+    }
     c.append(.init(id: "clip.\(v.id).exclude", title: v.excluded ? "Include" : "Exclude", symbol: v.excluded ? "plus.circle" : "minus.circle") {
       [weak self] in self?.setExcluded([v.id], !v.excluded)
     })
@@ -452,10 +472,13 @@ struct VideoContextMenu: View {
       Button("Skip next slot", systemImage: "forward.end") { model.skipNext(video.id) }
       RepostMenu(model: model, videoId: video.id)
       Divider()
+      StageMenuItems(model: model, video: video, targets: targets)
+      Divider()
       Button("Duplicate version", systemImage: "plus.square.on.square") { model.duplicateVersion(video.id) }
       Button("Re-render", systemImage: "arrow.triangle.2.circlepath") { model.reRender(video.id) }
     } else {
       Button("Add \(targets.count) to week", systemImage: "calendar.badge.plus") { model.addToWeek(targets) }
+      StageMenuItems(model: model, video: video, targets: targets)
     }
     Menu("Kind") {
       ForEach(Kind.allCases, id: \.self) { k in Button(k.displayName) { model.setKind(targets, k) } }

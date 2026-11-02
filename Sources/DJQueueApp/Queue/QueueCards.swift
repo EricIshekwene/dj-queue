@@ -44,7 +44,7 @@ struct QueueCardList: View {
     cfg.unmuteOnHover = p.unmuteOnHover
     cfg.selectionMode = !sel.isEmpty
     cfg.showsDragHandle = true
-    let hot = hovered == v.id
+    let hot = hovered == v.id || SnapshotHover.id == v.id
     return DSClipCard(c, mode: .wide, isSelected: sel.contains(v.id), isFocused: dropTarget == v.id, config: cfg,
                       onToggleSelect: { model.toggleSelection(v.id, screen: .queue) },
                       onTap: { m in
@@ -103,18 +103,28 @@ struct QueueClipActions: View {
   var body: some View {
     switch mode {
     case .grid:
+      Button(model.stageBackTitle(video), systemImage: "chevron.left") { model.stageBack([video.id]) }
+        .disabled(model.stageBlocker(video, .back) != nil)
+        .help(model.stageBlocker(video, .back) ?? model.stageBackHelp(video))
       Button("Post today", systemImage: "bolt") { postToday() }.help("Post today")
       Button("Pin to date…", systemImage: "pin") { onPin() }.help("Pin to date…")
     case .single:
       VStack(alignment: .leading, spacing: DS.space.sm) {
         DSButton("Post today", icon: "bolt", variant: .outline, tooltip: "Put it on today; the rest of the plan moves a day") { postToday() }
         DSButton("Pin to date…", icon: "pin", variant: .ghost, tooltip: "Pin it to a day the planner won't change") { onPin() }
+        StageControl(model: model, video: video, size: .md)
         HStack(spacing: 4) {
           DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .ghost) { model.openEditor(video.id, in: ids) }
           PipelineMoreMenu { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
         }
       }
+    case .list:
+      StageControl(model: model, video: video, compact: true)
+      DSIconButton("bolt", tooltip: "Post today", size: .sm) { postToday() }
+      DSIconButton("pin", tooltip: "Pin to date…", size: .sm) { onPin() }
+      PipelineMoreMenu { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
     default:
+      StageControl(model: model, video: video)
       DSIconButton("bolt", tooltip: "Post today", size: .sm) { postToday() }
       DSIconButton("pin", tooltip: "Pin to date…", size: .sm) { onPin() }
       PipelineMoreMenu { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
@@ -127,7 +137,8 @@ struct QueueClipActions: View {
   }
 }
 
-/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Skip next · Open editor · Exclude. Acts on the
+/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Skip next · Remove from queue · stage moves ·
+/// Open editor · Exclude. Acts on the
 /// selection (where it makes sense) when the clip is part of it.
 struct QueueClipMenu: View {
   @Bindable var model: AppModel
@@ -150,6 +161,22 @@ struct QueueClipMenu: View {
         .help(model.nextSlotByVideo[video.id] == nil ? "Moves it one place later in the backlog" : "Swaps it with the next open slot")
     }
     Divider()
+    Button(targets.count == 1 ? "Remove from queue" : "Remove \(n) from queue", systemImage: "arrow.uturn.backward") {
+      model.removeFromQueue(targets)
+    }
+    .help(AppModel.removeFromQueueHelp)
+    if targets.count == 1 && ClipStage.of(video) != .queue {
+      StageMenuItems(model: model, video: video, targets: targets)
+    } else {
+      // Back for a Queue clip IS "Remove from queue" (above); only forward is left.
+      let fwd = targets.count == 1 ? model.stageBlocker(video, .forward) : nil
+      Button(targets.count == 1 ? model.stageForwardTitle(video) : "Forward a stage (\(targets.count))", systemImage: "arrow.forward") {
+        model.stageForward(targets)
+      }
+      .disabled(fwd != nil)
+      .help(fwd ?? (targets.count == 1 ? model.stageForwardHelp(video) : "Each clip moves forward one stage"))
+    }
+    Divider()
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id, in: ids) }
     Divider()
     Button(targets.count == 1 ? "Exclude" : "Exclude \(n)", systemImage: "minus.circle") {
@@ -159,4 +186,10 @@ struct QueueClipMenu: View {
       }
     }
   }
+}
+
+/// Snapshot-only: draws one clip's hover actions without a pointer (nil in the app).
+@MainActor
+enum SnapshotHover {
+  static var id: String?
 }

@@ -33,7 +33,9 @@ djq bulk batches --json         # bulk journal (for undo)
 ```
 
 `videos` items: `id, display_name, title, title_source, raw_tag, name, session, type, kind, state, score, excluded,
-missing, part, duration, marked_start, marked_end, audio, file, suggestion_count, needs_title_help, issues[]`.
+missing, part, duration, marked_start, marked_end, audio, file, suggestion_count, needs_title_help, issues[],
+held_in_edit` (`held_in_edit`: sent back to Edit from the Queue; such a clip stays `needs_edit` with the issue
+"Sent back from Queue" until it's re-queued).
 
 `video` adds: `title_tracks, title_suggestions[{id,text,tracks,confidence,source,origin}], edit` (stored overrides
 only — absent/null fields follow the defaults), `resolved_edit` (effective values + `defaulted[]`), `versions`,
@@ -56,6 +58,39 @@ Suggestion fields (same as `videos.json` `title_suggestions`, see `docs/metadata
 breaks; join songs with `x`, no arrows, no emoji), `tracks[{title, artist?}]`, `confidence` 0…1, `source`.
 Re-sending the same `text` + `source` updates it.
 
+## Stages: move a clip back or forward
+
+A short clip's stage: **Score** (no score) → **Edit** (scored, not ready, or sent back) → **Queue** (ready; a day in a
+proposed week still counts) → **Scheduled** (in an approved week, not fully posted) → **Posted**.
+
+```sh
+djq stage <video…> [--json]                         # each clip's stage and what back/forward would do (or why not)
+djq stage <video…> back|forward [--dry-run] [--json]
+```
+
+- back: Edit → Score clears the score · Queue → Edit = `unqueue` (below) · Scheduled → Queue removes its unposted
+  days from the plan and leaves it ready (refused once any platform posted) · Posted: none (use `repost` / `reset`).
+- forward: Score: none (set a score with `djq score`) · Edit → Queue clears "sent back" and confirms the default crop
+  (make-ready); if anything is still missing the clip stays in Edit and the result says exactly what · Queue →
+  Scheduled pins it to the next open day of this or next week (a draft week must still be approved — the note says
+  so) · Scheduled → Posted: only by marking its posts posted.
+- One batch each (`moves{<video id>: {from, to, note}}`, plus `unplanned` for back); undo with `djq bulk undo`.
+
+## Remove from queue / send back to queue
+
+```sh
+djq unqueue <video…> [--dry-run] [--json]   # back to Edit; its unposted slots/posts are removed
+djq requeue <video…> [--dry-run] [--json]   # clears it; ready again if its edit is valid, else stays in Edit
+```
+
+`unqueue` sets the clip's `held_in_edit` flag and takes it out of the plan with the planner's own rules: its slots
+from today on that have nothing posted (a pinned slot loses its pin), and every post of it still in flight
+(planned/rendering/rendered/due/overdue, retries and reposts too) are removed. Posted/failed/skipped posts and
+history stay; other clips keep their days (nothing is reshuffled or backfilled). `--json` prints the bulk result
+(`batchId, changed, skipped, summary…`, see below) plus `unplanned{<video id>: [{videoId, date, platforms[], pinned}]}`; undo it with
+`djq bulk undo <batch>` (flag, slots, weeks and posts come back exactly). Both are also `djq bulk unqueue|requeue`
+(with `--filter`). Only when Eric asks — `--dry-run` first and tell Eric which days would go.
+
 ## Bulk (one transaction, journaled, undoable)
 
 ```sh
@@ -68,7 +103,7 @@ Actions: `make-ready` (confirm the default crop; reports what's still missing) �
 `kind <k>` · `exclude` · `include` · `caption-template <id|default>` · `hashtags <set,set|default>` ·
 `extra-hashtags "<#a #b>"|default` · `drop-hashtags <platform>` · `skip-platform <p>` · `unskip-platform <p>` ·
 `accept-title` · `title "<t>"|--clear` · `add-to-week <date>` · `pin-consecutive <date>` · `post-today` ·
-`re-render`.
+`re-render` · `unqueue` · `requeue`.
 
 Always `--dry-run` first on more than a few clips and show Eric the summary. Every result prints its batch id;
 `undo` refuses clips (or a plan) changed again since unless `--force` — don't force without Eric.

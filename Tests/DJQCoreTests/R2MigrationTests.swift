@@ -36,7 +36,7 @@ import Testing
     #expect(try raw.one("PRAGMA user_version")?.int("user_version") == 1)
 
     let store = try Store(paths: paths, clock: FixedClock(Fixture.monday9am), path: copy.path)
-    #expect(try store.db.one("PRAGMA user_version")?.int("user_version") == 2)
+    #expect(try store.db.one("PRAGMA user_version")?.int("user_version") == Store.schemaVersion)
     #expect(try store.db.query("SELECT id, score, kind, excluded, notes FROM videos ORDER BY id").map {
       "\($0.string("id")!)|\($0.int("score").map(String.init) ?? "-")|\($0.string("kind")!)|\($0.bool("excluded"))|\($0.string("notes") ?? "")"
     } == scores)

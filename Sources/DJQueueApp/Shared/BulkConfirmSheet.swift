@@ -11,11 +11,12 @@ struct BulkConfirmSheet: View {
 
   var body: some View {
     let r = pending.request
-    DSDialog(r.title, description: "\(r.ids.count) clips selected", icon: "square.stack.3d.up",
+    DSDialog(r.title, description: r.ids.count == 1 ? (model.video(r.ids[0]).map(model.displayName) ?? "1 clip") : "\(r.ids.count) clips selected", icon: "square.stack.3d.up",
              width: pending.preview?.outlook?.needTitle.isEmpty == false ? 560 : 480,
              onClose: { model.cancelPendingBulk() }) {
       VStack(alignment: .leading, spacing: DS.space.sm) {
         if !r.changes.isEmpty { DSChangeList(changes: r.changes) }
+        if let p = pending.preview, let lines = r.previewLines?(p), !lines.isEmpty { previewList(r.previewTitle, lines, icon: r.previewIcon) }
         preview
       }
     } footer: {
@@ -73,6 +74,25 @@ struct BulkConfirmSheet: View {
         Text("Checking what will change…").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
       }
     }
+  }
+
+  /// The dry run's own list (e.g. the scheduled days Remove from queue takes out), one line each.
+  private func previewList(_ title: String?, _ lines: [String], icon: String) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      if let title { Text(title).font(DS.type.captionMedium).foregroundStyle(DS.color.textSecondary) }
+      ForEach(Array(lines.prefix(12).enumerated()), id: \.offset) { _, l in
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Image(systemName: icon).font(.system(size: 10, weight: .medium)).foregroundStyle(DS.color.textTertiary)
+          Text(l).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(2)
+        }
+      }
+      if lines.count > 12 {
+        Text("+\(lines.count - 12) more").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+      }
+    }
+    .padding(DS.space.sm)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
   }
 
   /// Make-ready's real outcome per clip, and — when clips still need a title — the two explicit ways to give them

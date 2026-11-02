@@ -26,6 +26,8 @@ public enum AgentAPI {
     public var suggestion_count: Int
     public var needs_title_help: Bool
     public var issues: [String]
+    /// Sent back to Edit from the Queue (`djq unqueue`); `djq requeue` clears it.
+    public var held_in_edit: Bool = false
   }
 
   public struct SuggestionOut: Codable, Sendable {
@@ -104,7 +106,8 @@ public enum AgentAPI {
       state: v.state.rawValue, score: v.score, excluded: v.excluded, missing: v.missing, part: v.part, duration: v.duration,
       marked_start: v.markedStart, marked_end: v.markedEnd, audio: v.audio, file: (try? store.fileURL(for: v))??.path,
       suggestion_count: sugg.count, needs_title_help: AgentPrompts.needsTitleHelp(v, suggestions: sugg),
-      issues: v.type == .short ? ((try? Validation.issues(video: v, store: store)) ?? []).map(\.message) : [])
+      issues: v.type == .short ? ((try? Validation.issues(video: v, store: store)) ?? []).map(\.message) : [],
+      held_in_edit: v.heldInEdit)
   }
 
   public static func post(_ p: PlatformPost) -> PostOut {

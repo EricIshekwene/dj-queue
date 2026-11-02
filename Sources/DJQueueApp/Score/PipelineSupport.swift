@@ -42,6 +42,7 @@ struct EditFilter: Hashable, Identifiable {
     case .titleTooLong: return "YouTube title too long"
     case .corrupt: return "Edit unreadable"
     case .missingFile: return "File missing"
+    case .heldInEdit: return "Sent back from Queue"
     }
   }
 
@@ -62,6 +63,7 @@ struct EditFilter: Hashable, Identifiable {
     case .titleTooLong: 7
     case .corrupt: 8
     case .missingFile: 9
+    case .heldInEdit: -1
     }
   }
 }

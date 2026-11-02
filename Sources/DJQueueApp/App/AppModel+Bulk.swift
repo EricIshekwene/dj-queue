@@ -25,6 +25,14 @@ struct BulkRequest {
   var doneMessage: String? = nil
   /// Clear the screen's selection once the batch changed something (the bulk bar hides, the toast is unobstructed).
   var clearsSelection = true
+  /// Ask first even for one clip (e.g. Remove from queue when it would remove scheduled days, Back to Score).
+  var alwaysConfirm = false
+  /// Sheet: a titled list built from the dry run (e.g. "Scheduled days removed" → "Thu 5 Nov · 6 platforms").
+  var previewTitle: String? = nil
+  var previewLines: ((BulkResult) -> [String])? = nil
+  var previewIcon = "calendar"
+  /// Toast from the applied result (message, detail); nil falls back to `doneMessage`.
+  var doneText: ((BulkResult) -> (String, String?))? = nil
   var run: @Sendable (_ dryRun: Bool) throws -> BulkResult
 }
 
@@ -42,7 +50,7 @@ struct PendingBulk: Identifiable {
 extension AppModel {
   func requestBulk(_ r: BulkRequest) {
     guard !r.ids.isEmpty else { return }
-    if r.ids.count == 1 {
+    if r.ids.count == 1 && !r.alwaysConfirm {
       apply(r)
       return
     }
@@ -79,10 +87,12 @@ extension AppModel {
             return
           }
           if r.clearsSelection { self.clearSelection(screen) }
-          let msg = r.doneMessage ?? res.outlook.map { Self.outlookMessage($0, changed: n) } ?? "Updated \(n) clip\(n == 1 ? "" : "s")"
+          let custom = r.doneText?(res)
+          let msg = custom?.0 ?? r.doneMessage ?? res.outlook.map { Self.outlookMessage($0, changed: n) } ?? "Updated \(n) clip\(n == 1 ? "" : "s")"
           let skipped = res.skipped.count
           let allReady = res.outlook.map { $0.needTitle.isEmpty && $0.other.isEmpty } ?? true
-          self.show(DSToastModel(message: msg, detail: skipped > 0 ? "\(skipped) skipped" : nil, tone: allReady ? .success : .neutral,
+          let detail = [custom?.1, skipped > 0 ? "\(skipped) skipped" : nil].compactMap { $0 }.joined(separator: " · ")
+          self.show(DSToastModel(message: msg, detail: detail.isEmpty ? nil : detail, tone: allReady ? .success : .neutral,
                                  actionTitle: res.batchId == nil ? nil : "Undo",
                                  action: res.batchId.map { b in { self.undo(batch: b) } }, duration: 6))
         }

@@ -94,17 +94,21 @@ struct EditClipActions: View {
           HStack(spacing: 6) { ForEach(fixes.prefix(2)) { fixButton($0) } }
         }
         HStack(spacing: 2) {
-          DSButton("Open editor", variant: .outline, size: .sm, tooltip: "Crop, text, caption, cover and platforms") { open() }
+          StageControl(model: model, video: video)
+          DSButton("Open editor", variant: .ghost, size: .sm, tooltip: "Crop, text, caption, cover and platforms") { open() }
           PipelineMoreMenu { EditClipMenu(model: model, video: video, ids: ids, templates: [], extraFixes: Array(fixes.dropFirst(2))) }
         }
       }
       .fixedSize()
     case .grid:
+      Button(model.stageForwardTitle(video), systemImage: "chevron.right") { model.stageForward([video.id]) }
+        .help(model.stageForwardHelp(video))
       Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { open() }.help("Open editor")
       if needs.askAgent {
         Button("Ask an agent", systemImage: "sparkles") { model.copyAgentPrompt([video.id]) }.help(Self.askAgentHelp)
       }
     case .list:
+      StageControl(model: model, video: video, compact: true)
       DSIconButton("slider.horizontal.below.rectangle", tooltip: "Open editor", size: .sm) { open() }
       PipelineMoreMenu { EditClipMenu(model: model, video: video, ids: ids, templates: [], extraFixes: fixes) }
     case .single:
@@ -112,6 +116,7 @@ struct EditClipActions: View {
         if needs.addTitle { EditAddTitleField(model: model, videoId: video.id, label: "Title") }
         if needs.askAgent { askAgent(size: .md) }
         ForEach(fixes) { fixButton($0, size: .md) }
+        StageControl(model: model, video: video, size: .md)
         HStack(spacing: 4) {
           DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .outline,
                    tooltip: "Crop, text, caption, cover and platforms") { open() }
@@ -199,7 +204,7 @@ struct EditAddTitleField: View {
   }
 }
 
-/// ⋯ and right-click menu of an Edit card (native items): Open editor · fixes · Kind ▸ · Caption template ▸ ·
+/// ⋯ and right-click menu of an Edit card (native items): Open editor · Back to Score / Send to queue · fixes · Kind ▸ · Caption template ▸ ·
 /// Copy agent prompt · Apply defaults ▸ · Exclude. Acts on the selection when the clip is part of it.
 struct EditClipMenu: View {
   @Bindable var model: AppModel
@@ -213,6 +218,7 @@ struct EditClipMenu: View {
     let targets = sel.count > 1 && sel.contains(video.id) ? sel : [video.id]
     let n = AppModel.pipelineClips(targets.count)
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id, in: ids) }
+    StageMenuItems(model: model, video: video, targets: targets)
     if !extraFixes.isEmpty {
       Divider()
       ForEach(extraFixes) { f in Button(f.title, systemImage: f.icon, action: f.action).disabled(f.disabledReason != nil) }

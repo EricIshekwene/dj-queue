@@ -99,7 +99,8 @@ struct EditView: View {
 }
 
 /// Edit bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Top title · Caption ▾ (template + hashtags) · Kind ▾ ·
-/// More (agent prompt, apply defaults per section, skip platform, re-render) · **Make ready** (with defaults).
+/// More (Send to queue, Back to Score, agent prompt, apply defaults per section, skip platform, re-render) ·
+/// **Make ready** (with defaults).
 private struct EditBulkBar: View {
   @Bindable var model: AppModel
   let ids: [String]
@@ -141,6 +142,11 @@ private struct EditBulkBar: View {
         }
       }
     } more: {
+      Button("Send to queue", systemImage: "chevron.right") { model.stageForward(ids) }
+        .help("Confirms the default crop where missing and sends them to the Queue; clips still missing something stay here and say what")
+      Button("Back to Score", systemImage: "chevron.left") { model.stageBack(ids) }
+        .help("Clears their scores and sends them back to Score")
+      Divider()
       Button("Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") { model.copyAgentPrompt(ids) }
       EditApplyDefaultsMenu(model: model, ids: ids)
       Menu("Skip platform") {
