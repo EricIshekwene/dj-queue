@@ -38,6 +38,8 @@ struct PostProblemCard: View {
   @Bindable var model: AppModel
   let post: PlatformPost
   var isPrimary = false
+  /// Inside a Posts group card (which already shows the clip): no clip name, tighter padding.
+  var embedded = false
   @State private var showRaw = false
 
   var body: some View {
@@ -50,14 +52,18 @@ struct PostProblemCard: View {
         VStack(alignment: .leading, spacing: 4) {
           HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(post.platform.displayName).font(DS.type.headline).foregroundStyle(DS.color.text)
-            Text(v.map(model.displayName) ?? post.videoId).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+            if !embedded {
+              Text(v.map(model.displayName) ?? post.videoId).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+            }
             Spacer(minLength: DS.space.xs)
             Text(Fmt.relative(post.updatedAt, now: model.now)).font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
               .dsTooltip(Fmt.day(post.updatedAt, tz: model.tz, style: "EEE d MMM, h:mm a"))
           }
           HStack(spacing: 6) {
             DSBadge(PostText.problemType(post), style: .soft(tone), icon: post.state.isCopyright ? "c.circle" : nil)
-            Text("v\(post.versionNo) · \(PostText.attempt(post))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+            if post.versionNo != 1 || post.attemptNo != 1 || post.kind != .regular {
+              Text("v\(post.versionNo) · \(PostText.attempt(post))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+            }
           }
           Text(message).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(3)
             .fixedSize(horizontal: false, vertical: true).padding(.top, 2)
@@ -110,11 +116,11 @@ struct PostProblemCard: View {
       }
       .padding(.leading, 44)
     }
-    .padding(DS.space.md)
-    .background(DS.color.tint(tone), in: RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous))
+    .padding(embedded ? DS.space.sm : DS.space.md)
+    .background(DS.color.tint(tone), in: RoundedRectangle(cornerRadius: embedded ? DS.radius.md : DS.radius.lg, style: .continuous))
     .overlay {
       if model.postsSelection == post.id {
-        RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous).strokeBorder(DS.color.text, lineWidth: 2)
+        RoundedRectangle(cornerRadius: embedded ? DS.radius.md : DS.radius.lg, style: .continuous).strokeBorder(DS.color.text, lineWidth: 2)
       }
     }
   }

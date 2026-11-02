@@ -121,8 +121,9 @@ struct SidebarRow: View {
   }
 }
 
-/// Sidebar footer: "● Running · next 7:00 PM TikTok" / amber "Paused" / red "Engine stopped". Click → menu:
-/// Pause all posting (or Resume), Pause one platform ▸ (per-platform toggles), Open Health.
+/// Sidebar footer — the posting status everywhere except Posts (which also has the paused card) and its control:
+/// "● Running · next 7:00 PM TikTok" / amber "⏸ Posting paused" / red "Engine stopped". Click → menu: Resume posting
+/// (or Pause posting…, which asks first), Pause one platform ▸ (per-platform toggles), Open Health.
 struct EngineLine: View {
   @Bindable var model: AppModel
   var compact = false
@@ -131,11 +132,20 @@ struct EngineLine: View {
 
   var body: some View {
     let line = model.engineLine
+    let paused = model.settings.paused && model.engineRunning
     Button { open.toggle() } label: {
       HStack(spacing: 10) {
-        DSStatusDot(tone: line.tone, size: 8, pulse: line.tone == .success).frame(width: 18)
+        Group {
+          if paused {
+            Image(systemName: "pause.circle.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(DS.color.warning)
+          } else {
+            DSStatusDot(tone: line.tone, size: 8, pulse: line.tone == .success)
+          }
+        }
+        .frame(width: 18)
         if !compact {
-          Text(line.text).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(1)
+          Text(line.text).font(paused ? DS.type.calloutMedium : DS.type.callout)
+            .foregroundStyle(paused ? DS.color.warning : DS.color.text).lineLimit(1)
           Spacer(minLength: 0)
           Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(DS.color.textTertiary)
         }
@@ -143,12 +153,13 @@ struct EngineLine: View {
       .padding(.horizontal, 10)
       .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
       .frame(height: DS.size.sidebarItem)
-      .background(hovering || open ? DS.color.hover : .clear, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+      .background(hovering || open ? DS.color.hover : paused ? DS.color.warning.opacity(0.10) : .clear,
+                  in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
-    .dsTooltip(compact ? line.text : "Engine and posting")
+    .dsTooltip(paused ? "Posting is paused — click to resume posting" : compact ? line.text : "Posting status — click to pause or resume posting")
     .accessibilityLabel("Engine: \(line.text)")
     .dsPopover(isPresented: $open, edge: .top, width: 260) { EngineMenu(model: model) { open = false } }
   }
@@ -173,8 +184,8 @@ struct EngineMenu: View {
       DSMenuList(items: [
         .label(model.engineLine.text),
         paused
-          ? DSMenuItem(title: "Resume all posting", icon: "play.circle") { close(); model.setPaused(false) }
-          : DSMenuItem(title: "Pause all posting", icon: "pause.circle") { close(); model.confirmPause = true },
+          ? DSMenuItem(title: "Resume posting", icon: "play.circle") { close(); model.setPaused(false) }
+          : DSMenuItem(title: "Pause posting…", icon: "pause.circle") { close(); model.confirmPause = true },
         DSMenuItem(title: "Pause one platform", icon: "pause", shortcut: "›") { platforms = true },
         .separator,
         DSMenuItem(title: "Open Health", icon: "heart") { close(); model.screen = .health },

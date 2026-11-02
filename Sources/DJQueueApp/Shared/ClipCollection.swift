@@ -12,7 +12,8 @@ import SwiftUI
 /// Clicks: checkbox → toggle; ⇧-click → range from the anchor; ⌘-click → toggle; plain click → `onOpen` when
 /// nothing is selected, otherwise it toggles (selection mode — the same rule DSClipCard applies). A suggestion
 /// chip sets the Title through `acceptSuggestion` (undoable). Items request their poster and preview proxy as they
-/// appear. Autoplay follows `model.playback` (focus-only → only the hovered / shown item plays).
+/// appear. Autoplay follows `model.playback` via `PreviewPlayback.plays` (focus-only → only the hovered / shown item
+/// plays; Grid with "play on hover only" → posters, the hovered tile plays and its neighbours' proxies prefetch).
 ///
 /// The collection registers its ids in `model.visibleIds[screen]` (⌘A, Select all) and drops selected ids that
 /// left the list. Empty lists: show a DSEmptyState instead of the collection (the screen's job).
@@ -78,7 +79,9 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
     .task(id: proxyKey) {
       try? await Task.sleep(for: .milliseconds(model.frozen ? 0 : 250))
       guard !Task.isCancelled, model.playback.autoplay else { return }
-      model.requestProxies(proxyOrder)
+      let t = PreviewPlayback.proxyTargets(model.playback, layout: mode.playbackLayout, visible: proxyOrder,
+                                           hovered: mode == .single ? nil : hovered)
+      model.requestProxies(t.now, prefetch: t.prefetch)
     }
   }
 
@@ -173,7 +176,7 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
     let c = clip?(v) ?? model.dsClip(v, for: screen)
     var cfg = DSClipCardConfig()
     let p = model.playback
-    cfg.autoplay = p.autoplay && (!p.focusOnly || hovered == v.id || focused)
+    cfg.autoplay = PreviewPlayback.plays(p, layout: mode.playbackLayout, hovered: hovered == v.id, focused: focused)
     cfg.unmuteOnHover = p.unmuteOnHover
     cfg.selectionMode = !sel.isEmpty && mode != .single
     cfg.showsDragHandle = showsDragHandle && mode == .wide
@@ -218,6 +221,7 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
 
   private var proxyKey: String {
     proxyOrder.joined(separator: ",") + "|\(model.playback.loop.rawValue)|\(model.playback.autoplay)|\(mode.rawValue)"
+      + "|\(model.playback.gridHoverOnly)|\(mode == .grid && model.playback.gridHoverOnly ? hovered ?? "" : "")"
   }
 }
 
@@ -267,5 +271,17 @@ private struct OptionalContextMenu<M: View>: ViewModifier {
   @ViewBuilder let menu: () -> M
   func body(content: Content) -> some View {
     if enabled { content.contextMenu { menu() } } else { content }
+  }
+}
+
+extension DSViewMode {
+  /// The playback rules' name for this layout (`PreviewPlayback`).
+  var playbackLayout: PreviewPlayback.Layout {
+    switch self {
+    case .wide: .cards
+    case .grid: .grid
+    case .single: .single
+    case .list: .list
+    }
   }
 }

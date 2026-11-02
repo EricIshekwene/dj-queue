@@ -34,7 +34,7 @@ enum ScreenMetrics {
 /// ```
 /// `readingColumn: true` centres the sub-toolbar and attention cards in the 880 pt column (text-heavy screens and
 /// Cards view); otherwise they span the full width with gutters. The problems card is hidden on Posts (that
-/// screen is where it leads).
+/// screen is where it leads); the paused card shows only on Posts (the sidebar status is the indicator elsewhere).
 struct ScreenScaffold<Trailing: View, SubToolbar: View, Content: View>: View {
   @Bindable var model: AppModel
   let screen: Screen
@@ -92,7 +92,11 @@ struct AttentionStack: View {
   let screen: Screen
 
   var body: some View {
-    let items = model.attentionItems.filter { !(screen == .posts && $0.id == "problems") }
+    // Posts is where problems lead (no card there) and the only screen with the "Posting paused" card; elsewhere
+    // the sidebar's posting status says "Posting paused" and is the control.
+    let items = model.attentionItems.filter { i in
+      !(screen == .posts && i.id == "problems") && !(screen != .posts && i.id == "paused")
+    }
     if !items.isEmpty {
       VStack(spacing: DS.space.xs) {
         ForEach(items) { i in

@@ -27,7 +27,8 @@ struct ScoreGridView: View {
       .padding(.top, DS.space.xxs)
       .padding(.bottom, ScreenMetrics.bulkBarInset)
     }
-    .pipelineClipFeed(model, .score, ids: ids, play: ids.filter { visible.contains($0) })
+    .pipelineClipFeed(model, .score, ids: ids, play: ids.filter { visible.contains($0) }, layout: .grid,
+                      hovered: hovered ?? focus)
   }
 
   private func tile(_ v: Video, next: String?, ids: [String]) -> some View {
@@ -38,7 +39,7 @@ struct ScoreGridView: View {
     c.blocks = []
     var cfg = DSClipCardConfig()
     let p = model.playback
-    cfg.autoplay = p.autoplay && (!p.focusOnly || hovered == v.id || focus == v.id)
+    cfg.autoplay = PreviewPlayback.plays(p, layout: .grid, hovered: hovered == v.id, focused: focus == v.id)
     cfg.unmuteOnHover = p.unmuteOnHover
     cfg.selectionMode = !sel.isEmpty
     return VStack(alignment: .leading, spacing: DS.space.xs) {
