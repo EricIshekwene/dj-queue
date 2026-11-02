@@ -14,6 +14,7 @@ The app follows a clip's life — **Score → Edit → Queue → Week → Today*
 - **Score & queue** — I score each clip 0–100 on a large autoplaying preview; the queue orders the backlog worst → best (to warm up new accounts) or best → worst. Every list has Cards / Grid / Single / List views with muted autoplay from small background-generated proxies.
 - **Vertical editor** — crop a 4K 16:9 frame to 9:16, trim starting on my original markers (with grace to extend), overlay text, captions with per-platform limits, a cover frame, versions for reposts, multi-platform safe zones and realistic phone previews of each platform's UI with the real caption and handle.
 - **No intelligence in the app, by design** — the app is a UI over scripts. Song names and titles come from metadata my agents write (`title_suggestions` in the manifest) and show up as chips; when a name is ambiguous, *Ask an agent* copies a ready-made prompt. Outside agents read and change everything through the `djq` CLI (JSON in/out), documented as a Claude skill.
+- **Stage moves** — any clip can move one stage back or forward from wherever it is (e.g. *Remove from queue* sends it back to Edit; a scheduled clip can go back to the Queue), with the reason shown when a move isn't allowed (nothing already posted is ever pulled back) and one-step undo.
 - **Defaults + bulk editing** — new-clip defaults for frame, trim, text, cover, captions and platforms (clips store only overrides, so changing a default updates every untouched clip); bulk actions with a confirmation sheet showing exactly what changes and one-step undo.
 - **Weekly approval** — the app proposes the next 7 days; I drag, swap, pin and approve. Only approved weeks ever post.
 - **Background engine** — runs at login, renders the approved week ahead of time (1080×1920 H.264, loudness-normalised to −14 LUFS), and notifies me when each platform post is due.
@@ -28,6 +29,8 @@ The app follows a clip's life — **Score → Edit → Queue → Week → Today*
 | ![Editor previews](docs/screenshots/editor-preview.jpg) | ![Editor zones](docs/screenshots/editor-zones.jpg) |
 | **Week** | **Today** |
 | ![Week](docs/screenshots/week.jpg) | ![Today](docs/screenshots/today.jpg) |
+| **Queue — stage moves** | **Posts — one card per clip and day** |
+| ![Queue stage menu](docs/screenshots/queue-stage-menu.jpg) | ![Posts](docs/screenshots/posts.jpg) |
 | **Library** | **Settings — new clip defaults** |
 | ![Library](docs/screenshots/library.jpg) | ![Settings](docs/screenshots/settings-defaults.jpg) |
 
@@ -82,6 +85,7 @@ I wrote the product spec, then directed AI coding agents (Claude Code) through a
 3. **Independent review on every branch** — a fresh reviewer agent per milestone checked spec fidelity and code quality, with probes. Real bugs caught this way: a double-post path after a missed day, an edit hash that would have re-rendered and overwritten files whenever a platform was toggled, a DST off-by-an-hour, trim handles that stuck, crop maths 1 px off the export.
 4. **Integration and a final end-to-end review** against the spec's acceptance criteria on my real clips, with screenshots of every screen beside its reference, then ship.
 5. **Round 2 — redesign from my own usage notes.** After scoring my first set I staged 14 changes (too "rectangly", no bulk editing, unclear controls, the app guessing names). They were turned into a new design lock (`design/DESIGN-v2.md`), a SwiftUI design system (`design/DESIGN-SYSTEM.md`), a core rework (defaults with override semantics, bulk ops with an undo journal, proxies, an agent API) and rebuilt screens — again in parallel branches with independent reviews, a lossless schema migration verified against my real data, and a final end-to-end review. Decisions are logged in `DECISIONS-R2.md` and `design/*-DECISIONS*.md`.
+6. **Round 3 — fixes from daily use**, same process: stage moves back/forward, Remove from queue, grid clips that play (with sound) only on hover, grouped post cards, a quieter paused state. A reviewer caught a real data bug before it shipped (removing a partly posted clip from the queue would have dropped its remaining platforms).
 
 The commit history shows that flow (`Co-Authored-By` lines mark agent-written commits). Design artifacts are in `design/` (`INVENTORY.md`, `DESIGN.md`, `REFS.md`, text-style mockups) and the decision page is `DECISIONS.html` (its third-party reference images aren't published).
 
@@ -90,7 +94,7 @@ The commit history shows that flow (`Co-Authored-By` lines mark agent-written co
 Requires macOS 15+, a Swift 6 toolchain (Xcode or Command Line Tools) and `ffmpeg` (`brew install ffmpeg`).
 
 ```bash
-swift build && swift test                  # 187 tests
+swift build && swift test                  # 208 tests
 scripts/build-app.sh                       # builds "build/DJ Queue.app" with the djq CLI inside
 scripts/build-app.sh --install             # copies to ~/Applications and links ~/bin/djq
 ```
@@ -114,7 +118,7 @@ design/                 inventory, design specs v1/v2, design system, decision l
 
 ## Status
 
-Phase 1 (manual publishing) is in daily use, redesigned in round 2. Next: a Postiz publisher so posts go out with the Mac off, then analytics and opt-in reposting of underperforming posts.
+Phase 1 (manual publishing) is in daily use (v0.3.0), redesigned in round 2 and refined in round 3. Next: a tooltip/undo pass on every screen, then a Postiz publisher so posts go out with the Mac off. Next: a Postiz publisher so posts go out with the Mac off, then analytics and opt-in reposting of underperforming posts.
 
 ## License
 
