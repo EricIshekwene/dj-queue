@@ -24,7 +24,7 @@
 - Real data: DB `~/Library/Application Support/DJ Queue/queue.sqlite`; sources `~/Movies/DJ Video/`. Dev work and tests never open or change either. Use `scripts/make-devroot.sh`, then `DJQ_ROOT=~/code/dj-queue-dev/"DJ Video" DJQ_HOME=<own scratch dir>`.
 - Never modify, move or delete source footage, CapCut projects or `videos.json` ids.
 - Schema changes migrate losslessly: test on a **copy** of the newest `~/code/dj-queue-dev/backups/real-queue-before-*.sqlite` and compare counts, scores, titles and edits.
-- Don't resume posting, approve weeks, post, or change Settings on Eric's data unless Eric says so. Touch the LaunchAgent only with the ship step's `launchctl kickstart`.
+- Don't resume posting, approve weeks, post, or change Settings on Eric's data unless Eric says so. Touch the LaunchAgents only through the ship steps (the auto-update watcher restarts the engine itself; `launchctl kickstart` only on the manual fallback).
 - Eric may be at the Mac: never move the real pointer or type into Eric's apps. macOS blocks synthetic mouse input, so list hover checks for Eric to try by hand.
 - `rm` with literal paths only. Never force-push, never `gh auth switch`, never rewrite published history.
 - Public repo: no secrets, emails other than the GitHub no-reply address, absolute home-directory paths, references to Eric's other projects or third-party images. `refs/` stays gitignored.
@@ -37,12 +37,13 @@
 - Data: `djq doctor --json` (exit 2 means errors) and `djq videos --json`.
 
 ## Ship (Eric has authorized pushing `main`; no extra approval needed unless the round was only staged)
-1. All task branches have passed independent review and are merged into `main` (`--no-ff`) in dependency order. `swift build` and `swift test` pass on `main`.
-2. Before install, snapshot the data: `djq videos --json > <session>/evidence/pre-install-videos.json`, and back up the real DB with SQLite's backup API: `sqlite3 "$HOME/Library/Application Support/DJ Queue/queue.sqlite" ".backup '$HOME/code/dj-queue-dev/backups/real-queue-before-r<N>-install-<YYYYMMDD-HHMM>.sqlite'"`. Then confirm the copy with `PRAGMA integrity_check`.
-3. Tag first so the bundle shows the release version: `git tag -a v0.<X>.0 -m "<one-line summary>"`.
-4. Install with `scripts/build-app.sh --install`, then run `launchctl kickstart -k gui/$(id -u)/com.djlovd.queue.engine`.
-5. Verify: ids, scores, titles and edits are identical to the pre-install snapshot (plus the round's intended changes), `djq doctor --json` shows 0 errors, and the installed version matches the tag (`git describe --tags` versus `CFBundleShortVersionString` in `~/Applications/DJ Queue.app/Contents/Info.plist`). If verification fails, stop, keep the backup and report it; don't push.
-6. Push as EricIshekwene:
+From v0.6.0 on, the auto-update watcher installs every commit that lands on `main` (`djq autoupdate status` says whether it's on). Sessions merge and tag; the watcher gates (tests + app build in a scratch checkout), backs up the DB, installs, restarts the engine and verifies. Never run `build-app.sh --install` while the watcher is on: two installers would race.
+1. All task branches have passed independent review. Before merging, snapshot the data: `djq videos --json > <session>/evidence/pre-install-videos.json`, and back up the real DB with SQLite's backup API: `sqlite3 "$HOME/Library/Application Support/DJ Queue/queue.sqlite" ".backup '$HOME/code/dj-queue-dev/backups/real-queue-before-r<N>-install-<YYYYMMDD-HHMM>.sqlite'"`; confirm the copy with `PRAGMA integrity_check`.
+2. Merge into `main` (`--no-ff`) in dependency order and tag the final merge **in the same step** (`git tag -a v0.<X>.0 -m "<one-line summary>"`), so the watcher's 20 s debounce builds the release label. (A tag that lands later only re-labels: the watcher rebuilds the same commit.)
+3. Follow the install with `djq autoupdate status` and `djq autoupdate log` (a gate takes a few minutes). Outcomes: **installed** (go on); **ready** (Eric's window is open: it installs when the window closes or on Restart & update; report that, don't force it); **blocked** (tests or build failed on main: nothing was installed; fix on a branch, review, merge again; `djq autoupdate log --run` has the output); **rolled back** (its checks failed after install; Eric's data is as before; investigate). With the watcher off, fall back to the manual steps: `swift build` + `swift test` on `main`, `scripts/build-app.sh --install`, `launchctl kickstart -k gui/$(id -u)/com.djlovd.queue.engine`.
+4. Verify: ids, scores, titles and edits are identical to the pre-install snapshot (plus the round's intended changes), `djq doctor --json` shows 0 errors, and the installed version matches the tag (`git describe --tags` versus `CFBundleShortVersionString` in `~/Applications/DJ Queue.app/Contents/Info.plist`). If verification fails, stop, keep the backup and report it; don't push.
+5. Push as EricIshekwene:
    `GH_TOKEN=$(gh auth token --user EricIshekwene) git -c credential.helper= -c 'credential.helper=!f(){ echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' push origin main --follow-tags`
    A rejected push means fetch and reconcile, never force. Confirm with `git ls-remote origin main` and the tag.
+6. Docs-only commits (README, DECISIONS, design/) are skipped by the watcher, so post-ship doc refreshes don't reinstall.
 7. Refresh affected docs: README (screenshots when screens changed), `ARCHITECTURE.md`, `DECISIONS-R<N>.md`, and the knowledge pack in `~/code/dj-queue-dev/claude-project-docs/`. Update the Notion DJ Queue hub when the Notion connector is available; otherwise say so.
