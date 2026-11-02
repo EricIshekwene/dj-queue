@@ -6,6 +6,7 @@ public final class Doctor: @unchecked Sendable {
   let store: Store
   /// Injectable for tests (default asks launchctl, read-only).
   public var agentLoaded: () -> Bool = { LaunchAgent.isLoaded() }
+  public var autoUpdateWatcherLoaded: () -> Bool = { AutoUpdateWatcher.isLoaded() }
   /// Duration check with ffprobe (planned/next-48 h videos only). Off in tests for speed.
   public var probeDurations = true
 
@@ -41,6 +42,7 @@ public final class Doctor: @unchecked Sendable {
     check("disk.free", disk)
     check("tools", tools)
     check("system.timezone", timeZone)
+    check("autoupdate", autoUpdate)
     check("capcut.markers") {
       [DoctorFinding(id: "capcut.markers", severity: .info, title: "CapCut markers not checked",
                      detail: "No CapCut project → videos.json mapping is recorded yet, so marker changes since export can't be compared.",
