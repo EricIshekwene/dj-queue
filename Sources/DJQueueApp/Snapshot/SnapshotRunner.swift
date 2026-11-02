@@ -8,7 +8,8 @@ import SwiftUI
 /// Shots come from one static func per leaf (`SnapshotShots.shell/pipeline/planning/browse/settings`, each in its
 /// own `Shots+<Leaf>.swift` file) so parallel leaves never edit the same file. Name prefixes: shell 0x,
 /// pipeline 1x, planning 2x, browse 3x, settings 4x. `DJQ_SNAPSHOT_ONLY=<substring>` limits the run.
-/// `DJQ_SNAPSHOT_GALLERY=1` renders the design-system gallery instead (DSGallerySnapshot).
+/// `DJQ_SNAPSHOT_GALLERY=1` renders the design-system gallery instead (DSGallerySnapshot); `DJQ_SNAPSHOT_EDITOR=1`
+/// renders the editor (EditorSnapshot, incl. `DJQ_EDITOR_SELFTEST`).
 ///
 /// Rendering uses real AppKit windows (NSHostingController + window capture / `cacheDisplay`) instead of
 /// `ImageRenderer`, because ImageRenderer can't draw AppKit-backed controls.
@@ -16,6 +17,7 @@ import SwiftUI
 enum SnapshotRunner {
   static func run(outputDir: String) async -> Int32 {
     if ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_GALLERY"] != nil { return await DSGallerySnapshot.run(outputDir: outputDir) }
+    if ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_EDITOR"] != nil { return await EditorSnapshot.run(outputDir: outputDir) }
     let out = URL(fileURLWithPath: outputDir)
     do {
       try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
