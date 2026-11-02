@@ -166,6 +166,31 @@ import Testing
     #expect(try b.commit(s2).batchId == nil)
   }
 
+  /// Review r4 M1 (second case): edit in the editor, then a journaled action on the same clip, then more edits, then
+  /// close. The app splits the session before the action and rebases it past the action once it's journaled, so
+  /// ⌘Z⌘Z⌘Z unwinds edits₂, the action, edits₁ — none skipped.
+  @Test func editorSessionSplitsAroundAJournaledAction() throws {
+    let f = try Fixture.engine(1)
+    let b = bulk(f)
+    var history = UndoHistory()
+    let t0 = try f.store.video(id: "clip-0")?.title
+    var session = try b.begin("editor", ids: ["clip-0"])
+    try f.store.setTitle("clip-0", "T1")                                   // editor edit
+    let (first, next) = try b.split(session)                                // app: a journaled action is about to run
+    history.push(try #require(first.batchId), label: "Edits to clip-0")
+    session = next
+    let act = try b.record("set-title", ids: ["clip-0"]) { try f.store.setTitle("clip-0", "T2") }
+    history.push(try #require(act.batchId), label: "Title T2")
+    session = try b.rebase(session, onto: try #require(act.batchId))      // app: the action landed on the history
+    try f.store.setTitle("clip-0", "T3")                                   // more editor edits
+    history.push(try #require(try b.commit(session).batchId), label: "Edits to clip-0")
+    for expected in ["T2", "T1", t0] {
+      let r = try b.undo(try #require(history.popTop()?.batchId))
+      #expect(r.skipped.isEmpty, "undo to \(String(describing: expected)): \(r.skipped)")
+      #expect(try f.store.video(id: "clip-0")?.title == expected)
+    }
+  }
+
   /// Rapid ⌘Z⌘Z: 10 → 50 → 60, two undos submitted back to back → 10 (the runner keeps them in order).
   @Test func rapidUndosApplyInOrder() throws {
     let f = try Fixture.engine(1)

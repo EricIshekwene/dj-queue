@@ -468,7 +468,7 @@ public final class BulkActions: @unchecked Sendable {
   public struct OpenEntry: Sendable {
     public let action: String
     public let ids: [String]
-    let before: Snapshot
+    var before: Snapshot
   }
 
   /// Snapshots `ids` now; `commit` later records ONE undoable batch for whatever changed in between (e.g. a whole
@@ -508,6 +508,38 @@ public final class BulkActions: @unchecked Sendable {
       result.batchId = batchId
     }
     return result
+  }
+
+  /// Closes `e` as its own batch (when anything changed) and opens a fresh entry on the same clips: call it before a
+  /// journaled action runs inside a long interaction, so the history reads interaction₁ → action → interaction₂.
+  public func split(_ e: OpenEntry) throws -> (BulkResult, OpenEntry) {
+    let r = try commit(e)
+    return (r, try begin(e.action, ids: e.ids))
+  }
+
+  /// Moves `e`'s starting point past batch `batchId` (a journaled action that ran while `e` was open): every
+  /// interaction-owned field that batch changed starts from its result, so `e` never claims — or undoes — the
+  /// action's change, and the action's own undo still finds its clip as it left it.
+  public func rebase(_ e: OpenEntry, onto batchId: String) throws -> OpenEntry {
+    guard let row = try store.db.one("SELECT before, after FROM batches WHERE id=?", [batchId]),
+          let bs = row.string("before"), let asx = row.string("after"),
+          let b = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(bs.utf8)),
+          let a = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(asx.utf8)) else { return e }
+    let bById = Dictionary(b.clips.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
+    let aById = Dictionary(a.clips.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
+    var out = e
+    for i in out.before.clips.indices {
+      let id = out.before.clips[i].id
+      guard let x = bById[id], let y = aById[id] else { continue }
+      if x.kind != y.kind { out.before.clips[i].kind = y.kind }
+      if x.title != y.title || x.titleTracks != y.titleTracks || x.titleSource != y.titleSource {
+        out.before.clips[i].title = y.title; out.before.clips[i].titleTracks = y.titleTracks
+        out.before.clips[i].titleSource = y.titleSource
+      }
+      if x.edit != y.edit { out.before.clips[i].edit = y.edit }
+      if x.versions != y.versions { out.before.clips[i].versions = y.versions }
+    }
+    return out
   }
 
   // MARK: Journal

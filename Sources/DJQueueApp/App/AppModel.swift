@@ -173,7 +173,14 @@ final class AppModel {
   /// Bulk confirmation sheet currently shown (AppModel+Bulk.swift).
   var pendingBulk: PendingBulk?
   /// ⌘Z order: every undoable action's journal batch, most recent last (UndoHistory, round 3 F8).
-  var undoHistory = UndoHistory()
+  var undoHistory = UndoHistory() {
+    didSet {
+      // A new action was journaled while the editor is open: the session starts after it (review r4 M1).
+      if let s = editorSession, let top = undoHistory.top?.batchId, !oldValue.entries.contains(where: { $0.batchId == top }) {
+        editorSession = (try? bulk.rebase(s, onto: top)) ?? s
+      }
+    }
+  }
   /// The batch the next ⌘Z undoes. Setting pushes onto the history (label from `undoLabel`).
   var lastBatchId: String? {
     get { undoHistory.top?.batchId }
@@ -540,6 +547,7 @@ final class AppModel {
   @discardableResult
   func undoable(_ label: String, _ action: String, ids: [String] = [], plan: Bool = false, settings: Bool = false,
                 renders: Bool = false, _ body: () throws -> Void) -> Bool {
+    splitEditorSession()
     do {
       let r = try bulk.record(action, ids: ids, plan: plan, settings: settings, renders: renders, body)
       ChangeSignal.post()
@@ -907,6 +915,24 @@ final class AppModel {
     let all = ids ?? [videoId]
     if editorSession == nil { editorSession = try? bulk.begin("editor", ids: all.contains(videoId) ? all : [videoId] + all) }
     editor = EditorRequest(videoId: videoId, videoIds: all, fixPostId: fixPostId)
+  }
+
+  /// A journaled action (or an undo) is about to run while the editor is open: close the session so far as its own
+  /// entry and start a new one, so the history reads Edits₁ → the action → Edits₂ and ⌘Z unwinds them in order
+  /// (review r4 M1: folding the action into one session entry made its own undo skip the clip).
+  func splitEditorSession() {
+    guard let e = editorSession else { return }
+    EditorModel.waitForSaves()
+    do {
+      let (r, next) = try bulk.split(e)
+      if let b = r.batchId {
+        let name = r.changed.count == 1 ? video(r.changed[0]).map(displayName) ?? "1 clip" : "\(r.changed.count) clips"
+        undoHistory.push(b, label: "Edits to \(name)")
+      }
+      editorSession = next
+    } catch {
+      Log.shared.error("editor session split failed: \(error)")
+    }
   }
 
   /// After the editor's last writes land: journal the session (nothing changed → no entry).

@@ -92,6 +92,7 @@ extension AppModel {
   /// reverts every batch (⌘Z reverts the last one).
   func pipelineSaveScores(_ scores: [String: Int]) {
     guard !scores.isEmpty else { return }
+    splitEditorSession()
     let b = bulk
     let groups = Dictionary(grouping: scores.keys.sorted(), by: { scores[$0]! })
     Task.detached(priority: .userInitiated) {

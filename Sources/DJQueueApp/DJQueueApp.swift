@@ -154,6 +154,7 @@ final class AppHost {
       guard let postId else { break }
       do {
         // Journaled like an in-app click, so ⌘Z in the window can undo it (F8).
+        model.splitEditorSession()
         let r = try model.bulk.record("notification-\(action)", ids: post.map { [$0.videoId] } ?? [], plan: true) {
           try model.postActions.perform(act!, postId: postId)
         }
@@ -173,6 +174,7 @@ final class AppHost {
       let url = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
       do {
         guard !url.isEmpty else { throw EditorlessError("Paste the post URL") }
+        model.splitEditorSession()
         let r = try model.bulk.record("mark-posted", ids: [post.videoId], plan: true) {
           try model.postActions.markPosted(postId: post.id, url: url, at: Date())
         }

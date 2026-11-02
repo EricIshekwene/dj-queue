@@ -269,6 +269,7 @@ struct MenuBarContent: View {
   private func save(_ p: PlatformPost) {
     let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
     do {
+      model.splitEditorSession()
       let r = try model.bulk.record("mark-posted", ids: [p.videoId], plan: true) {
         try model.postActions.markPosted(postId: p.id, url: u, at: Date())
       }

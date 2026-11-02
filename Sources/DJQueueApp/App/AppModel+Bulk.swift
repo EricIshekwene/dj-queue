@@ -68,6 +68,7 @@ extension AppModel {
   func cancelPendingBulk() { pendingBulk = nil }
 
   func apply(_ r: BulkRequest, then: (() -> Void)? = nil) {
+    splitEditorSession()
     let run = r.run
     let screen = self.screen
     Task.detached(priority: .userInitiated) {
@@ -138,6 +139,7 @@ extension AppModel {
 
   /// Undoes one batch (toast "Undone: <what>", or why not). Clips changed again since are skipped by BulkActions.
   func undo(batch id: String) {
+    splitEditorSession()
     let label = undoHistory.entries.first { $0.batchId == id }?.label
     undoHistory.remove(id)
     // UndoRunner is serial: ⌘Z⌘Z restores newest-first even when pressed faster than an undo takes.
@@ -146,6 +148,9 @@ extension AppModel {
         self.refresh()
         switch out {
         case .success(let r):
+          // An undo from a toast while the editor is open: the session restarts after it (its edits so far were
+          // journaled by the split above), so closing the editor never re-applies what was just undone.
+          if let s = self.editorSession { self.editorSession = (try? self.bulk.begin(s.action, ids: s.ids)) ?? s }
           self.show(DSToastModel(message: label.map { "Undone: \($0)" } ?? "Undone",
                                  detail: r.skipped.isEmpty ? nil : "\(r.skipped.count) skipped · changed since",
                                  tone: .neutral, duration: 4))
