@@ -34,6 +34,9 @@ enum AutoUpdateCommand {
     let dev = ["DJQ_HOME", "DJQ_ROOT"].contains { !(env[$0] ?? "").isEmpty }
     guard let sub = args.first else { print(usage); return 0 }
     args.removeFirst()
+    if AutoUpdate.unsafeDevEnvironment(env), ["on", "off", "run", "rollback"].contains(sub) {
+      throw AutoUpdateCLIError("refused: DJQ_ROOT is set without DJQ_HOME, so this would act on the real app and watcher. Set DJQ_HOME too (or unset DJQ_ROOT).")
+    }
 
     switch sub {
     case "status":
@@ -66,6 +69,9 @@ enum AutoUpdateCommand {
         print("ready        \(r.version) (\(String(r.commit.prefix(7)))) · \(r.whatsNew.count) change(s) · \(r.later ? "installs when the window closes" : "waiting for the window to close")")
       }
       if let b = s.blocked { print("blocked      \(b.version) (\(String(b.commit.prefix(7)))): \(b.reason)") }
+      if let f = s.failedInstall, f.commit != s.blocked?.commit {
+        print("failed       \(f.version) (\(String(f.commit.prefix(7)))) is installed but failed its checks: \(f.reason)")
+      }
       if let l = s.last { print("last         \(l.kind.rawValue) · \(l.message)") }
       print("log          \(au.log.path)")
       return 0

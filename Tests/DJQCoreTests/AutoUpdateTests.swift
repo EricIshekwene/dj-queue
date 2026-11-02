@@ -537,6 +537,76 @@ import Testing
     #expect(e.files.state().ready == nil)
   }
 
+  @Test func verifyWaitsForTheEngineToComeBack() throws {
+    let e = try Env()
+    try e.setUp()
+    let first = e.git("rev-parse", "HEAD")
+    e.runner().run(trigger: .manual)
+    try e.write("Sources.swift", "// v2")
+    let v2 = e.commit("v2")
+    // An engine that restarts but never writes a heartbeat (crashes at launch): verify fails, rollback.
+    var r = e.runner()
+    r.heartbeatTimeout = 4
+    r.engine = AutoUpdateEngineControl(restart: { (true, "kickstarted") }, stop: { (true, "stopped") }, start: { _ in (true, "started") },
+                                       expectsHeartbeat: { true })
+    var result = r.run(trigger: .watch)
+    #expect(result.kind == .rolledBack)
+    #expect(result.message.contains("didn't start on the new build"))
+    #expect(e.installed?.commit == first)
+    // An engine that comes back (writes its start heartbeat) passes.
+    try e.write("Sources.swift", "// v3")
+    let v3 = e.commit("v3")
+    let db = e.paths.database.path
+    r = e.runner()
+    r.heartbeatTimeout = 4
+    r.engine = AutoUpdateEngineControl(restart: {
+      let d = try? SQLite(path: db)
+      try? d?.run("INSERT INTO heartbeats(at, kind) VALUES(?, 'start')", [Date().addingTimeInterval(1)])
+      return (true, "kickstarted")
+    }, stop: { (true, "stopped") }, start: { _ in (true, "started") }, expectsHeartbeat: { true })
+    result = r.run(trigger: .watch)
+    #expect(result.kind == .installed)
+    #expect(e.installed?.commit == v3)
+    _ = v2
+  }
+
+  @Test func aFailedKickstartFailsVerify() throws {
+    let e = try Env()
+    try e.setUp()
+    e.runner().run(trigger: .manual)
+    try e.write("Sources.swift", "// v2")
+    e.commit("v2")
+    let r = e.runner()
+    r.engine = AutoUpdateEngineControl(restart: { (false, "launchctl kickstart failed: boom") }, stop: { (true, "stopped") },
+                                       start: { _ in (true, "started") }, expectsHeartbeat: { true })
+    let result = r.run(trigger: .watch)
+    #expect(result.kind == .rolledBack)
+    #expect(result.message.contains("the engine didn't restart"))
+  }
+
+  @Test func aLaterGateBlockDoesntHideAFailedInstall() throws {
+    let e = try Env()
+    try e.setUp()
+    e.runner().run(trigger: .manual)
+    try migratingBuild(e, withPost: true)
+    let v2 = e.commit("migrating build")
+    e.extraEnv["DJQ_AUTOUPDATE_FAIL_VERIFY"] = "1"
+    #expect(e.runner().run(trigger: .watch).kind == .failed)
+    e.extraEnv = [:]
+    try e.write("FAIL_TESTS", "1")
+    e.commit("broken on top")
+    #expect(e.runner().run(trigger: .watch).kind == .blocked)
+    let s = e.files.state()
+    #expect(s.failedInstall?.commit == v2)
+    #expect(s.needsAttention)
+    let store = try Store(paths: e.paths)
+    let d = Doctor(store: store)
+    d.agentLoaded = { true }
+    d.autoUpdateWatcherLoaded = { true }
+    d.probeDurations = false
+    #expect(d.run().findings.contains { $0.id == "autoupdate.failed" && $0.fix.contains("--restore-db") })
+  }
+
   @Test func devRootWithoutDevHomeIsRefused() throws {
     let e = try Env()
     try e.setUp()
