@@ -1,0 +1,386 @@
+import DJQCore
+import SwiftUI
+
+// MARK: - Frame (aspect, crop, zoom, trim)
+
+struct EditorFrameSection: View {
+  @ObservedObject var model: EditorModel
+
+  var body: some View {
+    EditorSectionView(.frame) {
+      VStack(alignment: .leading, spacing: DS.space.md) {
+        EditorField(label: "Aspect", help: "Output shape of the video", isCustom: !model.isDefault(.aspect),
+                    resetHelp: "Back to the default aspect (\(model.defaults.aspect.rawValue))",
+                    onReset: { model.setAspect(model.defaults.aspect) }) {
+          DSSegmented(selection: Binding(get: { model.aspect }, set: { model.setAspect($0) }),
+                      segments: Aspect.allCases.map { DSSegment(value: $0, title: $0.rawValue) }, size: .sm, fullWidth: true)
+        }
+        crop
+        trim
+      }
+    }
+  }
+
+  private var crop: some View {
+    EditorField(label: "Crop", help: "Which part of the wide recording is shown", isCustom: model.cropIsSet,
+                resetHelp: "Back to the default framing (\(model.defaults.cropAnchor.displayName)) — it then needs confirming again",
+                onReset: { model.resetEdit(.crop) }) {
+      VStack(alignment: .leading, spacing: DS.space.sm) {
+        if !model.cropIsSet {
+          HStack(alignment: .center, spacing: DS.space.xs) {
+            EditorHint("Not confirmed yet — check the framing, then confirm", icon: "exclamationmark.circle.fill", tone: .warning)
+            Spacer(minLength: 0)
+            DSButton("Use this crop", variant: .outline, size: .sm,
+                     disabledReason: model.fileMissing ? "The clip file is missing" : nil,
+                     tooltip: "Confirm the framing shown on the canvas") { model.confirmCrop() }
+          }
+        }
+        DSSlider(label: "Zoom", value: Binding(get: { model.zoom }, set: { model.setZoom($0) }),
+                 range: 1...EditorGeometry.maxZoom, step: 0.05, format: { String(format: "%.2f×", $0) })
+          .help("Zoom into the recording (scroll or pinch on the Frame view)")
+        HStack(spacing: 6) {
+          Text("Place").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+          DSButton("Left", variant: .outline, size: .sm, tooltip: "Centre the crop on the left third") { model.placeCrop(atX: 1.0 / 3) }
+          DSButton("Centre", variant: .outline, size: .sm, tooltip: "Centre the crop") { model.placeCrop(atX: 0.5) }
+          DSButton("Right", variant: .outline, size: .sm, tooltip: "Centre the crop on the right third") { model.placeCrop(atX: 2.0 / 3) }
+          Spacer(minLength: 0)
+        }
+        HStack(spacing: 6) {
+          if model.upscale > 1.01 {
+            DSBadge(String(format: "Upscaled %.1f×", model.upscale), style: .soft(.warning), icon: "exclamationmark.triangle.fill")
+              .help("The crop has fewer pixels than the 1080-wide output, so it will look softer")
+          }
+          Text("\(Int(model.crop.w)) × \(Int(model.crop.h)) px").font(DS.type.mono).foregroundStyle(DS.color.textTertiary)
+          Spacer(minLength: 0)
+          if model.canvasMode != .frame {
+            DSButton("Edit on canvas", variant: .ghost, size: .sm, tooltip: "Show the whole recording to drag the crop") {
+              model.canvasMode = .frame
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private var trim: some View {
+    let t = model.trim
+    let hasMarkers = model.video?.markerIn != nil && model.video?.markerOut != nil
+    return EditorField(label: "Trim", help: "Which seconds of the clip file are posted", isCustom: !model.trimIsDefault,
+                       resetHelp: hasMarkers ? "Trim to markers" : "Use the whole file",
+                       onReset: { model.resetEdit(.trimIn, .trimOut); model.commitTrim() }) {
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 6) {
+          Text("\(EditorGeometry.time(t.start, tenths: true)) – \(EditorGeometry.time(t.end, tenths: true))")
+            .font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.text)
+          Text(String(format: "%.1f s", t.duration)).font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+          Spacer(minLength: 0)
+          if !model.trimIsDefault && hasMarkers {
+            DSButton("Trim to markers", variant: .ghost, size: .sm, tooltip: "Back to your in/out markers") {
+              model.resetEdit(.trimIn, .trimOut); model.commitTrim()
+            }
+          }
+        }
+        EditorHint(hasMarkers ? (model.trimIsDefault ? "Your markers. Drag a handle into the striped grace zone to extend."
+                                                     : "Changed from your markers.")
+                              : "No markers on this clip — the whole file is used.")
+      }
+    }
+  }
+}
+
+// MARK: - Text (overlay text, style, size, alignment, position, timing)
+
+struct EditorTextSection: View {
+  @ObservedObject var model: EditorModel
+
+  var body: some View {
+    let r = model.resolved
+    EditorSectionView(.text) {
+      VStack(alignment: .leading, spacing: DS.space.md) {
+        EditorField(label: "Text on the video", isCustom: !r.isDefault("text"), inheritedFrom: model.source(of: "text"),
+                    resetHelp: textResetHelp, onReset: resetter(["text"])) {
+          VStack(alignment: .leading, spacing: DS.space.xs) {
+            DSTextArea(placeholder: r.noText ? "No text on this clip" : "Text on the video",
+                       text: Binding(get: { r.noText ? "" : r.text },
+                                     set: { t in model.setText(t) }),
+                       minHeight: 60, maxHeight: 120)
+              .disabled(r.noText)
+              .opacity(r.noText ? 0.55 : 1)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+              EditorHint(textHint(r))
+              Spacer(minLength: 0)
+              if !r.isDefault("text") && model.ownsField(["text"]) && model.defaults.textSource == .title && !r.noText {
+                DSButton("Follow the Title", variant: .ghost, size: .sm,
+                         tooltip: "Drop the typed text and use the Title again") { model.resetVersion(["text"]) }
+              }
+            }
+            DSToggle("No text", description: nil, isOn: Binding(get: { r.noText }, set: { v in model.setNoText(v) }),
+                     size: .sm)
+              .help("Post this clip without any text on the video")
+          }
+        }
+        EditorField(label: "Style", isCustom: !r.isDefault("style"), inheritedFrom: model.source(of: "style"),
+                    onReset: resetter(["style"])) {
+          HStack(spacing: DS.space.xs) {
+            ForEach(TextStyle.allCases, id: \.self) { s in styleTile(s, selected: r.style == s) }
+          }
+        }
+        .disabled(r.noText)
+        EditorField(label: "Size", value: "\(Self.sizeName(r.size)) · \(Int(r.size))", isCustom: !r.isDefault("size"), inheritedFrom: model.source(of: "size"),
+                    onReset: resetter(["size"])) {
+          DSSlider(value: Binding(get: { r.size }, set: { v in model.setVersionField(\.size, \.size, v.rounded()) }),
+                   range: 40...110, step: 1, format: { "\(Self.sizeName($0)) · \(Int($0))" }, showsValue: false,
+                   disabledReason: r.noText ? "No text on this clip" : nil, accessibilityName: "Text size")
+        }
+        EditorField(label: "Alignment", isCustom: !r.isDefault("align"), inheritedFrom: model.source(of: "align"),
+                    onReset: resetter(["align"])) {
+          DSSegmented(selection: Binding(get: { r.align }, set: { a in model.setVersionField(\.align, \.align, a) }),
+                      segments: [DSSegment(value: TextAlign.left, title: "Left", icon: "text.alignleft"),
+                                 DSSegment(value: TextAlign.center, title: "Centre", icon: "text.aligncenter"),
+                                 DSSegment(value: TextAlign.right, title: "Right", icon: "text.alignright")],
+                      size: .sm, fullWidth: true)
+        }
+        .disabled(r.noText)
+        EditorField(label: "Position", isCustom: !r.isDefault("posX") || !r.isDefault("posY"),
+                    inheritedFrom: model.source(of: "posY"), resetHelp: "Back to the default position",
+                    onReset: resetter(["posX", "posY"])) {
+          VStack(alignment: .leading, spacing: 4) {
+            Text(abs(r.posX - 0.5) < 0.001 && abs(r.posY - 0.5) < 0.001 ? "Centre"
+                 : String(format: "%.0f %% across · %.0f %% down", r.posX * 100, r.posY * 100))
+              .font(DS.type.callout).foregroundStyle(DS.color.text)
+            EditorHint("Drag the text on the preview (Zones view).")
+          }
+        }
+        EditorField(label: "Timing", isCustom: !r.isDefault("textStart") || !r.isDefault("textEnd"),
+                    inheritedFrom: model.source(of: "textStart"), resetHelp: "Back to the default timing",
+                    onReset: resetter(["textStart", "textEnd"])) {
+          VStack(alignment: .leading, spacing: 4) {
+            Text(r.textStart == nil && r.textEnd == nil ? "Whole clip"
+                 : "\(EditorGeometry.time(r.textStart ?? 0, tenths: true)) – \(EditorGeometry.time(r.textEnd ?? model.trim.duration, tenths: true)) after the start")
+              .font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.text)
+            EditorHint("Drag the ends of the text bar on the timeline.")
+          }
+        }
+      }
+    }
+  }
+
+  private func resetter(_ f: [String]) -> (() -> Void)? {
+    model.ownsField(f) ? { model.resetVersion(f) } : nil
+  }
+
+  private var textResetHelp: String {
+    switch model.defaults.textSource {
+    case .title: "Back to the Title"
+    case .rawTag: "Back to the raw tag"
+    case .empty: "Back to no text"
+    }
+  }
+
+  private func textHint(_ r: ResolvedVersion) -> String {
+    if !r.isDefault("text") { return r.noText ? "No text on this clip." : "Typed for this clip." }
+    if r.noText { return "Talking clips have no text by default." }
+    switch model.defaults.textSource {
+    case .title: return model.title == nil ? "Follows the Title — no Title yet. Set one above, or type text here." : "Follows the Title."
+    case .rawTag: return "Follows the raw tag (Settings → New clip defaults)."
+    case .empty: return "Empty by default (Settings → New clip defaults)."
+    }
+  }
+
+  static func sizeName(_ s: Double) -> String { s < 54 ? "Small" : s <= 76 ? "Medium" : "Large" }
+
+  private func styleTile(_ s: TextStyle, selected: Bool) -> some View {
+    Button { model.setVersionField(\.style, \.style, s) } label: {
+      VStack(spacing: 5) {
+        ZStack {
+          RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous)
+            .fill(LinearGradient(colors: [Color(white: 0.34), Color(white: 0.16)], startPoint: .top, endPoint: .bottom))
+          sample(s)
+        }
+        .frame(height: 50)
+        .overlay(RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous)
+          .strokeBorder(selected ? DS.color.text : Color.clear, lineWidth: 2).padding(-3))
+        Text(s.displayName).font(selected ? DS.type.captionMedium : DS.type.caption)
+          .foregroundStyle(selected ? DS.color.text : DS.color.textSecondary)
+      }
+      .frame(maxWidth: .infinity)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(EditorPressStyle())
+    .help("Text style: \(s.displayName)")
+  }
+
+  @ViewBuilder private func sample(_ s: TextStyle) -> some View {
+    switch s {
+    case .box:
+      Text("Aa").font(.system(size: 15, weight: .heavy)).foregroundStyle(.black)
+        .padding(.horizontal, 8).padding(.vertical, 2).background(RoundedRectangle(cornerRadius: 5).fill(.white))
+    case .outline:
+      ZStack {
+        ForEach(0..<8, id: \.self) { i in
+          let a = Double(i) * .pi / 4
+          Text("Aa").font(.system(size: 17, weight: .heavy)).foregroundStyle(.black).offset(x: cos(a) * 1.5, y: sin(a) * 1.5)
+        }
+        Text("Aa").font(.system(size: 17, weight: .heavy)).foregroundStyle(.white)
+      }
+    case .shadow:
+      Text("Aa").font(.system(size: 17, weight: .bold)).foregroundStyle(.white).shadow(color: .black.opacity(0.9), radius: 3, y: 1)
+    }
+  }
+}
+
+// MARK: - Cover
+
+struct EditorCoverSection: View {
+  @ObservedObject var model: EditorModel
+  @StateObject private var strip = EditorFrameStrip()
+  @State private var cover: CGImage?
+
+  var body: some View {
+    EditorSectionView(.cover) {
+      VStack(alignment: .leading, spacing: DS.space.md) {
+        EditorField(label: "Cover frame", isCustom: !model.isDefault(.coverTime),
+                    resetHelp: "Back to the default cover frame (\(model.defaults.coverFrame.displayName))",
+                    onReset: { model.resetEdit(.coverTime) }) {
+          VStack(alignment: .leading, spacing: DS.space.sm) {
+            HStack(alignment: .bottom, spacing: DS.space.sm) {
+              ZStack {
+                EditorCroppedImage(image: cover, crop: model.crop, source: model.sourceSize)
+                if model.resolvedEdit.coverIncludesText, let o = model.overlay { Image(decorative: o, scale: 1).resizable() }
+              }
+              .aspectRatio(model.aspect.ratio, contentMode: .fit)
+              .frame(height: 176)
+              .clipShape(RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+              .dsBorder(radius: DS.radius.sm)
+              VStack(alignment: .leading, spacing: 4) {
+                Text(EditorGeometry.time(model.coverTime, tenths: true)).font(DS.type.callout.monospacedDigit())
+                  .foregroundStyle(DS.color.text)
+                Text(model.isDefault(.coverTime) ? model.defaults.coverFrame.displayName : "Picked frame")
+                  .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+                DSButton("Use playhead", icon: "scope", variant: .ghost, size: .sm,
+                         tooltip: "Use the frame under the timeline playhead") { set(model.playback.time) }
+                  .padding(.leading, -8)
+              }
+            }
+            filmstrip
+          }
+        }
+        EditorField(label: "Cover text", isCustom: !model.isDefault(.coverIncludesText), resetHelp: "Back to the default",
+                    onReset: { model.resetEdit(.coverIncludesText) }) {
+          DSToggle("Include text on the cover", isOn: Binding(get: { model.resolvedEdit.coverIncludesText },
+                                                               set: { model.setCoverIncludesText($0) }), size: .sm)
+            .help("Draw the overlay text on the cover image too")
+        }
+      }
+    }
+    .onAppear { reload() }
+    .onChange(of: model.trim) { _, _ in if !model.trimDragging { reload() } }  // regenerate once the drag ends
+    .onChange(of: model.trimDragging) { _, dragging in if !dragging { reload() } }
+    .onChange(of: model.videoId) { _, _ in reload() }
+    .onChange(of: model.coverTime) { _, _ in loadCover() }
+  }
+
+  private var filmstrip: some View {
+    HStack(spacing: 3) {
+      let nearest = strip.frames.indices.min { abs(strip.frames[$0].time - model.coverTime) < abs(strip.frames[$1].time - model.coverTime) }
+      ForEach(Array(strip.frames.enumerated()), id: \.offset) { i, f in
+        let sel = i == nearest
+        EditorCroppedImage(image: f.image, crop: model.crop, source: model.sourceSize)
+          .aspectRatio(model.aspect.ratio, contentMode: .fit)
+          .clipShape(RoundedRectangle(cornerRadius: DS.radius.xs - 2, style: .continuous))
+          .overlay(RoundedRectangle(cornerRadius: DS.radius.xs - 2, style: .continuous)
+            .strokeBorder(sel ? DS.color.text : .clear, lineWidth: 2))
+          .contentShape(Rectangle())
+          .onTapGesture { set(f.time) }
+          .help("Use the frame at \(EditorGeometry.time(f.time, tenths: true))")
+      }
+      if strip.frames.isEmpty {
+        RoundedRectangle(cornerRadius: DS.radius.xs).fill(DS.color.surfaceSunken).frame(height: 54)
+      }
+    }
+  }
+
+  private func set(_ t: Double) {
+    model.setCover(t)
+    model.playback.pause()
+    model.playback.seek(model.coverTime, exact: true)
+  }
+
+  private func reload() {
+    strip.load(url: model.fileMissing ? nil : model.fileURL, from: model.trim.start, to: model.trim.end, count: 8,
+               sync: model.snapshotMode)
+    loadCover()
+  }
+
+  private func loadCover() {
+    guard let url = model.fileURL, !model.fileMissing else { cover = nil; return }
+    let t = model.coverTime
+    if model.snapshotMode { cover = Media.frame(url, at: t, maxSize: CGSize(width: 1280, height: 720)); return }
+    Task.detached(priority: .userInitiated) {
+      let img = Media.frame(url, at: t, maxSize: CGSize(width: 1280, height: 720))
+      await MainActor.run { if abs(t - model.coverTime) < 0.001 { cover = img } }
+    }
+  }
+}
+
+// MARK: - Platforms (post to, per-platform length)
+
+struct EditorPlatformsSection: View {
+  @ObservedObject var model: EditorModel
+
+  var body: some View {
+    EditorSectionView(.platforms) {
+      VStack(alignment: .leading, spacing: DS.space.md) {
+        EditorField(label: "Post to", help: "Platforms this clip is posted on", isCustom: !model.isDefault(.platforms),
+                    resetHelp: "Back to the default platforms", onReset: { model.resetEdit(.platforms) }) {
+          DSFlowLayout(spacing: 6) {
+            ForEach(EditorPlatforms.order) { p in
+              let enabled = model.settings.enabledPlatforms.contains(p)
+              DSChip(p.displayName, isSelected: model.posting(p),
+                     disabledReason: enabled ? nil : "\(p.displayName) is turned off in Settings → Platforms", size: .sm) {
+                model.setPosting(p, !model.posting(p))
+              }
+              .help(enabled ? (model.posting(p) ? "Posting on \(p.displayName) — click to skip it for this clip"
+                                                : "Not posting on \(p.displayName) — click to post here") : "")
+            }
+          }
+        }
+        lengths
+        EditorHint("Safe zones are a view setting: pick platforms under the preview in the Zones view.", icon: "rectangle.dashed")
+      }
+    }
+  }
+
+  @ViewBuilder private var lengths: some View {
+    let rows = model.postingPlatforms.compactMap { p -> (Platform, Double, Double)? in
+      guard let lim = model.settings.limits[p]?.maxDuration else { return nil }
+      let d = model.resolvedEdit.trim(platform: p).duration
+      return d > lim + 0.05 || model.edit.platformTrims[p] != nil ? (p, d, lim) : nil
+    }
+    if !rows.isEmpty {
+      VStack(alignment: .leading, spacing: DS.space.xs) {
+        ForEach(rows, id: \.0) { p, d, lim in
+          let over = d > lim + 0.05
+          VStack(alignment: .leading, spacing: 6) {
+            EditorHint(over ? "Too long for \(p.displayName) · \(Validation.fmt(d)) / \(Validation.fmt(lim))"
+                            : "\(p.displayName) has its own trim · \(Validation.fmt(d))",
+                       icon: over ? "exclamationmark.triangle.fill" : "scissors", tone: over ? .warning : nil)
+            HStack(spacing: 6) {
+              if model.edit.platformTrims[p] == nil {
+                DSButton("Trim for \(p.displayName)", variant: .outline, size: .sm,
+                         tooltip: "Add a \(p.displayName)-only trim lane on the timeline") { model.addPlatformTrim(p) }
+              } else {
+                DSButton("Remove \(p.displayName) trim", variant: .ghost, size: .sm,
+                         tooltip: "Use the main trim on \(p.displayName) too") { model.updateEdit { $0.platformTrims[p] = nil } }
+              }
+              if over {
+                DSButton("Skip \(p.displayName)", variant: .ghost, size: .sm,
+                         tooltip: "Don't post this clip on \(p.displayName)") { model.setPosting(p, false) }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
