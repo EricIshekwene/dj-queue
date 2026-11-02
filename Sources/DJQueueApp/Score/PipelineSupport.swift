@@ -77,6 +77,13 @@ extension AppModel {
     requestBulk(BulkRequest(title: title, verb: verb, ids: ids, changes: changes, doneMessage: done) { dry in try body(b, dry) })
   }
 
+  /// A disabled native menu item's reason, appended to its title (menu items show no tooltip): " — already posted
+  /// on X" from "Already posted on X — it can't leave the plan; …". Empty when the item is enabled.
+  static func menuReason(_ why: String?) -> String {
+    guard let why, let first = why.components(separatedBy: " — ").first, !first.isEmpty else { return "" }
+    return " — " + first.prefix(1).lowercased() + first.dropFirst()
+  }
+
   /// "Clip" / "N clips".
   static func pipelineClips(_ n: Int) -> String { n == 1 ? "1 clip" : "\(n) clips" }
 
@@ -161,6 +168,26 @@ extension View {
   func pipelineClipFeed(_ model: AppModel, _ screen: Screen, ids: [String], play: [String],
                         layout: PreviewPlayback.Layout = .cards, hovered: String? = nil) -> some View {
     modifier(PipelineClipFeed(model: model, screen: screen, ids: ids, playIds: play, layout: layout, hovered: hovered))
+  }
+}
+
+/// The view toggle (DSViewModeSwitcher look) with a tooltip per mode that says what the layout is for, not just its
+/// name ("One clip at a time, keyboard scoring"). Modes without a tip fall back to their name.
+struct PipelineViewModeSwitcher: View {
+  @Binding var mode: DSViewMode
+  var modes: [DSViewMode] = DSViewMode.allCases
+  var tips: [DSViewMode: String] = PipelineViewModeSwitcher.clipTips
+
+  /// Edit / Queue: the four layouts of a clip list.
+  static let clipTips: [DSViewMode: String] = [
+    .wide: "Show clips as cards with their actions",
+    .grid: "Show many clips at a glance",
+    .single: "Show one big clip at a time",
+    .list: "Show clips as compact rows",
+  ]
+
+  var body: some View {
+    DSSegmented(selection: $mode, segments: modes.map { DSSegment(value: $0, icon: $0.icon, tooltip: tips[$0] ?? $0.help) })
   }
 }
 

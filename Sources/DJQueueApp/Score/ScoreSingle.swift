@@ -117,8 +117,9 @@ struct ScoreSingleView: View {
     HStack(spacing: DS.space.xs) {
       ScoreKeyField(text: text, invalid: !text.isEmpty && value == nil, focused: $fieldFocused, onKey: handle)
       DSButton("Save & next", trailingIcon: "return", variant: .primary, size: .lg,
-               disabledReason: value == nil ? "Type a score from 0 to 100 first" : nil, shortcut: "↩") { save() }
-      DSButton("Skip", variant: .ghost, size: .lg, tooltip: "Leave this clip for later", shortcut: "⇥") { move(1, wrap: true) }
+               disabledReason: value == nil ? "Type a score from 0 to 100 first" : nil,
+               tooltip: "Save score and show the next clip", shortcut: "↩") { save() }
+      DSButton("Skip", variant: .ghost, size: .lg, tooltip: "Leave unscored for now, show the next", shortcut: "⇥") { move(1, wrap: true) }
     }
     .padding(.horizontal, 6)
     .frame(height: 56)
@@ -140,11 +141,11 @@ struct ScoreSingleView: View {
         Text("Kind").font(DS.type.calloutMedium).foregroundStyle(DS.color.text)
         DSSegmented(selection: Binding(get: { v.kind }, set: { k in if k != v.kind { model.setKind([v.id], k) } }),
                     segments: Kind.allCases.map { DSSegment(value: $0, title: $0.displayName) }, size: .sm)
-          .dsTooltip("Talking clips get no text by default")
+          .dsTooltip("Talking clips get no text overlay (undoable)")
       }
       DSTextArea("Notes", placeholder: "Anything to remember about this clip", text: $notes, minHeight: 72, maxHeight: 140)
       DSButton("Exclude", icon: "minus.circle", variant: .ghost, size: .sm,
-               tooltip: "Leave this clip out — it never posts (find it in Library → Excluded)", shortcut: "⌘⌫") { onExclude(v) }
+               tooltip: "Never post this clip (Library → Excluded)", shortcut: "⌘⌫") { onExclude(v) }
         .padding(.leading, -10)
       Spacer(minLength: 0)
     }
@@ -230,7 +231,7 @@ struct ScoreKeyField: View {
     .onKeyPress(phases: .down, action: onKey)
     .onTapGesture { focused.wrappedValue = true }
     .onHover { hovering = $0 }
-    .dsTooltip("Score 0–100 — type digits, ↩ saves")
+    .dsTooltip("Type a score 0–100, then save & next", shortcut: "↩")
     .accessibilityElement()
     .accessibilityLabel("Score")
     .accessibilityValue(text.isEmpty ? "Empty" : text)

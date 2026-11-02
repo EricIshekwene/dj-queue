@@ -95,22 +95,31 @@ struct EditClipActions: View {
         }
         HStack(spacing: 2) {
           StageControl(model: model, video: video)
-          DSButton("Open editor", variant: .ghost, size: .sm, tooltip: "Crop, text, caption, cover and platforms") { open() }
-          PipelineMoreMenu { EditClipMenu(model: model, video: video, ids: ids, templates: [], extraFixes: Array(fixes.dropFirst(2))) }
+          DSButton("Open editor", variant: .ghost, size: .sm, tooltip: Self.openHelp) { open() }
+          PipelineMoreMenu(tooltip: Self.moreHelp) {
+            EditClipMenu(model: model, video: video, ids: ids, templates: model.captionTemplates, extraFixes: Array(fixes.dropFirst(2)))
+          }
         }
       }
       .fixedSize()
     case .grid:
-      Button(model.stageForwardTitle(video), systemImage: "chevron.right") { model.stageForward([video.id]) }
-        .help(model.stageForwardHelp(video))
-      Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { open() }.help("Open editor")
+      // Grid hover buttons render icon-only (DSMediaActionStyle): each one names its consequence in a tooltip.
+      let fwd = model.stageBlocker(video, .forward)
+      Button(model.stageForwardTitle(video), systemImage: "chevron.right") {
+        if let fwd { model.show(fwd, error: true) } else { model.stageForward([video.id]) }
+      }
+      .opacity(fwd == nil ? 1 : 0.45)
+      .dsTooltip(model.stageForwardTitle(video), disabledReason: fwd)
+      Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { open() }.dsTooltip(Self.openHelp)
       if needs.askAgent {
-        Button("Ask an agent", systemImage: "sparkles") { model.copyAgentPrompt([video.id]) }.help(Self.askAgentHelp)
+        Button("Ask an agent", systemImage: "sparkles") { model.copyAgentPrompt([video.id]) }.dsTooltip(Self.askAgentHelp)
       }
     case .list:
       StageControl(model: model, video: video, compact: true)
-      DSIconButton("slider.horizontal.below.rectangle", tooltip: "Open editor", size: .sm) { open() }
-      PipelineMoreMenu { EditClipMenu(model: model, video: video, ids: ids, templates: [], extraFixes: fixes) }
+      DSIconButton("slider.horizontal.below.rectangle", tooltip: Self.openHelp, size: .sm) { open() }
+      PipelineMoreMenu(tooltip: "Show fixes, kind, defaults and more") {
+        EditClipMenu(model: model, video: video, ids: ids, templates: model.captionTemplates, extraFixes: fixes)
+      }
     case .single:
       VStack(alignment: .leading, spacing: DS.space.sm) {
         if needs.addTitle { EditAddTitleField(model: model, videoId: video.id, label: "Title") }
@@ -118,15 +127,16 @@ struct EditClipActions: View {
         ForEach(fixes) { fixButton($0, size: .md) }
         StageControl(model: model, video: video, size: .md)
         HStack(spacing: 4) {
-          DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .outline,
-                   tooltip: "Crop, text, caption, cover and platforms") { open() }
-          PipelineMoreMenu { EditClipMenu(model: model, video: video, ids: ids, templates: []) }
+          DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .outline, tooltip: Self.openHelp) { open() }
+          PipelineMoreMenu(tooltip: Self.moreHelp) { EditClipMenu(model: model, video: video, ids: ids, templates: model.captionTemplates) }
         }
       }
     }
   }
 
-  static let askAgentHelp = "Copies a prompt for your own agent: it suggests titles and sends them back with djq suggest"
+  static let askAgentHelp = "Copy a title prompt for your agent"
+  static let openHelp = "Edit crop, text, caption, cover, platforms"
+  static let moreHelp = "Show kind, caption, defaults and more"
 
   private func askAgent(size: DSButtonSize) -> some View {
     DSButton("Ask an agent", icon: "sparkles", variant: .ghost, size: size, tooltip: Self.askAgentHelp) {
@@ -178,7 +188,7 @@ struct EditAddTitleField: View {
       .onHover { hovering = $0 }
     }
     .onChange(of: focused) { _, f in if !f && text.trimmingCharacters(in: .whitespaces).isEmpty { editing = false } }
-    .dsTooltip(label == nil ? "No suggestions in metadata — click, type a title, ↩ saves" : nil)
+    .dsTooltip(label == nil ? "Type a title; ↩ saves (undoable)" : nil)
     .accessibilityElement(children: .combine)
     .accessibilityLabel("Add title")
     .accessibilityAddTraits(.isButton)
@@ -205,7 +215,7 @@ struct EditAddTitleField: View {
 }
 
 /// ⋯ and right-click menu of an Edit card (native items): Open editor · Back to Score / Send to queue · fixes · Kind ▸ · Caption template ▸ ·
-/// Copy agent prompt · Apply defaults ▸ · Exclude. Acts on the selection when the clip is part of it.
+/// Copy agent prompt · Reset to New clip defaults ▸ · Exclude. Acts on the selection when the clip is part of it.
 struct EditClipMenu: View {
   @Bindable var model: AppModel
   let video: Video
@@ -221,7 +231,11 @@ struct EditClipMenu: View {
     StageMenuItems(model: model, video: video, targets: targets)
     if !extraFixes.isEmpty {
       Divider()
-      ForEach(extraFixes) { f in Button(f.title, systemImage: f.icon, action: f.action).disabled(f.disabledReason != nil) }
+      // Native items show no tooltip: a disabled fix says why in its title.
+      ForEach(extraFixes) { f in
+        let why = f.disabledReason.map { ($0.components(separatedBy: " — ").first ?? $0).lowercased() }
+        Button(why.map { "\(f.title) — \($0)" } ?? f.title, systemImage: f.icon, action: f.action).disabled(why != nil)
+      }
     }
     Divider()
     Menu("Kind") {

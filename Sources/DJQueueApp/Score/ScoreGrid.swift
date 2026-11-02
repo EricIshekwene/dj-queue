@@ -92,7 +92,7 @@ private struct ScoreTileField: View {
     .frame(height: DS.size.controlSm + 2)
     .modifier(DSFieldBox(focused: focused, hovering: hovering, error: invalid, disabled: false))
     .onHover { hovering = $0 }
-    .dsTooltip(invalid ? "Scores go from 0 to 100" : "Type 0–100 · ⇥ next tile · Save scores in the bar below")
+    .dsTooltip(invalid ? "Scores go from 0 to 100" : "Type 0–100; Save scores in the bar below")
     .accessibilityLabel("Score")
   }
 }
