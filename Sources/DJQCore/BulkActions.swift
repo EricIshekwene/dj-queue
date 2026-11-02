@@ -434,6 +434,9 @@ public final class BulkActions: @unchecked Sendable {
       let before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
                             plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil)
       try body()
+      // Round 4 (S1): a settings change (limits, platforms, defaults) can make Queue clips invalid or Edit clips valid —
+      // re-derive every Edit/Queue clip's state now (states only; the engine's next tick refills draft days).
+      if settings, try settingsSnapshot() != before.settings { try Revalidation(store: store).run(adjustPlan: false) }
       let after = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
                            plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil)
       var changed = Set(zip(before.clips, after.clips).filter { $0 != $1 }.map(\.0.id))
@@ -602,7 +605,10 @@ public final class BulkActions: @unchecked Sendable {
           if !force, cur != aset {
             throw EngineError("Can't undo the settings part of \(rec.action): settings changed after it. Use force to overwrite.")
           }
-          if cur != bset { try restoreSettings(bset) }
+          if cur != bset {
+            try restoreSettings(bset)
+            try Revalidation(store: store).run(adjustPlan: false)  // round 4 (S1): states follow the restored settings
+          }
           restored.insert(Self.settingsMarker)
         }
         for v in touched { try store.refreshState(videoId: v) }

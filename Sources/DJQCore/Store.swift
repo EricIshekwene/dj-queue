@@ -558,10 +558,32 @@ public final class Store: @unchecked Sendable {
   /// Recomputes a video's state from its flags, edit, versions and posts (spec §3 States).
   public func refreshState(videoId: String) throws {
     guard let v = try video(id: videoId) else { return }
-    let s = try computeState(v)
-    if s != v.state {
-      try db.run("UPDATE videos SET state=?, updated_at=? WHERE id=?", [s.rawValue, now, videoId])
+    try refreshState(v, context: nil)
+  }
+
+  /// Recomputes and stores `v`'s state; returns the new state when it changed (nil = unchanged). Round 4 (S1): when
+  /// a Queue clip (stored `ready`) lands in Edit for any reason other than being sent back, logs a "stage" event
+  /// "Moved to Edit: No crop · Too long for X" — the same words as its reason chips.
+  @discardableResult
+  public func refreshState(_ v: Video, context: ValidationContext?) throws -> VideoState? {
+    let s = try computeState(v, context: context)
+    guard s != v.state else { return nil }
+    try db.run("UPDATE videos SET state=?, updated_at=? WHERE id=?", [s.rawValue, now, v.id])
+    var after = v
+    after.state = s
+    if Self.wasInQueue(v), ClipStage.of(after) == .edit {
+      let issues = try Validation.issues(video: after, store: self, context: context)
+      if !issues.contains(where: { $0.kind == .heldInEdit }) {  // "Back to Edit" logs its own event
+        try logEvent("stage", StageWording.movedToEdit(issues), videoId: v.id)
+      }
     }
+    return s
+  }
+
+  /// The stored state says Queue (ready, scored, short, included) — the file flag aside, since intake sets
+  /// `missing` before the state catches up.
+  static func wasInQueue(_ v: Video) -> Bool {
+    v.state == .ready && v.type == .short && !v.excluded && v.score != nil
   }
 
   /// The held flag counts only for a short clip with nothing posted (regular/retry).
@@ -571,29 +593,32 @@ public final class Store: @unchecked Sendable {
                       [v.id]) == nil
   }
 
-  public func computeState(_ v: Video) throws -> VideoState {
+  public func computeState(_ v: Video) throws -> VideoState { try computeState(v, context: nil) }
+
+  /// `computeState` with settings/templates/sets read once (`Revalidation` passes one context for every clip).
+  public func computeState(_ v: Video, context: ValidationContext?) throws -> VideoState {
     if v.missing {
       // Round 4 (S1): a short clip whose file went missing after it was scheduled or posted keeps that state (it
       // stays in Scheduled/Posted and shows "File missing"); otherwise it is `missing_file` (stage Edit when scored).
-      if !v.excluded, v.type == .short, let s = try planOrPostState(v) { return s }
+      if !v.excluded, v.type == .short, let s = try planOrPostState(v, settings: context?.settings) { return s }
       return .missingFile
     }
     if v.excluded { return .excluded }
     // Sent back from Queue: Edit until Eric sends it to the queue again (its future slots/posts were removed).
     // Never masks a clip that already posted somewhere (Remove from queue refuses those).
     if try isHeld(v) { return .needsEdit }
-    if let s = try planOrPostState(v) { return s }
+    if let s = try planOrPostState(v, settings: context?.settings) { return s }
     if v.type == .long { return v.longformURL == nil ? .ready : .posted }
-    return try Validation.isReady(video: v, store: self) ? .ready : .needsEdit
+    return try Validation.isReady(video: v, store: self, context: context) ? .ready : .needsEdit
   }
 
   /// The state that comes from posts (posted / partial / posting / planned) or an approved-week slot (planned);
   /// nil when the clip is in neither.
-  func planOrPostState(_ v: Video) throws -> VideoState? {
+  func planOrPostState(_ v: Video, settings: Settings? = nil) throws -> VideoState? {
     // Latest attempt per platform; a retry (fix) supersedes the failed regular post. Reposts don't change state.
     let posts = try self.posts(where: "video_id=? AND kind IN ('regular','retry')", [v.id])
     if !posts.isEmpty {
-      let st = try settings()
+      let st = try settings ?? self.settings()
       let active = Set(st.activePlatforms)
       let latest = Dictionary(grouping: posts, by: \.platform).compactMapValues { $0.max { $0.attemptNo < $1.attemptNo } }
       let relevant = latest.filter { active.contains($0.key) }.map(\.value)

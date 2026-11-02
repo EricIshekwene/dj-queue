@@ -26,17 +26,32 @@ public struct ValidationIssue: Sendable, Hashable, Identifiable, Codable {
   }
 }
 
+/// Settings, caption templates, hashtag sets and session names read once for many `Validation.issues` calls (the
+/// stage revalidation pass checks every Edit/Queue clip each tick).
+public struct ValidationContext: Sendable {
+  public var settings: Settings
+  public var templates: [CaptionTemplate]
+  public var sets: [HashtagSet]
+  public var sessionNames: [String: String]
+
+  public static func load(_ store: Store) throws -> ValidationContext {
+    ValidationContext(settings: try store.settings(), templates: try store.captionTemplates(), sets: try store.hashtagSets(),
+                      sessionNames: Dictionary(try store.sessions().map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a }))
+  }
+}
+
 public enum Validation {
   /// Readiness rules (round 2): the crop is confirmed, the resolved text is set or "No text" (defaults count),
   /// a caption resolves (written, or an existing template), and every posting platform's limits are met.
-  public static func issues(video v: Video, store: Store) throws -> [ValidationIssue] {
+  /// `context` (optional) saves re-reading settings, templates, hashtag sets and session names per clip.
+  public static func issues(video v: Video, store: Store, context: ValidationContext? = nil) throws -> [ValidationIssue] {
     var out: [ValidationIssue] = []
     if v.missing { out.append(.init(kind: .missingFile, platform: nil, message: "File missing")) }
     guard v.type == .short else { return out }
     if try store.isHeld(v) {
       out.append(.init(kind: .heldInEdit, platform: nil, message: "Sent back from Queue — send it to the Queue when it's done"))
     }
-    let settings = try store.settings()
+    let settings = try context?.settings ?? store.settings()
     // Unreadable edit/version rows make the video not ready (reported here and by the Doctor);
     // they must not abort intake or the engine tick.
     guard let edit = try? store.edit(videoId: v.id), (try? store.versions(videoId: v.id)) != nil,
@@ -50,7 +65,7 @@ public enum Validation {
       out.append(.init(kind: .noText, platform: nil,
                        message: v.titleText == nil && r.isDefault("text") ? "Add text (no title yet)" : "Add text or choose No text"))
     }
-    let templates = try store.captionTemplates()
+    let templates = try context?.templates ?? store.captionTemplates()
     let posting = settings.activePlatforms.filter { !re.isSkipped($0) }
     if r.caption.isEmpty {
       let missing = Set(posting.map { Captions.templateId(for: $0, version: r, settings: settings) })
@@ -61,8 +76,8 @@ public enum Validation {
       }
     }
     out += platformIssues(video: v, resolved: re, settings: settings)
-    let session = try store.session(id: v.sessionId)?.name ?? ""
-    let sets = try store.hashtagSets()
+    let session = try context.map { $0.sessionNames[v.sessionId] ?? "" } ?? store.session(id: v.sessionId)?.name ?? ""
+    let sets = try context?.sets ?? store.hashtagSets()
     for p in posting {
       let lim = settings.limits[p]?.captionLimit ?? 2200
       let c = Captions.caption(for: p, version: r, video: v, sessionName: session, sets: sets, templates: templates,
@@ -107,8 +122,8 @@ public enum Validation {
     platformIssues(video: v, resolved: EditResolver.resolve(edit, video: v, defaults: settings.defaults), settings: settings)
   }
 
-  public static func isReady(video v: Video, store: Store) throws -> Bool {
-    try issues(video: v, store: store).isEmpty
+  public static func isReady(video v: Video, store: Store, context: ValidationContext? = nil) throws -> Bool {
+    try issues(video: v, store: store, context: context).isEmpty
   }
 
   public static func fmt(_ s: Double) -> String {
