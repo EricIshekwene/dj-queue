@@ -351,6 +351,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
 
     try? fm.removeItem(at: au.previousOlder.deletingLastPathComponent())
     recordInstall(record)
+    state.failedInstall = nil
     if let b = state.blocked, isAncestor(repo, b.commit, of: candidate.commit) { state.blocked = nil }
     state.rolledBackFrom = nil
     state.reopenWindow = reopenWindow
@@ -394,6 +395,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
       recordInstall(record)
       state.blocked = AutoUpdateBlock(version: candidate.version, commit: candidate.commit, reason: reason, detail: why,
                                       log: au.log.path, at: now(), afterInstall: true)
+      state.failedInstall = state.blocked
       try? fm.removeItem(at: au.previousOlder.deletingLastPathComponent())
       notice("Update failed", "\(candidate.version) is still installed: \(why)", "failed", candidate.commit)
       save()
@@ -404,6 +406,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
                             "\(candidate.version) (\(short)) failed verify and no previous build is kept: \(why)")
     }
     let migrated = record.schemaAfter != record.schemaBefore
+    var quiesced: (lock: EngineLock, wasLoaded: Bool)?
     if migrated {
       // The new build migrated the database. The old build can't open it, so the backup has to come back too —
       // but only if nothing posted since (restoring would lose it and risk a double post). Unknown = changed.
@@ -412,13 +415,17 @@ public final class AutoUpdateRunner: @unchecked Sendable {
         return leaveInstalled("Checks after installing failed (\(why)). It migrated the database (schema \(record.schemaBefore) → \(record.schemaAfter == Int.max ? "unknown" : String(record.schemaAfter))) and posts changed since (or couldn't be counted), so it was left installed. `djq autoupdate rollback --restore-db` goes back if you accept losing those changes.",
                               "\(candidate.version) failed verify after migrating the database; left installed: \(why)")
       }
-      // Stop the engine (it runs the new build) before the database goes back, then swap, then start it.
-      say(engine.stop())
+      // Stop the engine (it runs the new build) and hold its lock through the restore and the swap.
+      guard let q = quiesceEngine() else {
+        return leaveInstalled("Checks after installing failed (\(why)). It migrated the database and another process still runs the engine on it, so it was left installed. Quit DJ Queue, then `djq autoupdate rollback --restore-db`.",
+                              "\(candidate.version) failed verify after migrating the database; the engine couldn't be stopped; left installed: \(why)")
+      }
+      quiesced = q
       do {
         try restoreDatabase(from: URL(fileURLWithPath: backup), keepingCurrentAs: "after-failed-\(candidate.version)")
         say("restored the database from \(backup) (schema → \(record.schemaBefore))")
       } catch {
-        say(engine.start().message)
+        resume(q)
         return leaveInstalled("Checks after installing failed (\(why)) and restoring the database backup failed: \(error). Left installed.",
                               "\(candidate.version) failed verify; database restore failed: \(error)")
       }
@@ -426,11 +433,11 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     do {
       try swapBack()
     } catch {
-      if migrated { say(engine.start().message) }
+      if let q = quiesced { resume(q) }
       return leaveInstalled("Checks after installing failed (\(why)) and the rollback failed: \(error).",
                             "rollback of \(candidate.version) failed: \(error)")
     }
-    say(migrated ? engine.start().message : engine.restart().message)
+    if let q = quiesced { resume(q) } else { say(engine.restart().message) }
     let back = previous?.version ?? "the previous build"
     state.blocked = AutoUpdateBlock(version: candidate.version, commit: candidate.commit, reason: "Checks after installing failed: \(why). Rolled back to \(back).",
                                     detail: why, log: au.log.path, at: now())
@@ -494,6 +501,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
         """)
     }
     let needsRestore = schemaNow > (schemaPrev ?? schemaNow)
+    var quiesced: (lock: EngineLock, wasLoaded: Bool)?
     if needsRestore {
       let lost = record.flatMap { backupDate($0.backup) }.flatMap { postChanges(since: $0) }
       guard restoreDB else {
@@ -507,11 +515,14 @@ public final class AutoUpdateRunner: @unchecked Sendable {
         throw RollbackError(description: "The backup taken before \(cur?.version ?? "this update") is missing, so the database can't go back to schema \(schemaPrev!).")
       }
       try waitIdle()
-      say(engine.stop())
+      guard let q = quiesceEngine() else {
+        throw RollbackError(description: "Refused: another process still runs the engine on this database (a DJ Queue window opened without the background engine?). Quit DJ Queue and try again.")
+      }
+      quiesced = q
       do {
         try restoreDatabase(from: URL(fileURLWithPath: b), keepingCurrentAs: "before-rollback-\(cur?.version ?? "unknown")")
       } catch {
-        say(engine.start().message)
+        resume(q)
         throw error
       }
       say("restored the database from \(b)")
@@ -528,15 +539,20 @@ public final class AutoUpdateRunner: @unchecked Sendable {
         try? replace(au.installedApp, with: tmp, move: true)
         throw error
       }
-      try replace(au.previous, with: tmp, move: true)
     } catch {
-      if needsRestore { say(engine.start().message) }
+      if let q = quiesced { resume(q) }
       state.phase = .idle
       save()
       throw RollbackError(description: "The swap failed (\(error)); the installed build was put back.")
     }
+    do {
+      try replace(au.previous, with: tmp, move: true)
+    } catch {
+      // The rollback itself worked; only the kept copy of the newer build is stranded.
+      say("warning: the rolled-back build stayed at \(tmp.path) (couldn't move it to the kept slot: \(error))")
+    }
     linkCLI()
-    say(needsRestore ? engine.start().message : engine.restart().message)
+    if let q = quiesced { resume(q) } else { say(engine.restart().message) }
     let prevCommit = prev.commit ?? record?.from?.commit
     // Swapping back to a newer build (a second rollback) is a roll forward: nothing to skip then.
     let repo = files.config().repoPath(environment: environment)
@@ -544,6 +560,7 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     state.installed = AutoUpdateBuild(version: prev.version, commit: prevCommit, at: now())
     state.rolledBackFrom = forward ? nil : curCommit
     if let b = state.blocked, b.afterInstall, b.commit == curCommit { state.blocked = nil }
+    if state.failedInstall?.commit == curCommit { state.failedInstall = nil }
     state.ready = nil
     state.phase = .idle
     state.runPid = nil
@@ -562,6 +579,26 @@ public final class AutoUpdateRunner: @unchecked Sendable {
     let r = finish(.rolledBack, message, commit: curCommit)
     save()
     return r
+  }
+
+  /// Stops the engine and takes its lock for a database restore + swap. nil (engine started again) when another
+  /// process still holds the engine lock after 30 s, e.g. a plain-launched app that runs the engine itself.
+  private func quiesceEngine() -> (lock: EngineLock, wasLoaded: Bool)? {
+    let s = engine.stop()
+    say(s.message)
+    var waited: TimeInterval = 0
+    while waited <= 30 {
+      if let l = EngineLock.acquire(paths) { return (l, s.wasLoaded) }
+      sleep(1)
+      waited += 1
+    }
+    say(engine.start(s.wasLoaded).message)
+    return nil
+  }
+
+  private func resume(_ q: (lock: EngineLock, wasLoaded: Bool)) {
+    q.lock.release()
+    say(engine.start(q.wasLoaded).message)
   }
 
   private func waitIdle() throws {

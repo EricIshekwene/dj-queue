@@ -234,6 +234,9 @@ public struct AutoUpdateState: Codable, Equatable, Sendable {
   public var ready: AutoUpdateCandidate?
   public var blocked: AutoUpdateBlock?
   public var last: AutoUpdateResult?
+  /// A build that failed its checks after install and stayed installed (its database couldn't safely go back).
+  /// Kept apart from `blocked` so a later gate block can't hide it; cleared when a newer build verifies or on rollback.
+  public var failedInstall: AutoUpdateBlock?
   /// Commit + version last handled (installed, skipped or blocked), so a trigger with nothing new is a no-op.
   public var handled: String?
   /// Commit a rollback stepped back from: never reinstalled automatically (the next commit installs as usual).
@@ -253,6 +256,7 @@ public struct AutoUpdateState: Codable, Equatable, Sendable {
     installed = try c.decodeIfPresent(AutoUpdateBuild.self, forKey: .installed)
     ready = try c.decodeIfPresent(AutoUpdateCandidate.self, forKey: .ready)
     blocked = try c.decodeIfPresent(AutoUpdateBlock.self, forKey: .blocked)
+    failedInstall = try? c.decodeIfPresent(AutoUpdateBlock.self, forKey: .failedInstall)
     last = try? c.decodeIfPresent(AutoUpdateResult.self, forKey: .last)
     handled = try c.decodeIfPresent(String.self, forKey: .handled)
     rolledBackFrom = try c.decodeIfPresent(String.self, forKey: .rolledBackFrom)
@@ -268,7 +272,7 @@ public struct AutoUpdateState: Codable, Equatable, Sendable {
   }
 
   /// What the menu-bar dot shows: an update is ready, or one is blocked.
-  public var needsAttention: Bool { ready != nil || blocked != nil }
+  public var needsAttention: Bool { ready != nil || blocked != nil || failedInstall != nil }
 }
 
 /// `request.json` — the app's way to ask the runner for something (the watcher starts on any write).
@@ -392,7 +396,7 @@ public final class AutoUpdateLock: @unchecked Sendable {
 
   public static func acquire(_ url: URL) -> AutoUpdateLock? {
     try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    let fd = open(url.path, O_CREAT | O_RDWR, 0o644)
+    let fd = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
     guard fd >= 0 else { return nil }
     guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
       close(fd)

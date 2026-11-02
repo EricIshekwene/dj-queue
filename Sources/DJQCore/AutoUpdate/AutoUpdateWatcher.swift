@@ -140,7 +140,8 @@ public enum AutoUpdateClient {
     var attr: posix_spawnattr_t?
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
-    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID))
+    // Own session, and no inherited descriptors (the app's engine.lock must not stay held by the runner).
+    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT))
     var actions: posix_spawn_file_actions_t?
     posix_spawn_file_actions_init(&actions)
     defer { posix_spawn_file_actions_destroy(&actions) }

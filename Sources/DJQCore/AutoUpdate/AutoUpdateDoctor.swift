@@ -26,7 +26,11 @@ extension Doctor {
                        detail: b.reason, where_: [b.log ?? au.log.path, String(b.commit.prefix(7))],
                        fix: "Fix the failing build or tests on main and commit; the watcher retries on the next commit. `djq autoupdate log` shows the run."))
     }
-    if let r = s.last, r.kind == .failed {
+    if let f = s.failedInstall {
+      out.append(.init(id: "autoupdate.failed", severity: .warning, title: "Update \(f.version) failed its checks and is still installed",
+                       detail: f.reason, where_: [au.log.path, String(f.commit.prefix(7))],
+                       fix: "Eric decides: `djq autoupdate rollback --restore-db` goes back to the build before it (changes since its backup are lost), or a fixed commit on main replaces it."))
+    } else if let r = s.last, r.kind == .failed {
       out.append(.init(id: "autoupdate.failed", severity: .warning, title: "Last auto-update failed",
                        detail: r.message, where_: [au.log.path], fix: "Read `djq autoupdate log`; `djq autoupdate run` retries."))
     }
