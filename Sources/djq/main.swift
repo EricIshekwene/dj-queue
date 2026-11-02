@@ -46,6 +46,7 @@ usage: djq <command> [args]
   intake | tick [--force] | doctor [--json] | health [--days N]
   render <video> [--version N] [--platform P]
   agent install [--app PATH] [--load] [--force] | agent uninstall [--unload] | agent status
+  autoupdate on|off|status|run|rollback|log   install commits to main automatically (djq autoupdate help)
 
 Ids can be shortened to a unique prefix. Platforms: \(Platform.allCases.map(\.rawValue).joined(separator: " "))
 Title formatting from tags lives upstream: scripts/prefill_titles.py (docs/metadata.md).
@@ -177,6 +178,7 @@ func run() throws -> Int32 {
   if ["help", "-h", "--help"].contains(cmd) { print(usage); return 0 }
   let paths = Paths.standard
   Log.shared.configure(paths)
+  if cmd == "autoupdate" { return try AutoUpdateCommand.run(args, paths: paths) }
   if cmd == "prefill" {
     throw CLIError("prefill moved out of the app (round 2): run scripts/prefill_titles.py --tag \"<tag>\" or on a videos.json")
   }

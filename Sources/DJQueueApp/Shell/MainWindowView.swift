@@ -41,7 +41,7 @@ struct MainWindowView: View {
       HStack(spacing: 0) {
         AppSidebar(model: model, compact: compact)
           .frame(width: compact ? AppSidebar.compactWidth : DS.size.sidebarWidth)
-        screenView
+        VStack(spacing: 0) { UpdateBanner(); screenView }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .background(DS.color.background)
           .dsToastArea()
