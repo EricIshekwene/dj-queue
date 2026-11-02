@@ -26,7 +26,8 @@ struct PostsView: View {
     ZStack {
       ScreenScaffold(model: model, screen: .posts, readingColumn: true) {
         ListHeader(page: .posts, title: "Posts", count: model.loaded && has ? list.count : nil, total: model.posts.count,
-                   filters: has ? filterSections : [], readingColumn: true, showsSearch: has) {
+                   filters: has ? filterSections : [], readingColumn: true,
+                   columnTrailingInset: inspected == nil ? 0 : 360 + DS.space.md, showsSearch: has) {
           EmptyView()
         } chips: {
           if has { statusChips(scope) }

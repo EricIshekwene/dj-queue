@@ -26,10 +26,6 @@ struct DJQueueApp: App {
       CommandGroup(replacing: .newItem) {
         Button("Open DJ Queue") { WindowManager.shared.showMain() }.keyboardShortcut("0")
       }
-      // ⌘F focuses the current list's search (round 4 S3). Replaces the text Find group: DJ Queue has no find bar.
-      CommandGroup(replacing: .textEditing) {
-        Button("Find") { host.model?.focusListSearch() }.keyboardShortcut("f")
-      }
     }
   }
 }

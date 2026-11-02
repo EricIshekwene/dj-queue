@@ -50,7 +50,7 @@ extension SnapshotShots {
         m.visibleIds[.edit] = m.editList.map(\.id)
         m.setSelection(ids, screen: .edit)
         let bulk = m.bulk
-        m.pipelineBulk("Make \(AppModel.pipelineClips(ids.count)) ready?", verb: "Make ready", ids: ids,
+        m.pipelineBulk("Send \(AppModel.pipelineClips(ids.count)) to the Queue?", verb: "Send to Queue", ids: ids,
                        changes: [.init(field: "Crop", value: "Default anchor, confirmed where missing"),
                                  .init(field: "Text, caption, cover", value: "Keep following New clip defaults"),
                                  .init(field: "Title", value: "Not set by this — clips without one still need text")]) { b, dry in
@@ -60,7 +60,7 @@ extension SnapshotShots {
         if let r = try? bulk.makeReadyWithDefaults(ids, dryRun: true) { m.pendingBulk?.preview = r }
       },
       // The toast stacks above the bulk bar (here a selection is still showing) and states make-ready's real result.
-      c.main("16b-edit-toast-made-ready") { m in
+      c.main("16b-edit-toast-sent-to-queue") { m in
         SampleData.pipelineEditExtras(m)
         mode(m, .edit, .wide)
         let ids = m.editList.map(\.id)
@@ -98,6 +98,22 @@ extension SnapshotShots {
         let ids = m.queueClips.dropFirst(7).prefix(3).map(\.id)
         m.visibleIds[.queue] = m.queueClips.map(\.id)
         m.setSelection(ids, screen: .queue)
+      },
+      // Round 4 S1: a scored clip whose file went missing sits in Edit — "File missing" chip, Relink, no autoplay,
+      // stage moves blocked with the core reason (throwaway DB; put back right after).
+      c.main("1f-edit-missing-file") { m in
+        SampleData.pipelineMissing(m, true)
+        mode(m, .edit, .wide)
+      },
+      c.view("1f-edit-missing-file-revert", width: 10, height: 10) {
+        SampleData.pipelineMissing(c.model, false)
+        return AnyView(Color.clear)
+      },
+      // Round 4 S4: applied filters on a real screen (Kind + Score chips, Clear all, Filters count).
+      c.main("1g-library-filters-applied") { m in
+        mode(m, .library, .grid)
+        ListPrefs.shared.setFilter(.library, ListFilterKey.kind, Kind.djVid.rawValue)
+        ListPrefs.shared.setFilter(.library, ListFilterKey.score, LibraryScoreFilter.middle.rawValue)
       },
       c.main("1d-queue-empty", c.empty) { m in
         mode(m, .queue, .wide)

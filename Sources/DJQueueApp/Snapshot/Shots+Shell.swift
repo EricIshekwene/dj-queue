@@ -23,7 +23,7 @@ extension SnapshotShots {
         m.visibleIds[.edit] = ids
         m.setSelection(ids, screen: .edit)
         let bulk = m.bulk
-        m.requestBulk(BulkRequest(title: "Make \(ids.count) clips ready?", verb: "Make ready", ids: ids,
+        m.requestBulk(BulkRequest(title: "Send \(ids.count) clips to the Queue?", verb: "Send to Queue", ids: ids,
                                   changes: [.init(field: "Crop", value: "Default anchor, confirmed"),
                                             .init(field: "Text, caption, cover", value: "Defaults")]) { dry in
           try bulk.makeReadyWithDefaults(ids, dryRun: dry)

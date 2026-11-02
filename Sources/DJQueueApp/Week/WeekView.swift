@@ -300,7 +300,8 @@ struct WeekDayCard: View {
       DSVideoPreview(url: pv.proxyURL, poster: pv.cover,
                      isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), loopRange: pv.loopRange,
                      unmuteOnHover: p.hoverSound && !isPast, isHovered: hovering, muteAlignment: .bottomTrailing,
-                     overlay: pv.overlay, textWindow: pv.textWindow, isUpdating: pv.isUpdating, updatingStyle: .label)
+                     overlay: pv.overlay, textWindow: pv.textWindow, isUpdating: pv.isUpdating, updatingStyle: .label,
+                     needsOverlay: pv.overlayMissing, onNeedsOverlay: { model.reloadOverlay(video.id, version: pv.version) })
         .task(id: pv.stamp) { requestPreview() }
         .frame(width: width, height: width * 16 / 9)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: DS.radius.md, topTrailingRadius: DS.radius.md, style: .continuous))

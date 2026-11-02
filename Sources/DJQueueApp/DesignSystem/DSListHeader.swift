@@ -28,11 +28,16 @@ struct DSListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View 
   var search: Binding<String>?
   var searchPlaceholder: String
   var searchFocus: Int
+  /// Focus the search as soon as it appears (a ⌘F that arrived before the field existed).
+  var searchAutoFocus: Bool
+  var onSearchFocused: () -> Void
   var filters: [DSFilterSection]
   var onFilter: (String, String?) -> Void
   var onClearAll: () -> Void
   var compact: Bool
   var columnWidth: CGFloat?
+  /// Space beside the reading column taken by a side panel (Posts' inspector): rows 2–3 stay over the list.
+  var columnTrailingInset: CGFloat
   @ViewBuilder var modes: Modes
   @ViewBuilder var chips: Chips
   @ViewBuilder var sort: Sort
@@ -40,8 +45,10 @@ struct DSListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View 
 
   init(_ title: String, count: Int? = nil, of total: Int? = nil, detail: String? = nil,
        search: Binding<String>? = nil, searchPlaceholder: String = "Search", searchFocus: Int = 0,
+       searchAutoFocus: Bool = false, onSearchFocused: @escaping () -> Void = {},
        filters: [DSFilterSection] = [], onFilter: @escaping (String, String?) -> Void = { _, _ in },
        onClearAll: @escaping () -> Void = {}, compact: Bool = false, columnWidth: CGFloat? = nil,
+       columnTrailingInset: CGFloat = 0,
        @ViewBuilder modes: () -> Modes = { EmptyView() }, @ViewBuilder chips: () -> Chips = { EmptyView() },
        @ViewBuilder sort: () -> Sort = { EmptyView() }, @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
     self.title = title
@@ -51,11 +58,14 @@ struct DSListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View 
     self.search = search
     self.searchPlaceholder = searchPlaceholder
     self.searchFocus = searchFocus
+    self.searchAutoFocus = searchAutoFocus
+    self.onSearchFocused = onSearchFocused
     self.filters = filters
     self.onFilter = onFilter
     self.onClearAll = onClearAll
     self.compact = compact
     self.columnWidth = columnWidth
+    self.columnTrailingInset = columnTrailingInset
     self.modes = modes()
     self.chips = chips()
     self.sort = sort()
@@ -63,6 +73,7 @@ struct DSListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View 
   }
 
   private var applied: [DSFilterSection] { filters.filter { $0.selected != nil } }
+  private var hasSearch: Bool { !(search?.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty ?? true) }
   private var hasRow2: Bool { Chips.self != EmptyView.self || !filters.isEmpty || Sort.self != EmptyView.self }
 
   var body: some View {
@@ -77,7 +88,8 @@ struct DSListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View 
         DSListTitle(title: title, count: count, total: total, detail: detail)
         Spacer(minLength: DS.space.md)
         HStack(spacing: DS.space.xs) {
-          if let search { DSSearchField(placeholder: searchPlaceholder, text: search, focusToken: searchFocus).frame(width: 220) }
+          if let search { DSSearchField(placeholder: searchPlaceholder, text: search, focusToken: searchFocus, autoFocus: searchAutoFocus,
+                                     onFocused: onSearchFocused).frame(width: 220) }
           modes
           trailing
         }
@@ -95,17 +107,15 @@ struct DSListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View 
           } else {
             Spacer(minLength: DS.space.xs)
           }
-          if !filters.isEmpty { DSFilterButton(sections: filters, onSelect: onFilter, onClearAll: onClearAll) }
+          if !filters.isEmpty { DSFilterButton(sections: filters, onSelect: onFilter, onClearAll: onClearAll, hasSearch: hasSearch) }
           sort
         }
-        .frame(maxWidth: columnWidth ?? .infinity, alignment: .leading)
-        .frame(maxWidth: .infinity)
+        .modifier(DSColumnFrame(width: columnWidth, trailingInset: columnTrailingInset))
         .padding(.bottom, DS.space.sm)
       }
       if !applied.isEmpty {
         DSAppliedFilters(sections: applied, onRemove: { onFilter($0, nil) }, onClearAll: onClearAll)
-          .frame(maxWidth: columnWidth ?? .infinity, alignment: .leading)
-          .frame(maxWidth: .infinity)
+          .modifier(DSColumnFrame(width: columnWidth, trailingInset: columnTrailingInset))
           .padding(.bottom, DS.space.sm)
           .transition(.opacity)
       }
@@ -120,14 +130,17 @@ struct DSListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View 
       HStack(spacing: DS.space.xs) {
         DSListTitle(title: title, count: count, total: total, detail: detail, compact: true)
         if let search {
-          DSSearchField(placeholder: searchPlaceholder, text: search, focusToken: searchFocus, size: .sm)
+          DSSearchField(placeholder: searchPlaceholder, text: search, focusToken: searchFocus, size: .sm, autoFocus: searchAutoFocus,
+                        onFocused: onSearchFocused)
             .frame(width: 200)
             .padding(.leading, DS.space.xs)
         }
         modes
         chips
         Spacer(minLength: DS.space.xs)
-        if !filters.isEmpty { DSFilterButton(sections: filters, onSelect: onFilter, onClearAll: onClearAll, size: .sm) }
+        if !filters.isEmpty {
+          DSFilterButton(sections: filters, onSelect: onFilter, onClearAll: onClearAll, size: .sm, hasSearch: hasSearch)
+        }
         sort
         trailing
       }
@@ -135,6 +148,19 @@ struct DSListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View 
         DSAppliedFilters(sections: applied, onRemove: { onFilter($0, nil) }, onClearAll: onClearAll, size: .sm)
       }
     }
+  }
+}
+
+/// Rows 2–3 of a page header: the reading column (centred), less a side panel's width at its trailing edge.
+struct DSColumnFrame: ViewModifier {
+  let width: CGFloat?
+  var trailingInset: CGFloat = 0
+  func body(content: Content) -> some View {
+    content
+      .frame(maxWidth: width ?? .infinity, alignment: .leading)
+      .padding(.trailing, trailingInset)
+      .frame(maxWidth: width.map { $0 + trailingInset } ?? .infinity, alignment: .leading)
+      .frame(maxWidth: .infinity)
   }
 }
 
@@ -171,23 +197,28 @@ struct DSListTitle: View {
 // MARK: - Search
 
 /// Capsule search field for list headers: magnifier, clear button, and a ⌘F keycap while empty. Bumping
-/// `focusToken` (⌘F) focuses it.
+/// `focusToken` (⌘F) focuses it; `autoFocus` focuses it when it appears (⌘F pressed before it existed).
 struct DSSearchField: View {
   let placeholder: String
   @Binding var text: String
   var focusToken = 0
   var size: DSButtonSize = .md
   var shortcut: String? = "⌘F"
+  var autoFocus = false
+  var onFocused: () -> Void = {}
   @FocusState private var focused: Bool
   @State private var hovering = false
   @Environment(\.dsForcedState) private var forced
 
-  init(placeholder: String, text: Binding<String>, focusToken: Int = 0, size: DSButtonSize = .md, shortcut: String? = "⌘F") {
+  init(placeholder: String, text: Binding<String>, focusToken: Int = 0, size: DSButtonSize = .md, shortcut: String? = "⌘F",
+       autoFocus: Bool = false, onFocused: @escaping () -> Void = {}) {
     self.placeholder = placeholder
     _text = text
     self.focusToken = focusToken
     self.size = size
     self.shortcut = shortcut
+    self.autoFocus = autoFocus
+    self.onFocused = onFocused
   }
 
   var body: some View {
@@ -216,7 +247,12 @@ struct DSSearchField: View {
     .frame(height: h)
     .modifier(DSFieldBox(focused: isFocused, hovering: forced == .hover || hovering, error: false, disabled: false, radius: h / 2))
     .onHover { hovering = $0 }
-    .onChange(of: focusToken) { _, _ in focused = true }
+    .onChange(of: focusToken) { _, _ in focused = true; onFocused() }
+    .onAppear {
+      guard autoFocus else { return }
+      // Next run-loop turn: the field must be in the window before it can take focus.
+      DispatchQueue.main.async { focused = true; onFocused() }
+    }
     .dsAnimation(DS.motion.hover, value: isFocused)
     .accessibilityLabel(placeholder)
   }
@@ -261,6 +297,8 @@ struct DSFilterButton: View {
   let onSelect: (String, String?) -> Void
   let onClearAll: () -> Void
   var size: DSButtonSize = .md
+  /// A search is typed (Clear all also clears it).
+  var hasSearch = false
   @State private var open = false
   @State private var hovering = false
   @Environment(\.dsForcedState) private var forced
@@ -291,7 +329,7 @@ struct DSFilterButton: View {
     .dsAnimation(DS.motion.hover, value: hot)
     .accessibilityLabel(n == 0 ? "Filters" : "Filters, \(n) on")
     .dsPopover(isPresented: $open, width: 340) {
-      DSFilterPanel(sections: sections, onSelect: onSelect, onClearAll: onClearAll)
+      DSFilterPanel(sections: sections, onSelect: onSelect, onClearAll: onClearAll, hasSearch: hasSearch)
     }
   }
 
@@ -308,14 +346,15 @@ struct DSFilterPanel: View {
   let sections: [DSFilterSection]
   let onSelect: (String, String?) -> Void
   let onClearAll: () -> Void
+  var hasSearch = false
 
   var body: some View {
-    let any = sections.contains { $0.selected != nil }
+    let any = hasSearch || sections.contains { $0.selected != nil }
     VStack(alignment: .leading, spacing: DS.space.sm) {
       HStack {
         Text("Filters").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
         Spacer()
-        DSButton("Clear all", variant: .ghost, size: .sm, disabledReason: any ? nil : "No filters on",
+        DSButton("Clear all", variant: .ghost, size: .sm, disabledReason: any ? nil : "No filters or search on",
                  tooltip: "Remove every filter and the search", action: onClearAll)
       }
       ScrollView {

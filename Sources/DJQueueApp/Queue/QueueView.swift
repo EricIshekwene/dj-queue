@@ -4,7 +4,7 @@ import SwiftUI
 /// Queue (DESIGN-v2 §6.3, ref R2.QUEUE Hootsuite cards) — job: keep complete clips in posting order.
 ///
 /// Shared list header (round 4 S3): "Queue 41 · next Thu 5 Nov" · search (⌘F) · view toggle · runway chip ·
-/// status chips `All · Scheduled · Not scheduled` · Filters (Session · Kind · Score) · sort ("Worst → best ▾",
+/// status chips `All · Has a day · No day yet` · Filters (Session · Kind · Score) · sort ("Worst → best ▾",
 /// tie rule inside, writes `Settings.sort`). No filled primary: the primary act is direct manipulation.
 /// Order = the upcoming plan (date order) then the backlog in sort order; search and filters narrow it without
 /// renumbering. Cards: position · ⋮⋮ on hover · thumb · title + meta · score · next-date chip · platform icons only
@@ -19,7 +19,7 @@ struct QueueView: View {
   var body: some View {
     let all = model.queueClips
     let scope = model.listScope(.queue, all)
-    let status = prefs[.queue].status
+    let status = prefs[.queue].status.flatMap { ["scheduled", "unscheduled"].contains($0) ? $0 : nil }
     let list = scope.filter { status == nil || isScheduled($0) == (status == "scheduled") }
     let ids = list.map(\.id)
     let mode = model.viewMode(.queue)
@@ -89,8 +89,9 @@ struct QueueView: View {
   private func statusChips(_ scope: [Video]) -> some View {
     let n = scope.filter(isScheduled).count
     return DSStatusChips(options: [
-      DSStatusChipOption(id: "scheduled", title: "Scheduled", count: n, tooltip: "Clips with a day in the plan"),
-      DSStatusChipOption(id: "unscheduled", title: "Not scheduled", count: scope.count - n, tooltip: "Clips still waiting for a day"),
+      DSStatusChipOption(id: "scheduled", title: "Has a day", count: n,
+                         tooltip: "Clips with a day in the plan (a draft or an approved week)"),
+      DSStatusChipOption(id: "unscheduled", title: "No day yet", count: scope.count - n, tooltip: "Clips still waiting for a day"),
     ], selection: prefs.statusBinding(.queue), allCount: scope.count, allTooltip: "Every clip in the Queue")
   }
 

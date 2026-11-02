@@ -82,7 +82,7 @@ struct GallerySurfaces: View {
           }
         }
         GSection("Confirmation sheet", note: "e3 · 480 · lists what will change") {
-          DSDialog("Make 9 clips ready?", description: "Applies your new-clip defaults. ⌘Z undoes the whole batch.",
+          DSDialog("Send 9 clips to the Queue?", description: "Applies your new-clip defaults. ⌘Z undoes the whole batch.",
                    icon: "wand.and.stars", onClose: {}) {
             DSChangeList(changes: [
               .init(field: "Crop", value: "Default (centre)"),
@@ -91,7 +91,7 @@ struct GallerySurfaces: View {
             ])
           } footer: {
             DSButton("Cancel", variant: .ghost) {}
-            DSButton("Make ready", variant: .primary) {}
+            DSButton("Send to Queue", variant: .primary) {}
           }
           .dsFloatingSurface(radius: DS.radius.lg, elevation: DS.elevation.e3)
         }

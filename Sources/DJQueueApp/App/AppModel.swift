@@ -110,7 +110,6 @@ final class AppModel {
 
   // MARK: UI state
   var screen: Screen = .score
-  var librarySession: String? = nil
   var postsSelection: String? = nil
   var postsFilter: PostsFilter = .all
   var weekStart: String = "" { didSet { if oldValue != weekStart && !oldValue.isEmpty { refresh() } } }

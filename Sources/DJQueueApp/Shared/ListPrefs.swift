@@ -101,7 +101,16 @@ final class ListPrefs {
     }
   }
 
-  func focusSearch(_ p: ListPage) { focusTokens[p, default: 0] += 1 }
+  /// A ⌘F that hasn't reached a search field yet (Week: the drawer's field appears after the drawer opens).
+  private(set) var pendingFocus: ListPage?
+
+  func focusSearch(_ p: ListPage) {
+    pendingFocus = p
+    focusTokens[p, default: 0] += 1
+  }
+
+  /// The page's search field took focus (clears the pending ⌘F).
+  func searchFocused(_ p: ListPage) { if pendingFocus == p { pendingFocus = nil } }
   func focusToken(_ p: ListPage) -> Int { focusTokens[p] ?? 0 }
 
   private func save(_ p: ListPage) {

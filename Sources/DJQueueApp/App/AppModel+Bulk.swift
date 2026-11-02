@@ -14,7 +14,7 @@ import SwiftUI
 /// })
 /// ```
 struct BulkRequest {
-  /// Sheet title, e.g. "Make 9 clips ready?".
+  /// Sheet title, e.g. "Send 9 clips to the Queue?".
   var title: String
   /// Primary button label, e.g. "Send to Queue".
   var verb: String

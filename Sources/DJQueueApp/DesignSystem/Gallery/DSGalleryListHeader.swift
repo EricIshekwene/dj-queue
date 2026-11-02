@@ -14,19 +14,24 @@ struct GalleryListHeader: View {
           sample(applied: ["kind": "talking", "session": "s1"], search: "yayo").frame(width: 1080)
         }
       }
-      HStack(alignment: .top, spacing: DS.space.xxl) {
-        GSection("Filters popover", note: "Session · Kind · Score + page sections · nothing highlighted until applied") {
-          HStack(alignment: .top, spacing: DS.space.lg) {
-            GCell("none applied") {
-              DSPopoverSurface(width: 340) { DSFilterPanel(sections: Self.sections([:]), onSelect: { _, _ in }, onClearAll: {}) }
+      GSection("Filters popover", note: "Session · Kind · Score + page sections · nothing highlighted until applied") {
+        HStack(alignment: .top, spacing: DS.space.lg) {
+          GCell("none applied") {
+            DSPopoverSurface(width: 340) { DSFilterPanel(sections: Self.sections([:]), onSelect: { _, _ in }, onClearAll: {}) }
+          }
+          GCell("two applied") {
+            DSPopoverSurface(width: 340) {
+              DSFilterPanel(sections: Self.sections(["kind": "talking", "score": "top"]), onSelect: { _, _ in }, onClearAll: {})
             }
-            GCell("two applied") {
-              DSPopoverSurface(width: 340) {
-                DSFilterPanel(sections: Self.sections(["kind": "talking", "score": "top"]), onSelect: { _, _ in }, onClearAll: {})
-              }
+          }
+          GCell("search only (Clear all on)") {
+            DSPopoverSurface(width: 340) {
+              DSFilterPanel(sections: Array(Self.sections([:]).prefix(2)), onSelect: { _, _ in }, onClearAll: {}, hasSearch: true)
             }
           }
         }
+      }
+      HStack(alignment: .top, spacing: DS.space.xxl) {
         VStack(alignment: .leading, spacing: DS.space.lg) {
           GSection("Filters trigger", note: "same look applied or not; a count when on") {
             HStack(spacing: DS.space.md) {
@@ -38,7 +43,7 @@ struct GalleryListHeader: View {
           }
           GSection("Applied chips", note: "click removes · Clear all") {
             VStack(alignment: .leading, spacing: DS.space.sm) {
-              DSAppliedFilters(sections: Self.sections(["session": "s1", "kind": "talking", "score": "top"]).filter { $0.selected != nil },
+              DSAppliedFilters(sections: Self.sections(["kind": "talking", "score": "top"]).filter { $0.selected != nil },
                                onRemove: { _ in }, onClearAll: {})
               HStack(spacing: DS.space.md) {
                 GCell("idle") { DSRemovableChip("Kind: Talking") {} }
@@ -47,20 +52,23 @@ struct GalleryListHeader: View {
               }
             }
           }
+        }
+        .frame(width: 520, alignment: .leading)
+        VStack(alignment: .leading, spacing: DS.space.lg) {
           GSection("Search", note: "capsule · ⌘F focuses it · Esc clears") {
             HStack(spacing: DS.space.md) {
-              GCell("idle") { GState("") { DSSearchField(placeholder: "Search clips", text: $0).frame(width: 200) } }
-              GCell("hover", forced: .hover) { GState("") { DSSearchField(placeholder: "Search clips", text: $0).frame(width: 200) } }
-              GCell("focused · text", forced: .focused) { GState("yayo") { DSSearchField(placeholder: "Search clips", text: $0).frame(width: 200) } }
+              GCell("idle") { GState("") { DSSearchField(placeholder: "Search clips", text: $0).frame(width: 160) } }
+              GCell("hover", forced: .hover) { GState("") { DSSearchField(placeholder: "Search clips", text: $0).frame(width: 160) } }
+              GCell("focused · text", forced: .focused) { GState("yayo") { DSSearchField(placeholder: "Search clips", text: $0).frame(width: 160) } }
             }
           }
-          GSection("Status chips · sort", note: "single choice, All first · sort names the order") {
+          GSection("Status chips", note: "single choice, All first") {
             VStack(alignment: .leading, spacing: DS.space.sm) {
               HStack(spacing: DS.space.xs) {
                 GState(String?.none) { sel in
                   DSStatusChips(options: [DSStatusChipOption(id: "crop", title: "No crop", count: 4),
                                           DSStatusChipOption(id: "text", title: "No text", count: 6),
-                                          DSStatusChipOption(id: "x", title: "Too long for X", count: 1)],
+                                          DSStatusChipOption(id: "x", title: "Too long for X", count: 1, tone: .danger)],
                                 selection: sel, allCount: 9)
                 }
               }
@@ -71,12 +79,18 @@ struct GalleryListHeader: View {
                                           DSStatusChipOption(id: "posted", title: "Posted", count: 26)],
                                 selection: sel, allCount: 46)
                 }
-                GState("session") { DSSortMenu(options: Self.sorts, selection: $0) }
-                GCell("hover", forced: .hover) { GState("newest") { DSSortMenu(options: Self.sorts, selection: $0) } }
               }
             }
           }
+          GSection("Sort", note: "names the order") {
+            HStack(spacing: DS.space.md) {
+              GCell("idle") { GState("session") { DSSortMenu(options: Self.sorts, selection: $0) } }
+              GCell("hover", forced: .hover) { GState("newest") { DSSortMenu(options: Self.sorts, selection: $0) } }
+              GCell("small") { GState("high") { DSSortMenu(options: Self.sorts, selection: $0, size: .sm) } }
+            }
+          }
         }
+        .frame(width: 540, alignment: .leading)
       }
       GSection("List header · compact", note: "drawers (Week › Next up): one row, small controls") {
         GState("") { q in

@@ -151,7 +151,8 @@ extension AppModel {
       }
       // A remembered choice that's no longer listed (a session left the list) still shows, so it can be removed.
       if let sel = state.filters[key], !options.contains(where: { $0.id == sel }) {
-        options.append(DSFilterOption(id: sel, title: sessionById[sel].map { Captions.setName($0.name) } ?? sel, count: 0))
+        let title = key == ListFilterKey.session ? (sessionById[sel].map { Captions.setName($0.name) } ?? "Removed session") : sel
+        options.append(DSFilterOption(id: sel, title: title, count: 0, tooltip: "No longer in this list — remove this filter"))
       }
       guard !options.isEmpty else { return nil }
       return DSFilterSection(id: key, title: title, options: options, selected: state.filters[key])
@@ -227,6 +228,7 @@ struct ListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View {
   var filters: [DSFilterSection]
   var compact = false
   var readingColumn = false
+  var columnTrailingInset: CGFloat = 0
   var showsSearch = true
   @ViewBuilder var modes: Modes
   @ViewBuilder var chips: Chips
@@ -234,7 +236,7 @@ struct ListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View {
   @ViewBuilder var trailing: Trailing
 
   init(page: ListPage, title: String, count: Int?, total: Int? = nil, detail: String? = nil, filters: [DSFilterSection],
-       compact: Bool = false, readingColumn: Bool = false, showsSearch: Bool = true,
+       compact: Bool = false, readingColumn: Bool = false, columnTrailingInset: CGFloat = 0, showsSearch: Bool = true,
        @ViewBuilder modes: () -> Modes = { EmptyView() }, @ViewBuilder chips: () -> Chips = { EmptyView() },
        @ViewBuilder sort: () -> Sort = { EmptyView() }, @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
     self.page = page
@@ -245,6 +247,7 @@ struct ListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View {
     self.filters = filters
     self.compact = compact
     self.readingColumn = readingColumn
+    self.columnTrailingInset = columnTrailingInset
     self.showsSearch = showsSearch
     self.modes = modes()
     self.chips = chips()
@@ -256,10 +259,12 @@ struct ListHeader<Modes: View, Chips: View, Sort: View, Trailing: View>: View {
     let prefs = ListPrefs.shared
     DSListHeader(title, count: count, of: total, detail: detail,
                  search: showsSearch ? prefs.searchBinding(page) : nil, searchPlaceholder: page.searchPlaceholder,
-                 searchFocus: prefs.focusToken(page), filters: filters,
+                 searchFocus: prefs.focusToken(page), searchAutoFocus: prefs.pendingFocus == page,
+                 onSearchFocused: { prefs.searchFocused(page) }, filters: filters,
                  onFilter: { key, value in dsWithAnimation { prefs.setFilter(page, key, value) } },
                  onClearAll: { dsWithAnimation { prefs.clearFilters(page) } },
-                 compact: compact, columnWidth: readingColumn ? DS.size.readingColumn : nil) {
+                 compact: compact, columnWidth: readingColumn ? DS.size.readingColumn : nil,
+                 columnTrailingInset: columnTrailingInset) {
       modes
     } chips: {
       chips

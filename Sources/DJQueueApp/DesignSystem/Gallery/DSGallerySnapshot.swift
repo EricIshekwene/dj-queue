@@ -18,7 +18,8 @@ enum DSGallerySnapshot {
       var pages = DSGalleryPage.allCases
       if let only = ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_ONLY"] { pages = pages.filter { $0.rawValue.contains(only) } }
       for p in pages {
-        try await render(AnyView(DSGallery(page: p, media: media)), size: CGSize(width: 1440, height: 900),
+        // The list-header page is taller than a window: render it whole instead of clipping its lower half.
+        try await render(AnyView(DSGallery(page: p, media: media)), size: CGSize(width: 1440, height: p == .lists ? 1560 : 900),
                          name: String(format: "ds-%02d-%@", p.number, p.rawValue), to: out)
         print("ds-gallery: \(p.rawValue)")
       }

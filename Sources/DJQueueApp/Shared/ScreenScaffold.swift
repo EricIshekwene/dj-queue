@@ -105,6 +105,16 @@ struct ScreenScaffold<Trailing: View, SubToolbar: View, Header: View, Content: V
     }
     .environment(\.screenGutter, gutter)
     .background(DS.color.background)
+    .background {
+      // ⌘F focuses this screen's list search (round 4 S3). A window-level hidden button wins over the Edit menu, so
+      // the system text items (Find, Spelling, Substitutions…) stay for text fields elsewhere (the editor has no
+      // scaffold, so ⌘F there is the text view's own).
+      Button("") { model.focusListSearch() }
+        .keyboardShortcut("f", modifiers: .command)
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
   }
 }
