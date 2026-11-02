@@ -19,12 +19,12 @@ struct EditorTitleSection: View {
         HStack(spacing: DS.space.xs) {
           DSButton("Use raw tag", icon: "tag", variant: .outline, size: .sm,
                    disabledReason: model.title == model.rawTag ? "The Title already is the raw tag" : nil,
-                   tooltip: "Set the Title to the marker tag exactly as typed: “\(model.rawTag)”") {
+                   tooltip: "Set the Title to “\(model.rawTag)” as typed") {
             model.setTitle(model.rawTag, source: "app")
           }
           if !model.needsTitleHelp {
             DSButton("Ask an agent", icon: "doc.on.clipboard", variant: .ghost, size: .sm,
-                     tooltip: "Copy a prompt for your agent to find the song names (it answers with djq suggest)") {
+                     tooltip: "Copy a song-name prompt for your agent") {
               model.copyAgentPrompt()
             }
           }
@@ -45,10 +45,11 @@ struct EditorTitleSection: View {
           Text(t).font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(2)
         } else {
           Text(model.rawTag).font(DS.type.headline).foregroundStyle(DS.color.textSecondary).lineLimit(2)
-          DSBadge("Raw tag", style: .outline, size: .sm).help("No Title yet — every screen shows the marker tag as typed")
+          DSBadge("Raw tag", style: .outline, size: .sm).dsTooltip("No Title yet; screens show the marker tag")
         }
         Spacer(minLength: 0)
-        EditorCustomTag(isCustom: model.title != nil, resetHelp: "Clear the Title (screens show the raw tag again)") {
+        EditorCustomTag(isCustom: model.title != nil, resetHelp: "Clear the Title (screens show the raw tag)",
+                        customHelp: "Typed or chosen by you (not the raw tag)") {
           model.titleDraft = nil
           model.setTitle(nil)
         }
@@ -71,7 +72,7 @@ struct EditorTitleSection: View {
       Text("Copy a ready-made prompt for your agent. It finds the song names and sends suggestions back with djq; they show up here as chips.")
         .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
       DSButton("Ask an agent", icon: "doc.on.clipboard", variant: .secondary, size: .sm,
-               tooltip: "Copies the prompt (clip id, tag, set position, audio) to the clipboard") { model.copyAgentPrompt() }
+               tooltip: "Copy a song-name prompt for your agent") { model.copyAgentPrompt() }
     }
     .padding(DS.space.sm)
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -113,7 +114,7 @@ struct EditorTitleSection: View {
       .contentShape(RoundedRectangle(cornerRadius: 14))
     }
     .buttonStyle(EditorPressStyle())
-    .help(chosen ? "This is the Title" : "Use “\(s.text)” as the Title\(s.source.isEmpty ? "" : " (from \(s.source))")")
+    .dsTooltip(chosen ? "This is the Title" : "Use “\(s.text)” as the Title\(s.source.isEmpty ? "" : " (from \(s.source))")")
   }
 
   /// "Yayo – Kabza De Small · 82 %" — matched tracks and confidence, as subtle text.
@@ -136,9 +137,9 @@ struct EditorTitleSection: View {
         .onSubmit(commit)
         .padding(.horizontal, 12).frame(height: DS.size.controlMd)
         .modifier(DSFieldBox(focused: focused, hovering: false, error: false, disabled: false))
-        .help("The Title feeds the overlay text, caption {text}, YouTube title and the name shown everywhere")
+        .dsTooltip("Rename: text, caption and YouTube title follow", shortcut: "↩")
       if draftDiffers {
-        DSButton("Set", variant: .outline, size: .md, tooltip: "Save this Title (↩)", action: commit)
+        DSButton("Set", variant: .outline, size: .md, tooltip: "Save this Title", shortcut: "↩", action: commit)
       }
     }
     .onChange(of: focused) { _, f in if !f { model.commitTitleDraft() } }
@@ -161,10 +162,10 @@ struct EditorTitleSection: View {
   private var kindRow: some View {
     HStack {
       Text("Kind").font(DS.type.calloutMedium).foregroundStyle(DS.color.text)
-        .help("Talking clips get “No text” by default (Settings → New clip defaults)")
       Spacer()
       DSSegmented(selection: Binding(get: { model.video?.kind ?? .djVid }, set: { model.setKind($0) }),
                   segments: Kind.allCases.map { DSSegment(value: $0, title: $0.displayName) }, size: .sm)
+        .dsTooltip("Set the kind; Talking clips start with no text")
     }
     .padding(.top, DS.space.xxs)
   }

@@ -54,12 +54,15 @@ struct EditorTimeline: View {
 
   private var gutterLabels: some View {
     VStack(alignment: .leading, spacing: 0) {
-      Image(systemName: "textformat").frame(height: Self.textH).help("Text: when the overlay text shows")
+      Image(systemName: "textformat").frame(height: Self.textH).contentShape(Rectangle())
+        .dsTooltip("Text lane: when the overlay text shows", side: .leading)
       Spacer().frame(height: Self.gap)
-      Image(systemName: "film").frame(height: Self.filmH).help("The clip file — trim handles, markers, grace zones")
+      Image(systemName: "film").frame(height: Self.filmH).contentShape(Rectangle())
+        .dsTooltip("The clip file: trim, markers, grace", side: .leading)
       if !lanes.isEmpty { Spacer().frame(height: Self.gap) }
       ForEach(lanes, id: \.self) { p in
-        DSPlatformIcon(platform: p, size: Self.laneH).frame(height: Self.laneH).padding(.bottom, 4)
+        DSPlatformIcon(platform: p, size: Self.laneH).frame(height: Self.laneH)
+          .dsTooltip("\(p.displayName)-only trim", side: .leading).padding(.bottom, 4)
       }
     }
     .font(.system(size: 11, weight: .medium))
@@ -99,24 +102,26 @@ struct EditorTransport: View {
           .font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
         Text(String(format: "%.1f s", t.duration)).font(DS.type.captionMedium.monospacedDigit()).foregroundStyle(DS.color.text)
         if !model.trimIsDefault {
-          DSBadge("Custom", style: .soft(.neutral), size: .sm).help("Trim changed from your markers")
+          DSBadge("Custom", style: .soft(.neutral), size: .sm)
+            .dsTooltip(model.video?.markerIn != nil ? "Trim changed from your markers" : "Trim changed from the whole file")
         } else if model.video?.markerIn != nil {
           Text("· markers").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
         }
         Spacer()
         if !model.trimIsDefault {
           DSButton(model.video?.markerIn != nil ? "Trim to markers" : "Whole file", icon: "arrow.uturn.backward", variant: .ghost,
-                   size: .sm, tooltip: "Reset the trim to the default (your in/out markers)") {
+                   size: .sm, tooltip: model.video?.markerIn != nil ? "Reset the trim to your in/out markers"
+                                                                     : "Reset the trim to the whole file") {
             model.resetEdit(.trimIn, .trimOut); model.commitTrim()
           }
         }
       }
       HStack(spacing: 4) {
-        DSIconButton("gobackward.5", tooltip: "Back 5 seconds", size: .sm) { playback.skip(-5) }
+        DSIconButton("gobackward.5", tooltip: "Jump back 5 seconds", size: .sm) { playback.skip(-5) }
         DSIconButton(playback.isPlaying ? "pause.fill" : "play.fill", tooltip: playback.isPlaying ? "Pause" : "Play the trim",
                      variant: .secondary, size: .md, shortcut: "Space",
                      disabledReason: playback.player == nil ? "The clip isn't loaded" : nil) { playback.toggle() }
-        DSIconButton("goforward.5", tooltip: "Forward 5 seconds", size: .sm) { playback.skip(5) }
+        DSIconButton("goforward.5", tooltip: "Jump forward 5 seconds", size: .sm) { playback.skip(5) }
         EditorTimeLabel(playback: playback, duration: model.duration).padding(.leading, 6)
       }
     }
@@ -156,14 +161,17 @@ struct EditorFilmTrack: View {
       EditorFilmstripImages(strip: strip, width: width, height: h)
         .clipShape(RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
         .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track"))
-          .onChanged { v in playback.pause(); playback.seek(m.t(v.location.x)) }
-          .onEnded { v in playback.seek(m.t(v.location.x), exact: true) })
-        .help("Click or drag to move the playhead")
-      // Grace zones: the seconds the file keeps beyond the markers (striped; extendable).
+        .gesture(scrub(m))
+        .dsTooltip("Click or drag to move the playhead")
+      // Grace zones: the seconds the file keeps beyond the markers (striped; extendable). Hoverable for the tooltip;
+      // they carry the same scrub gesture, so clicking/dragging on them still moves the playhead.
       ForEach(grace, id: \.start) { z in
         EditorGraceZone(width: max(1, m.x(z.end) - m.x(z.start)), height: h, leading: z.start < 0.01)
-          .offset(x: m.x(z.start)).allowsHitTesting(false)
+          .contentShape(Rectangle())
+          .gesture(scrub(m))
+          .dsTooltip(z.start < 0.01 ? "Grace: drag the trim start into these seconds"
+                                    : "Grace: drag the trim end into these seconds")
+          .offset(x: m.x(z.start))
       }
       // Dim outside the trim.
       Rectangle().fill(Color.black.opacity(0.5)).frame(width: max(0, a), height: h).allowsHitTesting(false)
@@ -177,16 +185,23 @@ struct EditorFilmTrack: View {
           model.setTrimIn(nt, live: true)
           playback.pause(); playback.seek(nt)
         }.onEnded { _ in model.commitTrim() })
-        .help("Trim in (I) — snaps to your markers; drag left into the grace zone to start earlier")
+        .dsTooltip("Drag to set the start; snaps to your markers", shortcut: "I")
       handleView(leading: false).offset(x: b)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
           let nt = max(m.snapped(v.location.x), model.trim.start + 0.5)
           model.setTrimOut(nt, live: true)
           playback.pause(); playback.seek(nt)
         }.onEnded { _ in model.commitTrim() })
-        .help("Trim out (O) — snaps to your markers; drag right into the grace zone to end later")
+        .dsTooltip("Drag to set the end; snaps to your markers", shortcut: "O")
     }
     .frame(width: width, height: h, alignment: .topLeading)
+  }
+
+  /// Click or drag to move the playhead (the filmstrip, grace zones and marker ticks all scrub).
+  private func scrub(_ m: EditorTrackMath) -> some Gesture {
+    DragGesture(minimumDistance: 0, coordinateSpace: .named("track"))
+      .onChanged { v in playback.pause(); playback.seek(m.t(v.location.x)) }
+      .onEnded { v in playback.seek(m.t(v.location.x), exact: true) }
   }
 
   private func handleView(leading: Bool) -> some View {
@@ -199,17 +214,21 @@ struct EditorFilmTrack: View {
       .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
   }
 
+  /// In/out marker ticks: hoverable for the tooltip, and they scrub like the filmstrip under them.
   @ViewBuilder private func markerTicks(_ m: EditorTrackMath) -> some View {
-    let marks = [model.video?.markerIn, model.video?.markerOut].compactMap { $0 }.filter { $0 >= 0 && $0 <= model.duration }
-    ForEach(marks, id: \.self) { t in
+    let marks = [(model.video?.markerIn, "in"), (model.video?.markerOut, "out")]
+      .compactMap { t, k in t.map { ($0, k) } }.filter { $0.0 >= 0 && $0.0 <= model.duration }
+    ForEach(marks, id: \.1) { t, kind in
       VStack(spacing: 0) {
         Image(systemName: "arrowtriangle.down.fill").font(.system(size: 7)).foregroundStyle(.white)
         Rectangle().fill(Color.white).frame(width: 1.5)
       }
       .shadow(color: .black.opacity(0.6), radius: 1)
       .frame(width: 10, height: h)
+      .contentShape(Rectangle())
+      .gesture(scrub(m))
+      .dsTooltip("Your \(kind) marker at \(EditorGeometry.time(t, tenths: true)); the trim snaps here")
       .offset(x: m.x(t) - 5)
-      .allowsHitTesting(false)
     }
   }
 }
@@ -260,7 +279,7 @@ struct EditorTextBar: View {
         .frame(width: max(14, b - a), height: h)
         .offset(x: a)
         .onTapGesture { model.scrollTarget = .text }
-        .help("Overlay text — click to edit it")
+        .dsTooltip("Edit the overlay text")
       if on {
         grip.offset(x: a)
           .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
@@ -292,7 +311,7 @@ struct EditorTextBar: View {
   private var grip: some View {
     RoundedRectangle(cornerRadius: 2).fill(DS.color.text.opacity(0.7)).frame(width: 6, height: h)
       .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-      .help("Drag to set when the text shows")
+      .dsTooltip("Drag to set when the text shows")
   }
 }
 
@@ -325,13 +344,13 @@ struct EditorTrimLane: View {
           let t = min(m.snapped(v.location.x), r.end - 0.5)
           model.updateEdit { $0.platformTrims[platform]?.start = t }
         })
-        .help("\(platform.displayName) trim in")
+        .dsTooltip("Drag to set where \(platform.displayName)'s cut starts")
       RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 6, height: h).offset(x: b - 6)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
           let t = max(m.snapped(v.location.x, extra: [r.start + lim]), r.start + 0.5)
           model.updateEdit { $0.platformTrims[platform]?.end = t }
         })
-        .help("\(platform.displayName) trim out — snaps to the \(Validation.fmt(lim)) limit")
+        .dsTooltip("Drag to set where \(platform.displayName)'s cut ends (snaps to \(Validation.fmt(lim)))")
     }
     .frame(width: width, height: h, alignment: .leading)
   }

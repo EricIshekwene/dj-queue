@@ -92,7 +92,8 @@ struct SettingsModal: View {
 
   private var nav: some View {
     VStack(alignment: .leading, spacing: 2) {
-      DSIconButton("xmark", tooltip: "Close settings", size: .sm, shortcut: "esc") { model.showSettings = false }
+      DSIconButton("xmark", tooltip: ui.isDirty(model.settings.defaults) ? "Close settings (unsaved defaults are kept)" : "Close settings",
+                   size: .sm, shortcut: "esc") { model.showSettings = false }
         .padding(.leading, 2)
         .padding(.bottom, DS.space.sm)
       ForEach(SettingsSection.allCases) { s in
@@ -147,9 +148,9 @@ struct SettingsModal: View {
         DSDialog(c.title, description: c.message, icon: c.icon, iconTone: c.destructive ? .danger : .neutral, width: 420) {
           EmptyView()
         } footer: {
-          DSButton("Cancel", variant: .ghost) { ui.confirm = nil }
+          DSButton("Cancel", variant: .ghost, tooltip: "Close without changing anything", shortcut: "esc") { ui.confirm = nil }
             .keyboardShortcut(.cancelAction)
-          DSButton(c.confirmTitle, variant: c.destructive ? .destructiveSolid : .primary) {
+          DSButton(c.confirmTitle, variant: c.destructive ? .destructiveSolid : .primary, shortcut: "↩") {
             ui.confirm = nil
             c.action()
           }

@@ -27,6 +27,7 @@ struct EditorInspector: View {
           }
           .padding(.top, DS.space.md).padding(.bottom, DS.space.xxl)
           .disabled(model.readOnly || model.video == nil)
+          .dsTooltip(nil, disabledReason: model.readOnly ? EditorView.readOnlyReason : nil)
         }
         .scrollIndicators(.automatic)
         .onAppear { if let t = model.scrollTarget { jump(proxy, t, animated: false) } }
@@ -76,7 +77,7 @@ struct EditorMiniIndex: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 ? s : (hovering == s ? nil : hovering) }
-        .help(flagged.contains(s) ? "Jump to \(s.rawValue) — needs attention" : "Jump to \(s.rawValue)")
+        .dsTooltip(flagged.contains(s) ? "Jump to \(s.rawValue) (needs attention)" : "Jump to \(s.rawValue)", side: .bottom)
         if s != EditorSection.allCases.last { Spacer(minLength: 0) }
       }
     }
@@ -86,6 +87,8 @@ struct EditorMiniIndex: View {
 /// E.S4: versions v1…vn with usage, duplicate and delete (popover from the header's version picker).
 struct EditorVersionList: View {
   @ObservedObject var model: EditorModel
+  /// Asks before deleting (the header closes this popover and shows the confirmation).
+  var requestDelete: (Int) -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 2) {
@@ -97,7 +100,8 @@ struct EditorVersionList: View {
       ForEach(model.versionNumbers, id: \.self) { n in row(n) }
       DSSeparator().padding(.vertical, DS.space.xxs)
       DSButton("New version", icon: "plus", variant: .ghost, size: .sm,
-               disabledReason: model.readOnly ? "Editing is off for this clip" : nil) { model.newVersion(copying: nil) }
+               disabledReason: model.readOnly ? "Editing is off for this clip" : nil,
+               tooltip: "Start a new text version for a repost") { model.newVersion(copying: nil) }
         .padding(.horizontal, DS.space.xxs).padding(.bottom, DS.space.xs)
     }
     .padding(DS.space.xxs)
@@ -120,15 +124,15 @@ struct EditorVersionList: View {
       if selected { DSBadge("Editing", style: .soft(.neutral), size: .sm) }
       Menu {
         Button("Duplicate as new version") { model.newVersion(copying: n) }
-        if n > 1 { Button("Delete v\(n)", role: .destructive) { model.deleteVersion(n) } }
+        if n > 1 { Button("Delete v\(n)…", role: .destructive) { requestDelete(n) } }
       } label: { Image(systemName: "ellipsis").foregroundStyle(DS.color.textSecondary) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        .help("Actions for v\(n)")
+        .dsTooltip("More actions for v\(n)")
     }
     .padding(.horizontal, DS.space.sm).frame(height: 40)
     .background(selected ? DS.color.selected : .clear, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
     .contentShape(Rectangle())
     .onTapGesture { model.selectVersion(n) }
-    .help("Edit v\(n)")
+    .dsTooltip(selected ? nil : "Edit v\(n)'s text and caption")
   }
 }

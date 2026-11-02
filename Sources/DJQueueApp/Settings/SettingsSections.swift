@@ -14,13 +14,14 @@ struct GeneralSettings: View {
         .accessibilityLabel("Pause all posting")
     }
     SettingsRow("Posts per day", description: "Each clip goes to every platform it posts to.") {
-      DSXStepper(label: "Posts per day", int: model.binding(\.postsPerDay), range: 1...5) { "\($0) per day" }
+      DSXStepper(label: "Posts per day", int: model.binding(\.postsPerDay) { "Posts per day set to \($0)" }, range: 1...5,
+                 less: "Post fewer clips each day", more: "Post more clips each day") { "\($0) per day" }
     }
     SettingsRow("Time zone", description: "Slot times, days and reminders use this zone.") {
-      SettingsSelect(label: "Time zone", selection: model.binding(\.timeZone), options: timeZones)
+      SettingsSelect(label: "Time zone", selection: model.binding(\.timeZone) { "Time zone set to \($0)" }, options: timeZones)
     }
     SettingsRow("Week starts on", description: "First day of the Week screen and of each approval.") {
-      SettingsSelect(label: "Week starts on", selection: model.binding(\.weekStartsOn),
+      SettingsSelect(label: "Week starts on", selection: model.binding(\.weekStartsOn) { "Week now starts on \(SettingsFmt.weekday($0))" },
                      options: [DSSelectOption(value: 2, title: "Monday"), DSSelectOption(value: 1, title: "Sunday")])
     }
   }
@@ -78,7 +79,7 @@ struct PlatformsSettings: View {
     Binding(get: {
       !model.settings.enabledPlatforms.contains(p) ? .off : model.settings.pausedPlatforms.contains(p) ? .paused : .on
     }, set: { m in
-      model.update { s in
+      model.update("\(p.displayName) \(m == .on ? "turned on" : m == .paused ? "paused" : "turned off")") { s in
         switch m {
         case .on: s.enabledPlatforms.insert(p); s.pausedPlatforms.remove(p)
         case .paused: s.enabledPlatforms.insert(p); s.pausedPlatforms.insert(p)
@@ -104,11 +105,22 @@ struct PlatformsSettings: View {
       ForEach(Platform.allCases.sorted()) { p in
         HStack(spacing: DS.space.xs) {
           DSPlatformIcon(platform: p, size: 22, showsLabel: true).frame(maxWidth: .infinity, alignment: .leading)
-          field("\(p.displayName) maximum length in seconds", limit(p).map { Int($0.maxDuration) }) { v in setLimit(p) { $0.maxDuration = Double(v) } }
-          field("\(p.displayName) maximum size in MB", limit(p).map { Int($0.maxBytes / 1_000_000) }) { v in setLimit(p) { $0.maxBytes = Int64(v) * 1_000_000 } }
-          field("\(p.displayName) caption characters", limit(p)?.captionLimit) { v in setLimit(p) { $0.captionLimit = v } }
+          field("\(p.displayName) maximum length in seconds", "Set \(p.displayName)'s longest clip (seconds)",
+                limit(p).map { Int($0.maxDuration) }) { v in
+            setLimit(p, "\(p.displayName) length limit set to \(v) s") { $0.maxDuration = Double(v) }
+          }
+          field("\(p.displayName) maximum size in MB", "Set \(p.displayName)'s largest file (MB)",
+                limit(p).map { Int($0.maxBytes / 1_000_000) }) { v in
+            setLimit(p, "\(p.displayName) size limit set to \(v) MB") { $0.maxBytes = Int64(v) * 1_000_000 }
+          }
+          field("\(p.displayName) caption characters", "Set \(p.displayName)'s caption limit (characters)",
+                limit(p)?.captionLimit) { v in
+            setLimit(p, "\(p.displayName) caption limit set to \(v)") { $0.captionLimit = v }
+          }
           if p == .youtube {
-            field("YouTube title characters", limit(p)?.titleLimit) { v in setLimit(p) { $0.titleLimit = v } }
+            field("YouTube title characters", "Set the YouTube title limit (characters)", limit(p)?.titleLimit) { v in
+              setLimit(p, "YouTube title limit set to \(v)") { $0.titleLimit = v }
+            }
           } else {
             Text("—").font(DS.type.callout).foregroundStyle(DS.color.textTertiary).frame(width: 76, alignment: .trailing)
               .dsTooltip("Only YouTube has a title")
@@ -120,14 +132,15 @@ struct PlatformsSettings: View {
     }
   }
 
-  private func field(_ label: String, _ value: Int?, _ set: @escaping (Int) -> Void) -> some View {
-    SettingsNumberField(label: label, value: value ?? 0, commit: set).frame(width: 76)
+  /// Saves on ↩ or when the field loses focus (never mid-typing).
+  private func field(_ label: String, _ tooltip: String, _ value: Int?, _ set: @escaping (Int) -> Void) -> some View {
+    SettingsNumberField(label: label, value: value ?? 0, tooltip: tooltip, commit: set).frame(width: 76)
   }
 
   private func limit(_ p: Platform) -> PlatformLimits? { model.settings.limits[p] ?? PlatformLimits.defaults[p] }
 
-  private func setLimit(_ p: Platform, _ change: @escaping (inout PlatformLimits) -> Void) {
-    model.update { s in
+  private func setLimit(_ p: Platform, _ label: String, _ change: @escaping (inout PlatformLimits) -> Void) {
+    model.update(label) { s in
       guard var l = s.limits[p] ?? PlatformLimits.defaults[p] else { return }
       change(&l)
       s.limits[p] = l
@@ -154,8 +167,9 @@ struct ScheduleSettings: View {
     HStack {
       Spacer()
       DSButton("Reset slot times", icon: "arrow.counterclockwise", variant: .ghost, size: .sm,
-               disabledReason: slotsAreDefault ? "Slot times are already the built-in times" : nil) {
-        model.update { s in for p in Platform.allCases { s.slotMinutes[p] = p.defaultSlotMinutes } }
+               disabledReason: slotsAreDefault ? "Slot times are already the built-in times" : nil,
+               tooltip: "Put every slot back to its built-in time") {
+        model.update("Slot times reset") { s in for p in Platform.allCases { s.slotMinutes[p] = p.defaultSlotMinutes } }
       }
     }
     .padding(.top, DS.space.xs)
@@ -164,27 +178,32 @@ struct ScheduleSettings: View {
     SettingsRow("Second post offset", description: "Extra posts on the same day use the same slots, shifted by this much.",
                 disabledReason: model.settings.postsPerDay < 2 ? "Only used with 2 or more posts per day (General)." : nil) {
       DSXStepper(label: "Second post offset", int: Binding(get: { model.settings.secondPostOffsetMinutes / 60 },
-                                                           set: { v in model.update { $0.secondPostOffsetMinutes = v * 60 } }),
+                                                           set: { v in model.update("Second post offset set to +\(v) h") { $0.secondPostOffsetMinutes = v * 60 } }),
                  range: 1...6) { "+\($0) h" }
     }
     SettingsRow("Post early", description: "Allow posting any time on the day, before the slot.") {
-      DSSwitch(isOn: model.binding(\.allowEarlyPosting)).accessibilityLabel("Post early")
+      DSSwitch(isOn: model.toggleBinding(\.allowEarlyPosting, "Post early")).accessibilityLabel("Post early")
     }
     SettingsRow("Late grace", description: "A post is still due this long after its slot; after that the plan shifts.") {
-      DSXStepper(label: "Late grace", value: model.binding(\.lateGraceHours), range: 1...12, format: SettingsFmt.hours)
+      DSXStepper(label: "Late grace", value: model.binding(\.lateGraceHours) { "Late grace set to \(SettingsFmt.hours($0))" },
+                 range: 1...12, format: SettingsFmt.hours)
     }
     SettingsRow("Retry stagger", description: "Re-queued failures post this long after the day's slot.") {
-      DSXStepper(label: "Retry stagger", value: model.binding(\.retryStaggerHours), range: 1...8, format: SettingsFmt.hours)
+      DSXStepper(label: "Retry stagger", value: model.binding(\.retryStaggerHours) { "Retry stagger set to \(SettingsFmt.hours($0))" },
+                 range: 1...8, less: "Retry failed posts sooner after the slot", more: "Retry failed posts later after the slot",
+                 format: SettingsFmt.hours)
     }
     SettingsRow("Repost cooldown", description: "Days before the same clip can post again on a platform.") {
-      DSXStepper(label: "Repost cooldown", int: model.binding(\.repostCooldownDays), range: 1...90, format: SettingsFmt.days)
+      DSXStepper(label: "Repost cooldown", int: model.binding(\.repostCooldownDays) { "Repost cooldown set to \(SettingsFmt.days($0))" },
+                 range: 1...90, format: SettingsFmt.days)
     }
   }
 
   private var slotsAreDefault: Bool { Platform.allCases.allSatisfy { model.settings.slot(for: $0) == $0.defaultSlotMinutes } }
 
   private func slotBinding(_ p: Platform) -> Binding<Int> {
-    Binding(get: { model.settings.slot(for: p) }, set: { v in model.update { $0.slotMinutes[p] = v } })
+    Binding(get: { model.settings.slot(for: p) },
+            set: { v in model.update("\(p.displayName) slot set to \(SettingsFmt.time(v))") { $0.slotMinutes[p] = v } })
   }
 }
 
@@ -195,7 +214,7 @@ struct QueueSettings: View {
 
   var body: some View {
     SettingsRow("Order", description: "Orders the unplanned backlog by score. Planned days don't move.") {
-      SettingsSelect(label: "Order", selection: model.binding(\.sort),
+      SettingsSelect(label: "Order", selection: model.binding(\.sort) { "Order set to \($0.displayName)" },
                      options: SortDirection.allCases.map { DSSelectOption(value: $0, title: $0.displayName) })
     }
     SettingsRow("Ties", description: "Equal scores: older session first, then the night's order (part, start).") {
@@ -213,16 +232,19 @@ struct QueueSettings: View {
 
     SettingsGroupHeader("Spacing")
     SettingsRow("Avoid overlapping clips", description: "Keep clips from the same part of a set apart. Off: your scores decide.") {
-      DSSwitch(isOn: model.binding(\.avoidOverlap)).accessibilityLabel("Avoid overlapping clips")
+      DSSwitch(isOn: model.toggleBinding(\.avoidOverlap, "Avoid overlapping clips")).accessibilityLabel("Avoid overlapping clips")
     }
     SettingsRow("Keep apart for", description: "Minimum days between overlapping clips.",
                 disabledReason: model.settings.avoidOverlap ? nil : "Turn on Avoid overlapping clips first.") {
-      DSXStepper(label: "Keep apart for", int: model.binding(\.avoidOverlapDays), range: 1...14, format: SettingsFmt.days)
+      DSXStepper(label: "Keep apart for", int: model.binding(\.avoidOverlapDays) { "Keep apart for \(SettingsFmt.days($0))" },
+                 range: 1...14, format: SettingsFmt.days)
     }
   }
 
   private func overrideBinding(_ p: Platform) -> Binding<SortDirection?> {
-    Binding(get: { model.settings.sortOverrides[p] }, set: { v in model.update { $0.sortOverrides[p] = v } })
+    Binding(get: { model.settings.sortOverrides[p] }, set: { v in
+      model.update("\(p.displayName) order set to \(v?.displayName ?? "Same as Order")") { $0.sortOverrides[p] = v }
+    })
   }
 }
 
@@ -235,23 +257,29 @@ struct RenderingSettings: View {
   var body: some View {
     SettingsGroupHeader("Audio", first: true)
     SettingsRow("Loudness target", description: "Integrated loudness every render is normalised to.") {
-      DSXStepper(label: "Loudness target", value: model.binding(\.loudnessTarget), range: -24 ... -8) { String(format: "%.0f LUFS", $0) }
+      DSXStepper(label: "Loudness target", value: model.binding(\.loudnessTarget) { String(format: "Loudness target set to %.0f LUFS", $0) },
+                 range: -24 ... -8, less: "Make renders quieter", more: "Make renders louder") { String(format: "%.0f LUFS", $0) }
     }
     SettingsRow("True peak", description: "Ceiling for the loudest sample.") {
-      DSXStepper(label: "True peak", value: model.binding(\.truePeak), range: -3...0, step: 0.5) { String(format: "%.1f dBTP", $0) }
+      DSXStepper(label: "True peak", value: model.binding(\.truePeak) { String(format: "True peak set to %.1f dBTP", $0) },
+                 range: -3...0, step: 0.5, less: "Lower the loudest-sample ceiling", more: "Raise the loudest-sample ceiling") {
+        String(format: "%.1f dBTP", $0)
+      }
     }
     SettingsRow("Loudness range", description: "How much the loudness may vary across the clip.") {
-      DSXStepper(label: "Loudness range", value: model.binding(\.lra), range: 5...20) { String(format: "%.0f LU", $0) }
+      DSXStepper(label: "Loudness range", value: model.binding(\.lra) { String(format: "Loudness range set to %.0f LU", $0) },
+                 range: 5...20, less: "Allow less loudness variation", more: "Allow more loudness variation") { String(format: "%.0f LU", $0) }
     }
 
     SettingsGroupHeader("Video")
     SettingsRow("Bitrate", description: "Video bitrate of every render.") {
       DSXStepper(label: "Bitrate", int: Binding(get: { model.settings.videoBitrateKbps / 1000 },
-                                                set: { v in model.update { $0.videoBitrateKbps = v * 1000 } }),
+                                                set: { v in model.update("Bitrate set to \(v) Mbps") { $0.videoBitrateKbps = v * 1000 } }),
                  range: 4...40) { "\($0) Mbps" }
     }
     SettingsRow("Render ahead", description: "Approved posts are rendered this far ahead.") {
-      DSXStepper(label: "Render ahead", int: model.binding(\.renderHorizonDays), range: 1...14, format: SettingsFmt.days)
+      DSXStepper(label: "Render ahead", int: model.binding(\.renderHorizonDays) { "Render ahead set to \(SettingsFmt.days($0))" },
+                 range: 1...14, format: SettingsFmt.days)
     }
 
     SettingsGroupHeader("Posted renders")
@@ -262,10 +290,8 @@ struct RenderingSettings: View {
       ])
     }
     SettingsRow("Delete after", description: "Days after the last platform posted.", disabledReason: deleteAfter == nil ? "Only used when Cleanup deletes renders." : nil) {
-      DSXStepper(label: "Delete after", int: Binding(get: { deleteAfter ?? deleteDays }, set: { v in
-        deleteDays = v
-        model.update { $0.cleanup = .deleteAfter(days: v) }
-      }), range: 1...365, format: SettingsFmt.days)
+      DSXStepper(label: "Delete after", int: Binding(get: { deleteAfter ?? deleteDays }, set: { v in setDeleteAfter(v) }),
+                 range: 1...365, less: "Delete posted renders sooner", more: "Delete posted renders later", format: SettingsFmt.days)
     }
   }
 
@@ -274,8 +300,34 @@ struct RenderingSettings: View {
     return nil
   }
 
+  /// Turning deletion on asks first: the engine then deletes posted render files (the source footage stays).
   private var keepBinding: Binding<Bool> {
-    Binding(get: { deleteAfter == nil }, set: { keep in model.update { $0.cleanup = keep ? .keep : .deleteAfter(days: deleteDays) } })
+    Binding(get: { deleteAfter == nil }, set: { keep in
+      if keep {
+        model.update("Posted renders kept forever") { $0.cleanup = .keep }
+      } else if deleteAfter == nil {
+        let d = deleteDays
+        model.confirm(ConfirmRequest(
+          title: "Delete posted renders after \(SettingsFmt.days(d))?",
+          message: "The engine deletes each render file \(SettingsFmt.days(d)) after its last platform posted it, starting on its next pass. Your source footage is never touched. Undo restores the setting, not deleted files.",
+          verb: "Delete after \(SettingsFmt.days(d))", icon: "trash", destructive: true) {
+            model.update("Posted renders now deleted after \(SettingsFmt.days(d))") { $0.cleanup = .deleteAfter(days: d) }
+          })
+      }
+    })
+  }
+
+  /// Lowering the delay makes older renders eligible at once, so that asks first; raising it doesn't.
+  private func setDeleteAfter(_ v: Int) {
+    let apply = {
+      deleteDays = v
+      model.update("Delete after set to \(SettingsFmt.days(v))") { $0.cleanup = .deleteAfter(days: v) }
+    }
+    guard let current = deleteAfter, v < current else { apply(); return }
+    model.confirm(ConfirmRequest(
+      title: "Delete posted renders after \(SettingsFmt.days(v))?",
+      message: "Renders posted more than \(SettingsFmt.days(v)) ago are deleted on the engine's next pass. Undo restores the setting, not deleted files.",
+      verb: "Delete after \(SettingsFmt.days(v))", icon: "trash", destructive: true, action: apply))
   }
 }
 
@@ -326,18 +378,24 @@ struct AlertsSettings: View {
   var body: some View {
     SettingsGroupHeader("Runway", first: true)
     SettingsRow("Approve next week", description: "Card and notification when approved runway drops below this.") {
-      DSXStepper(label: "Approve next week", int: model.binding(\.approvedRunwayAlertDays), range: 1...14, format: SettingsFmt.days)
+      DSXStepper(label: "Approve next week", int: model.binding(\.approvedRunwayAlertDays) { "Approval alert at \(SettingsFmt.days($0)) left" },
+                 range: 1...14, less: "Alert when fewer approved days are left", more: "Alert when more approved days are left",
+                 format: SettingsFmt.days)
     }
     SettingsRow("Record a new set", description: "Card and notification when total runway drops below this.") {
-      DSXStepper(label: "Record a new set", int: model.binding(\.totalRunwayAlertDays), range: 3...60, format: SettingsFmt.days)
+      DSXStepper(label: "Record a new set", int: model.binding(\.totalRunwayAlertDays) { "New-set alert at \(SettingsFmt.days($0)) left" },
+                 range: 3...60, less: "Alert when fewer days of clips are left", more: "Alert when more days of clips are left",
+                 format: SettingsFmt.days)
     }
 
     SettingsGroupHeader("Reminders")
     SettingsRow("Approval reminder", description: "Notification if next week isn't approved by then.") {
       HStack(spacing: DS.space.xxs) {
-        SettingsSelect(label: "Approval reminder day", selection: model.binding(\.approvalReminderWeekday),
+        SettingsSelect(label: "Approval reminder day",
+                       selection: model.binding(\.approvalReminderWeekday) { "Approval reminder moved to \(SettingsFmt.weekday($0))" },
                        options: (1...7).map { DSSelectOption(value: $0, title: SettingsFmt.weekday($0)) })
-        SettingsSelect(label: "Approval reminder time", selection: model.binding(\.approvalReminderMinutes),
+        SettingsSelect(label: "Approval reminder time",
+                       selection: model.binding(\.approvalReminderMinutes) { "Approval reminder moved to \(SettingsFmt.time($0))" },
                        options: SettingsFmt.timeOptions(current: model.settings.approvalReminderMinutes))
       }
       .fixedSize()
