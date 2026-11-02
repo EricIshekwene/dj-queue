@@ -55,10 +55,19 @@ extension AppModel {
   /// Asks for preview proxies of the clips now on screen (most important first). Cached proxies land in
   /// `proxyURLs` at once; missing ones are generated in the background by `proxies` (visible first) and land when
   /// done. Snapshot mode only looks up cached files and never generates. Cheap to call repeatedly.
-  func requestProxies(_ visibleIds: [String], prefetch: [String] = []) {
+  ///
+  /// S6: a proxy that lands after the clip's preview changed (`previewChanged` bumped its generation) is dropped
+  /// and asked for again, so an older crop/trim never plays. `keepOthersVisible`: re-requests (from
+  /// `previewChanged`) don't demote the screen's other visible clips.
+  func requestProxies(_ visibleIds: [String], prefetch: [String] = [], keepOthersVisible: Bool = false) {
     let range = playback.loop
     func eligible(_ ids: [String]) -> [String] { ids.filter { id in videoById[id].map { $0.type == .short && !$0.missing } ?? false } }
     let now = eligible(visibleIds), later = eligible(prefetch).filter { !now.contains($0) }
+    for id in now {
+      if let i = recentProxyIds.firstIndex(of: id) { recentProxyIds.remove(at: i) }
+      recentProxyIds.append(id)
+    }
+    if recentProxyIds.count > 48 { recentProxyIds.removeFirst(recentProxyIds.count - 48) }
     let wanted = (now + later).filter { proxyURLs[$0] == nil }
     if frozen {
       for id in wanted { if let u = proxies.cachedProxy(videoId: id, range: range) { proxyURLs[id] = u } }
@@ -66,20 +75,40 @@ extension AppModel {
     }
     let fresh = wanted.filter { !proxyPending.contains($0) }
     proxyPending.formUnion(fresh)
+    let gens = Dictionary(uniqueKeysWithValues: fresh.map { ($0, ThumbStamps.shared.gen($0)) })
     let svc = proxies
     let all = now + later
     let background = Set(later)
-    Task.detached(priority: .utility) {
-      svc.setVisible(all, range: range)
-      for id in fresh {
-        svc.request(id, priority: background.contains(id) ? .background : .visible, range: range) { result in
-          Task { @MainActor in
-            self.proxyPending.remove(id)
-            if case .success(let url) = result, self.playback.loop == range { self.proxyURLs[id] = url }
+    let store = self.store
+    let land: @Sendable (String, Result<URL, Error>) -> Void = { id, result in
+      // Belt for review M1 (off the main thread): a proxy whose cache name isn't the one the clip's current edit
+      // asks for has an older crop/trim — never show it.
+      var stale = false
+      if case .success(let url) = result, let v = try? store.video(id: id),
+         let want = try? Media.proxyURL(store: store, video: v, range: range), want != url { stale = true }
+      Task { @MainActor in
+        guard ThumbStamps.shared.gen(id) == gens[id] else { return }  // the preview changed meanwhile: a newer request owns it
+        self.proxyPending.remove(id)
+        guard self.playback.loop == range else { self.previewUpdating.remove(id); return }
+        if stale {
+          // Ask once more for this generation (the service runs it after any encode in flight); else keep the cover.
+          if self.proxyRetried.insert("\(id)|\(gens[id] ?? 0)").inserted {
+            self.requestProxies([id], keepOthersVisible: true)
+            return
           }
+        } else if case .success(let url) = result {
+          self.proxyURLs[id] = url
         }
+        self.previewUpdating.remove(id)
+      }
+    }
+    Task.detached(priority: .utility) {
+      if !keepOthersVisible { svc.setVisible(all, range: range) }
+      for id in fresh {
+        // Already made (e.g. a text-only change keeps the crop/trim): no wait behind other encodes.
+        if let u = svc.cachedProxy(videoId: id, range: range) { land(id, .success(u)); continue }
+        svc.request(id, priority: background.contains(id) ? .background : .visible, range: range) { result in land(id, result) }
       }
     }
   }
-
 }

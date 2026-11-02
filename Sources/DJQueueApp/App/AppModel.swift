@@ -115,7 +115,7 @@ final class AppModel {
   var postsFilter: PostsFilter = .all
   var weekStart: String = "" { didSet { if oldValue != weekStart && !oldValue.isEmpty { refresh() } } }
   var editor: EditorRequest? {
-    didSet { if editor == nil, oldValue != nil { finishEditorSession() } }
+    didSet { if editor == nil, let old = oldValue { editorDidClose(old) } }
   }
   /// The open editor session's journal entry: every clip it can reach is snapshotted at open, and the whole session
   /// becomes ONE app-level undo ("Edits to <clip>") when the editor closes (F8; in-editor ⌘Z is field-level).
@@ -162,6 +162,29 @@ final class AppModel {
   /// Decoded covers by ThumbCache key (filled by `requestPoster`).
   var posters: [String: NSImage] = [:]
   @ObservationIgnored var posterPending: Set<String> = []
+
+  // MARK: Previews (round 4 S6 — AppModel+Previews.swift)
+
+  /// Edit/version times + defaults generation from the last refresh; `previewStamp` reads it.
+  var previewTable = PreviewStampTable()
+  /// All-versions stamp per clip (change detection in `apply`).
+  @ObservationIgnored var previewAllStamps: [String: String] = [:]
+  /// When the stamps were last set from the database (an older background load doesn't roll them back).
+  @ObservationIgnored var previewStampsAt = Date.distantPast
+  /// Clips whose edit changed and whose new proxy is still being made ("Updating preview").
+  var previewUpdating: Set<String> = []
+  /// Overlay timing per "id|vN" (with the stamp it was resolved at).
+  var previewInfo: [String: PreviewInfo] = [:]
+  @ObservationIgnored var previewInfoPending: Set<String> = []
+  /// Post id → `posters` key of its current render's cover.
+  var renderCoverKeys: [String: String] = [:]
+  /// Clips recently shown / recently played (bounded): `previewChanged` re-requests these.
+  @ObservationIgnored var recentPreviewIds: [String] = []
+  @ObservationIgnored var recentProxyIds: [String] = []
+  /// "id|generation" of clips whose landed proxy was stale and were asked for once more (no retry loops).
+  @ObservationIgnored var proxyRetried: Set<String> = []
+  /// When an evicted overlay was last reloaded, per overlay key (no reload storms when many are on screen).
+  @ObservationIgnored var overlayReloadedAt: [String: Date] = [:]
   /// Selected clip ids per screen (#11). Use `select`, `toggleSelection`, `selectAll`, `clearSelection`.
   var selection: [Screen: Set<String>] = [:]
   /// Last plain/⌘-clicked id per screen (⇧-click range anchor).
@@ -293,7 +316,10 @@ final class AppModel {
     var suggestions: [String: [TitleSuggestion]] = [:]
     var issues: [String: [ValidationIssue]] = [:]
     var needsTitleHelp: Set<String> = []
-    var editStamps: [String: Double] = [:]
+    var previewTable = PreviewStampTable()
+    var previewStamps: [String: String] = [:]
+    var previewAllStamps: [String: String] = [:]
+    var startedAt = Date()
     var covers: Set<String> = []
     var captionTemplates: [CaptionTemplate] = []
     var hashtagSets: [HashtagSet] = []
@@ -304,6 +330,7 @@ final class AppModel {
 
   nonisolated static func load(store: Store, queue: Queue, postActions: PostActions, now: Date, weekStart: String) -> Loaded {
     var l = Loaded()
+    l.startedAt = Date()
     do {
       l.settings = try store.settings()
       let dm = DayMath(settings: l.settings)
@@ -344,9 +371,12 @@ final class AppModel {
       for v in l.needsEdit where (try? store.edit(videoId: v.id))?.coverTime != nil { l.covers.insert(v.id) }
       l.captionTemplates = try store.captionTemplates()
       l.hashtagSets = try store.hashtagSets()
-      l.editStamps = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT video_id, updated_at FROM edits").compactMap { r in
-        r.string("video_id").map { ($0, r.double("updated_at") ?? 0) }
-      })
+      // S6 preview stamps: edit + text versions + New-clip defaults + clip row, per clip.
+      l.previewTable = try store.previewStampTable()
+      for v in l.videos {
+        l.previewStamps[v.id] = l.previewTable.stamp(for: v, version: 1)
+        l.previewAllStamps[v.id] = l.previewTable.stamp(for: v, version: .max)
+      }
       if !weekStart.isEmpty {
         l.weekSlots = try store.planSlots(where: "week_start=?", [weekStart])
         l.weekAwake = try Health.awakePeriods(store: store, since: dm.date(weekStart))
@@ -407,9 +437,24 @@ final class AppModel {
     loaded = true
     weekSlots = l.weekSlots
     weekAwake = l.weekAwake
-    ThumbStamps.shared.update(l.editStamps)
+    applyPreviewStamps(l)
     lastRefresh = Date()
     loadError = nil
+  }
+
+  /// S6: new stamps → `previewChanged` for every clip whose preview changed (djq/agent edits, bulk actions, Score
+  /// quick edits, defaults changes all land here within one refresh). The first load only records them.
+  private func applyPreviewStamps(_ l: Loaded) {
+    guard l.startedAt >= previewStampsAt else { return }  // older than stamps set since (editor close)
+    let first = previewAllStamps.isEmpty
+    let changed = first ? [] : Set(l.previewAllStamps.compactMap { id, s in
+      previewAllStamps[id].map { $0 == s ? nil : id } ?? nil
+    })
+    if previewTable != l.previewTable { previewTable = l.previewTable }
+    previewAllStamps = l.previewAllStamps
+    previewStampsAt = l.startedAt
+    ThumbStamps.shared.update(l.previewStamps)
+    previewChanged(changed)
   }
 
   /// Synchronous reload (launch, snapshot mode).
@@ -957,16 +1002,23 @@ final class AppModel {
     }
   }
 
+  /// Done in the editor. Leaving any other way (sidebar, ⌘-number, ⌘K, a stage move) sets `editor = nil` directly;
+  /// both run `editorDidClose`, so previews refresh the same way on every path (S6).
   func closeEditor() {
     let fix = editor?.fixPostId
-    for id in editor?.videoIds ?? [] {
-      ThumbCache.shared.invalidate(id)
-      proxyURLs[id] = nil  // the crop/trim may have changed → a new proxy key
-    }
+    editor = nil
+    if let fix { fixed(fix) }
+  }
+
+  /// Every editor exit: land the editor's pending saves, then re-stamp its clips so changed covers/proxies are
+  /// dropped and re-requested at once (never an old crop or text), journal the session and reload.
+  private func editorDidClose(_ old: EditorRequest) {
+    if !frozen { EditorModel.flushLiveAndWait() }
     prepared = [:]
     preparedStamp = [:]
-    editor = nil
-    if let fix { fixed(fix) } else { refresh() }
+    refreshPreviewStamps(old.videoIds)
+    finishEditorSession()
+    refresh()
   }
 
   func reviewProblems() {

@@ -155,39 +155,70 @@ public enum Media {
 
   // MARK: Thumbnails
 
-  /// Cached JPG in `paths.thumbs`. Uses the edit's crop if set, else a centred crop of the edit's
-  /// aspect; default time = marker in-point + 1 s. Cache key covers video id, crop, aspect, time and size.
-  public static func thumbnail(store: Store, video: Video, at seconds: Double? = nil, maxHeight: Int = 320) -> URL? {
+  /// Cached JPG in `paths.thumbs`: the clip's cover as it will post (S6). Uses the edit's crop if set, else the
+  /// default crop of the edit's aspect; default time = the resolved cover frame (Edit › Cover, else New-clip
+  /// defaults). When "cover includes text" is on and text `version` has text, the overlay is composited exactly
+  /// like the renderer's cover (`coverComposite`). Cache key covers video id, crop, aspect, time, size, text and
+  /// cover-includes-text.
+  public static func thumbnail(store: Store, video: Video, at seconds: Double? = nil, maxHeight: Int = 320,
+                               version: Int = 1) -> URL? {
     guard let src = try? store.fileURL(for: video), FileManager.default.fileExists(atPath: src.path) else { return nil }
     let settings = (try? store.settings()) ?? Settings()
     let raw = (try? store.edit(videoId: video.id)) ?? Edit()
     let edit = EditResolver.resolve(raw, video: video, defaults: settings.defaults)
-    var t = seconds ?? ((video.markerIn ?? 0) + 1)
+    var t = seconds ?? edit.coverTime
     if video.duration > 0 { t = min(max(0, t), max(0, video.duration - 0.05)) }
     let anchor = settings.defaults.cropAnchor
-    let cropKey = raw.crop.map { "\($0.x),\($0.y),\($0.w),\($0.h)" } ?? "default-\(anchor.rawValue)"
-    let key = "\(video.id)|\(cropKey)|\(edit.aspect.rawValue)|\(String(format: "%.3f", t))|\(maxHeight)|\(video.fingerprint ?? "")"
-    let hash = SHA256.hash(data: Data(key.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-    let url = store.paths.thumbs.appendingPathComponent("\(video.id)-\(hash).jpg")
+    let lastUsed = anchor == .lastUsed ? (try? store.lastCropCentre()) ?? nil : nil
+    let cropKey = raw.crop.map { "\($0.x),\($0.y),\($0.w),\($0.h)" }
+      ?? "default-\(anchor.rawValue)\(lastUsed.map { String(format: "-%.4f,%.4f", $0.x, $0.y) } ?? "")"
+    let text = edit.coverIncludesText
+      ? (try? store.resolvedVersion(videoId: video.id, number: version, settings: settings)) ?? nil : nil
+    let textKey = edit.coverIncludesText ? "t1-" + PreviewKeys.textKey(text, aspect: edit.aspect) : "t0"
+    let key = "\(video.id)|\(cropKey)|\(edit.aspect.rawValue)|\(String(format: "%.3f", t))|\(maxHeight)|\(video.fingerprint ?? "")|\(textKey)"
+    // The cover (no explicit time) is named per clip, version and size, so older covers of the same slot can be pruned.
+    let slot = seconds == nil ? "\(video.id)-c\(version)h\(maxHeight)-" : "\(video.id)-t-"
+    let url = store.paths.thumbs.appendingPathComponent("\(slot)\(PreviewKeys.short(key)).jpg")
     if FileManager.default.fileExists(atPath: url.path) { return url }
     guard let frame = frame(src, at: t, maxSize: .zero) else { return nil }
     if video.sourceWidth == nil { try? store.setSourceSize(video.id, width: frame.width, height: frame.height) }
     let h = maxHeight
     let w = max(2, Int((Double(h) * edit.aspect.ratio).rounded()))
     let crop = raw.crop ?? settings.defaults.defaultCrop(
-      source: CGSize(width: frame.width, height: frame.height), aspect: edit.aspect,
-      lastUsed: anchor == .lastUsed ? (try? store.lastCropCentre()) ?? nil : nil)
-    guard let img = compose(frame, crop: crop, aspect: edit.aspect, size: CGSize(width: w, height: h)) else {
-      return nil
-    }
+      source: CGSize(width: frame.width, height: frame.height), aspect: edit.aspect, lastUsed: lastUsed)
+    guard let img = coverComposite(frame, crop: crop, aspect: edit.aspect, size: CGSize(width: w, height: h),
+                                   text: text, includesText: edit.coverIncludesText) else { return nil }
     do {
       try FileManager.default.createDirectory(at: store.paths.thumbs, withIntermediateDirectories: true)
       try writeJPEG(img, to: url, quality: 0.8)
+      if seconds == nil { pruneThumbnails(in: store.paths.thumbs, videoId: video.id, slot: slot, keep: url.lastPathComponent) }
       return url
     } catch {
       Log.shared.warn("thumbnail failed for \(video.id): \(error)")
       return nil
     }
+  }
+
+  /// Removes this clip's older covers of the same slot (and pre-round-4 names, `<id>-<16 hex>.jpg`), like proxies
+  /// keep one file per clip and range: a text change with "cover includes text" on would otherwise add a JPG each time.
+  static func pruneThumbnails(in dir: URL, videoId: String, slot: String, keep: String) {
+    let fm = FileManager.default
+    let legacy = "\(videoId)-"
+    for f in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where f != keep && f.hasSuffix(".jpg") {
+      let old = f.hasPrefix(slot)
+      let pre = f.hasPrefix(legacy) && f.count == legacy.count + 16 + 4
+        && f.dropFirst(legacy.count).prefix(16).allSatisfy { $0.isHexDigit && !$0.isUppercase }
+      if old || pre { try? fm.removeItem(at: dir.appendingPathComponent(f)) }
+    }
+  }
+
+  /// The cover composite shared by the renderer's cover and every list cover: the cover frame cropped with
+  /// `pixelCrop`, scaled into `size`, plus `TextOverlay.image` (drawn at output size, scaled into `size`) when
+  /// `includesText` and the version has text.
+  public static func coverComposite(_ frame: CGImage, crop: CropRect?, aspect: Aspect, size: CGSize,
+                                    text: ResolvedVersion?, includesText: Bool) -> CGImage? {
+    let overlay = includesText ? text.flatMap { TextOverlay.image(for: $0, aspect: aspect) } : nil
+    return compose(frame, crop: crop, aspect: aspect, size: size, overlay: overlay)
   }
 
   public static func writeJPEG(_ img: CGImage, to url: URL, quality: Double = 0.9) throws {

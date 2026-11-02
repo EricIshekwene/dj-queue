@@ -2,12 +2,14 @@ import DJQCore
 import SwiftUI
 
 /// Library quick look (DESIGN-v2 §6.6 "a quick-look sheet"): long-form, missing and removed-from-videos.json
-/// clips (and Space on any clip). Plays the source file looping Eric's markers (16:9), states what is wrong and
-/// offers the one fitting action as the primary.
+/// clips (and Space on any clip). Short clips show the clip as it will post (9:16 proxy + live text, S6) with an
+/// "Original" toggle for the 16:9 source between Eric's markers; long-form and missing clips show the source frame.
+/// States what is wrong and offers the one fitting action as the primary.
 struct LibraryQuickLook: View {
   @Bindable var model: AppModel
   let video: Video
 
+  @State private var source = ClipPreviewSource.edited
   private var ui: BrowseUI { .shared }
   private var current: Video { model.video(video.id) ?? video }
 
@@ -18,16 +20,21 @@ struct LibraryQuickLook: View {
     let chip = model.libraryStateChip(v)
     DSDialog(model.displayName(v), description: description(v), width: 640, onClose: close) {
       VStack(alignment: .leading, spacing: DS.space.md) {
-        ZStack {
-          DSVideoPreview(url: missing ? nil : model.clipURL(v), poster: model.poster(v), isActive: !missing && !model.frozen,
-                         isPriority: true, loopRange: v.type == .short ? model.markerRange(v) : nil, showsScrubber: true,
-                         cornerRadius: DS.radius.md, gravity: .resizeAspect)
-          if missing {
-            Image(systemName: "questionmark.folder").font(.system(size: 26, weight: .light)).foregroundStyle(DS.color.textTertiary)
+        if EditedClipPlayer.hasToggle(v) && !missing {
+          EditedClipPlayer(model: model, video: v, source: $source, maxHeight: 460)
+            .frame(maxWidth: .infinity)
+        } else {
+          ZStack {
+            DSVideoPreview(url: missing ? nil : model.clipURL(v), poster: model.poster(v), isActive: !missing && !model.frozen,
+                           isPriority: true, loopRange: v.type == .short ? model.markerRange(v) : nil, showsScrubber: true,
+                           cornerRadius: DS.radius.md, gravity: .resizeAspect)
+            if missing {
+              Image(systemName: "questionmark.folder").font(.system(size: 26, weight: .light)).foregroundStyle(DS.color.textTertiary)
+            }
           }
+          .aspectRatio(16 / 9, contentMode: .fit)
+          .background(DS.color.canvas, in: RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
         }
-        .aspectRatio(16 / 9, contentMode: .fit)
-        .background(DS.color.canvas, in: RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
         HStack(spacing: 6) {
           if v.type == .long { DSBadge("Long-form", style: .outline, help: "A full set — uploaded by hand, never queued") }
           if missing {
