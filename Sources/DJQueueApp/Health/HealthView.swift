@@ -131,7 +131,7 @@ struct HealthView: View {
     case .openLog: model.openLog()
     case .runDoctor: runAgain()
     case .openEngineSettings:
-      model.settingsSection = SettingsSection(rawValue: "engine") ?? model.settingsSection
+      model.settingsSection = .engine
       model.showSettings = true
     }
   }
