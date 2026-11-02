@@ -10,11 +10,11 @@ let usage = """
 usage: djq <command> [args]
 
   status                              runway, today, problems, engine
-  queue [--platform P]                ready backlog in posting order
+  queue [--platform P]                the Queue (nothing missing, not scheduled yet) in posting order
   today                               today's posts
   posts [--problems] [--json]         upcoming/recent posts (or unresolved problems)
   week [--propose|--approve|--rebuild] [--json] [YYYY-MM-DD]
-  videos [--state S] [--json]         clips (S: a state, unscored, scored, needs-edit, all)
+  videos [--stage S] [--state S] [--json]   clips (stage: score edit queue scheduled posted; state: a stored state, unscored, scored, needs-edit, all)
   video <video> [--json]              one clip: title, suggestions, edit (+resolved), versions, captions, posts
   defaults [--json]                   new clip defaults (Settings → New clip defaults)
 
@@ -32,8 +32,8 @@ usage: djq <command> [args]
   bulk undo <batch> [--force] | bulk batches [--json]
   agent-prompt titles [--ids a,b | --needs-title] [--out FILE]
   stage <video…> [back|forward] [--dry-run] [--json]   a clip's stage (Score→Edit→Queue→Scheduled→Posted), or move it one stage
-  unqueue <video…> [--dry-run] [--json]   remove from queue: back to Edit; its unposted slots/posts are removed
-  requeue <video…> [--dry-run] [--json]   send to queue again (ready if its edit is valid, else stays in Edit)
+  unqueue <video…> [--dry-run] [--json]   Back to Edit (held there); its unposted slots/posts are removed
+  requeue <video…> [--dry-run] [--json]   Send to Queue again (Queue if nothing is missing, else stays in Edit)
   pin <video> <YYYY-MM-DD> | post-today <video> | skip-next <video> | push <YYYY-MM-DD> <days>
   remove-slot <slot> | swap <slot> <slot> | move <slot> <YYYY-MM-DD>
   posted <post> <url>                 mark posted (URL host must match the platform)
@@ -194,7 +194,14 @@ func run() throws -> Int32 {
     && !(cmd == "bulk" && (args.contains("--dry-run") || args.first == "batches"))
     && !((cmd == "unqueue" || cmd == "requeue" || cmd == "stage") && args.contains("--dry-run"))
     && !(cmd == "stage" && !args.contains("back") && !args.contains("forward"))
-  defer { if wrote { ChangeSignal.post() } }
+  defer {
+    if wrote {
+      // Round 4 (S1): after any write, invalid Queue clips move to Edit (and valid Edit clips return) before the app
+      // and engine hear about it.
+      Revalidation.afterWrite(store: store, command: cmd)
+      ChangeSignal.post()
+    }
+  }
 
   switch cmd {
   case "status":
@@ -203,8 +210,8 @@ func run() throws -> Int32 {
     let today = try actions.dueToday(now: now)
     let problems = try actions.problems()
     print("DJ Queue · \(fmt(now, settings, "EEE d MMM yyyy HH:mm")) (\(settings.timeZone))")
-    print("Runway     approved \(rw.approvedDays) d · ready \(rw.readyDays) d · total \(rw.totalDays) d")
-    print("Queue      \(try queue.ordered().count) ready · \(try queue.toScore().count) to score · \(try queue.needsEdit().count) need edit")
+    print("Runway     approved \(rw.approvedDays) d · queue \(rw.readyDays) d · total \(rw.totalDays) d")
+    print("Stages     Score \(try queue.toScore().count) · Edit \(try queue.needsEdit().count) · Queue \(try queue.ordered().count) (not scheduled)")
     let byState = Dictionary(grouping: today, by: \.state).map { "\($0.value.count) \($0.key.displayName.lowercased())" }.sorted()
     print("Today      \(today.count) post\(today.count == 1 ? "" : "s")\(byState.isEmpty ? "" : " (" + byState.joined(separator: ", ") + ")")")
     print("Problems   \(problems.count)")
@@ -217,12 +224,12 @@ func run() throws -> Int32 {
     let p = try option("--platform").map(platform)
     let list = try queue.ordered(platform: p)
     print("Queue\(p.map { " · \($0.displayName)" } ?? "") · \(settings.sortDirection(for: p).displayName) · ties: older session first")
-    if list.isEmpty { print("  (empty — score videos and finish their edits)") }
+    if list.isEmpty { print("  (empty — score clips and finish them in Edit)") }
     for (i, v) in list.enumerated() {
       print("  \(pad(String(i + 1), 3)) \(short(v.id))  \(pad(String(v.score ?? 0), 4))\(pad(v.tag, 36)) part \(v.part ?? 0) @ \(Int(v.start ?? 0))s")
     }
     let ts = try queue.toScore().count, ne = try queue.needsEdit().count
-    print("  to score \(ts) · need edit \(ne)")
+    print("  in Score \(ts) · in Edit \(ne)")
 
   case "today":
     print("Today · \(fmt(store.clock.now, settings, "EEE d MMM"))")
@@ -254,11 +261,18 @@ func run() throws -> Int32 {
 
   case "videos":
     let state = option("--state")
-    let list = try AgentAPI.videos(store: store, filter: state)
+    let stage = try option("--stage").map { raw -> ClipStage in
+      guard let st = ClipStage(rawValue: raw.lowercased()) else {
+        throw CLIError("--stage must be one of \(ClipStage.allCases.map(\.rawValue).joined(separator: ", "))")
+      }
+      return st
+    }
+    let list = try AgentAPI.videos(store: store, filter: state, stage: stage)
     if flag("--json") { try printJSON(list); return 0 }
     for v in list {
-      print("  \(short(v.id))  \(pad(v.state, 11)) \(pad(v.score.map(String.init) ?? "–", 4))\(v.display_name)"
-            + (v.title == nil ? "" : "  (tag: \(v.raw_tag))") + (v.suggestion_count > 0 ? "  [\(v.suggestion_count) suggestion(s)]" : ""))
+      print("  \(short(v.id))  \(pad(stageLabel(v), 11)) \(pad(v.score.map(String.init) ?? "–", 4))\(v.display_name)"
+            + (v.title == nil ? "" : "  (tag: \(v.raw_tag))") + (v.suggestion_count > 0 ? "  [\(v.suggestion_count) suggestion(s)]" : "")
+            + (v.reasons.isEmpty ? "" : "  — " + v.reasons.joined(separator: " · ")))
     }
     print("  \(list.count) clip(s)")
 
@@ -267,7 +281,7 @@ func run() throws -> Int32 {
     let d = try AgentAPI.video(v.id, store: store)
     if flag("--json") { try printJSON(d); return 0 }
     print("\(d.video.display_name)  [\(v.id)]")
-    print("  tag \(d.video.raw_tag) · \(d.video.kind) · \(d.video.state) · score \(d.video.score.map(String.init) ?? "–")")
+    print("  tag \(d.video.raw_tag) · \(d.video.kind) · \(stageLabel(d.video)) · score \(d.video.score.map(String.init) ?? "–")")
     print("  title \(d.video.title.map { "\"\($0)\" (\(d.video.title_source ?? "?"))" } ?? "none")")
     for s in d.title_suggestions {
       print("  suggestion \"\(Captions.oneLine(s.text))\" \(s.confidence.map { String(format: "%.2f", $0) } ?? "?") \(s.source) [\(s.origin)]")
@@ -377,16 +391,30 @@ func run() throws -> Int32 {
     let ids = try args.flatMap { $0.split(separator: ",") }.map { try resolveVideo(store, String($0).trimmingCharacters(in: .whitespaces)).id }
     let bulk = BulkActions(store: store)
     guard let dir else {
-      struct StageOut: Encodable { var id: String; var display_name: String; var stage: String?; var back: String?; var forward: String? }
+      // back/forward: "→ <stage>" or why not (unchanged keys); round 4 adds the control labels (the app's words),
+      // the blockers on their own and, for Edit clips, the reason chips.
+      struct StageOut: Encodable {
+        var id: String; var display_name: String; var stage: String?; var back: String?; var forward: String?
+        var back_title: String?; var forward_title: String?; var back_blocked: String?; var forward_blocked: String?
+        var reasons: [String]
+      }
       let rows = try ids.compactMap { try store.video(id: $0) }.map { v -> StageOut in
         let st = ClipStage.of(v)
+        let bb = try bulk.blocker(v, .back), fb = try bulk.blocker(v, .forward)
+        let reasons = st == .edit
+          ? try Validation.issues(video: v, store: store).sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText) : []
         return StageOut(id: v.id, display_name: v.displayName, stage: st?.rawValue,
-                        back: try bulk.blocker(v, .back) ?? st?.previous.map { "→ \($0.displayName)" },
-                        forward: try bulk.blocker(v, .forward) ?? st?.next.map { "→ \($0.displayName)" })
+                        back: bb ?? st?.backTarget.map { "→ \($0.displayName)" },
+                        forward: fb ?? st?.forwardTarget.map { "→ \($0.displayName)" },
+                        back_title: st?.backTitle, forward_title: st?.forwardTitle, back_blocked: bb, forward_blocked: fb,
+                        reasons: reasons)
       }
       if json { try printJSON(rows); return 0 }
       for o in rows {
-        print("  \(short(o.id))  \(pad(o.display_name, 30)) \(pad(o.stage.flatMap(ClipStage.init(rawValue:))?.displayName ?? "—", 10))  back: \(o.back ?? "—")  ·  forward: \(o.forward ?? "—")")
+        let back = o.back_blocked.map { "can't go back: \($0)" } ?? o.back_title ?? "—"
+        let fwd = o.forward_blocked.map { "can't go forward: \($0)" } ?? o.forward_title ?? "—"
+        print("  \(short(o.id))  \(pad(o.display_name, 30)) \(pad(o.stage.flatMap(ClipStage.init(rawValue:))?.displayName ?? "—", 10))  ‹ \(back)  ·  \(fwd) ›"
+              + (o.reasons.isEmpty ? "" : "\n      why in Edit: " + o.reasons.joined(separator: " · ")))
       }
       return 0
     }
@@ -395,7 +423,7 @@ func run() throws -> Int32 {
     if json { try printJSON(r); return 0 }
     printBulk(r)
     for (id, m) in (r.moves ?? [:]).sorted(by: { $0.key < $1.key }) {
-      print("  \(short(id))  \(tagOf(store, id)): \(m.from.displayName) → \(m.to.displayName) · \(m.note)")
+      print("  \(short(id))  \(tagOf(store, id)): \(StageWording.moveText(m.from, m.to)) · \(m.note)")
     }
 
   case "unqueue", "requeue":
@@ -621,6 +649,14 @@ func run() throws -> Int32 {
     throw CLIError("unknown command \(cmd)\n\n\(usage)")
   }
   return 0
+}
+
+/// "Edit" / "Queue" / … (the stage name), else "Long-form" / "Excluded" / "File missing" — never "ready"/"needs edit".
+func stageLabel(_ v: AgentAPI.VideoSummary) -> String {
+  if let st = v.stage.flatMap(ClipStage.init(rawValue:)) { return st.displayName }
+  if v.type == VideoType.long.rawValue { return v.state == VideoState.posted.rawValue ? "Long · posted" : "Long-form" }
+  if v.excluded { return "Excluded" }
+  return v.missing ? "File missing" : "—"
 }
 
 /// Prints JSON; an encoding failure throws (→ "djq: …" on stderr, exit 1), never a silent `null`.

@@ -28,6 +28,11 @@ public enum AgentAPI {
     public var issues: [String]
     /// Sent back to Edit from the Queue (`djq unqueue`); `djq requeue` clears it.
     public var held_in_edit: Bool = false
+    /// Round 4: the clip's stage (`score`, `edit`, `queue`, `scheduled`, `posted`; null = none: long-form, excluded,
+    /// or unscored with its file missing). Readiness IS the stage: Edit = not ready yet, Queue = ready.
+    public var stage: String? = nil
+    /// Round 4: why it is in Edit, as the app's reason chips ("No crop", "Too long for X", "File missing", …).
+    public var reasons: [String] = []
   }
 
   public struct SuggestionOut: Codable, Sendable {
@@ -97,17 +102,19 @@ public enum AgentAPI {
     return e
   }
 
-  public static func summary(_ v: Video, store: Store, sessions: [String: Session]? = nil) throws -> VideoSummary {
+  public static func summary(_ v: Video, store: Store, sessions: [String: Session]? = nil,
+                             context: ValidationContext? = nil) throws -> VideoSummary {
     let sugg = try store.titleSuggestions(videoId: v.id)
     let s = try sessions?[v.sessionId] ?? store.session(id: v.sessionId)
+    let issues = v.type == .short ? ((try? Validation.issues(video: v, store: store, context: context)) ?? []) : []
     return VideoSummary(
       id: v.id, display_name: v.displayName, title: v.titleText, title_source: v.titleSource,
       raw_tag: v.tag, name: v.name, session: s?.name ?? "", type: v.type.rawValue, kind: v.kind.rawValue,
       state: v.state.rawValue, score: v.score, excluded: v.excluded, missing: v.missing, part: v.part, duration: v.duration,
       marked_start: v.markedStart, marked_end: v.markedEnd, audio: v.audio, file: (try? store.fileURL(for: v))??.path,
       suggestion_count: sugg.count, needs_title_help: AgentPrompts.needsTitleHelp(v, suggestions: sugg),
-      issues: v.type == .short ? ((try? Validation.issues(video: v, store: store)) ?? []).map(\.message) : [],
-      held_in_edit: v.heldInEdit)
+      issues: issues.map(\.message), held_in_edit: v.heldInEdit, stage: ClipStage.of(v)?.rawValue,
+      reasons: ClipStage.of(v) == .edit ? issues.sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText) : [])
   }
 
   public static func post(_ p: PlatformPost) -> PostOut {
@@ -116,17 +123,20 @@ public enum AgentAPI {
             error_type: p.errorType?.rawValue, error_message: p.errorMessage)
   }
 
-  /// `djq videos --json [--state S]` (state also accepts the BulkActions filters: unscored, scored, needs-edit, all).
-  public static func videos(store: Store, filter: String? = nil) throws -> [VideoSummary] {
+  /// `djq videos --json [--state S] [--stage S]` (state also accepts the BulkActions filters: unscored, scored,
+  /// needs-edit, all; stage: score, edit, queue, scheduled, posted).
+  public static func videos(store: Store, filter: String? = nil, stage: ClipStage? = nil) throws -> [VideoSummary] {
     let sessions = Dictionary(uniqueKeysWithValues: try store.sessions().map { ($0.id, $0) })
-    let vids: [Video]
+    let ctx = try ValidationContext.load(store)
+    var vids: [Video]
     if let f = filter {
       let ids = try BulkActions(store: store).ids(filter: f)
       vids = try ids.compactMap { try store.video(id: $0) }
     } else {
       vids = try store.videos().sorted { ($0.sessionId, $0.part ?? 0, $0.start ?? 0, $0.name) < ($1.sessionId, $1.part ?? 0, $1.start ?? 0, $1.name) }
     }
-    return try vids.map { try summary($0, store: store, sessions: sessions) }
+    if let stage { vids = vids.filter { ClipStage.of($0) == stage } }
+    return try vids.map { try summary($0, store: store, sessions: sessions, context: ctx) }
   }
 
   /// `djq video <id> --json`
