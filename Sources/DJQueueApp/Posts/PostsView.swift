@@ -1,315 +1,320 @@
 import DJQCore
 import SwiftUI
 
-/// P.L: pinned red error cards, then the full table (Gumloop ref) with a detail inspector (Stripe ref).
+/// Posts (DESIGN-v2 §6.7, refs R2.POSTS Substack segmented list + R2.POSTS-alt n8n status table). Job: see what was
+/// posted, and fix problems.
+///
+/// Toolbar "Posts" · search · Platform ▾. Tabs `Problems 2 · Scheduled · Posted · All` head the centred column.
+/// Problems are attention cards with their fixes; the other tabs are 52 pt rows (thumb, title, platform, version,
+/// attempt, state pill, date, link). Clicking a row opens the 360 pt inspector (attempt history, metrics, repost).
+/// Bulk (checkbox / ⇧ / ⌘ / ⌘A): Reset · Skip · Retry, confirmed in a dialog, then a toast.
 struct PostsView: View {
   @Bindable var model: AppModel
-  @State private var platform: Platform?
-  @State private var range: Int? = nil
-  @State private var search = ""
-  @State private var sortOrder = [KeyPathComparator(\PostRow.scheduledAt, order: .reverse)]
-
-  private var rows: [PostRow] {
-    let since = range.map { model.now.addingTimeInterval(-Double($0) * 86400) }
-    return model.posts
-      .filter { p in
-        switch model.postsFilter {
-        case .all: true
-        case .problems: p.state.isProblem && p.resolution == nil
-        case .posted: p.state == .posted
-        case .failed: p.state == .failed
-        case .copyright: p.state.isCopyright
-        }
-      }
-      .filter { platform == nil || $0.platform == platform }
-      .filter { since == nil || $0.scheduledAt >= since! }
-      .filter { search.isEmpty || (model.video($0.videoId).map { model.displayName($0).localizedCaseInsensitiveContains(search) } ?? false) }
-      .map { PostRow(model: model, post: $0) }
-      .sorted(using: sortOrder)
-  }
+  @Bindable private var ui = BrowseUI.shared
 
   var body: some View {
-    // FOUNDATION: round-1 body inside the shared scaffold until the Browse leaf rewrites this screen.
-    ScreenScaffold(model: model, screen: .posts, content: { legacyBody })
-  }
-
-  @ViewBuilder private var legacyBody: some View {
-    VStack(spacing: 0) {
-      if !model.problems.isEmpty {
-        VStack(spacing: 8) {
-          ForEach(model.problems.prefix(3)) { p in ErrorCard(model: model, post: p, primary: p.id == model.problems.first?.id) }
-          if model.problems.count > 3 {
-            Button("Show all \(model.problems.count) problems") { model.postsFilter = .problems }.buttonStyle(.link)
+    let tab = ui.postsTab
+    let list = rows(tab)
+    let sel = model.selectedIds(.posts)
+    let inspected = model.postsSelection.flatMap { id in model.posts.first { $0.id == id } }
+    ZStack {
+      ScreenScaffold(model: model, screen: .posts, subtitle: subtitle, readingColumn: true) {
+        if !model.posts.isEmpty {
+          DSTextField(placeholder: "Search posts", text: $ui.postsSearch, isSearch: true).frame(width: 220)
+          BrowseFilterMenu(placeholder: "Platform", selection: $ui.postsPlatform, anyValue: nil,
+                           options: [(nil, "All platforms")] + model.settings.activePlatforms.map { (Optional($0), $0.displayName) },
+                           tooltip: "Show one platform")
+        }
+      } content: {
+        HStack(alignment: .top, spacing: DS.space.md) {
+          column(tab: tab, list: list, compact: inspected != nil)
+            .frame(maxWidth: DS.size.readingColumn)
+          if let p = inspected {
+            PostInspector(model: model, post: p)
+              .id(p.id)
+              .frame(width: 360)
+              .padding(.bottom, DS.space.md)
+              .transition(.dsMove(.trailing))
           }
         }
-        .padding(DS.Space.l)
-        Divider()
+        .frame(maxWidth: .infinity)
+        .modifier(BrowseGutter())
+        .dsAnimation(DS.motion.layout, value: inspected?.id)
       }
-      filterBar
-      Divider()
-      if model.posts.isEmpty {
-        EmptyState(symbol: "paperplane", title: "No posts yet", subtitle: "Posts appear once a week is approved.",
-                   buttonTitle: "Open Week") { model.screen = .week }
-      } else if rows.isEmpty {
-        EmptyState(symbol: "line.3.horizontal.decrease.circle", title: "No posts match", buttonTitle: "Show all") {
-          model.postsFilter = .all; platform = nil; range = nil; search = ""
-        }
-      } else {
-        table
+      .dsBulkBar(isPresented: !sel.isEmpty) { bulkBar(sel) }
+      if let b = ui.pendingPostBulk {
+        BrowseModal(onDismiss: { ui.pendingPostBulk = nil }) { PostBulkDialog(model: model, bulk: b) }
       }
-    }
-    .inspector(isPresented: $model.showInspector) {
-      Group {
-        if let id = model.postsSelection, let p = model.posts.first(where: { $0.id == id }) {
-          PostDetail(model: model, post: p).id(p.id)  // fresh metric fields per post
-        } else {
-          EmptyState(symbol: "sidebar.right", title: "No post selected")
-        }
-      }
-      .inspectorColumnWidth(min: 280, ideal: 320, max: 440)
-    }
-  }
-
-  private var filterBar: some View {
-    HStack(spacing: 8) {
-      Picker("Filter", selection: $model.postsFilter) {
-        ForEach(PostsFilter.allCases) { f in Text(f.title).tag(f) }
-      }
-      .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 380)
-      Menu {
-        Button("All platforms") { platform = nil }
-        ForEach(Platform.allCases.sorted()) { p in Button(p.displayName) { platform = p } }
-      } label: { Text(platform?.displayName ?? "Platform") }
-        .menuStyle(.borderlessButton).fixedSize()
-      Menu {
-        Button("Any date") { range = nil }
-        Button("Last 7 days") { range = 7 }
-        Button("Last 30 days") { range = 30 }
-      } label: { Text(range.map { "Last \($0) days" } ?? "Date") }
-        .menuStyle(.borderlessButton).fixedSize()
-      Spacer()
-      TextField("Search video", text: $search).textFieldStyle(.roundedBorder).frame(minWidth: 100, maxWidth: 180)
-    }
-    .padding(.horizontal, DS.Space.l)
-    .padding(.vertical, 8)
-  }
-
-  private var table: some View {
-    Table(rows, selection: $model.postsSelection, sortOrder: $sortOrder) {
-      TableColumn("Date", value: \.scheduledAt) { r in
-        Text("\(Fmt.day(r.post.scheduledAt, tz: model.tz, style: "dd MMM")) · \(Fmt.shortTime(r.post.scheduledAt, tz: model.tz))")
-          .font(DS.Font.mono)
-      }
-      .width(min: 104, ideal: 108)
-      TableColumn("Platform", value: \.platformName) { r in
-        HStack(spacing: 6) {
-          PlatformGlyph(platform: r.post.platform, size: 18)
-          Text(r.post.platform.displayName).lineLimit(1)
-        }
-      }
-      .width(min: 96, ideal: 116)
-      TableColumn("Video", value: \.videoName) { r in
-        HStack(spacing: 8) {
-          CoverThumb(video: model.video(r.post.videoId), width: 18, height: 32, radius: 3)
-          Text(r.videoName).font(DS.Font.bodyStrong).lineLimit(1)
-        }
-      }
-      .width(min: 150, ideal: 200)
-      TableColumn("Ver.", value: \.post.versionNo) { r in Text("v\(r.post.versionNo)").foregroundStyle(.secondary) }.width(40)
-      TableColumn("Try", value: \.post.attemptNo) { r in
-        Text("#\(r.post.attemptNo)\(r.post.kind == .repost ? " ↻" : "")").foregroundStyle(.secondary)
-      }
-      .width(44)
-      TableColumn("State", value: \.stateName) { r in StatusPill(post: r.post, now: model.now) }.width(min: 80, ideal: 96)
-      TableColumn("Publisher", value: \.post.publisher) { r in Text(r.post.publisher.capitalized).foregroundStyle(.secondary) }.width(64)
-      TableColumn("URL", value: \.urlText) { r in
-        if let u = r.post.url, let url = URL(string: u) {
-          Link(destination: url) { Label("Open", systemImage: "arrow.up.right.square") }.help(u)
-        } else { Text("—").foregroundStyle(.tertiary) }
-      }
-      .width(min: 80, ideal: 110)
-    }
-    .contextMenu(forSelectionType: String.self) { ids in
-      if let id = ids.first, let p = model.posts.first(where: { $0.id == id }) { PostContextMenu(model: model, post: p) }
-    }
-  }
-}
-
-struct PostRow: Identifiable {
-  let post: PlatformPost
-  let videoName: String
-  var id: String { post.id }
-  var scheduledAt: Date { post.scheduledAt }
-  var platformName: String { post.platform.displayName }
-  var stateName: String { post.state.displayName }
-  var urlText: String { post.url ?? "" }
-
-  @MainActor init(model: AppModel, post: PlatformPost) {
-    self.post = post
-    videoName = model.video(post.videoId).map(model.displayName) ?? post.videoId
-  }
-}
-
-/// P.S1 error card: red stripe, platform, video, type, message, raw response disclosure, actions.
-struct ErrorCard: View {
-  @Bindable var model: AppModel
-  let post: PlatformPost
-  /// Only the top card's Fix in editor is prominent (one primary per screen).
-  var primary = false
-  @State private var showRaw = false
-
-  var body: some View {
-    HStack(alignment: .top, spacing: 0) {
-      HStack(alignment: .top, spacing: 12) {
-        PlatformGlyph(platform: post.platform, tint: .red, size: 28)
-        VStack(alignment: .leading, spacing: 6) {
-          HStack(spacing: 8) {
-            Text("\(post.platform.displayName) · \(model.video(post.videoId).map(model.displayName) ?? "")").font(DS.Font.bodyStrong)
-            StatusPill(text: post.errorType?.displayName ?? post.state.displayName, tint: .red, icon: post.state.symbol, loud: true)
-            Text(Fmt.relative(post.updatedAt, now: model.now)).font(DS.Font.secondary).foregroundStyle(.secondary)
-          }
-          Text(post.errorMessage ?? (post.state == .overdue ? "Slot passed without a post." : "No message")).font(DS.Font.body)
-            .foregroundStyle(.secondary).lineLimit(2)
-          if let raw = post.rawResponse, !raw.isEmpty {
-            DisclosureGroup("Raw response", isExpanded: $showRaw) {
-              ScrollView { Text(raw).font(DS.Font.mono).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                .frame(maxHeight: 90)
-                .padding(8)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
-            }
-            .font(DS.Font.secondary)
-          }
-        }
-        Spacer(minLength: 8)
-        actions.controlSize(.small)
-      }
-      .padding(12)
-    }
-    .padding(.leading, 4)
-    .background(alignment: .leading) { Rectangle().fill(Color.red).frame(width: 4) }
-    .background(Color.red.opacity(0.07))
-    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card))
-    .overlay(RoundedRectangle(cornerRadius: DS.Radius.card).strokeBorder(Color.red.opacity(0.35)))
-    .contentShape(Rectangle())
-    .onTapGesture { model.postsSelection = post.id }
-  }
-
-  @ViewBuilder private var actions: some View {
-    HStack(spacing: 6) {
-      if post.state.isCopyright {
-        ReuploadMenu(model: model, post: post)
-        Button("Skip") { model.resolve(post, .skipPlatform) }
-        Button("Accept") { model.resolve(post, .accept) }
-      } else if post.state == .overdue {
-        Button("Post now") { model.postNow(post) }
-        Button("Shift plan") { model.shiftPlan(post) }
-        Button("Skip") { model.skip(post) }
-      } else {
-        if primary {
-          Button("Fix in editor") { model.openEditor(post.videoId, fixPostId: post.id) }.buttonStyle(.borderedProminent)
-        } else {
-          Button("Fix in editor") { model.openEditor(post.videoId, fixPostId: post.id) }
-        }
-        Button("Re-queue") { model.fixed(post.id) }.help("The cause is fixed: try again on the next day's slot")
-      }
-      Menu {
-        if model.canReset(post) { Button("Reset post") { model.reset(post) } }
-        if post.state == .overdue { Button("Mark posted…") { model.markPostedTarget = post } }
-        Button("Copy details") {
-          model.copy("\(post.platform.displayName) · \(post.errorType?.displayName ?? post.state.displayName)\n\(post.errorMessage ?? "")\n\(post.rawResponse ?? "")")
-        }
-      } label: { Image(systemName: "ellipsis") }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-    }
-  }
-}
-
-/// P.S3 detail: key/value details, error, metrics, render, history log.
-struct PostDetail: View {
-  @Bindable var model: AppModel
-  let post: PlatformPost
-  @State private var views = ""
-  @State private var likes = ""
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
-        VStack(alignment: .leading, spacing: 6) {
-          Eyebrow("Post details")
-          HStack(spacing: 8) {
-            PlatformGlyph(platform: post.platform, tint: post.state.tint, size: 24)
-            Text("\(post.platform.displayName) · \(model.video(post.videoId).map(model.displayName) ?? "")").font(DS.Font.title).lineLimit(2)
-          }
-          StatusPill(post: post, now: model.now)
-        }
-        VStack(alignment: .leading, spacing: 2) {
-          PropertyRow("Post ID") { Text(post.id).font(DS.Font.mono).textSelection(.enabled).lineLimit(1) }
-          PropertyRow("Scheduled") { Text(Fmt.day(post.scheduledAt, tz: model.tz, style: "EEE d MMM, h:mm a")) }
-          if let at = post.postedAt { PropertyRow("Posted") { Text(Fmt.day(at, tz: model.tz, style: "EEE d MMM, h:mm a")) } }
-          PropertyRow("Version") { Text("v\(post.versionNo)") }
-          PropertyRow("Attempt") { Text("#\(post.attemptNo) · \(post.kind.rawValue)") }
-          PropertyRow("Publisher") { Text(post.publisher.capitalized) }
-          if let u = post.url, let url = URL(string: u) { PropertyRow("URL") { Link(u, destination: url).lineLimit(1) } }
-          if let r = post.resolution { PropertyRow("Resolution") { Text(r.capitalized) } }
-          PropertyRow("Render") {
-            if let rid = post.renderId, let r = try? model.store.render(id: rid), let path = r.outputPath {
-              Button((path as NSString).lastPathComponent) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
-                .buttonStyle(.link).lineLimit(1)
-            } else { Text("Not rendered yet").foregroundStyle(.secondary) }
-          }
-        }
-        if post.errorType != nil || post.errorMessage != nil {
-          VStack(alignment: .leading, spacing: 6) {
-            Eyebrow("Error")
-            Text(post.errorType?.displayName ?? "").font(DS.Font.bodyStrong).foregroundStyle(.red)
-            Text(post.errorMessage ?? "").font(DS.Font.body)
-            if let raw = post.rawResponse, !raw.isEmpty {
-              Text(raw).font(DS.Font.mono).textSelection(.enabled).padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
-            }
-          }
-        }
-        if post.state == .posted {
-          VStack(alignment: .leading, spacing: 6) {
-            Eyebrow("Metrics")
-            HStack {
-              TextField("Views", text: $views).textFieldStyle(.roundedBorder).frame(width: 90)
-              TextField("Likes", text: $likes).textFieldStyle(.roundedBorder).frame(width: 90)
-              Button("Save") { model.setMetrics(post, views: Int(views), likes: Int(likes)) }
-            }
-          }
-        }
-        VStack(alignment: .leading, spacing: 8) {
-          Eyebrow("History")
-          let h = (try? model.store.history(postId: post.id)) ?? []
-          if h.isEmpty { Text("No changes yet").font(DS.Font.secondary).foregroundStyle(.secondary) }
-          ForEach(h) { e in
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-              Circle().fill(PostState(rawValue: e.toState)?.tint ?? .secondary).frame(width: 6, height: 6)
-              VStack(alignment: .leading, spacing: 1) {
-                Text("\(e.fromState.flatMap { PostState(rawValue: $0)?.displayName } ?? "Created") → \(PostState(rawValue: e.toState)?.displayName ?? e.toState)")
-                  .font(DS.Font.body)
-                if let n = e.note { Text(n).font(DS.Font.secondary).foregroundStyle(.secondary) }
-              }
-              Spacer()
-              Text(Fmt.day(e.at, tz: model.tz, style: "d MMM HH:mm")).font(DS.Font.mono).foregroundStyle(.secondary)
-            }
-          }
-        }
-        HStack {
-          if !post.state.isTerminal { Button("Mark posted…") { model.markPostedTarget = post } }
-          if !post.state.isTerminal || post.state == .posted { Button("Report…") { model.reportTarget = post } }
-          if model.canReset(post) { Button("Reset") { model.reset(post) } }
-          if model.canSkip(post) { Button("Skip") { model.skip(post) } }
-        }
-        .controlSize(.small)
-      }
-      .padding(DS.Space.l)
     }
     .onAppear {
-      views = post.metrics?.views.map(String.init) ?? ""
-      likes = post.metrics?.likes.map(String.init) ?? ""
+      consumeFilter()
+      register(list.map(\.id))
     }
+    .onChange(of: model.postsFilter) { consumeFilter() }
+    .onChange(of: list.map(\.id)) { _, ids in register(ids) }
+  }
+
+  // MARK: Data
+
+  /// Attention card "Review" → `reviewProblems()` sets `postsFilter = .problems`; open that tab once.
+  private func consumeFilter() {
+    guard model.postsFilter == .problems else { return }
+    ui.postsTab = .problems
+    model.postsFilter = .all
+  }
+
+  private func register(_ ids: [String]) {
+    model.visibleIds[.posts] = ids
+    let keep = Set(ids)
+    if let s = model.selection[.posts], !s.isSubset(of: keep) { model.selection[.posts] = s.intersection(keep) }
+  }
+
+  private func scoped(_ posts: [PlatformPost]) -> [PlatformPost] {
+    let q = ui.postsSearch.trimmingCharacters(in: .whitespaces)
+    return posts.filter { p in
+      (ui.postsPlatform == nil || p.platform == ui.postsPlatform)
+        && (q.isEmpty || p.platform.displayName.localizedCaseInsensitiveContains(q)
+            || (model.video(p.videoId).map { model.displayName($0).localizedCaseInsensitiveContains(q) || $0.tag.localizedCaseInsensitiveContains(q) } ?? false))
+    }
+  }
+
+  private func rows(_ tab: PostsTab) -> [PlatformPost] {
+    switch tab {
+    case .problems: return scoped(model.problems)
+    case .scheduled: return scoped(model.posts.filter { !$0.state.isTerminal && $0.state != .overdue }).sorted { $0.scheduledAt < $1.scheduledAt }
+    case .posted: return scoped(model.posts.filter { $0.state == .posted }).sorted { ($0.postedAt ?? $0.scheduledAt) > ($1.postedAt ?? $1.scheduledAt) }
+    case .all: return scoped(model.posts).sorted { $0.scheduledAt > $1.scheduledAt }
+    }
+  }
+
+  private var subtitle: String? {
+    guard model.loaded, !model.posts.isEmpty else { return nil }
+    let posted = model.posts.filter { $0.state == .posted }.count
+    let scheduled = model.posts.filter { !$0.state.isTerminal && $0.state != .overdue }.count
+    return "\(posted) posted · \(scheduled) scheduled"
+  }
+
+  // MARK: Column
+
+  @ViewBuilder private func column(tab: PostsTab, list: [PlatformPost], compact: Bool) -> some View {
+    VStack(alignment: .leading, spacing: DS.space.sm) {
+      if !model.posts.isEmpty {
+        DSTabs(selection: $ui.postsTab, tabs: [
+          DSTab(value: .problems, title: "Problems", count: model.problems.isEmpty ? nil : model.problems.count),
+          DSTab(value: .scheduled, title: "Scheduled"),
+          DSTab(value: .posted, title: "Posted"),
+          DSTab(value: .all, title: "All"),
+        ])
+      }
+      if !model.loaded {
+        Color.clear
+      } else if model.posts.isEmpty {
+        DSEmptyState(icon: "paperplane", title: "No posts yet", message: "Posts appear once a week is approved.",
+                     actionTitle: "Open Week") { model.screen = .week }
+      } else if list.isEmpty {
+        if tab == .problems && ui.postsSearch.isEmpty && ui.postsPlatform == nil {
+          DSEmptyState(icon: "checkmark.circle", title: "No problems", message: "Every post went out or is on schedule.",
+                       actionTitle: "Show all posts") { ui.postsTab = .all }
+        } else {
+          DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No posts match",
+                       message: "Nothing in \(tab.title) fits this search or platform.", actionTitle: "Clear filters") {
+            ui.postsSearch = ""
+            ui.postsPlatform = nil
+          }
+        }
+      } else if tab == .problems {
+        let primaryId = list.first { PostFixes(model: model, post: $0).fixReason == nil }?.id
+        ScrollView {
+          LazyVStack(spacing: DS.space.sm) {
+            ForEach(list) { p in PostProblemCard(model: model, post: p, isPrimary: p.id == primaryId) }
+          }
+          .padding(.vertical, DS.space.xxs)
+          .padding(.bottom, ScreenMetrics.bulkBarInset)
+        }
+        .scrollIndicators(.automatic)
+      } else {
+        ScrollView {
+          LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+            Section {
+              ForEach(list) { p in PostRowView(model: model, post: p, ordered: list.map(\.id), compact: compact) }
+            } header: {
+              PostListHeader(compact: compact).background(DS.color.background)
+            }
+          }
+          .padding(.bottom, ScreenMetrics.bulkBarInset)
+        }
+      }
+    }
+  }
+
+  // MARK: Bulk (reset / skip / retry)
+
+  private func bulkBar(_ sel: [String]) -> some View {
+    let posts = sel.compactMap { id in model.posts.first { $0.id == id } }
+    let resettable = posts.filter(model.canReset).count
+    let skippable = posts.filter(model.canSkip).count
+    let retryable = posts.filter(PostFixes.canRetry).count
+    return ScreenBulkBar(model: model, screen: .posts) {
+      bulkButton("Reset", icon: "arrow.counterclockwise", n: resettable, why: "None of these can be reset (planned, or their time passed)") {
+        ui.pendingPostBulk = PostBulk(op: .reset, postIds: sel)
+      }
+      bulkButton("Skip", icon: "forward", n: skippable, why: "These are already finished") {
+        ui.pendingPostBulk = PostBulk(op: .skip, postIds: sel)
+      }
+      bulkButton("Retry", icon: "arrow.clockwise", n: retryable, why: "Only failed posts can be retried") {
+        ui.pendingPostBulk = PostBulk(op: .retry, postIds: sel)
+      }
+    }
+  }
+
+  private func bulkButton(_ title: String, icon: String, n: Int, why: String, action: @escaping () -> Void) -> some View {
+    Button(n > 0 && n < model.selected(.posts).count ? "\(title) \(n)" : title, systemImage: icon, action: action)
+      .disabled(n == 0)
+      .browseHelp(n == 0 ? why : nil)
+  }
+}
+
+// MARK: - Rows
+
+/// Column labels above the post rows (aligned with PostRowView).
+struct PostListHeader: View {
+  var compact = false
+  var body: some View {
+    HStack(spacing: DS.space.sm) {
+      Color.clear.frame(width: 20, height: 1)
+      Color.clear.frame(width: 24, height: 1)
+      Text("Clip").frame(maxWidth: .infinity, alignment: .leading)
+      Text(compact ? "" : "Platform").frame(width: compact ? 24 : 130, alignment: .leading)
+      Text("Ver.").frame(width: 30, alignment: .leading)
+      if !compact { Text("Try").frame(width: 36, alignment: .leading) }
+      Text("State").frame(width: 96, alignment: .leading)
+      Text("Date").frame(width: 104, alignment: .leading)
+      Color.clear.frame(width: 28, height: 1)
+    }
+    .font(DS.type.micro)
+    .foregroundStyle(DS.color.textTertiary)
+    .padding(.horizontal, DS.space.xs)
+    .frame(height: 32)
+    .overlay(alignment: .bottom) { DSSeparator() }
+  }
+}
+
+struct PostRowView: View {
+  @Bindable var model: AppModel
+  let post: PlatformPost
+  let ordered: [String]
+  var compact = false
+  @State private var hovering = false
+
+  var body: some View {
+    let v = model.video(post.videoId)
+    let selected = model.isSelected(post.id, in: .posts)
+    let inspected = model.postsSelection == post.id
+    let showCheck = hovering || selected || !model.selected(.posts).isEmpty
+    HStack(spacing: DS.space.sm) {
+      DSCheckbox(isOn: selected, size: 20, shape: .circle) { model.toggleSelection(post.id, screen: .posts) }
+        .opacity(showCheck ? 1 : 0.0001)
+        .dsTooltip(selected ? "Deselect" : "Select")
+      BrowsePoster(model: model, video: v, width: 24, height: 42)
+      VStack(alignment: .leading, spacing: 1) {
+        Text(v.map(model.displayName) ?? post.videoId).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(1)
+        if let v { Text(model.sessionName(v)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1) }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      DSPlatformIcon(platform: post.platform, size: 22, showsLabel: !compact)
+        .frame(width: compact ? 24 : 130, alignment: .leading)
+      Text("v\(post.versionNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+        .frame(width: 30, alignment: .leading)
+        .dsTooltip("Version \(post.versionNo)")
+      if !compact {
+        Text("#\(post.attemptNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+          .frame(width: 36, alignment: .leading)
+          .dsTooltip(PostText.attempt(post))
+      }
+      PostStatePill(post: post).frame(width: 96, alignment: .leading)
+      Text(PostText.date(post, model: model)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+        .lineLimit(1).frame(width: 104, alignment: .leading)
+      Group {
+        if let u = post.url, let url = URL(string: u) {
+          DSIconButton("arrow.up.right.square", tooltip: "Open post · \(u)", size: .sm) { NSWorkspace.shared.open(url) }
+        } else {
+          DSIconButton("arrow.up.right.square", tooltip: "Open post", size: .sm, disabledReason: "No link yet — not posted") {}
+            .opacity(0.5)
+        }
+      }
+      .frame(width: 28)
+    }
+    .padding(.horizontal, DS.space.xs)
+    .frame(height: DS.size.listRow)
+    .background(selected || inspected ? DS.color.selected : hovering ? DS.color.hover : .clear,
+                in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+    .overlay(alignment: .bottom) { if !(selected || inspected || hovering) { DSSeparator().padding(.horizontal, DS.space.xs) } }
+    .contentShape(Rectangle())
+    .onHover { hovering = $0 }
+    .onTapGesture { tap() }
+    .contextMenu { PostContextMenu(model: model, post: post) }
+    .onAppear { if let v { model.requestPoster(v) } }
+  }
+
+  private func tap() {
+    let flags = NSEvent.modifierFlags
+    var m: EventModifiers = []
+    if flags.contains(.shift) { m.insert(.shift) }
+    if flags.contains(.command) { m.insert(.command) }
+    guard model.select(post.id, modifiers: m, ordered: ordered, screen: .posts) == .plainClick else { return }
+    if !model.selected(.posts).isEmpty {
+      model.toggleSelection(post.id, screen: .posts)
+    } else {
+      dsWithAnimation { model.postsSelection = model.postsSelection == post.id ? nil : post.id }
+    }
+  }
+}
+
+/// The post's state as a pill (status = chip, never a sentence).
+struct PostStatePill: View {
+  let post: PlatformPost
+  var body: some View {
+    let s = PostText.pill(post)
+    DSBadge(s.text, style: s.style, icon: s.icon)
+  }
+}
+
+/// Shared wording for posts.
+enum PostText {
+  static func pill(_ p: PlatformPost) -> (text: String, style: DSBadgeStyle, icon: String?) {
+    switch p.state {
+    case .posted: return ("Posted", .soft(.success), nil)
+    case .failed:
+      return p.resolution == nil ? (p.errorType?.displayName ?? "Failed", .soft(.danger), nil) : ("Retried", .outline, nil)
+    case .copyrightBlocked, .copyrightMuted, .removed:
+      switch p.resolution {
+      case "accepted": return ("Accepted", .outline, "c.circle")
+      case "reuploaded": return ("Re-uploaded", .outline, "c.circle")
+      default: return (p.state == .removed ? "Removed" : p.state == .copyrightMuted ? "Muted" : "Blocked", .soft(.danger), "c.circle")
+      }
+    case .overdue: return ("Missed", .soft(.warning), nil)
+    case .due: return ("Due now", .solid, nil)
+    case .planned: return ("Planned", .soft(.info), nil)
+    case .rendering: return ("Rendering", .soft(.info), nil)
+    case .rendered: return ("Ready", .soft(.info), nil)
+    case .skipped: return ("Skipped", .outline, nil)
+    }
+  }
+
+  /// "5 Nov · 7:00 PM": posted time for posted posts, else the scheduled time.
+  @MainActor static func date(_ p: PlatformPost, model: AppModel) -> String {
+    let d = p.state == .posted ? (p.postedAt ?? p.scheduledAt) : p.scheduledAt
+    return "\(Fmt.day(d, tz: model.tz, style: "d MMM")) · \(AppModel.clockText(d, tz: model.tz))"
+  }
+
+  static func attempt(_ p: PlatformPost) -> String {
+    let kind = p.kind == .regular ? "" : p.kind == .retry ? " · retry" : " · repost"
+    return "Attempt \(p.attemptNo)\(kind)"
+  }
+
+  /// One line for a problem ("Copyright blocked", "Too long", "Missed slot").
+  static func problemType(_ p: PlatformPost) -> String {
+    if p.state == .overdue { return "Missed slot" }
+    return p.errorType?.displayName ?? p.state.displayName
   }
 }

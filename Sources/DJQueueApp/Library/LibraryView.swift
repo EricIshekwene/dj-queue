@@ -1,293 +1,426 @@
 import DJQCore
 import SwiftUI
 
-enum LibraryFilter: String, CaseIterable, Identifiable {
-  case all, short, long, toScore, excluded, missing
-  var id: String { rawValue }
-  var title: String {
-    switch self {
-    case .all: "All"
-    case .short: "Short"
-    case .long: "Long-form"
-    case .toScore: "To score"
-    case .excluded: "Excluded"
-    case .missing: "Missing"
-    }
-  }
-}
-
-/// L.L (Later ref): sessions list → video table / grid, bulk bar on multi-select, inspector.
+/// Library (DESIGN-v2 §6.6, refs R2.LIBRARY Frame.io tiles + R2.VIEWMODES Arcade filters). Job: find any clip in
+/// any state.
+///
+/// Toolbar "Library · 63 clips" · capsule search · view toggle (Grid default, all four modes, remembered).
+/// Sub-toolbar: filter pills with counts (All · Posted · Excluded · Missing · Long-form), Session ▾, Kind ▾,
+/// Score ▾, sort menu. Short clips go through the shared ClipCollection with a state chip; long-form clips get their
+/// own 16:9 section (tiles, or rows in List view) with **Mark posted**. Click: short → editor; long-form, missing or
+/// removed-from-videos.json → quick look. Bulk bar: Score… · Kind ▾ · Exclude/Include · Mark long-form posted ·
+/// More (Copy agent prompt, Re-render, Apply defaults).
 struct LibraryView: View {
   @Bindable var model: AppModel
-  @State private var filter: LibraryFilter = .all
-  @State private var search = ""
-  @State private var sortOrder = [KeyPathComparator(\LibraryRow.order)]
-
-  private var rows: [LibraryRow] {
-    model.videos
-      .filter { model.librarySession == nil || $0.sessionId == model.librarySession }
-      .filter { v in
-        switch filter {
-        case .all: true
-        case .short: v.type == .short
-        case .long: v.type == .long
-        case .toScore: v.type == .short && v.score == nil && !v.excluded
-        case .excluded: v.excluded
-        case .missing: v.missing || !v.inManifest
-        }
-      }
-      .filter { search.isEmpty || $0.tag.localizedCaseInsensitiveContains(search) || $0.name.localizedCaseInsensitiveContains(search) }
-      .map { LibraryRow(model: model, video: $0) }
-      .sorted(using: sortOrder)
-  }
+  @Bindable private var ui = BrowseUI.shared
+  @FocusState private var keyFocus: Bool
 
   var body: some View {
-    // FOUNDATION: round-1 body inside the shared scaffold until the Browse leaf rewrites this screen.
-    ScreenScaffold(model: model, screen: .library, content: { legacyBody })
+    let all = model.libraryAll
+    let shown = visible(all)
+    let shorts = shown.filter { $0.type == .short }
+    let longs = shown.filter { $0.type == .long }
+    let mode = model.viewMode(.library)
+    let sel = model.selectedIds(.library)
+    ZStack {
+      ScreenScaffold(model: model, screen: .library, subtitle: subtitle(all: all.count, shown: shown.count),
+                     readingColumn: mode == .wide || mode == .list) {
+        if !all.isEmpty {
+          DSTextField(placeholder: "Search clips", text: $ui.search, isSearch: true).frame(width: 220)
+          DSViewModeSwitcher(mode: model.viewModeBinding(.library))
+        }
+      } subToolbar: {
+        if !all.isEmpty { filterBar(all) }
+      } content: {
+        content(all: all, shorts: shorts, longs: longs, mode: mode)
+      }
+      .dsBulkBar(isPresented: !sel.isEmpty) { bulkBar(sel) }
+      overlays
+    }
+    .background {
+      // Space = quick look, digits = score the selected short clips (round-1 Library keys), when no field has focus.
+      Color.clear
+        .focusable()
+        .focused($keyFocus)
+        .focusEffectDisabled()
+        .onKeyPress(.space) {
+          guard let v = model.selectedIds(.library).first.flatMap(model.video) else { return .ignored }
+          quickLook(v)
+          return .handled
+        }
+        .onKeyPress(characters: .decimalDigits, phases: .down) { press in
+          let ids = Set(model.selectedIds(.library).filter { model.video($0)?.type == .short })
+          guard !ids.isEmpty else { return .ignored }
+          model.typeDigit(press.characters, ids: ids)
+          return .handled
+        }
+    }
+    .onAppear { if !model.frozen { keyFocus = true } }
   }
 
-  @ViewBuilder private var legacyBody: some View {
-    HStack(spacing: 0) {
-      SessionList(model: model).frame(width: 200)
-      Divider()
-      VStack(spacing: 0) {
-        toolbar
-        Divider()
-        if !model.loaded {
-          SkeletonRows()
-        } else if model.sessions.isEmpty {
-          EmptyState(symbol: "folder.badge.questionmark", title: "No sessions found",
-                     subtitle: "Add a session folder with a videos.json under \(model.store.paths.sessions.path).")
-        } else if rows.isEmpty {
-          EmptyState(symbol: "line.3.horizontal.decrease.circle", title: "No videos match", buttonTitle: "Show all") { filter = .all; search = "" }
-        } else if model.libraryGrid {
-          gridView
-        } else {
-          table
-        }
-      }
+  // MARK: Filtering
+
+  /// Session / kind / score / search scope (the pills' counts are computed inside this scope).
+  private func scoped(_ all: [Video]) -> [Video] {
+    let q = ui.search.trimmingCharacters(in: .whitespaces)
+    return all.filter { v in
+      (model.librarySession == nil || v.sessionId == model.librarySession)
+        && (ui.kind == .any || (ui.kind == .talking) == (v.kind == .talking))
+        && (ui.score == .any || (v.type == .short && ui.score.matches(v.score)))
+        && (q.isEmpty || model.displayName(v).localizedCaseInsensitiveContains(q) || v.tag.localizedCaseInsensitiveContains(q)
+            || v.name.localizedCaseInsensitiveContains(q))
     }
   }
 
-  private var toolbar: some View {
-    HStack(spacing: 8) {
-      ForEach(LibraryFilter.allCases) { f in
-        let n = count(f)
-        if f != .short && (f == .all || n > 0) {
-          Chip(title: "\(f.title) \(n)", selected: filter == f, tint: f == .missing ? .red : .accentColor) { filter = f }
-            .fixedSize()
-        }
-      }
-      Spacer(minLength: 8)
-      TextField("Search", text: $search).textFieldStyle(.roundedBorder).frame(minWidth: 100, maxWidth: 180)
-      Picker("View", selection: $model.libraryGrid) {
-        Image(systemName: "list.bullet").tag(false)
-        Image(systemName: "square.grid.2x2").tag(true)
-      }
-      .pickerStyle(.segmented).labelsHidden().fixedSize()
-    }
-    .padding(.horizontal, DS.Space.l)
-    .padding(.vertical, 8)
-  }
-
-  private func count(_ f: LibraryFilter) -> Int {
-    let vs = model.videos.filter { model.librarySession == nil || $0.sessionId == model.librarySession }
+  private func matches(_ v: Video, _ f: LibraryFilter) -> Bool {
     switch f {
-    case .all: return vs.count
-    case .short: return vs.filter { $0.type == .short }.count
-    case .long: return vs.filter { $0.type == .long }.count
-    case .toScore: return vs.filter { $0.type == .short && $0.score == nil && !$0.excluded }.count
-    case .excluded: return vs.filter(\.excluded).count
-    case .missing: return vs.filter { $0.missing || !$0.inManifest }.count
+    case .all: true
+    case .posted: v.state == .posted || v.state == .partial || (v.type == .long && v.longformURL != nil)
+    case .excluded: v.excluded
+    case .missing: model.libraryIsMissing(v) || model.libraryIsRemoved(v)
+    case .longform: v.type == .long
     }
   }
 
-  private var table: some View {
-    Table(rows, selection: $model.librarySelection, sortOrder: $sortOrder) {
-      TableColumn("Video", value: \.name) { r in
-        HStack(spacing: 10) {
-          CoverThumb(video: r.video, width: r.video.type == .long ? 48 : 22, height: r.video.type == .long ? 27 : 39)
-          VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 5) {
-              Text(r.name).font(DS.Font.bodyStrong).lineLimit(1)
-              if model.relinked.contains(r.id) {
-                Image(systemName: "link").font(.system(size: 9)).foregroundStyle(.blue).help("Relinked after a rename")
-              }
-            }
-            HStack(spacing: 4) {
-              if r.video.type == .long { StatusPill(text: "Long-form", tint: .indigo) }
-              Text(model.setName(r.video)).font(DS.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
-            }
-          }
-        }
-        .foregroundStyle(r.video.missing ? Color.red : Color.primary)
-        .contextMenu { VideoContextMenu(model: model, video: r.video, ids: Array(model.librarySelection)) }
+  private func visible(_ all: [Video]) -> [Video] {
+    sorted(scoped(all).filter { matches($0, ui.filter) })
+  }
+
+  private func sorted(_ vs: [Video]) -> [Video] {
+    switch ui.sort {
+    case .session:
+      return vs.sorted { a, b in
+        let sa = model.sessionById[a.sessionId]?.date ?? "", sb = model.sessionById[b.sessionId]?.date ?? ""
+        return (sb, a.part ?? 0, a.start ?? 0, a.id) < (sa, b.part ?? 0, b.start ?? 0, b.id)
       }
-      .width(min: 150, ideal: 180)
-      TableColumn("Kind", value: \.kindLabel) { r in Text(r.kindLabel).foregroundStyle(.secondary) }.width(58)
-      TableColumn("Length", value: \.duration) { r in Text(Fmt.duration(r.duration)).font(DS.Font.mono) }.width(54)
-      TableColumn("Audio", value: \.audio) { r in Text(r.audio).foregroundStyle(.secondary).lineLimit(1) }.width(58)
-      TableColumn("Score", value: \.scoreSort) { r in
-        if r.video.type == .short {
-          Text(r.video.score.map(String.init) ?? "—").font(DS.Font.mono)
-        }
-      }
-      .width(52)
-      TableColumn("State", value: \.stateLabel) { r in stateCell(r.video) }.width(min: 76, ideal: 86)
-      TableColumn("Posted on", value: \.postedOn) { r in
-        HStack(spacing: 1) {
-          if r.video.type == .long {
-            if r.video.longformURL != nil { PlatformGlyph(platform: .youtube, tint: .green, size: 16) }
-            else { Button("Mark posted") { model.longformTarget = r.video }.controlSize(.small) }
-          } else {
-            ForEach(r.postedPlatforms) { p in PlatformGlyph(platform: p, tint: .green, size: 12) }
-          }
-        }
-      }
-      .width(min: 76, ideal: 86)
-    }
-    .onKeyPress(.space) {
-      if let id = model.librarySelection.first, let v = model.video(id) { model.previewVideo = v }
-      return .handled
-    }
-    .onKeyPress(characters: .decimalDigits, phases: .down) { press in
-      model.typeDigit(press.characters, ids: model.librarySelection)
-      return .handled
+    case .newest: return vs.sorted { ($0.createdAt, $0.id) > ($1.createdAt, $1.id) }
+    case .scoreHigh: return vs.sorted { ($0.score ?? -1, $1.id) > ($1.score ?? -1, $0.id) }
+    case .scoreLow: return vs.sorted { ($0.score ?? 101, $0.id) < ($1.score ?? 101, $1.id) }
+    case .title:
+      return vs.sorted { model.displayName($0).localizedCaseInsensitiveCompare(model.displayName($1)) == .orderedAscending }
     }
   }
 
-  @ViewBuilder private func stateCell(_ v: Video) -> some View {
-    if v.missing {
-      StatusPill(text: "Missing", tint: .red, icon: "exclamationmark.triangle.fill", loud: true)
-    } else if !v.inManifest && !model.keptRemoved.contains(v.id) {
-      StatusPill(text: "Not in videos.json", tint: .orange, icon: "questionmark.circle")
-    } else if v.type == .short && v.score == nil && !v.excluded {
-      StatusPill(text: "To score", tint: .orange)
+  private func subtitle(all: Int, shown: Int) -> String? {
+    guard model.loaded, all > 0 else { return nil }
+    let noun = all == 1 ? "clip" : "clips"
+    return shown == all ? "\(all) \(noun)" : "\(shown) of \(all) \(noun)"
+  }
+
+  // MARK: Sub-toolbar
+
+  @ViewBuilder private func filterBar(_ all: [Video]) -> some View {
+    let scope = scoped(all)
+    ForEach(LibraryFilter.allCases) { f in
+      let n = scope.filter { matches($0, f) }.count
+      DSChip(f.title, isSelected: ui.filter == f, tone: f == .missing && n > 0 && ui.filter != f ? .danger : nil, count: n,
+             showsCheck: false) { ui.filter = f }
+        .dsTooltip(tooltip(f))
+    }
+    DSSeparator(vertical: true).frame(height: 18).padding(.horizontal, DS.space.xxs)
+    BrowseFilterMenu(placeholder: "Session", selection: $model.librarySession, anyValue: nil,
+                     options: [(nil, "All sessions")] + model.sessions.sorted { ($0.date ?? "") > ($1.date ?? "") }
+                       .map { (Optional($0.id), Captions.setName($0.name)) },
+                     tooltip: "Show one session")
+    BrowseFilterMenu(placeholder: "Kind", selection: $ui.kind, anyValue: .any,
+                     options: LibraryKindFilter.allCases.map { ($0, $0.title) }, tooltip: "DJ vid or Talking")
+    BrowseFilterMenu(placeholder: "Score", selection: $ui.score, anyValue: .any,
+                     options: LibraryScoreFilter.allCases.map { ($0, $0.title) }, tooltip: "Filter short clips by score")
+    if ui.libraryFiltered || model.librarySession != nil {
+      DSButton("Clear", variant: .ghost, size: .sm, tooltip: "Show every clip") { clearFilters() }
+    }
+    Spacer(minLength: DS.space.xs)
+    BrowseFilterMenu(placeholder: LibrarySort.session.title, selection: $ui.sort, anyValue: .session,
+                     options: LibrarySort.allCases.map { ($0, $0.title) }, tooltip: "Sort clips")
+  }
+
+  private func tooltip(_ f: LibraryFilter) -> String {
+    switch f {
+    case .all: "Every clip in every state"
+    case .posted: "Posted on at least one platform (long-form: on YouTube)"
+    case .excluded: "Clips you excluded from posting"
+    case .missing: "File missing, or removed from videos.json"
+    case .longform: "Long-form parts for YouTube"
+    }
+  }
+
+  private func clearFilters() {
+    ui.clearLibraryFilters()
+    model.librarySession = nil
+  }
+
+  // MARK: Content
+
+  @ViewBuilder private func content(all: [Video], shorts: [Video], longs: [Video], mode: DSViewMode) -> some View {
+    if !model.loaded {
+      Color.clear
+    } else if all.isEmpty {
+      DSEmptyState(icon: "film.stack", title: "No clips yet",
+                   message: "Add a session folder with a videos.json. New clips show here after the next check.",
+                   actionTitle: "Check for new clips", actionIcon: "arrow.clockwise") { model.runTick() }
+    } else if shorts.isEmpty && longs.isEmpty {
+      DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match",
+                   message: "Nothing fits these filters\(ui.search.isEmpty ? "" : " and “\(ui.search)”").",
+                   actionTitle: "Clear filters") { clearFilters() }
+    } else if shorts.isEmpty {
+      // Only long-form clips: their own section in every view mode.
+      ScrollView {
+        LongformSection(model: model, videos: longs, mode: mode == .list ? .list : mode == .wide ? .wide : .grid, showsHeader: false,
+                        onOpen: quickLook)
+          .frame(maxWidth: mode == .grid || mode == .single ? .infinity : DS.size.readingColumn)
+          .frame(maxWidth: .infinity)
+          .modifier(BrowseGutter())
+          .padding(.bottom, ScreenMetrics.bulkBarInset)
+      }
     } else {
-      StatusPill(video: v)
-    }
-  }
-
-  private var gridView: some View {
-    ScrollView {
-      let groups = Dictionary(grouping: rows, by: { $0.video.sessionId })
-      VStack(alignment: .leading, spacing: 20) {
-        ForEach(model.sessions.filter { groups[$0.id] != nil }) { s in
-          VStack(alignment: .leading, spacing: 10) {
-            Text(Captions.setName(s.name)).font(DS.Font.title)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 10)], spacing: 14) {
-              ForEach(groups[s.id] ?? []) { r in
-                let sel = model.librarySelection.contains(r.id)
-                VStack(alignment: .leading, spacing: 4) {
-                  ZStack(alignment: .topLeading) {
-                    CoverThumb(video: r.video, width: 104, height: 185, radius: 6)
-                    if sel { Image(systemName: "checkmark.circle.fill").foregroundStyle(.white, Color.accentColor).font(.system(size: 18)).padding(6) }
-                    if r.video.missing { StatusPill(text: "Missing", tint: .red, loud: true).padding(6) }
-                  }
-                  .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(sel ? Color.accentColor : .clear, lineWidth: 2))
-                  Text(r.name).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                  HStack(spacing: 4) {
-                    Text(r.video.score.map(String.init) ?? "–").font(DS.Font.secondary.monospacedDigit()).foregroundStyle(.secondary)
-                    Text(r.stateLabel).font(DS.Font.secondary).foregroundStyle(.tertiary)
-                  }
-                }
-                .frame(width: 104)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                  if NSEvent.modifierFlags.contains(.command) {
-                    if sel { model.librarySelection.remove(r.id) } else { model.librarySelection.insert(r.id) }
-                  } else { model.librarySelection = [r.id] }
-                }
-                .contextMenu { VideoContextMenu(model: model, video: r.video, ids: Array(model.librarySelection)) }
-              }
-            }
-          }
+      let shortIds = shorts.filter { !model.libraryIsMissing($0) }.map(\.id)
+      ClipCollection(model: model, screen: .library, videos: shorts, mode: mode, clip: { v in libraryClip(v, mode: mode) },
+                     onOpen: { v in open(v, among: shortIds) }) { v in
+        actions(v, mode: mode)
+      } contextMenu: { v in
+        contextMenu(v)
+      } header: {
+        if mode != .single && !longs.isEmpty {
+          LongformSection(model: model, videos: longs, mode: mode, showsHeader: true, onOpen: quickLook)
+          LibrarySectionLabel(title: "Short clips", count: shorts.count)
         }
       }
-      .padding(DS.Space.l)
     }
   }
 
-  /// L.S5: removed from videos.json → Keep / Exclude.
-  private func removedNotice(_ v: Video) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Label("Removed from videos.json", systemImage: "questionmark.circle.fill").font(DS.Font.bodyStrong).foregroundStyle(.orange)
-      Text("The record and its history are kept. Keep posting it, or exclude it?").font(DS.Font.secondary).foregroundStyle(.secondary)
-      HStack {
-        Button("Keep") { model.keepRemoved(v.id) }
-        Button("Exclude") { model.setExcluded([v.id], true); model.keepRemoved(v.id) }.buttonStyle(.borderedProminent)
+  /// The card model: shared mapping + a state chip; Library cards don't list issues (the chip says Needs edit).
+  private func libraryClip(_ v: Video, mode: DSViewMode) -> DSClip {
+    var c = model.dsClip(v, for: .library)
+    c.issues = []
+    c.blocks = []
+    c.isMissing = model.libraryIsMissing(v)
+    c.status = c.isMissing ? nil : model.libraryStateChip(v)
+    c.dateText = model.nextDateLabel(v)
+    if mode == .list && !c.isMissing {
+      // List rows have one badge slot (the kind's): show the state there, which is what Library is for.
+      c.kind = [c.kind, c.status?.text].compactMap { $0 }.joined(separator: " · ")
+    }
+    return c
+  }
+
+  @ViewBuilder private func actions(_ v: Video, mode: DSViewMode) -> some View {
+    if mode == .grid {
+      Button { quickLook(v) } label: { Label("Quick look", systemImage: "eye") }.dsTooltip("Quick look", shortcut: "Space")
+    } else if mode == .single {
+      HStack(spacing: DS.space.xs) {
+        DSButton("Quick look", icon: "eye", variant: .outline, size: .sm) { quickLook(v) }
+        DSButton(v.excluded ? "Include" : "Exclude", variant: .ghost, size: .sm) { model.setExcluded([v.id], !v.excluded) }
+      }
+    } else {
+      DSIconButton("eye", tooltip: "Quick look", size: .sm, shortcut: "Space") { quickLook(v) }
+    }
+  }
+
+  @ViewBuilder private func contextMenu(_ v: Video) -> some View {
+    Button("Quick look", systemImage: "eye") { quickLook(v) }
+    if model.libraryIsMissing(v) {
+      Button("Look for the file", systemImage: "magnifyingglass") { relink() }
+    }
+    if model.libraryIsRemoved(v) {
+      Button("Keep posting it", systemImage: "checkmark.circle") { model.keepRemoved(v.id) }
+    }
+    Divider()
+    VideoContextMenu(model: model, video: v, ids: model.selectedIds(.library))
+  }
+
+  private func open(_ v: Video, among ids: [String]) {
+    if model.libraryIsMissing(v) || model.libraryIsRemoved(v) {
+      quickLook(v)
+    } else {
+      model.openEditor(v.id, in: ids.contains(v.id) ? ids : [v.id])
+    }
+  }
+
+  private func quickLook(_ v: Video) {
+    dsWithAnimation(DS.motion.fade) { ui.quickLook = v }
+  }
+
+  private func relink() {
+    model.runTick()
+    model.show(DSToastModel(message: "Looking for missing files", detail: "Intake finds renamed or moved files by fingerprint", duration: 4))
+  }
+
+  // MARK: Bulk bar (DESIGN-v2 §5: Score… · Kind ▾ · Exclude/Include · Mark long-form posted · More)
+
+  private func bulkBar(_ sel: [String]) -> some View {
+    let vids = sel.compactMap(model.video)
+    let shorts = vids.filter { $0.type == .short }.map(\.id)
+    let unpostedLongs = vids.filter { $0.type == .long && $0.longformURL == nil }
+    let allExcluded = !vids.isEmpty && vids.allSatisfy(\.excluded)
+    return ScreenBulkBar(model: model, screen: .library) {
+      if !shorts.isEmpty {
+        bulkButton("Score…", icon: "number", why: nil, tooltip: "Give the selected short clips one score") {
+          ui.scoreTargets = shorts
+        }
+      }
+      Menu {
+        ForEach(Kind.allCases, id: \.self) { k in
+          Button(k.displayName) { setKind(sel, k) }
+        }
+      } label: {
+        HStack(spacing: 5) {
+          Image(systemName: "tag").font(.system(size: 13))
+          Text("Kind")
+          Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(DS.color.textTertiary)
+        }
+        .fixedSize()
+      }
+      .menuStyle(.button)
+      .buttonStyle(DSBulkActionStyle())
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .dsTooltip("Set the kind")
+      Button { setExcluded(sel, !allExcluded) } label: {
+        Label(allExcluded ? "Include" : "Exclude", systemImage: allExcluded ? "plus.circle" : "minus.circle").lineLimit(1).fixedSize()
+      }
+      .dsTooltip(allExcluded ? "Put these clips back into the pipeline" : "Keep these clips out of the plan")
+      if shorts.isEmpty {
+        bulkButton("Mark long-form posted", icon: "checkmark.circle",
+                   why: unpostedLongs.isEmpty ? "These long-form clips are already posted" : nil,
+                   tooltip: "Paste each YouTube link; the files move to Posted/Longform") {
+          ui.longformTargets = unpostedLongs
+        }
+      }
+    } more: {
+      if !shorts.isEmpty && !unpostedLongs.isEmpty {
+        Button("Mark \(unpostedLongs.count) long-form posted…") { ui.longformTargets = unpostedLongs }
+        Divider()
+      }
+      Button("Copy agent prompt for \(shorts.count) clip\(shorts.count == 1 ? "" : "s")") { model.copyAgentPrompt(shorts) }
+        .disabled(shorts.isEmpty)
+      Button("Re-render \(sel.count) clip\(sel.count == 1 ? "" : "s")") { reRender(sel) }
+      Button("Apply defaults to \(shorts.count) clip\(shorts.count == 1 ? "" : "s")…") { applyDefaults(shorts) }
+        .disabled(shorts.isEmpty)
+    }
+  }
+
+  /// Bulk bar action that stays visible but disabled (with the reason as a tooltip) when it doesn't apply.
+  private func bulkButton(_ title: String, icon: String, why: String?, tooltip: String? = nil,
+                          action: @escaping () -> Void) -> some View {
+    Button(action: action) { Label(title, systemImage: icon).lineLimit(1).fixedSize() }
+      .disabled(why != nil)
+      .browseHelp(why ?? tooltip)
+  }
+
+  private func setKind(_ ids: [String], _ k: Kind) {
+    let bulk = model.bulk
+    model.requestBulk(BulkRequest(title: "Set \(ids.count) clip\(ids.count == 1 ? "" : "s") to \(k.displayName)?", verb: "Set kind",
+                                  ids: ids, changes: [.init(field: "Kind", value: k.displayName)]) { dry in
+      try bulk.setKind(ids, k, dryRun: dry)
+    })
+  }
+
+  private func setExcluded(_ ids: [String], _ ex: Bool) {
+    let bulk = model.bulk
+    let n = ids.count
+    model.requestBulk(BulkRequest(title: "\(ex ? "Exclude" : "Include") \(n) clip\(n == 1 ? "" : "s")?", verb: ex ? "Exclude" : "Include",
+                                  ids: ids, changes: [.init(field: "Posting", value: ex ? "Excluded" : "Included")]) { dry in
+      try bulk.setExcluded(ids, ex, dryRun: dry)
+    })
+  }
+
+  private func reRender(_ ids: [String]) {
+    let bulk = model.bulk
+    model.requestBulk(BulkRequest(title: "Re-render \(ids.count) clip\(ids.count == 1 ? "" : "s")?", verb: "Re-render", ids: ids,
+                                  changes: [.init(field: "Renders", value: "Made again on the next engine tick")]) { dry in
+      try bulk.reRender(ids, dryRun: dry)
+    })
+  }
+
+  private func applyDefaults(_ ids: [String]) {
+    let bulk = model.bulk
+    model.requestBulk(BulkRequest(title: "Apply defaults to \(ids.count) clip\(ids.count == 1 ? "" : "s")?", verb: "Apply defaults",
+                                  ids: ids, changes: [.init(field: "Frame, trim, text, cover, caption, platforms", value: "Default")]) { dry in
+      try bulk.applyDefaults(ids, dryRun: dry)
+    })
+  }
+
+  // MARK: Overlays (in-screen dialogs)
+
+  @ViewBuilder private var overlays: some View {
+    if let v = ui.quickLook {
+      BrowseModal(onDismiss: { ui.quickLook = nil }) {
+        LibraryQuickLook(model: model, video: v)
       }
     }
-    .padding(12)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.orange.opacity(0.1))
+    if !ui.longformTargets.isEmpty {
+      BrowseModal(onDismiss: { ui.longformTargets = [] }) {
+        LongformPostedDialog(model: model, videos: ui.longformTargets)
+      }
+    }
+    if !ui.scoreTargets.isEmpty {
+      BrowseModal(onDismiss: { ui.scoreTargets = [] }) {
+        LibraryScoreDialog(model: model, ids: ui.scoreTargets)
+      }
+    }
   }
 }
 
-struct LibraryRow: Identifiable {
-  let video: Video
-  let name: String
-  let order: String
-  let postedPlatforms: [Platform]
-  var id: String { video.id }
-
-  @MainActor init(model: AppModel, video: Video) {
-    self.video = video
-    name = model.displayName(video)
-    order = String(format: "%@-%03d-%08.1f", model.sessionById[video.sessionId]?.date ?? "", video.part ?? 0, video.start ?? 0)
-    let posted = Set(model.latestPosts(video.id).values.filter { $0.state == .posted }.map(\.platform)).union(video.alreadyPostedOn)
-    postedPlatforms = posted.sorted()
-  }
-
-  var typeLabel: String { video.type == .long ? "Long-form" : "Short" }
-  var kindLabel: String { video.kind.displayName }
-  var duration: Double { video.duration }
-  var audio: String { video.audio ?? "—" }
-  var scoreSort: Int { video.score ?? -1 }
-  var stateLabel: String { video.missing ? "Missing" : video.state.displayName }
-  var postedOn: String { postedPlatforms.map(\.shortName).joined() }
-}
-
-/// L.S1: sessions with counts (short / long / missing), missing-session flag.
-struct SessionList: View {
-  @Bindable var model: AppModel
-
+/// "Long-form · 1" / "Short clips · 62" label above a Library section.
+struct LibrarySectionLabel: View {
+  let title: String
+  let count: Int
   var body: some View {
-    List(selection: Binding<String?>(get: { model.librarySession ?? "__all" }, set: { model.librarySession = $0 == "__all" ? nil : $0 })) {
-      row(title: "All videos", short: model.videos.filter { $0.type == .short }.count, long: model.videos.filter { $0.type == .long }.count,
-          missing: model.videos.filter(\.missing).count, flagged: false)
-        .tag("__all")
-      Section("Sessions") {
-        ForEach(model.sessions.sorted { ($0.date ?? "") > ($1.date ?? "") }) { s in
-          let vs = model.videos.filter { $0.sessionId == s.id }
-          row(title: Captions.setName(s.name), subtitle: s.date, short: vs.filter { $0.type == .short }.count,
-              long: vs.filter { $0.type == .long }.count, missing: vs.filter(\.missing).count, flagged: s.missing)
-            .tag(s.id)
-        }
-      }
+    HStack(spacing: 6) {
+      Text(title).font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+      Text("\(count)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
+      Spacer(minLength: 0)
     }
-    .listStyle(.sidebar)
-  }
-
-  private func row(title: String, subtitle: String? = nil, short: Int, long: Int, missing: Int, flagged: Bool) -> some View {
-    VStack(alignment: .leading, spacing: 2) {
-      HStack {
-        Text(title).font(DS.Font.bodyStrong).lineLimit(1)
-        if flagged { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red).help("Session folder missing") }
-      }
-      HStack(spacing: 6) {
-        if let subtitle { Text(subtitle).foregroundStyle(.tertiary) }
-        Text("\(short) short")
-        if long > 0 { Text("· \(long) long") }
-        if missing > 0 { Text("· \(missing) missing").foregroundStyle(.red) }
-      }
-      .font(DS.Font.secondary).foregroundStyle(.secondary)
-    }
-    .padding(.vertical, 3)
+    .padding(.top, DS.space.xs)
+    .padding(.bottom, DS.space.xxs)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 }
 
-/// FOUNDATION compile shim for the round-1 Library (selection now lives in `AppModel.selection`).
+// MARK: - Library state
+
+/// The state chip on Library tiles (DESIGN-v2 §6.6).
+enum LibraryClipState {
+  case unscored, needsEdit, ready, planned, posted, excluded, missing, removed
+}
+
+extension AppModel {
+  /// File missing on disk (danger chip "File missing · Relink", no autoplay).
+  func libraryIsMissing(_ v: Video) -> Bool { v.missing || v.state == .missingFile }
+  /// Gone from videos.json and not kept by Eric (L.S5: Keep / Exclude).
+  func libraryIsRemoved(_ v: Video) -> Bool { !v.inManifest && !keptRemoved.contains(v.id) }
+
+  func libraryState(_ v: Video) -> LibraryClipState {
+    if libraryIsMissing(v) { return .missing }
+    if v.excluded { return .excluded }
+    if libraryIsRemoved(v) { return .removed }
+    if v.type == .long { return v.longformURL == nil ? .ready : .posted }
+    if v.score == nil { return .unscored }
+    switch v.state {
+    case .needsEdit: return .needsEdit
+    case .ready: return .ready
+    case .planned, .posting: return .planned
+    case .posted, .partial: return .posted
+    case .excluded: return .excluded
+    case .missingFile: return .missing
+    }
+  }
+
+  func libraryStateChip(_ v: Video) -> DSClipTag {
+    switch libraryState(v) {
+    case .unscored: DSClipTag(text: "Unscored", style: .outline)
+    case .needsEdit: DSClipTag(text: "Needs edit", style: .soft(.warning))
+    case .ready: DSClipTag(text: "Ready", style: .soft(.neutral))
+    case .planned: DSClipTag(text: "Planned", style: .soft(.info))
+    case .posted: DSClipTag(text: "Posted", style: .soft(.success))
+    case .excluded: DSClipTag(text: "Excluded", style: .outline)
+    case .missing: DSClipTag(text: "Missing", style: .soft(.danger))
+    case .removed: DSClipTag(text: "Not in videos.json", style: .soft(.warning))
+    }
+  }
+}
+
+/// FOUNDATION compile shim (selection lives in `AppModel.selection`); kept for any round-1 caller.
 extension AppModel {
   var librarySelection: Set<String> {
     get { selection[.library] ?? [] }
