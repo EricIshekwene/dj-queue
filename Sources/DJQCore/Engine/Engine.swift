@@ -11,14 +11,14 @@ public struct TickReport: Sendable {
     self.started = started; self.steps = steps; self.errors = errors
   }
   /// Step names in the order a tick runs them (for display).
-  public static let order = ["intake", "plan", "missed", "due", "platform", "alerts", "render", "proxies", "move", "heartbeat",
+  public static let order = ["intake", "stages", "plan", "missed", "due", "platform", "alerts", "render", "proxies", "move", "heartbeat",
                               "backup"]
 }
 
 /// The background engine (spec §8). One `tick` does whatever is pending; it is safe to call at any time and never
 /// overlaps another tick. The app runs it on a background queue via `start()`; the CLI calls `tick` once.
 ///
-/// Tick order: intake → plan housekeeping → missed/overdue → due → platform checks → alerts → render-ahead →
+/// Tick order: intake → stages (invalid Queue clips → Edit) → plan housekeeping → missed/overdue → due → platform checks → alerts → render-ahead →
 /// move/cleanup → heartbeat → backup. Missed runs before due so a post that is about to be shifted never gets a
 /// "due" notification first; rendering (slow) runs after every notification step so it never delays one, and at
 /// most one new render happens per tick (due posts first). Every step catches its own errors into the report.
@@ -138,6 +138,9 @@ public final class Engine: @unchecked Sendable {
       let ir = try Intake(store: store).run()
       return "sessions \(ir.sessionsSeen) · new \(ir.newVideos.count) · missing \(ir.missing.count) · relinked \(ir.relinked.count)"
     }
+    // Round 4 (S1): the Queue only holds ready clips — invalid ones move to Edit (after intake marks missing files,
+    // before planning so a proposal never picks a clip that just left the Queue).
+    step("stages", &r) { try Revalidation(store: store).run().summary }
     step("plan", &r) { try planHousekeeping() }
     step("missed", &r) { try missed() }
     step("due", &r) { try due() }
