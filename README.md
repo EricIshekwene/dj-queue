@@ -15,6 +15,7 @@ The app follows a clip's life — **Score → Edit → Queue → Week → Today*
 - **Vertical editor** — crop a 4K 16:9 frame to 9:16, trim starting on my original markers (with grace to extend), overlay text, captions with per-platform limits, a cover frame, versions for reposts, multi-platform safe zones and realistic phone previews of each platform's UI with the real caption and handle.
 - **No intelligence in the app, by design** — the app is a UI over scripts. Song names and titles come from metadata my agents write (`title_suggestions` in the manifest) and show up as chips; when a name is ambiguous, *Ask an agent* copies a ready-made prompt. Outside agents read and change everything through the `djq` CLI (JSON in/out), documented as a Claude skill.
 - **Stage moves** — any clip can move one stage back or forward from wherever it is (e.g. *Remove from queue* sends it back to Edit; a scheduled clip can go back to the Queue), with the reason shown when a move isn't allowed (nothing already posted is ever pulled back) and one-step undo.
+- **Every control explains itself** — every icon-only button and badge has a tooltip (label, shortcut, and why it's disabled), enforced by a lint in the test suite; every data-changing click has Undo or asks first, and ⌘Z always undoes the most recent action (a whole editor session counts as one).
 - **Defaults + bulk editing** — new-clip defaults for frame, trim, text, cover, captions and platforms (clips store only overrides, so changing a default updates every untouched clip); bulk actions with a confirmation sheet showing exactly what changes and one-step undo.
 - **Weekly approval** — the app proposes the next 7 days; I drag, swap, pin and approve. Only approved weeks ever post.
 - **Background engine** — runs at login, renders the approved week ahead of time (1080×1920 H.264, loudness-normalised to −14 LUFS), and notifies me when each platform post is due.
@@ -118,7 +119,7 @@ design/                 inventory, design specs v1/v2, design system, decision l
 
 ## Status
 
-Phase 1 (manual publishing) is in daily use (v0.3.0), redesigned in round 2 and refined in round 3. Next: a tooltip/undo pass on every screen, then a Postiz publisher so posts go out with the Mac off. Next: a Postiz publisher so posts go out with the Mac off, then analytics and opt-in reposting of underperforming posts.
+Phase 1 (manual publishing) is in daily use (v0.4.0), redesigned in round 2 and refined in rounds 3 and 4 (tooltips and undo everywhere). Next: one shared list header with a Filters popover, auto-update on every commit to main, then a Postiz publisher so posts go out with the Mac off, analytics and opt-in reposting of underperforming posts.
 
 ## License
 
