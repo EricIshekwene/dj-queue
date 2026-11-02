@@ -127,6 +127,10 @@ struct DSVideoPreview: View {
   var textWindow: ClosedRange<Double>? = nil
   var isUpdating = false
   var updatingStyle: DSPreviewUpdatingStyle = .label
+  /// The clip has text whose overlay isn't loaded: `onNeedsOverlay` runs when this preview starts playing (so only
+  /// the ≤4 playing previews ever re-draw an evicted overlay).
+  var needsOverlay = false
+  var onNeedsOverlay: (() -> Void)? = nil
   var gravity: AVLayerVideoGravity = .resizeAspectFill
 
   @State private var id = UUID()
@@ -153,8 +157,15 @@ struct DSVideoPreview: View {
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-    .overlay(alignment: .topLeading) {
-      if isUpdating && url == nil && updatingStyle != .none { updatingBadge.padding(updatingStyle == .icon ? 4 : 8).transition(.opacity) }
+    // Bottom-leading, above a tile's duration badge and the scrubber: never under the selection circle (top-leading)
+    // or the score (top-trailing).
+    .overlay(alignment: .bottomLeading) {
+      if isUpdating && url == nil && updatingStyle != .none {
+        updatingBadge
+          .padding(.leading, updatingStyle == .icon ? 4 : 8)
+          .padding(.bottom, updatingStyle == .icon ? 4 : 32)
+          .transition(.opacity)
+      }
     }
     .overlay(alignment: muteAlignment) {
       if showsMuteButton && playing && (hovering || audible) {
@@ -184,6 +195,7 @@ struct DSVideoPreview: View {
       if w { budget.request(id, priority: priority) } else { budget.release(id); ready = false }
     }
     .onChange(of: priority) { _, p in if wantsPlay { budget.request(id, priority: p) } }
+    .onChange(of: playing && needsOverlay, initial: true) { _, need in if need { onNeedsOverlay?() } }
     .onChange(of: hoverSound, initial: true) { _, h in budget.setHover(id, h) }
     .accessibilityLabel(playing ? (audible ? "Video preview, playing with sound" : "Video preview, playing muted")
                         : isUpdating ? "Video cover, preview updating" : "Video cover")

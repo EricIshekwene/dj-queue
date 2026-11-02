@@ -28,6 +28,11 @@ struct ClipPreview {
   var isRenderCover = false
   /// Width ÷ height of the clip as posted (9:16 unless its edit says otherwise).
   var aspectRatio: Double = Aspect.r9x16.ratio
+  /// The clip has text but its overlay image was evicted from the cache: a PLAYING preview calls
+  /// `model.reloadOverlay(videoId, version:)` (DSVideoPreview's `onNeedsOverlay`). The cover already carries the text.
+  var overlayMissing = false
+  /// The text version this preview shows.
+  var version = 1
 }
 
 /// Resolved, per (clip, version, stamp): what the overlay and its timing need. Loaded off the main thread.
@@ -46,6 +51,9 @@ extension AppModel {
   /// Overlay images (≤540 wide), least recently used evicted past 64 MB. Keyed by `PreviewKeys.textKey` (which
   /// covers text, style, size, position and aspect), so clips with the same text share one image.
   nonisolated static let overlayCache = CostCappedCache<String, CGImage>(costLimit: 64 << 20)
+  /// Overlay + timing loads run here, two at a time.
+  nonisolated static let previewWork = DispatchQueue(label: "djq.previews", qos: .userInitiated, attributes: .concurrent)
+  nonisolated static let previewGate = DispatchSemaphore(value: 2)
   /// Width of list overlays (the proxy width).
   nonisolated static let overlayWidth = Media.proxyWidth
 
@@ -117,11 +125,13 @@ extension AppModel {
     let proxy = v.missing || v.type != .short ? nil : proxyURLs[v.id]
     var p = ClipPreview(stamp: stamp, proxyURL: proxy, cover: version == 1 ? poster(v) : poster(v, version: version),
                         overlay: nil, textWindow: nil, loopRange: nil,
-                        isUpdating: proxy == nil && previewUpdating.contains(v.id))
+                        isUpdating: proxy == nil && previewUpdating.contains(v.id), version: version)
     if v.type == .short, let info = previewInfo[Self.infoKey(v.id, version)], info.stamp == stamp {
       p.aspectRatio = info.aspect.ratio
       guard info.textKey != "none" else { return p }
       p.overlay = Self.overlayCache.value(info.overlayKey)
+      // Evicted from the LRU while still on screen (review L2): only a playing tile (≤4) asks for it again.
+      p.overlayMissing = p.overlay == nil
       let offset = playback.loop == .wholeFile ? info.trimIn : 0
       p.textWindow = info.textWindow.map { ($0.lowerBound + offset)...($0.upperBound + offset) }
     }
@@ -188,6 +198,14 @@ extension AppModel {
     }.value
   }
 
+  /// Draws an evicted overlay again for a preview that is playing now (throttled to once per 2 s per text).
+  func reloadOverlay(_ videoId: String, version: Int = 1) {
+    guard let v = videoById[videoId], let info = previewInfo[Self.infoKey(videoId, version)] else { return }
+    guard Date().timeIntervalSince(overlayReloadedAt[info.overlayKey] ?? .distantPast) > 2 else { return }
+    overlayReloadedAt[info.overlayKey] = Date()
+    requestPreviewInfo(v, version: version)
+  }
+
   /// Loads (or refreshes after a cache eviction) the overlay + timing of `v` at `version`.
   func requestPreviewInfo(_ v: Video, version: Int) {
     guard v.type == .short, !v.missing else { return }
@@ -204,9 +222,12 @@ extension AppModel {
       self.previewInfo[key] = info
     }
     if frozen { land(Self.loadPreviewInfo(store: s, videoId: id, version: version, stamp: stamp)); return }
-    Task.detached(priority: .userInitiated) {
+    // At most two overlay draws at once (each draws a 1080-wide image before scaling it down; review L3).
+    Self.previewWork.async {
+      Self.previewGate.wait()
       let info = Self.loadPreviewInfo(store: s, videoId: id, version: version, stamp: stamp)
-      await MainActor.run { land(info) }
+      Self.previewGate.signal()
+      DispatchQueue.main.async { MainActor.assumeIsolated { land(info) } }
     }
   }
 

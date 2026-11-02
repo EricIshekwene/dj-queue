@@ -46,7 +46,8 @@ struct EditedClipPlayer: View {
           let url = renderURL ?? p.proxyURL
           DSVideoPreview(url: url, poster: p.cover, isActive: !model.frozen, isPriority: true, showsScrubber: true,
                          cornerRadius: DS.radius.md, overlay: renderURL == nil ? p.overlay : nil, textWindow: p.textWindow,
-                         isUpdating: url == nil, gravity: .resizeAspect)
+                         isUpdating: url == nil, needsOverlay: renderURL == nil && p.overlayMissing,
+                         onNeedsOverlay: { model.reloadOverlay(v.id) }, gravity: .resizeAspect)
             .aspectRatio(p.aspectRatio, contentMode: .fit)
         } else {
           DSVideoPreview(url: v.missing ? nil : model.clipURL(v), poster: v.type == .long ? model.poster(v) : model.originalPoster(v),
@@ -61,6 +62,7 @@ struct EditedClipPlayer: View {
     }
     .onChange(of: source, initial: true) { _, s in if s == .original { model.requestOriginalPoster(v) } }
     .task(id: p.stamp) {
+      renderURL = nil  // an older render (older crop/text) never keeps playing while the new one is looked up
       guard Self.hasToggle(v) else { model.requestPoster(v); return }
       model.requestPoster(v)
       model.requestProxies([v.id], keepOthersVisible: true)

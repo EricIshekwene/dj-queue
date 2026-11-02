@@ -181,6 +181,10 @@ final class AppModel {
   /// Clips recently shown / recently played (bounded): `previewChanged` re-requests these.
   @ObservationIgnored var recentPreviewIds: [String] = []
   @ObservationIgnored var recentProxyIds: [String] = []
+  /// "id|generation" of clips whose landed proxy was stale and were asked for once more (no retry loops).
+  @ObservationIgnored var proxyRetried: Set<String> = []
+  /// When an evicted overlay was last reloaded, per overlay key (no reload storms when many are on screen).
+  @ObservationIgnored var overlayReloadedAt: [String: Date] = [:]
   /// Selected clip ids per screen (#11). Use `select`, `toggleSelection`, `selectAll`, `clearSelection`.
   var selection: [Screen: Set<String>] = [:]
   /// Last plain/⌘-clicked id per screen (⇧-click range anchor).
@@ -446,7 +450,7 @@ final class AppModel {
     let changed = first ? [] : Set(l.previewAllStamps.compactMap { id, s in
       previewAllStamps[id].map { $0 == s ? nil : id } ?? nil
     })
-    previewTable = l.previewTable
+    if previewTable != l.previewTable { previewTable = l.previewTable }
     previewAllStamps = l.previewAllStamps
     previewStampsAt = l.startedAt
     ThumbStamps.shared.update(l.previewStamps)

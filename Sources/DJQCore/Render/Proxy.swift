@@ -130,6 +130,9 @@ public final class ProxyService: @unchecked Sendable {
   let store: Store
   private let lock = NSLock()
   private var jobs: [String: Job] = [:]
+  /// Requests that arrived while the same clip+range was encoding: they run after it (S6 review M1), because the
+  /// running encode read its crop/trim before the request and may hand back an older-geometry proxy.
+  private var followUps: [String: Job] = [:]
   private var running: String?
   private var draining = false
   private var seq = 0
@@ -157,7 +160,13 @@ public final class ProxyService: @unchecked Sendable {
     lock.withLock {
       guard !stopped else { return }
       seq += 1
-      if var j = jobs[k] {
+      if k == running {
+        var j = followUps[k] ?? Job(videoId: videoId, range: range, priority: priority, seq: seq, completions: [])
+        j.priority = max(j.priority, priority)
+        if priority == .visible { j.seq = seq }
+        if let c = completion { j.completions.append(c) }
+        followUps[k] = j
+      } else if var j = jobs[k] {
         j.priority = max(j.priority, priority)
         if priority == .visible { j.seq = seq }  // most recently shown first
         if let c = completion { j.completions.append(c) }
@@ -178,11 +187,11 @@ public final class ProxyService: @unchecked Sendable {
   }
 
   /// Drops queued (not running) jobs.
-  public func cancelAll() { lock.withLock { jobs = jobs.filter { $0.key == running } } }
+  public func cancelAll() { lock.withLock { jobs = jobs.filter { $0.key == running }; followUps = [:] } }
 
-  public func stop() { lock.withLock { stopped = true; jobs = jobs.filter { $0.key == running } } }
+  public func stop() { lock.withLock { stopped = true; jobs = jobs.filter { $0.key == running }; followUps = [:] } }
 
-  public var pendingCount: Int { lock.withLock { jobs.count } }
+  public var pendingCount: Int { lock.withLock { jobs.count + followUps.count } }
   public var isBusy: Bool { lock.withLock { running != nil } }
 
   static func failKey(_ id: String) -> String { "proxyFail.\(id)" }
@@ -238,7 +247,9 @@ public final class ProxyService: @unchecked Sendable {
       }
       let completions: [Completion] = lock.withLock {
         running = nil
-        return jobs.removeValue(forKey: k)?.completions ?? job.completions
+        let done = jobs.removeValue(forKey: k)?.completions ?? job.completions
+        if let next = followUps.removeValue(forKey: k), !stopped { jobs[k] = next }  // runs next (re-reads the edit)
+        return done
       }
       for c in completions { c(result) }
     }

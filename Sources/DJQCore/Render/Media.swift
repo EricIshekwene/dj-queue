@@ -176,7 +176,9 @@ public enum Media {
       ? (try? store.resolvedVersion(videoId: video.id, number: version, settings: settings)) ?? nil : nil
     let textKey = edit.coverIncludesText ? "t1-" + PreviewKeys.textKey(text, aspect: edit.aspect) : "t0"
     let key = "\(video.id)|\(cropKey)|\(edit.aspect.rawValue)|\(String(format: "%.3f", t))|\(maxHeight)|\(video.fingerprint ?? "")|\(textKey)"
-    let url = store.paths.thumbs.appendingPathComponent("\(video.id)-\(PreviewKeys.short(key)).jpg")
+    // The cover (no explicit time) is named per clip, version and size, so older covers of the same slot can be pruned.
+    let slot = seconds == nil ? "\(video.id)-c\(version)h\(maxHeight)-" : "\(video.id)-t-"
+    let url = store.paths.thumbs.appendingPathComponent("\(slot)\(PreviewKeys.short(key)).jpg")
     if FileManager.default.fileExists(atPath: url.path) { return url }
     guard let frame = frame(src, at: t, maxSize: .zero) else { return nil }
     if video.sourceWidth == nil { try? store.setSourceSize(video.id, width: frame.width, height: frame.height) }
@@ -189,10 +191,24 @@ public enum Media {
     do {
       try FileManager.default.createDirectory(at: store.paths.thumbs, withIntermediateDirectories: true)
       try writeJPEG(img, to: url, quality: 0.8)
+      if seconds == nil { pruneThumbnails(in: store.paths.thumbs, videoId: video.id, slot: slot, keep: url.lastPathComponent) }
       return url
     } catch {
       Log.shared.warn("thumbnail failed for \(video.id): \(error)")
       return nil
+    }
+  }
+
+  /// Removes this clip's older covers of the same slot (and pre-round-4 names, `<id>-<16 hex>.jpg`), like proxies
+  /// keep one file per clip and range: a text change with "cover includes text" on would otherwise add a JPG each time.
+  static func pruneThumbnails(in dir: URL, videoId: String, slot: String, keep: String) {
+    let fm = FileManager.default
+    let legacy = "\(videoId)-"
+    for f in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where f != keep && f.hasSuffix(".jpg") {
+      let old = f.hasPrefix(slot)
+      let pre = f.hasPrefix(legacy) && f.count == legacy.count + 16 + 4
+        && f.dropFirst(legacy.count).prefix(16).allSatisfy { $0.isHexDigit && !$0.isUppercase }
+      if old || pre { try? fm.removeItem(at: dir.appendingPathComponent(f)) }
     }
   }
 
