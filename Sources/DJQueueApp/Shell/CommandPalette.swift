@@ -44,7 +44,7 @@ extension AppModel {
     let queued = selectedVideoIds.compactMap(video).filter { [.queue, .scheduled].contains(ClipStage.of($0)) && !$0.heldInEdit }.map(\.id)
     if !queued.isEmpty {
       let blocked = removeFromQueueBlocker(queued)
-      c.append(.init(id: "selection.unqueue", title: "Remove \(queued.count) from queue", symbol: "arrow.uturn.backward",
+      c.append(.init(id: "selection.unqueue", title: "Send \(queued.count) back to Edit", symbol: "arrow.uturn.backward",
                      subtitle: blocked == nil ? Self.removeFromQueueHelp : nil, disabled: blocked) { [weak self] in
         self?.removeFromQueue(queued)
       })

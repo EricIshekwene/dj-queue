@@ -100,7 +100,7 @@ struct BulkConfirmSheet: View {
   /// one (the app never invents a title: an agent suggests, or Eric takes the raw tag as it is).
   @ViewBuilder private func outlook(_ o: ReadyOutlook) -> some View {
     VStack(alignment: .leading, spacing: DS.space.sm) {
-      Text(([("\(o.ready.count) will be ready", true),
+      Text(([("\(o.ready.count) go\(o.ready.count == 1 ? "es" : "") to the Queue", true),
              ("\(o.needTitle.count) still need\(o.needTitle.count == 1 ? "s" : "") a title", !o.needTitle.isEmpty),
              ("\(o.other.count) other issue\(o.other.count == 1 ? "" : "s")", !o.other.isEmpty)])
         .filter(\.1).map(\.0).joined(separator: " · "))

@@ -172,7 +172,7 @@ struct TodayRow: View {
   private func statusHelp(_ s: DSXPostStatus) -> String {
     switch s {
     case .rendering: "The engine is preparing the file"
-    case .ready: "File ready — it's due at \(AppModel.clockText(post.scheduledAt, tz: model.tz))"
+    case .ready: "Rendered — it's due at \(AppModel.clockText(post.scheduledAt, tz: model.tz))"
     case .dueNow: "Post it now, then mark it posted"
     case .late: "Past its time — post it now or shift the plan"
     case .copyright: post.errorMessage ?? "Copyright problem"

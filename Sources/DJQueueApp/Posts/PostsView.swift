@@ -339,7 +339,7 @@ enum PostText {
     case .due: return ("Due now", .solid, nil)
     case .planned: return ("Planned", .soft(.info), nil)
     case .rendering: return ("Rendering", .soft(.info), nil)
-    case .rendered: return ("Ready", .soft(.info), nil)
+    case .rendered: return ("Rendered", .soft(.info), nil)
     case .skipped: return ("Skipped", .outline, nil)
     }
   }

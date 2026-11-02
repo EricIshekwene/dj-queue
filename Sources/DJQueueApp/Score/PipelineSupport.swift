@@ -21,50 +21,23 @@ final class PipelineUIState {
   }
 }
 
-/// One Edit filter chip: what's missing or blocking ("No crop", "Too long for X", …), derived from
-/// `AppModel.issuesByVideo`.
+/// One Edit status chip: why clips are in Edit ("No crop", "Too long for X", "File missing", …), derived from
+/// `AppModel.issuesByVideo`. Labels, tooltips and order come from DJQCore (`ValidationIssue.chipText`,
+/// `Kind.chipHelp`, `Kind.chipOrder`), the same words `djq` prints.
 struct EditFilter: Hashable, Identifiable {
   var kind: ValidationIssue.Kind
   var platform: Platform?
   var id: String { "\(kind.rawValue)-\(platform?.rawValue ?? "all")" }
 
-  var title: String {
-    let p = platform?.displayName ?? ""
-    switch kind {
-    case .noCrop: return "No crop"
-    case .noText: return "No text"
-    case .noCaption: return "No caption"
-    case .noTitle: return "No title"
-    case .tooLong: return "Too long for \(p)"
-    case .tooLarge: return "Too large for \(p)"
-    case .captionTooLong: return "Caption too long for \(p)"
-    case .titleTooLong: return "YouTube title too long"
-    case .corrupt: return "Edit unreadable"
-    case .missingFile: return "File missing"
-    case .heldInEdit: return "Sent back from Queue"
-    }
-  }
+  var title: String { ValidationIssue(kind: kind, platform: platform, message: "").chipText }
+  var help: String { kind.chipHelp }
 
   func matches(_ issues: [ValidationIssue]) -> Bool {
     issues.contains { $0.kind == kind && $0.platform == platform }
   }
 
-  /// Chip order: missing pieces first, then hard blocks.
-  var order: Int {
-    switch kind {
-    case .noCrop: 0
-    case .noText: 1
-    case .noCaption: 2
-    case .noTitle: 3
-    case .tooLong: 4
-    case .captionTooLong: 5
-    case .tooLarge: 6
-    case .titleTooLong: 7
-    case .corrupt: 8
-    case .missingFile: 9
-    case .heldInEdit: -1
-    }
-  }
+  /// Chip order: sent back first, then missing pieces, then hard blocks.
+  var order: Int { kind.chipOrder }
 }
 
 extension AppModel {

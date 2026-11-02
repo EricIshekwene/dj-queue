@@ -1,8 +1,8 @@
 import DJQCore
 import SwiftUI
 
-/// "Remove from queue" + stage moves (prefix 5x): the Queue card's hover stage control and ⋯ menu, the
-/// confirmation listing scheduled days, the toast, Edit's "Sent back from Queue" chip + "Send to queue", the Week
+/// "Back to Edit" (formerly Remove from queue) + stage moves (prefix 5x): the Queue card's hover stage control and ⋯ menu, the
+/// confirmation listing scheduled days, the toast, Edit's "Sent back from Queue" chip + "Send to Queue", the Week
 /// card's stage control, the bulk back confirmation, Library's pill and the editor header. Holds made here are
 /// undone by the last shot.
 extension SnapshotShots {
@@ -42,7 +42,6 @@ extension SnapshotShots {
               .init(icon: "pin", title: "Pin to date…"),
               .init(icon: "forward.end", title: "Skip next"),
               .divider,
-              .init(icon: "arrow.uturn.backward", title: "Remove from queue", help: AppModel.removeFromQueueHelp),
               .init(icon: "arrow.uturn.backward", title: m.stageBackTitle(v), help: m.stageBackHelp(v)),
               .init(icon: "arrow.forward", title: m.stageForwardTitle(v), help: m.stageForwardHelp(v)),
               .divider,
@@ -139,7 +138,7 @@ struct SnapshotMenuMock: View {
           }
           .padding(.horizontal, 8).padding(.vertical, 3)
           .frame(maxWidth: .infinity, alignment: .leading)
-          .background(i.title == "Remove from queue" ? DS.color.hover : .clear, in: RoundedRectangle(cornerRadius: 6))
+          .background(i.title == "Back to Edit" ? DS.color.hover : .clear, in: RoundedRectangle(cornerRadius: 6))
         }
       }
     }

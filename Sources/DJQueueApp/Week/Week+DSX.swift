@@ -24,7 +24,7 @@ enum DSXPostStatus: Equatable {
     case .draft: "Draft"
     case .planned: "Planned"
     case .rendering(let f): f.map { "Rendering \(Int($0 * 100))%" } ?? "Rendering"
-    case .ready: "Ready"
+    case .ready: "Rendered"
     case .dueNow: "Due now"
     case .late(let t): "Late \(t)"
     case .posted: "Posted"

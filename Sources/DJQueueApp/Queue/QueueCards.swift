@@ -149,7 +149,7 @@ struct QueueClipActions: View {
   }
 }
 
-/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Move one slot later · Remove from queue · stage
+/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Move one slot later · Back to Edit · stage
 /// moves · Open editor · Exclude. Acts on the selection (where it makes sense) when the clip is part of it. Native
 /// items show no tooltip, so a disabled item says why in its title.
 struct QueueClipMenu: View {
@@ -175,7 +175,7 @@ struct QueueClipMenu: View {
     }
     Divider()
     let removeWhy = model.removeFromQueueBlocker(targets)
-    Button((targets.count == 1 ? "Remove from queue" : "Remove \(n) from queue") + AppModel.menuReason(removeWhy),
+    Button((targets.count == 1 ? "Back to Edit" : "Send \(n) back to Edit") + AppModel.menuReason(removeWhy),
            systemImage: "arrow.uturn.backward") {
       model.removeFromQueue(targets)
     }
@@ -183,7 +183,7 @@ struct QueueClipMenu: View {
     if targets.count == 1 && ClipStage.of(video) != .queue {
       StageMenuItems(model: model, video: video, targets: targets)
     } else {
-      // Back for a Queue clip IS "Remove from queue" (above); only forward is left.
+      // Back for a Queue clip IS "Back to Edit" (above); only forward is left.
       let fwd = targets.count == 1 ? model.stageBlocker(video, .forward) : nil
       Button((targets.count == 1 ? model.stageForwardTitle(video) : "Forward a stage (\(targets.count))") + AppModel.menuReason(fwd),
              systemImage: "arrow.forward") {

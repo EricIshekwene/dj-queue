@@ -2,7 +2,7 @@ import DJQCore
 import SwiftUI
 
 /// Stage moves in the UI (Eric: "at any stage, bring a video back to its previous stage or move it forward a
-/// stage") and "Remove from queue". The rules live in DJQCore (`BulkActions.back/forward/removeFromQueue`); this file
+/// stage") and Queue's "Back to Edit". The rules live in DJQCore (`BulkActions.back/forward/removeFromQueue`); this file
 /// only names them, explains them and runs them through the shared bulk flow (confirmation + undo toast).
 extension AppModel {
   func stage(_ v: Video) -> ClipStage? { ClipStage.of(v) }
@@ -16,45 +16,25 @@ extension AppModel {
     queueList.filter { v in ClipStage.of(v).map { $0 >= .queue } ?? true }
   }
 
-  /// Why `direction` can't move `v` (nil = it can). Mirrors `BulkActions.blocker` from the loaded data (no DB read).
+  /// Why `direction` can't move `v` (nil = it can). Core's data-free reasons (`StageWording.blocker`) plus the ones
+  /// that need loaded posts (mirrors `BulkActions.blocker`; no DB read).
   func stageBlocker(_ v: Video, _ direction: StageDirection) -> String? {
-    guard let st = ClipStage.of(v) else {
-      if v.type != .short { return "Long-form clips are uploaded by hand — no stages" }
-      if v.excluded { return "Excluded — include it first" }
-      return "File missing — relink it first"
-    }
-    switch (st, direction) {
-    case (.score, .back): return "Score is the first stage"
+    if let why = StageWording.blocker(v, direction) { return why }
+    switch (ClipStage.of(v), direction) {
     case (.scheduled, .back): return removeFromQueueBlocker(v)
-    case (.posted, .back): return "Posted — use Repost (next version) or Reset a wrongly marked post in Posts"
-    case (.posted, .forward): return "Posted is the last stage"
-    case (.scheduled, .forward):
-      return nextLivePost(v.id) == nil ? "Nothing left to mark posted" : nil
+    case (.scheduled, .forward): return nextLivePost(v.id) == nil ? "Nothing left to mark posted" : nil
     default: return nil
     }
   }
 
-  /// "Back to Score" · "Remove from queue" · "Back to Queue" (button labels; no chevrons — the icon carries it).
-  func stageBackTitle(_ v: Video) -> String {
-    switch ClipStage.of(v) {
-    case .edit: "Back to Score"
-    case .queue: "Remove from queue"
-    case .scheduled: "Back to Queue"
-    default: "Back"
-    }
-  }
+  /// "Back to Score" · "Back to Edit" · "Back to Queue" — always the clip's real neighbour (round 4 S1; no chevrons
+  /// in the title, the icon carries it). From the clip's own stage, never from the screen it's shown on.
+  func stageBackTitle(_ v: Video) -> String { StageWording.backTitle(v) }
 
   /// What back does, in words (tooltip).
-  func stageBackHelp(_ v: Video) -> String {
-    switch ClipStage.of(v) {
-    case .edit: "Clears its score (\(v.score.map(String.init) ?? "–")) and sends it back to Score"
-    case .queue: Self.removeFromQueueHelp
-    case .scheduled: "Unschedule: removes its unposted days from the plan; it stays in the Queue"
-    default: stageBlocker(v, .back) ?? "Back a stage"
-    }
-  }
+  func stageBackHelp(_ v: Video) -> String { StageWording.backHelp(v) }
 
-  static let removeFromQueueHelp = "Send back to Edit — unposted slots are removed"
+  static let removeFromQueueHelp = StageWording.backToEditHelp
 
   /// Why `v` can't leave the plan (Remove from queue / Back to Queue): it already posted somewhere, or every platform
   /// finished. Mirrors `BulkActions.postedBlocker` from the loaded data.
@@ -77,26 +57,11 @@ extension AppModel {
     return targets.count == 1 ? reasons[0] : "Every selected clip already posted somewhere — they can't leave the plan"
   }
 
-  /// "Score it" · "Send to queue" · "Schedule" · "Mark posted".
-  func stageForwardTitle(_ v: Video) -> String {
-    switch ClipStage.of(v) {
-    case .score: "Score it"
-    case .edit: "Send to queue"
-    case .queue: "Schedule"
-    case .scheduled: "Mark posted…"
-    default: "Forward"
-    }
-  }
+  /// "Score it" · "Send to Queue" · "Schedule" · "Mark posted…" (from the clip's stage: a Queue card can never say
+  /// "Send to Queue").
+  func stageForwardTitle(_ v: Video) -> String { StageWording.forwardTitle(v) }
 
-  func stageForwardHelp(_ v: Video) -> String {
-    switch ClipStage.of(v) {
-    case .score: "Opens Score to give it a score"
-    case .edit: "Confirms the default crop where missing and sends it to the Queue; if something's still missing it stays here and says what"
-    case .queue: "Pins it to the next open day of this or next week (a draft week still needs approval in Week)"
-    case .scheduled: "Opens Mark posted for its next post (Today)"
-    default: stageBlocker(v, .forward) ?? "Forward a stage"
-    }
-  }
+  func stageForwardHelp(_ v: Video) -> String { StageWording.forwardHelp(v) }
 
   /// The clip's next post still in flight (Mark posted target).
   func nextLivePost(_ videoId: String) -> PlatformPost? {
@@ -125,23 +90,34 @@ extension AppModel {
 
   // MARK: Actions
 
-  /// Queue "Remove from queue" (F1): back to Edit, held there until "Send to queue". Asks first (listing the days)
-  /// when it would remove scheduled days, or for several clips.
+  /// After a direct settings write (New clip defaults, a deleted template): clips whose validity changed move between
+  /// Edit and Queue now instead of on the next engine tick (DJQCore `Revalidation`, states only — the plan is the
+  /// engine's job).
+  func revalidateStages() {
+    let s = store
+    Task.detached(priority: .userInitiated) {
+      _ = try? Revalidation(store: s).run(adjustPlan: false)
+      await MainActor.run { self.refresh() }
+    }
+  }
+
+  /// Queue "Back to Edit" (F1, formerly "Remove from queue"): back to Edit, held there until "Send to Queue". Asks
+  /// first (listing the days) when it would remove scheduled days, or for several clips.
   func removeFromQueue(_ ids: [String]) {
     if let why = removeFromQueueBlocker(ids) { show(why, error: true); return }
     let b = bulk
     let n = AppModel.pipelineClips(ids.count)
     requestBulk(BulkRequest(
-      title: ids.count == 1 ? "Remove from queue?" : "Remove \(n) from queue?", verb: "Remove from queue", ids: ids,
-      changes: [.init(field: "Goes back to", value: "Edit · stays there until you Send to queue"),
+      title: ids.count == 1 ? "Back to Edit?" : "Send \(n) back to Edit?", verb: "Back to Edit", ids: ids,
+      changes: [.init(field: "Goes back to", value: "Edit · stays there until you send it to the Queue"),
                 .init(field: "Plan", value: "Unposted days removed · posted ones stay · other clips keep their days")],
       alwaysConfirm: hasScheduledDays(ids), previewTitle: "Scheduled days removed",
       previewLines: { [weak self] r in self?.unplannedLines(r) ?? [] },
       doneText: { r in
         let n = r.changed.count
         let days = (r.unplanned ?? [:]).values.reduce(0) { $0 + $1.count }
-        return (n == 1 ? "Removed from queue" : "Removed \(n) from queue",
-                "Back in Edit" + (days > 0 ? " · \(days) scheduled day\(days == 1 ? "" : "s") removed" : ""))
+        return (n == 1 ? "Back in Edit" : "\(n) back in Edit",
+                "Held there until you send it to the Queue" + (days > 0 ? " · \(days) scheduled day\(days == 1 ? "" : "s") removed" : ""))
       }) { dry in try b.removeFromQueue(ids, dryRun: dry) })
   }
 
@@ -165,7 +141,7 @@ extension AppModel {
     requestBulk(BulkRequest(
       title: title, verb: one.map(stageBackTitle) ?? "Move back", ids: ids,
       changes: one == nil ? [.init(field: "Edit → Score", value: "Score cleared"),
-                             .init(field: "Queue → Edit", value: "Removed from queue, held in Edit"),
+                             .init(field: "Queue → Edit", value: "Held in Edit until sent to the Queue again"),
                              .init(field: "Scheduled → Queue", value: "Unposted days removed, stays in the Queue")] : [],
       alwaysConfirm: anyScore || hasScheduledDays(ids), previewTitle: one == nil ? "What happens" : "Scheduled days removed",
       previewLines: { [weak self] r in
@@ -206,10 +182,10 @@ extension AppModel {
       doneText: { [weak self] r in self?.moveToast(r, back: false) ?? ("Done", nil) }) { dry in try b.forward(ids, dryRun: dry) })
   }
 
-  /// "Yayo x Johnny: Edit → Queue · Ready — in the queue" per moved clip, then the skipped ones with their reason.
+  /// "Yayo x Johnny: Edit → Queue · Sent to the Queue" per moved clip, then the skipped ones with their reason.
   func moveLines(_ r: BulkResult) -> [String] {
     let moved = (r.moves ?? [:]).sorted { $0.key < $1.key }.map { id, m in
-      "\(video(id).map(displayName) ?? id): \(m.from.displayName) → \(m.to.displayName) · \(m.note)"
+      "\(video(id).map(displayName) ?? id): \(StageWording.moveText(m.from, m.to)) · \(m.note)"
     }
     let skipped = r.skipped.sorted { $0.key < $1.key }.map { id, why in "\(video(id).map(displayName) ?? id): stays — \(why)" }
     return moved + skipped

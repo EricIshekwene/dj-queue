@@ -11,7 +11,7 @@ import SwiftUI
 ///   } more: {
 ///     Button("Copy agent prompt") { model.copyAgentPrompt(model.selectedIds(.edit)) }
 ///   } primary: {
-///     DSButton("Make ready with defaults", variant: .primary) { … }
+///     DSButton("Send to Queue with defaults", variant: .primary) { … }
 ///   }
 /// }
 /// ```

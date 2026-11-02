@@ -102,6 +102,7 @@ struct CaptionsSettings: View {
       verb: "Delete template", icon: "trash", destructive: true) {
         if model.perform("Template “\(t.name)” deleted", { try model.store.deleteCaptionTemplate(t.id) }) {
           templates.removeAll { $0.id == t.id }
+          model.revalidateStages()
         }
       })
   }

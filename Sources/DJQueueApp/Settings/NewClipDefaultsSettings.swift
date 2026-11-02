@@ -247,6 +247,7 @@ struct NewClipDefaultsSettings: View {
       try model.store.save(s)
     }) {
       ui.draft = nil
+      model.revalidateStages()
     }
   }
 
@@ -261,6 +262,7 @@ struct NewClipDefaultsSettings: View {
           try model.store.save(s)
         }) {
           ui.draft = nil
+          model.revalidateStages()
         }
       }
   }

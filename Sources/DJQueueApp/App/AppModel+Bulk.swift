@@ -8,7 +8,7 @@ import SwiftUI
 ///
 /// ```swift
 /// let bulk = model.bulk, ids = model.selectedIds(.edit)
-/// model.requestBulk(BulkRequest(title: "Make \(ids.count) clips ready?", verb: "Make ready", ids: ids,
+/// model.requestBulk(BulkRequest(title: "Send \(ids.count) clips to the Queue?", verb: "Send to Queue", ids: ids,
 ///                               changes: [.init(field: "Crop", value: "Default anchor"), …]) { dry in
 ///   try bulk.makeReadyWithDefaults(ids, dryRun: dry)
 /// })
@@ -16,12 +16,12 @@ import SwiftUI
 struct BulkRequest {
   /// Sheet title, e.g. "Make 9 clips ready?".
   var title: String
-  /// Primary button label, e.g. "Make ready".
+  /// Primary button label, e.g. "Send to Queue".
   var verb: String
   var ids: [String]
   /// "What will change" rows (DSChangeList), e.g. Caption → Template "DJ set".
   var changes: [DSChangeList.Change] = []
-  /// Toast after applying; nil = "Updated N clips" (make-ready: its outlook, "Made 3 ready · 58 still need a title").
+  /// Toast after applying; nil = "Updated N clips" (make-ready: its outlook, "3 sent to the Queue · 58 still need a title").
   var doneMessage: String? = nil
   /// Clear the screen's selection once the batch changed something (the bulk bar hides, the toast is unobstructed).
   var clearsSelection = true
@@ -101,9 +101,9 @@ extension AppModel {
     }
   }
 
-  /// Make-ready's true result: "Made 3 ready · 58 still need a title" (none ready: "Crop confirmed for 3 · …").
+  /// Make-ready's true result: "3 sent to the Queue · 58 still need a title" (none: "Crop confirmed for 3 · …").
   static func outlookMessage(_ o: ReadyOutlook, changed: Int) -> String {
-    var parts = [o.ready.isEmpty ? "Crop confirmed for \(pipelineClips(changed))" : "Made \(o.ready.count) ready"]
+    var parts = [o.ready.isEmpty ? "Crop confirmed for \(pipelineClips(changed))" : "\(o.ready.count) sent to the Queue"]
     if !o.needTitle.isEmpty { parts.append("\(o.needTitle.count) still need\(o.needTitle.count == 1 ? "s" : "") a title") }
     if !o.other.isEmpty { parts.append("\(o.other.count) with other issues") }
     return parts.joined(separator: " · ")

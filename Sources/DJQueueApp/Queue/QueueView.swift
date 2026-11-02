@@ -117,7 +117,7 @@ struct QueueSortMenu: View {
   }
 }
 
-/// Queue bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Pin to days… · Post today · More (Remove from queue,
+/// Queue bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Pin to days… · Post today · More (Back to Edit,
 /// Back / Forward a stage, Skip platform ▸, Exclude, post on a platform again, Kind, re-render) · **Add to week**.
 private struct QueueBulkBar: View {
   @Bindable var model: AppModel
@@ -140,7 +140,7 @@ private struct QueueBulkBar: View {
     } more: {
       // Native items show no tooltip: titles carry the consequence (or why not); each asks first and can be undone.
       let removeWhy = model.removeFromQueueBlocker(ids)
-      Button("Remove from queue (back to Edit)" + AppModel.menuReason(removeWhy), systemImage: "arrow.uturn.backward") {
+      Button("Back to Edit" + AppModel.menuReason(removeWhy), systemImage: "arrow.uturn.backward") {
         model.removeFromQueue(ids)
       }
       .disabled(removeWhy != nil)

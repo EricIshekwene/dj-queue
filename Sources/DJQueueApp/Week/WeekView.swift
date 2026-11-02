@@ -430,7 +430,7 @@ struct WeekCardMenu: View {
     Divider()
     StageMenuItems(model: model, video: video, targets: [video.id])
     let removeBlocker = isPast ? "this day has passed" : model.removeFromQueueBlocker(video).map { _ in "already posted" }
-    Button(removeBlocker.map { "Remove from queue — \($0)" } ?? "Remove from queue (back to Edit)", systemImage: "arrow.uturn.backward") {
+    Button(removeBlocker.map { "Back to Edit — \($0)" } ?? "Back to Edit (out of the plan)", systemImage: "arrow.uturn.backward") {
       model.removeFromQueue([video.id])
     }
     .disabled(removeBlocker != nil)

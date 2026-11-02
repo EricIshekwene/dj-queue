@@ -72,7 +72,7 @@ struct GalleryTooltips: View {
           GalleryCollisionDemo().frame(width: 360, height: 250)
         }
         GSection("Wraps at 280 pt", note: "max 3 lines label · 4 lines reason") {
-          DSTooltipBubble(text: "Remove from queue — goes back to Edit; future unposted slots are cleared, posted ones stay",
+          DSTooltipBubble(text: "Back to Edit — held there until sent to the Queue; future unposted slots are cleared, posted ones stay",
                           shortcut: "⌫")
             .frame(width: DSTooltipBubble.maxWidth, alignment: .leading)
         }

@@ -399,8 +399,7 @@ extension AppModel {
 
   /// Why a clip is in Edit, in words ("no crop, no text"), from its Validation issues; nil when none are loaded.
   func editWhy(_ v: Video) -> String? {
-    let titles = (issuesByVideo[v.id] ?? []).filter { $0.kind != .missingFile }
-      .map { EditFilter(kind: $0.kind, platform: $0.platform).title }
+    let titles = (issuesByVideo[v.id] ?? []).sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText)
     var seen = Set<String>()
     let unique = titles.filter { seen.insert($0).inserted }
     guard !unique.isEmpty else { return nil }

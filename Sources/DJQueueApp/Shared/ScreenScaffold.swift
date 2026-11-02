@@ -23,9 +23,9 @@ enum ScreenMetrics {
 /// ```
 ///
 /// ```swift
-/// ScreenScaffold(model: model, screen: .edit, subtitle: "9 need work") {
+/// ScreenScaffold(model: model, screen: .edit, subtitle: "9") {
 ///   DSViewModeSwitcher(mode: model.viewModeBinding(.edit), modes: [.wide, .grid, .list])
-///   DSButton("Make ready with defaults", variant: .primary) { … }
+///   DSButton("Send to Queue with defaults", variant: .primary) { … }
 /// } subToolbar: {
 ///   DSChip("All", isSelected: true, count: 9) {}
 /// } content: {
