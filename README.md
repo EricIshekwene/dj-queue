@@ -111,7 +111,7 @@ Sources/djq/            CLI
 Sources/DJQueueApp/     SwiftUI app — queue, week, today, library, posts, health, settings, editor, menu bar
 Tests/DJQCoreTests/     Swift Testing suite
 Sources/DJQueueApp/DesignSystem/  tokens + components (shadcn-style anatomy in SwiftUI)
-skills/                 Claude skills: Doctor report, agent access via djq
+skills/                 Claude skills: Doctor report, agent access via djq, djq-daddy build process (plan → review → ship)
 scripts/prefill_titles.py  upstream title-suggestion formatter for agents
 design/                 inventory, design specs v1/v2, design system, decision logs
 ```
