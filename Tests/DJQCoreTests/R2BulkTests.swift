@@ -74,6 +74,20 @@ import Testing
     let u = try b.undo(r.batchId!)
     #expect(u.changed == ["clip-0"] && u.skipped["clip-1"] != nil)
     #expect(try f.store.video(id: "clip-1")?.score == 90)
+    // Partial undo leaves the batch open and remembers what was restored.
+    let rec = try #require(try b.batch(id: r.batchId!))
+    #expect(rec.undoneAt == nil && rec.restored == ["clip-0"])
+    // Eric changes clip-0 again; a plain undo still skips clip-1 and doesn't touch the already-restored clip-0.
+    try f.store.setScore("clip-0", 77)
+    let u2 = try b.undo(r.batchId!)
+    #expect(u2.changed.isEmpty && u2.skipped.keys.sorted() == ["clip-1"])
+    #expect(try f.store.video(id: "clip-0")?.score == 77)
+    // force restores the remainder and only then marks the batch undone.
+    let u3 = try b.undo(r.batchId!, force: true)
+    #expect(u3.changed == ["clip-1"] && u3.skipped.isEmpty)
+    #expect(try f.store.video(id: "clip-1")?.score == nil && f.store.video(id: "clip-0")?.score == 77)
+    #expect(try b.batch(id: r.batchId!)?.undoneAt != nil)
+    #expect(throws: EngineError.self) { try b.undo(r.batchId!, force: true) }
   }
 
   @Test func captionHashtagsPlatformsAndApplyDefaults() throws {

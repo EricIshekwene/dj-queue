@@ -18,7 +18,7 @@ New, both optional:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `title` | string | The clip's title if the tool knows it for sure. **Seeds** DJ Queue's title only while the app has none; a title Eric set (or later cleared and re-set) in the app is never overwritten. |
+| `title` | string | The clip's title if the tool knows it for sure. **Seeds** DJ Queue's title only if the clip never had one. A title Eric set — or deliberately cleared — is never overwritten; a different manifest title then shows up as a suggestion (source `videos.json title`). |
 | `title_suggestions` | array | Guesses for Eric to pick from, best first. Re-synced on every intake (the list in the file replaces the previous file list; suggestions added with `djq suggest` are kept). Malformed values are ignored, never fatal. |
 
 Each suggestion:

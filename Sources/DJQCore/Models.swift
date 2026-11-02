@@ -245,7 +245,8 @@ public struct Video: Codable, Sendable, Identifiable, Hashable {
   public var title: String? = nil
   /// Optional structured track names behind the title (from an accepted suggestion or `djq title --tracks`).
   public var titleTracks: [Track]? = nil
-  /// Who set `title`: "manifest" (videos.json seed), "app" (Eric in the app), "agent" (djq), "suggestion".
+  /// Who set `title`: "manifest" (videos.json seed), "app" (Eric in the app), "agent" (djq), "suggestion";
+  /// "cleared" (with title nil) = deliberately cleared, so videos.json never re-seeds it.
   public var titleSource: String? = nil
   /// Source picture size, cached the first time the file is probed (nil = not probed yet).
   public var sourceWidth: Int? = nil

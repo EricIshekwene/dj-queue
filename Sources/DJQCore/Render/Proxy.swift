@@ -41,14 +41,36 @@ extension Media {
     return u
   }
 
+  /// Longest one ffmpeg proxy encode may run (per attempt) before it is stopped.
+  public static let proxyTimeout: TimeInterval = 120
+
   /// A small H.264 preview (540 px wide, e.g. 540×960) of the clip with its crop (confirmed, else the default
   /// anchor — centre unless Settings say otherwise), cached in `<app support>/proxies/`. Blocking; call off the
   /// main thread (`ProxyService` does). Older proxies of the same clip and range are removed.
+  ///
+  /// Cross-process safe: a per-clip+range `flock` (`proxies/<id>-<range>.lock`, released by the kernel if the
+  /// process dies) means the app and the engine/CLI never encode the same proxy at once — the second one waits,
+  /// then returns the finished file.
   @discardableResult
-  public static func ensureProxy(store: Store, video: Video, range: ProxyRange = .trim) throws -> URL {
+  public static func ensureProxy(store: Store, video: Video, range: ProxyRange = .trim,
+                                 timeout: TimeInterval = proxyTimeout) throws -> URL {
     let fm = FileManager.default
     let url = try proxyURL(store: store, video: video, range: range)
     if fm.fileExists(atPath: url.path) { return url }
+    try fm.createDirectory(at: store.paths.proxies, withIntermediateDirectories: true)
+    let lockPath = store.paths.proxies.appendingPathComponent(".\(video.id)-\(range.rawValue).lock").path
+    let fd = open(lockPath, O_CREAT | O_RDWR, 0o644)
+    guard fd >= 0 else { throw MediaError("Can't open proxy lock (errno \(errno))") }
+    defer { flock(fd, LOCK_UN); close(fd) }
+    let deadline = Date().addingTimeInterval(2 * timeout + 30)
+    while flock(fd, LOCK_EX | LOCK_NB) != 0 {
+      guard errno == EWOULDBLOCK || errno == EINTR else { throw MediaError("Can't lock proxy (errno \(errno))") }
+      guard Date() < deadline else { throw MediaError("Timed out waiting for another process's proxy of \(video.name)") }
+      Thread.sleep(forTimeInterval: 0.2)
+    }
+    // Another process may have finished it while we waited.
+    let url2 = try proxyURL(store: store, video: (try? store.video(id: video.id)) ?? video, range: range)
+    if fm.fileExists(atPath: url2.path) { return url2 }
     guard let ffmpeg = Tools.ffmpeg else { throw MediaError("ffmpeg not found (install with Homebrew)") }
     guard let src = try store.fileURL(for: video), fm.fileExists(atPath: src.path) else {
       throw MediaError("Source file missing for \(video.name)")
@@ -64,7 +86,6 @@ extension Media {
     let h = Int((Double(w) / aspect.ratio / 2).rounded()) * 2
     let start = max(0, trim.start), end = min(trim.end > 0 ? trim.end : info.duration, info.duration)
     guard end - start > 0.05 else { throw MediaError("Empty range for \(video.name)'s proxy") }
-    try fm.createDirectory(at: store.paths.proxies, withIntermediateDirectories: true)
     let tmp = store.paths.proxies.appendingPathComponent(".\(UUID().uuidString).mp4")
     defer { try? fm.removeItem(at: tmp) }
     let vf = "crop=\(Int(rect.width)):\(Int(rect.height)):\(Int(rect.minX)):\(Int(rect.minY)),scale=\(w):\(h):flags=bicubic,format=yuv420p,setsar=1"
@@ -75,12 +96,12 @@ extension Media {
       a += ["-g", "30", "-c:a", "aac", "-b:a", "96k", "-ac", "2", "-map_metadata", "-1", "-movflags", "+faststart", tmp.path]
       return a
     }
-    var r = try Proc.run(ffmpeg, args(hw: true), timeout: max(120, 4 * (end - start)))
-    if r.status != 0 { r = try Proc.run(ffmpeg, args(hw: false), timeout: max(120, 8 * (end - start))) }
+    var r = try Proc.run(ffmpeg, args(hw: true), timeout: timeout)
+    if r.status != 0 { r = try Proc.run(ffmpeg, args(hw: false), timeout: timeout) }
     guard r.status == 0, fm.fileExists(atPath: tmp.path) else { throw MediaError("proxy failed for \(video.name): \(r.stderrTail)") }
     // Keep one proxy per clip and range.
     let prefix = "\(video.id)-\(range.rawValue)-"
-    for f in (try? fm.contentsOfDirectory(atPath: store.paths.proxies.path)) ?? [] where f.hasPrefix(prefix) {
+    for f in (try? fm.contentsOfDirectory(atPath: store.paths.proxies.path)) ?? [] where f.hasPrefix(prefix) && f.hasSuffix(".mp4") {
       try? fm.removeItem(at: store.paths.proxies.appendingPathComponent(f))
     }
     try fm.moveItem(at: tmp, to: url)
@@ -95,9 +116,12 @@ extension Media {
   }
 }
 
-/// Background proxy generation for the UI (and anything else): one serial worker, visible items first.
-/// `request` is cheap to call repeatedly (a queued or cached item is not queued twice); `completion` runs on the
-/// worker thread.
+/// Background proxy generation (UI tiles and the engine): ONE serial worker queue of its own, visible items first,
+/// background items paused while `shouldPause()` (the engine sets it to "a render is running"). `request` only
+/// queues (never probes or encodes on the caller's thread); `completion` runs on the worker.
+///
+/// A background job that fails records `proxyFail.<video id>` = the proxy's cache name, so background requests
+/// skip that clip until its crop/trim/file changes; visible requests always try.
 public final class ProxyService: @unchecked Sendable {
   public typealias Completion = @Sendable (Result<URL, Error>) -> Void
 
@@ -107,26 +131,28 @@ public final class ProxyService: @unchecked Sendable {
   private let lock = NSLock()
   private var jobs: [String: Job] = [:]
   private var running: String?
+  private var draining = false
   private var seq = 0
   private var stopped = false
   private let worker = DispatchQueue(label: "com.djlovd.queue.proxies", qos: .utility)
-  /// The generator (tests replace it). Default: `Media.ensureProxy`.
+  /// The generator (tests replace it). Default: `Media.ensureProxy` (per-proxy flock + ffmpeg timeout).
   public var make: @Sendable (Store, Video, ProxyRange) throws -> URL = { try Media.ensureProxy(store: $0, video: $1, range: $2) }
+  /// Background jobs wait while this returns true (checked between jobs).
+  public var shouldPause: @Sendable () -> Bool = { false }
 
   public init(store: Store) { self.store = store }
 
   private func key(_ id: String, _ r: ProxyRange) -> String { "\(id)|\(r.rawValue)" }
 
-  /// The cached proxy, if any (non-blocking, never generates).
+  /// The cached proxy, if any (never generates; may probe the source once if its size isn't cached yet).
   public func cachedProxy(videoId: String, range: ProxyRange = .trim) -> URL? {
     guard let v = try? store.video(id: videoId) else { return nil }
     return Media.cachedProxy(store: store, video: v, range: range)
   }
 
-  /// Queues a proxy (raising its priority if already queued). Cached proxies complete immediately.
+  /// Queues a proxy (raising its priority if already queued). Returns immediately.
   public func request(_ videoId: String, priority: ProxyPriority = .visible, range: ProxyRange = .trim,
                       completion: Completion? = nil) {
-    if let u = cachedProxy(videoId: videoId, range: range) { completion?(.success(u)); return }
     let k = key(videoId, range)
     lock.withLock {
       guard !stopped else { return }
@@ -157,27 +183,58 @@ public final class ProxyService: @unchecked Sendable {
   public func stop() { lock.withLock { stopped = true; jobs = jobs.filter { $0.key == running } } }
 
   public var pendingCount: Int { lock.withLock { jobs.count } }
+  public var isBusy: Bool { lock.withLock { running != nil } }
+
+  static func failKey(_ id: String) -> String { "proxyFail.\(id)" }
 
   private func pump() {
-    worker.async { [weak self] in self?.drain() }
+    let go: Bool = lock.withLock {
+      if draining { return false }
+      draining = true
+      return true
+    }
+    if go { worker.async { [weak self] in self?.drain() } }
   }
 
   private func drain() {
     while true {
       let next: (String, Job)? = lock.withLock {
-        guard running == nil, !stopped,
-              let best = jobs.max(by: { ($0.value.priority, $0.value.seq) < ($1.value.priority, $1.value.seq) }) else { return nil }
+        guard !stopped else { draining = false; return nil }
+        let paused = shouldPause()
+        let candidates = jobs.filter { !paused || $0.value.priority == .visible }
+        guard let best = candidates.max(by: { ($0.value.priority, $0.value.seq) < ($1.value.priority, $1.value.seq) }) else {
+          if jobs.isEmpty { draining = false }
+          return nil
+        }
         running = best.key
         return (best.key, best.value)
       }
-      guard let (k, job) = next else { return }
+      guard let (k, job) = next else {
+        // Only paused background work left: look again shortly.
+        if lock.withLock({ draining }) { Thread.sleep(forTimeInterval: 1); continue }
+        return
+      }
       let result: Result<URL, Error>
       do {
         guard let v = try store.video(id: job.videoId) else { throw MediaError("No video \(job.videoId)") }
-        result = .success(try make(store, v, job.range))
+        if let u = Media.cachedProxy(store: store, video: v, range: job.range) {
+          result = .success(u)
+        } else if job.priority == .background, let name = try? Media.proxyURL(store: store, video: v, range: job.range).lastPathComponent,
+                  let last: String = try store.kv(Self.failKey(v.id)), last == name {
+          result = .failure(MediaError("proxy for \(v.id) failed before; not retried until its crop/trim/file changes"))
+        } else {
+          do {
+            result = .success(try make(store, v, job.range))
+          } catch {
+            if let name = try? Media.proxyURL(store: store, video: v, range: job.range).lastPathComponent {
+              try? store.setKV(Self.failKey(v.id), name)
+            }
+            Log.shared.warn("proxy \(job.videoId): \(error)")
+            throw error
+          }
+        }
       } catch {
         result = .failure(error)
-        Log.shared.warn("proxy \(job.videoId): \(error)")
       }
       let completions: [Completion] = lock.withLock {
         running = nil

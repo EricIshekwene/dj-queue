@@ -19,10 +19,22 @@ import Testing
     try f.intake()
     v = try #require(try f.store.video(id: "clip-0"))
     #expect(v.title == "Yayo × Johnny (live)" && v.titleSource == "app")
-    // Cleared in the app → the manifest seeds it again (empty = not chosen).
+    // The changed manifest title is offered as a suggestion instead.
+    #expect(try f.store.titleSuggestions(videoId: "clip-0").map(\.text) == ["Something else"])
+    // Cleared in the app → stays cleared (tombstone); the manifest title stays a suggestion only.
     try f.store.setTitle("clip-0", nil)
     try f.intake()
-    #expect(try f.store.video(id: "clip-0")?.title == "Something else")
+    v = try #require(try f.store.video(id: "clip-0"))
+    #expect(v.title == nil && v.titleSource == Store.clearedTitleSource && v.displayName == "yayo x johnny")
+    #expect(try f.store.titleSuggestions(videoId: "clip-0").first?.source == "videos.json title")
+    // Clearing through bulk (and `djq title --clear`, which calls setTitle(nil)) leaves the same tombstone.
+    f.entries[2]["title"] = "Poosh Five"
+    try f.saveManifest()
+    try f.intake()
+    #expect(try f.store.video(id: "clip-1")?.title == "Poosh Five")
+    try BulkActions(store: f.store).setTitle(["clip-1"], nil)
+    try f.intake()
+    #expect(try f.store.video(id: "clip-1")?.title == nil)
     // No title anywhere → display name is the raw tag verbatim.
     #expect(try f.store.video(id: "clip-1")?.displayName == "poosh 5")
   }
@@ -49,6 +61,21 @@ import Testing
     #expect(s.map(\.text) == ["Yayo x Johnny (agent)", "Yayo x Jonny"])
     // Intake never sets a title from suggestions.
     #expect(try f.store.video(id: "clip-0")?.title == nil)
+  }
+
+  @Test func identicalManifestSuggestionsAreNotRewritten() throws {
+    let f = try Fixture()
+    f.entries[1]["title_suggestions"] = [
+      ["text": "A x B", "confidence": 0.5, "source": "s"],
+      ["text": "  ", "confidence": 0.9],  // empty: never stored
+      ["text": "A x B", "confidence": 0.5, "source": "s"],  // duplicate text+source
+    ]
+    try f.saveManifest()
+    try f.intake()
+    let first = try f.store.titleSuggestions(videoId: "clip-0")
+    #expect(first.map(\.text) == ["A x B"])
+    try f.intake()
+    #expect(try f.store.titleSuggestions(videoId: "clip-0").map(\.id) == first.map(\.id))  // same rows, no churn
   }
 
   @Test func suggestionImportShapes() throws {
