@@ -132,7 +132,7 @@ struct DSFlowLayout: Layout {
     let maxW = proposal.width ?? .infinity
     var x: CGFloat = 0, y: CGFloat = 0, lineH: CGFloat = 0, widest: CGFloat = 0
     for s in subviews {
-      let sz = s.sizeThatFits(.unspecified)
+      let sz = Self.size(s, maxWidth: maxW)
       if x > 0 && x + sz.width > maxW { y += lineH + lineSpacing; x = 0; lineH = 0 }
       x += sz.width + spacing
       lineH = max(lineH, sz.height)
@@ -144,12 +144,21 @@ struct DSFlowLayout: Layout {
   func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
     var x = bounds.minX, y = bounds.minY, lineH: CGFloat = 0
     for s in subviews {
-      let sz = s.sizeThatFits(.unspecified)
+      let sz = Self.size(s, maxWidth: bounds.width)
       if x > bounds.minX && x + sz.width > bounds.maxX { y += lineH + lineSpacing; x = bounds.minX; lineH = 0 }
       s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sz))
       x += sz.width + spacing
       lineH = max(lineH, sz.height)
     }
+  }
+
+  /// A chip's natural size, or — when that's wider than the row — its size at the row's width, so a long chip
+  /// truncates inside the column instead of being clipped at its edge.
+  private static func size(_ s: LayoutSubview, maxWidth: CGFloat) -> CGSize {
+    let sz = s.sizeThatFits(.unspecified)
+    guard maxWidth.isFinite, sz.width > maxWidth else { return sz }
+    let fitted = s.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
+    return CGSize(width: min(fitted.width, maxWidth), height: fitted.height)
   }
 }
 

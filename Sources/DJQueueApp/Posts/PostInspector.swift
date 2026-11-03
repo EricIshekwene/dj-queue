@@ -64,8 +64,8 @@ struct PostInspector: View {
   }
 
   private func section<C: View>(_ title: String, last: Bool = false, @ViewBuilder _ content: () -> C) -> some View {
-    VStack(alignment: .leading, spacing: DS.space.xs) {
-      DSEyebrow(title)
+    VStack(alignment: .leading, spacing: DS.space.sm) {
+      DSSectionHeader(title)
       content()
     }
     .padding(DS.space.md)

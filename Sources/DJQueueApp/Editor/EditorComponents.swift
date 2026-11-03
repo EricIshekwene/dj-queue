@@ -34,7 +34,7 @@ struct EditorCustomTag: View {
   }
 }
 
-/// One labelled field in an inspector section: label (callout medium) + Custom tag on the right, then the control.
+/// One labelled field in an inspector section: label (callout medium, secondary) + Custom tag on the right, then the control.
 struct EditorField<Content: View>: View {
   var label: String
   var help: String? = nil
@@ -49,7 +49,8 @@ struct EditorField<Content: View>: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 6) {
-        Text(label).font(DS.type.calloutMedium).foregroundStyle(DS.color.text)
+        // Secondary, so field labels sit clearly under the section title (Framer / Webflow inspectors).
+        Text(label).font(DS.type.calloutMedium).foregroundStyle(DS.color.textSecondary)
           .dsTooltip(help)
         Spacer(minLength: 0)
         if let value {
@@ -62,7 +63,8 @@ struct EditorField<Content: View>: View {
   }
 }
 
-/// Inspector section: `headline` title + optional trailing accessory, content below, 24 pt between sections.
+/// Inspector section: `DSSectionHeader` title + optional trailing accessory, content below, 20 pt above and below
+/// (the inspector puts a hairline between sections).
 struct EditorSectionView<Content: View, Accessory: View>: View {
   var section: EditorSection
   @ViewBuilder var accessory: Accessory
@@ -73,15 +75,12 @@ struct EditorSectionView<Content: View, Accessory: View>: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: DS.space.sm) {
-      HStack(spacing: 6) {
-        Text(section.rawValue).font(DS.type.headline).foregroundStyle(DS.color.text)
-        Spacer(minLength: 0)
-        accessory
-      }
+    VStack(alignment: .leading, spacing: DS.space.md) {
+      DSSectionHeader(section.rawValue) { accessory }
       content
     }
-    .padding(.horizontal, DS.space.md)
+    .padding(.horizontal, DS.space.md).padding(.vertical, DS.space.lg)
+    .frame(maxWidth: .infinity, alignment: .leading)
     .id(section)
   }
 }

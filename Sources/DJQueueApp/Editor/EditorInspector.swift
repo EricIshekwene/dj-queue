@@ -2,7 +2,7 @@ import DJQCore
 import SwiftUI
 
 /// DESIGN-v2 §7 inspector: a 340 pt floating card (r.lg, e1) with a sticky mini-index and ONE scrolling column —
-/// Title · Frame · Text · Caption · Cover · Platforms. No tabs, so nothing missing is hidden.
+/// Title · Frame · Text · Caption · Cover · Platforms, split by hairlines. No tabs, so nothing missing is hidden.
 struct EditorInspector: View {
   @ObservedObject var model: EditorModel
   @State private var current: EditorSection = .title
@@ -17,15 +17,22 @@ struct EditorInspector: View {
       DSSeparator()
       ScrollViewReader { proxy in
         ScrollView {
-          VStack(alignment: .leading, spacing: DS.space.xl) {
+          // Full-width hairlines between sections (the Framer / Webflow / Figma inspector pattern) so each section
+          // reads as its own block.
+          VStack(alignment: .leading, spacing: 0) {
             EditorTitleSection(model: model)
+            DSSeparator()
             EditorFrameSection(model: model)
+            DSSeparator()
             EditorTextSection(model: model)
+            DSSeparator()
             EditorCaptionSection(model: model)
+            DSSeparator()
             EditorCoverSection(model: model)
+            DSSeparator()
             EditorPlatformsSection(model: model)
           }
-          .padding(.top, DS.space.md).padding(.bottom, DS.space.xxl)
+          .padding(.bottom, DS.space.xxl)
           .disabled(model.readOnly || model.video == nil)
           .dsTooltip(nil, disabledReason: model.readOnly ? EditorView.readOnlyReason : nil)
         }

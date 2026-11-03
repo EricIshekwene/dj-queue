@@ -35,11 +35,19 @@ struct EditorFrameSection: View {
                      tooltip: "Confirm the framing shown on the canvas") { model.confirmCrop() }
           }
         }
-        DSSlider(label: "Zoom", value: Binding(get: { model.zoom }, set: { model.setZoom($0) }),
-                 range: 1...EditorGeometry.maxZoom, step: 0.05, format: { String(format: "%.2f×", $0) })
-          .dsTooltip("Zoom in; or scroll/pinch on the Frame view")
+        // Zoom and Place are part of Crop, so they get small secondary labels, not field headers.
+        HStack(spacing: DS.space.xs) {
+          Text("Zoom").font(DS.type.caption).foregroundStyle(DS.color.textSecondary).frame(width: 34, alignment: .leading)
+            .accessibilityHidden(true)
+          DSSlider(value: Binding(get: { model.zoom }, set: { model.setZoom($0) }),
+                   range: 1...EditorGeometry.maxZoom, step: 0.05, format: Self.zoomText, showsValue: false, accessibilityName: "Zoom")
+            .dsTooltip("Zoom in; or scroll/pinch on the Frame view")
+          Text(Self.zoomText(model.zoom)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+            .frame(width: 38, alignment: .trailing)
+            .accessibilityHidden(true)
+        }
         HStack(spacing: 6) {
-          Text("Place").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+          Text("Place").font(DS.type.caption).foregroundStyle(DS.color.textSecondary).frame(width: 34, alignment: .leading)
           DSButton("Left", variant: .outline, size: .sm, tooltip: "Centre the crop on the left third") { model.placeCrop(atX: 1.0 / 3) }
           DSButton("Centre", variant: .outline, size: .sm, tooltip: "Centre the crop") { model.placeCrop(atX: 0.5) }
           DSButton("Right", variant: .outline, size: .sm, tooltip: "Centre the crop on the right third") { model.placeCrop(atX: 2.0 / 3) }
@@ -61,6 +69,8 @@ struct EditorFrameSection: View {
       }
     }
   }
+
+  private static func zoomText(_ z: Double) -> String { String(format: "%.2f×", z) }
 
   private var trim: some View {
     let t = model.trim

@@ -435,7 +435,8 @@ struct DSSuggestionChip: View {
     Button(action: action) {
       HStack(spacing: 5) {
         Image(systemName: "text.badge.plus").font(.system(size: 10, weight: .medium)).foregroundStyle(DS.color.textTertiary)
-        Text(suggestion.text).font(DS.type.captionMedium).foregroundStyle(DS.color.text)
+        // In a narrow column (Single's 280 pt panel) the tracks truncate first, then the title; the tooltip has both.
+        Text(suggestion.text).font(DS.type.captionMedium).foregroundStyle(DS.color.text).layoutPriority(1)
         if let d = suggestion.detail { Text(d).font(DS.type.caption).foregroundStyle(DS.color.textTertiary) }
       }
       .lineLimit(1)
@@ -446,8 +447,8 @@ struct DSSuggestionChip: View {
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
-    .fixedSize()
-    .dsTooltip("Set the Title to “\(suggestion.text)”")
+    .fixedSize(horizontal: false, vertical: true)
+    .dsTooltip("“\(suggestion.text)” · click to set the Title" + (suggestion.detail.map { "\n" + $0 } ?? ""))
   }
 }
 
