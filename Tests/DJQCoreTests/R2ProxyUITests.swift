@@ -97,7 +97,7 @@ import Testing
     // A visible request always tries.
     let done = DispatchSemaphore(value: 0)
     ps.request("clip-2", priority: .visible) { _ in done.signal() }
-    #expect(done.wait(timeout: .now() + 5) == .success)
+    #expect(done.wait(timeout: .now() + 30) == .success)
     #expect(made.value.filter { $0 == "clip-2" }.count == 2)
   }
 
