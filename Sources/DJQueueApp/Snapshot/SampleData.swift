@@ -53,6 +53,11 @@ enum SampleData {
                                    source: "sample")
           }
           try store.addSuggestions(videoId: v.id, list, origin: "agent")
+          // Text on the video: the top title laid out on lines, plus a low-confidence hook.
+          let laid = list[0].text.replacingOccurrences(of: " x ", with: "\nx\n")
+          try store.addSuggestions(videoId: v.id, [SuggestionInput(text: laid, confidence: list[0].confidence, source: "sample"),
+                                                   SuggestionInput(text: "Who knows this blend?", confidence: 0.3, source: "sample")],
+                                   origin: "agent", kind: .text)
         }
       }
       if i >= 40 && i < 48 {

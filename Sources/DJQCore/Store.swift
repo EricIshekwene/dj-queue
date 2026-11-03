@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 3
+  public static let schemaVersion = 4
 
   public init(paths: Paths, clock: Clock = SystemClock(), path: String? = nil) throws {
     self.paths = paths
@@ -84,6 +84,7 @@ public final class Store: @unchecked Sendable {
     }
     if v < 2 { try migrateToV2(from: v) }
     if v < 3 { try migrateToV3(from: v) }
+    if v < 4 { try migrateToV4(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -149,6 +150,29 @@ public final class Store: @unchecked Sendable {
         try db.exec("ALTER TABLE videos ADD COLUMN held_in_edit INTEGER NOT NULL DEFAULT 0")
       }
       try db.exec("PRAGMA user_version = 3")
+    }
+  }
+
+  /// Overlay-text suggestions (round 5): a new table shaped like `title_suggestions`. Additive and lossless (no
+  /// existing row changes). A file database with data is copied to `<app support>/backups/` first.
+  private func migrateToV4(from v: Int) throws {
+    if v >= 3, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-schema4-\(f.string(from: Date())).sqlite").path)
+    }
+    try db.transaction {
+      try db.exec("""
+        CREATE TABLE IF NOT EXISTS text_suggestions(id INTEGER PRIMARY KEY AUTOINCREMENT,
+          video_id TEXT NOT NULL REFERENCES videos(id), text TEXT NOT NULL, tracks TEXT NOT NULL DEFAULT '[]',
+          confidence REAL, source TEXT NOT NULL DEFAULT '', origin TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0,
+          created_at REAL NOT NULL, UNIQUE(video_id, origin, text, source));
+        CREATE INDEX IF NOT EXISTS text_suggestions_video ON text_suggestions(video_id);
+        PRAGMA user_version = 4;
+        """)
     }
   }
 

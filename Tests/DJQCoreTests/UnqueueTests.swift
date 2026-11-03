@@ -384,7 +384,7 @@ import Testing
       ["id", "score", "kind", "excluded", "notes", "state"].map { r.string($0) ?? r.int($0).map(String.init) ?? "-" }.joined(separator: "|")
     }
     let store = try Store(paths: paths, clock: FixedClock(Fixture.monday9am), path: copy.path)
-    #expect(try store.db.one("PRAGMA user_version")?.int("user_version") == 3)
+    #expect(try store.db.one("PRAGMA user_version")?.int("user_version") == Store.schemaVersion)
     #expect(try store.db.query("SELECT \(cols) FROM videos ORDER BY id").map { r in
       ["id", "score", "kind", "excluded", "notes", "state"].map { r.string($0) ?? r.int($0).map(String.init) ?? "-" }.joined(separator: "|")
     } == old)

@@ -48,7 +48,7 @@ enum EditorSnapshot {
       let model = EditorModel(store: store, videoId: pick.id, snapshotMode: true)
       // A clip with no title and no suggestions for the "Ask an agent" state.
       let helpless = shorts.first { $0.id != pick.id && $0.titleText == nil && ((try? store.titleSuggestions(videoId: $0.id)) ?? []).isEmpty }
-      print("editor-snapshot: clip \(pick.id.prefix(8)) “\(pick.displayName)”, \(model.suggestions.count) suggestions")
+      print("editor-snapshot: clip \(pick.id.prefix(8)) “\(pick.displayName)”, \(model.suggestions.count) suggestions, \(model.textSuggestions.count) text suggestions")
 
       var shots: [(String, () -> Void)] = []
       func shot(_ name: String, _ setup: @escaping () -> Void) { shots.append((name, setup)) }
@@ -91,6 +91,13 @@ enum EditorSnapshot {
         model.dropHashtags(.x)
         model.toast = nil
         model.writePlatformCaption(.x)
+      }
+      // Changes v1's text, so it runs after every shot that shows the default text.
+      if let s = model.textSuggestions.first {
+        shot("18b-text-suggestion-chosen") {
+          reset(); model.resetVersion(["caption", "platformCaptions"]); model.canvasMode = .zones; model.acceptText(s)
+          model.scrollTarget = .text
+        }
       }
       if let h = helpless {
         shot("19-title-ask-agent") {

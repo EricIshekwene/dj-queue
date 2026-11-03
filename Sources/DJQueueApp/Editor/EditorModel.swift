@@ -56,6 +56,8 @@ final class EditorModel: ObservableObject {
   @Published private(set) var posts: [PlatformPost] = []
   @Published private(set) var issues: [ValidationIssue] = []
   @Published private(set) var suggestions: [TitleSuggestion] = []
+  /// On-video text suggestions (`text_suggestions`), best first.
+  @Published private(set) var textSuggestions: [TitleSuggestion] = []
   @Published private(set) var lastCrop: CGPoint?
   @Published private(set) var overlay: CGImage?
   @Published private(set) var saving = false
@@ -122,6 +124,7 @@ final class EditorModel: ObservableObject {
   private struct Loaded: @unchecked Sendable {
     var settings = Settings(), sets: [HashtagSet] = [], templates: [CaptionTemplate] = [], lastCrop: CGPoint?
     var video: Video?, sessionName = "", fileURL: URL?, fileMissing = false, suggestions: [TitleSuggestion] = []
+    var textSuggestions: [TitleSuggestion] = []
     var edit = Edit(), versions: [Version] = [], posts: [PlatformPost] = [], issues: [ValidationIssue] = []
     var error: String?, readOnly = false
   }
@@ -140,6 +143,7 @@ final class EditorModel: ObservableObject {
       l.fileURL = url
       l.fileMissing = v.missing || url.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true
       l.suggestions = (try? store.titleSuggestions(videoId: id)) ?? []
+      l.textSuggestions = (try? store.textSuggestions(videoId: id)) ?? []
       do {
         l.edit = try store.edit(videoId: id)
         l.versions = try store.versions(videoId: id)
@@ -173,6 +177,7 @@ final class EditorModel: ObservableObject {
     posts = []
     issues = []
     suggestions = []
+    textSuggestions = []
     fileURL = nil
     openPlatformCaption = nil
     titleDraft = nil
@@ -195,7 +200,7 @@ final class EditorModel: ObservableObject {
     loading = false
     settings = l.settings; sets = l.sets; templates = l.templates; lastCrop = l.lastCrop
     video = l.video; sessionName = l.sessionName; fileURL = l.fileURL; fileMissing = l.fileMissing
-    suggestions = l.suggestions; edit = l.edit; versions = l.versions; posts = l.posts; issues = l.issues
+    suggestions = l.suggestions; textSuggestions = l.textSuggestions; edit = l.edit; versions = l.versions; posts = l.posts; issues = l.issues
     readOnly = l.readOnly; loadError = l.error
     if let v = l.video, let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
     if !posting(previewPlatform) { previewPlatform = postingPlatforms.first ?? .tiktok }
@@ -592,6 +597,12 @@ final class EditorModel: ObservableObject {
   }
 
   func accept(_ s: TitleSuggestion) { titleDraft = nil; setTitle(s.text, tracks: s.tracks.isEmpty ? nil : s.tracks, source: "suggestion") }
+
+  /// Puts a text suggestion on the video for the current version (typed text, so it no longer follows the Title).
+  func acceptText(_ s: TitleSuggestion) { setText(s.text) }
+
+  /// True when this version's text on the video is exactly the suggestion.
+  func isCurrentText(_ s: TitleSuggestion) -> Bool { !resolved.noText && resolved.text == s.text }
 
   /// Copies the "Ask an agent" prompt for this clip (a deterministic template; the agent answers via `djq suggest`).
   func copyAgentPrompt() {
