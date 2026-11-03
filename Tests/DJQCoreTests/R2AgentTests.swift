@@ -39,7 +39,7 @@ import Testing
     let parsed = try SuggestionImport.parse(Data(block.utf8))
     #expect(parsed.count == 1 && parsed[0].videoId == "clip-0" && parsed[0].suggestions[0].tracks.count == 2)
     var answer = parsed
-    answer.append((videoId: "clip-3", suggestions: [SuggestionInput(text: "Asabone x Forgiveness", confidence: 0.8, source: "rekordbox history")]))
+    answer.append((videoId: "clip-3", suggestions: [SuggestionInput(text: "Asabone x Forgiveness", confidence: 0.8, source: "rekordbox history")], textSuggestions: []))
     for e in answer { try f.store.addSuggestions(videoId: e.videoId, e.suggestions) }
     #expect(try f.store.titleSuggestions(videoId: "clip-3").first?.text == "Asabone x Forgiveness")
     #expect(throws: EngineError.self) { try AgentPrompts.titles(for: ["nope"], store: f.store) }

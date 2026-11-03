@@ -51,6 +51,8 @@ public final class Intake: @unchecked Sendable {
     var title: String?
     /// Optional upstream guesses; synced into title_suggestions (origin "manifest") on every intake.
     var titleSuggestions: [SuggestionInput]?
+    /// Optional upstream overlay-text guesses; synced into text_suggestions (origin "manifest") the same way.
+    var textSuggestions: [SuggestionInput]?
 
     enum CodingKeys: String, CodingKey {
       case id, name, tags, type, file, session, part, start, end, duration, grace, audio, status, title
@@ -58,6 +60,7 @@ public final class Intake: @unchecked Sendable {
       case markedStart = "marked_start"
       case markedEnd = "marked_end"
       case titleSuggestions = "title_suggestions"
+      case textSuggestions = "text_suggestions"
     }
 
     init(from d: Decoder) throws {
@@ -81,6 +84,7 @@ public final class Intake: @unchecked Sendable {
       title = try? c.decodeIfPresent(String.self, forKey: .title)
       // Malformed suggestions never fail the manifest (they're optional guesses); they are just ignored.
       titleSuggestions = (try? c.decodeIfPresent([SuggestionInput].self, forKey: .titleSuggestions)) ?? nil
+      textSuggestions = (try? c.decodeIfPresent([SuggestionInput].self, forKey: .textSuggestions)) ?? nil
     }
   }
 
@@ -260,6 +264,7 @@ public final class Intake: @unchecked Sendable {
       }
     }
     try store.syncManifestSuggestions(videoId: v.id, suggestions)
+    try store.syncManifestSuggestions(videoId: v.id, e.textSuggestions ?? [], kind: .text)
     try store.refreshState(videoId: v.id)
   }
 

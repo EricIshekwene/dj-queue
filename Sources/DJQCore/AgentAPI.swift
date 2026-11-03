@@ -33,6 +33,8 @@ public enum AgentAPI {
     public var stage: String? = nil
     /// Round 4: why it is in Edit, as the app's reason chips ("No crop", "Too long for X", "File missing", …).
     public var reasons: [String] = []
+    /// Round 5: how many on-video text suggestions the clip has (`text_suggestions` in `djq video`).
+    public var text_suggestion_count: Int = 0
   }
 
   public struct SuggestionOut: Codable, Sendable {
@@ -63,6 +65,8 @@ public enum AgentAPI {
     public var video: VideoSummary
     public var title_tracks: [Track]?
     public var title_suggestions: [SuggestionOut]
+    /// Round 5: suggestions for the on-video overlay text (line breaks kept), best first.
+    public var text_suggestions: [SuggestionOut]
     /// Raw overrides as stored (nil fields follow the defaults).
     public var edit: Edit
     public var resolved_edit: ResolvedEdit
@@ -114,7 +118,12 @@ public enum AgentAPI {
       marked_start: v.markedStart, marked_end: v.markedEnd, audio: v.audio, file: (try? store.fileURL(for: v))??.path,
       suggestion_count: sugg.count, needs_title_help: AgentPrompts.needsTitleHelp(v, suggestions: sugg),
       issues: issues.map(\.message), held_in_edit: v.heldInEdit, stage: ClipStage.of(v)?.rawValue,
-      reasons: ClipStage.of(v) == .edit ? issues.sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText) : [])
+      reasons: ClipStage.of(v) == .edit ? issues.sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText) : [],
+      text_suggestion_count: try store.suggestionCount(.text, videoId: v.id))
+  }
+
+  static func suggestion(_ s: TitleSuggestion) -> SuggestionOut {
+    SuggestionOut(id: s.id, text: s.text, tracks: s.tracks, confidence: s.confidence, source: s.source, origin: s.origin)
   }
 
   public static func post(_ p: PlatformPost) -> PostOut {
@@ -157,9 +166,8 @@ public enum AgentAPI {
     }
     return VideoDetail(
       video: try summary(v, store: store), title_tracks: v.titleText == nil ? nil : v.titleTracks,
-      title_suggestions: try store.titleSuggestions(videoId: id).map {
-        SuggestionOut(id: $0.id, text: $0.text, tracks: $0.tracks, confidence: $0.confidence, source: $0.source, origin: $0.origin)
-      },
+      title_suggestions: try store.titleSuggestions(videoId: id).map(suggestion),
+      text_suggestions: try store.textSuggestions(videoId: id).map(suggestion),
       edit: try store.edit(videoId: id), resolved_edit: try store.resolvedEdit(videoId: id, settings: settings),
       versions: try store.versions(videoId: id), resolved_v1: r1, captions: captions, youtube_title: yt,
       issues: v.type == .short ? try Validation.issues(video: v, store: store) : [],

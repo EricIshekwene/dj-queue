@@ -113,9 +113,10 @@ struct EditorTextSection: View {
             DSTextArea(placeholder: r.noText ? "No text on this clip" : "Text on the video",
                        text: Binding(get: { r.noText ? "" : r.text },
                                      set: { t in model.setText(t) }),
-                       minHeight: 60, maxHeight: 120)
+                       minHeight: Self.textAreaHeight(r.noText ? "" : r.text), maxHeight: 120)
               .disabled(r.noText)
               .opacity(r.noText ? 0.55 : 1)
+            textSuggestions
             HStack(alignment: .firstTextBaseline, spacing: 6) {
               EditorHint(textHint(r))
               Spacer(minLength: 0)
@@ -179,6 +180,45 @@ struct EditorTextSection: View {
     }
   }
 
+  /// Agent suggestions for the text on the video (`text_suggestions`): a tap puts one on this version.
+  @ViewBuilder private var textSuggestions: some View {
+    if model.textSuggestions.isEmpty {
+      HStack(spacing: 6) {
+        EditorHint("No text suggestions yet", icon: "text.badge.plus")
+        Spacer(minLength: 0)
+        DSButton("Ask an agent", icon: "doc.on.clipboard", variant: .ghost, size: .sm,
+                 tooltip: "Copy a prompt for your agent: song names, the title and the text on the video") {
+          model.copyAgentPrompt()
+        }
+      }
+    } else {
+      VStack(alignment: .leading, spacing: 6) {
+        Text("Text suggestions").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+        DSFlowLayout(spacing: 6) {
+          ForEach(model.textSuggestions) { s in
+            let chosen = model.isCurrentText(s)
+            EditorSuggestionChip(text: s.text, detail: s.confidence.map { "\(Int(($0 * 100).rounded())) %" },
+                                 chosen: chosen, lineLimit: 4, tooltip: textTooltip(s, chosen: chosen)) {
+              model.acceptText(s)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /// Same shape as the Title chips: the full text first (line breaks as " / "), then what a click does.
+  private func textTooltip(_ s: TitleSuggestion, chosen: Bool) -> String {
+    let one = s.text.replacingOccurrences(of: "\n", with: " / ")
+    var t = "“\(one)” · " + (chosen ? "the text on the video" : "click to put on the video")
+    if let v = versionLabel { t += " (\(v))" }
+    if !s.source.isEmpty { t += "\nFrom \(s.source)" }
+    return t
+  }
+
+  /// "v2" when the editor is on a later version, so the tooltip says which one the tap changes.
+  private var versionLabel: String? { model.versionNo > 1 ? "v\(model.versionNo)" : nil }
+
   private func resetter(_ f: [String]) -> (() -> Void)? {
     model.ownsField(f) ? { model.resetVersion(f) } : nil
   }
@@ -199,6 +239,12 @@ struct EditorTextSection: View {
     case .rawTag: return "Follows the raw tag (Settings → New clip defaults)."
     case .empty: return "Empty by default (Settings → New clip defaults)."
     }
+  }
+
+  /// Tall enough to show every line of a laid-out text (2–5 lines; longer ones scroll).
+  static func textAreaHeight(_ text: String) -> CGFloat {
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).count
+    return CGFloat(min(5, max(2, lines))) * 18 + 24
   }
 
   static func sizeName(_ s: Double) -> String { s < 54 ? "Small" : s <= 76 ? "Medium" : "Large" }

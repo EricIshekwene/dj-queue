@@ -19,7 +19,8 @@ usage: djq <command> [args]
   defaults [--json]                   new clip defaults (Settings → New clip defaults)
 
   title <video> "<title>" | --clear   set Eric's title (agents: prefer suggest)
-  suggest [<video>] --file <json>     add title suggestions (array of {video_id, title_suggestions} for many)
+  suggest [<video>] --file <json>     add title and/or on-video text suggestions
+                                      (array of {video_id, title_suggestions, text_suggestions} for many)
   text <video> "<text>" | --none | --default [--version N]
   caption <video> "<caption>" | --default [--platform P] [--version N]
   kind <video> "dj vid"|talking
@@ -288,6 +289,9 @@ func run() throws -> Int32 {
     for s in d.title_suggestions {
       print("  suggestion \"\(Captions.oneLine(s.text))\" \(s.confidence.map { String(format: "%.2f", $0) } ?? "?") \(s.source) [\(s.origin)]")
     }
+    for s in d.text_suggestions {
+      print("  text suggestion \"\(s.text.replacingOccurrences(of: "\n", with: " / "))\" \(s.confidence.map { String(format: "%.2f", $0) } ?? "?") \(s.source) [\(s.origin)]")
+    }
     let re = d.resolved_edit
     print("  trim \(EditorLogic.time(re.trimIn, tenths: true))–\(EditorLogic.time(re.trimOut, tenths: true))\(re.isDefault(.trimIn) && re.isDefault(.trimOut) ? " (default)" : "") · aspect \(re.aspect.rawValue) · crop \(re.cropConfirmed ? "confirmed" : "not confirmed")")
     if let r = d.resolved_v1 { print("  text \(r.noText ? "(no text)" : "\"\(Captions.oneLine(r.text))\"")\(r.isDefault("text") ? " (default)" : "")") }
@@ -314,15 +318,16 @@ func run() throws -> Int32 {
     let vid = try args.first.map { try resolveVideo(store, $0).id }
     let data = file == "-" ? FileHandle.standardInput.readDataToEndOfFile() : try Data(contentsOf: URL(fileURLWithPath: file))
     let entries = try SuggestionImport.parse(data, videoId: vid)
-    var n = 0
+    var n = 0, nt = 0
     try store.db.transaction {
       for e in entries {
         let id = try resolveVideo(store, e.videoId).id
         n += try store.addSuggestions(videoId: id, e.suggestions, origin: "agent")
+        nt += try store.addSuggestions(videoId: id, e.textSuggestions, origin: "agent", kind: .text)
       }
     }
-    wrote = n > 0
-    print("added \(n) suggestion(s) for \(entries.count) clip(s)")
+    wrote = n + nt > 0
+    print("added \(n) title suggestion(s) and \(nt) text suggestion(s) for \(entries.count) clip(s)")
 
   case "text":
     let v = try resolveVideo(store, try arg(0, "video id"))

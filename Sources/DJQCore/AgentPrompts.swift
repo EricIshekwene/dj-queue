@@ -28,18 +28,23 @@ public enum AgentPrompts {
   /// The command an agent runs to hand its answer back (one file, many clips).
   public static func suggestCommand(file: String = "suggestions.json") -> String { "djq suggest --file \(file)" }
 
-  /// Markdown prompt asking an agent for song names / overlay text for these clips.
+  /// Markdown prompt asking an agent for song names: title suggestions and on-video text suggestions.
   public static func titles(for videoIds: [String], store: Store) throws -> String {
     let vids = try videoIds.compactMap { try store.video(id: $0) }
     guard !vids.isEmpty else { throw EngineError("No clips to ask about") }
     let sessions = Dictionary(uniqueKeysWithValues: try store.sessions().map { ($0.id, $0) })
+    let settings = try store.settings()
     var md = """
-    # Find the song names / overlay text for these DJ clips
+    # Find the song names, titles and on-video text for these DJ clips
 
     ## Task
     For each clip below, find the correct song names (the tracks audible in the clip, usually a transition from one \
-    song into the next) and propose the overlay text Eric will put on the video. Give one or more suggestions per clip, \
-    best first, each with a confidence from 0 to 1. Eric picks the title in DJ Queue — you only suggest.
+    song into the next). Then suggest two things, best first, each with a confidence from 0 to 1:
+    - **Title** (`title_suggestions`): the song names on one line. It names the clip on every DJ Queue screen.
+    - **Text on the video** (`text_suggestions`): what Eric will put on screen. Usually the same song names laid out \
+    for a vertical video; you may add one short hook as an extra option.
+
+    Eric picks both in DJ Queue — you only suggest.
 
     ## Context
     - Artist: DJ Lovd (DJ; amapiano / afrobeats sets). Clips are short vertical videos cut from a recorded live set.
@@ -49,8 +54,10 @@ public enum AgentPrompts {
     hint, not the answer.
     - Sources you may use, READ-ONLY: Eric's rekordbox library, history and crates (match the set date and the part \
     timeline), tracklists, the clip files / set recordings listed below, and your own knowledge.
-    - Overlay text style: song names joined with " x " (never an arrow, no emoji), e.g. `Yayo x Johnny`; long names \
-    may go on three lines `Song One` / `x` / `Song Two`.
+    - Title style: one line, song names joined with " x " (never an arrow, no emoji), e.g. `Yayo x Johnny`.
+    - Text-on-video style: the song names, short enough to read in a second. Long names go on lines with `x` alone \
+    between them (`Song One\\nx\\nSong Two`); short pairs can stay on one line. A hook (e.g. `Piano is sweet!!`) is \
+    a separate, lower-confidence suggestion and never replaces the song names.
 
     ## Clips
 
@@ -64,13 +71,25 @@ public enum AgentPrompts {
       md += "- Raw marker tag: `\(v.tag)`\n"
       md += "- Current title: \(v.titleText.map { "\"\($0)\"" } ?? "none")\n"
       if sugg.isEmpty {
-        md += "- Suggestions so far: none\n"
+        md += "- Title suggestions so far: none\n"
       } else {
-        md += "- Suggestions so far:\n"
+        md += "- Title suggestions so far:\n"
         for x in sugg {
           let tracks = x.tracks.map { t in t.artist.map { "\(t.title) — \($0)" } ?? t.title }.joined(separator: "; ")
           md += "  - \"\(Captions.oneLine(x.text))\" (confidence \(x.confidence.map { String(format: "%.2f", $0) } ?? "?")"
             + "\(x.source.isEmpty ? "" : ", source \(x.source)")\(tracks.isEmpty ? "" : ", tracks: \(tracks)"))\n"
+        }
+      }
+      if v.type == .short, let r = try store.resolvedVersion(videoId: v.id, number: 1, settings: settings) {
+        let text = r.noText ? "no text" : r.hasText ? "\"\(lines(r.text))\"" : "none yet"
+        md += "- Text on the video now: \(text)\(r.isDefault("text") ? "" : " (chosen by Eric)")\n"
+      }
+      let textSugg = try store.textSuggestions(videoId: v.id)
+      if !textSugg.isEmpty {
+        md += "- Text suggestions so far:\n"
+        for x in textSugg {
+          md += "  - \"\(lines(x.text))\" (confidence \(x.confidence.map { String(format: "%.2f", $0) } ?? "?")"
+            + "\(x.source.isEmpty ? "" : ", source \(x.source)"))\n"
         }
       }
       md += "- Part: \(v.part.map(String.init) ?? "?")\n"
@@ -91,15 +110,20 @@ public enum AgentPrompts {
             "confidence": 0.8,
             "source": "rekordbox history"
           }
+        ],
+        "text_suggestions": [
+          {"text": "Song One\\nx\\nSong Two", "confidence": 0.8, "source": "rekordbox history"},
+          {"text": "Who knows this blend?", "confidence": 0.3, "source": "hook"}
         ]
       }
     ]
     """
     md += """
     ## Return exactly this JSON
-    One array entry per clip (\(vids.count) clip\(vids.count == 1 ? "" : "s")), `video_id` copied from the headings above; \
-    `text` is the overlay text (use `\\n` for line breaks); `tracks` lists the songs in order; `confidence` 0–1; \
-    `source` says where you found it.
+    One array entry per clip (\(vids.count) clip\(vids.count == 1 ? "" : "s")), `video_id` copied from the headings above. \
+    In `title_suggestions`, `text` is the one-line title and `tracks` lists the songs in order. In `text_suggestions`, \
+    `text` is the text on the video (use `\\n` for line breaks). `confidence` 0–1; `source` says where you found it. \
+    Either list may be left out for a clip.
 
     ```json
     \(example)
@@ -114,11 +138,17 @@ public enum AgentPrompts {
 
     ## Rules
     - Never modify, move or delete session source files (Video/, Audio/, Other/, Clips/, CapCut projects) or the ids in videos.json.
-    - Suggestions only: don't set titles, scores or anything else. Eric picks.
+    - Suggestions only: don't set titles, text, scores or anything else. Eric picks.
     - Don't guess silently: if you can't identify a track, give your best guess with a low confidence and say why in `source`.
 
     """
     return md
+  }
+
+  /// Line breaks shown as " / " so a multi-line text stays on one Markdown line.
+  static func lines(_ s: String) -> String {
+    s.split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+      .joined(separator: " / ")
   }
 
   static func mmss(_ s: Double) -> String {

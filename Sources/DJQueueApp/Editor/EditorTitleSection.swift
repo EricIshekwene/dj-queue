@@ -83,10 +83,10 @@ struct EditorTitleSection: View {
 
   @ViewBuilder private var suggestionsBlock: some View {
     if model.suggestions.isEmpty {
-      EditorHint("No suggestions in metadata", icon: "text.badge.plus")
+      EditorHint("No title suggestions yet", icon: "text.badge.plus")
     } else {
       VStack(alignment: .leading, spacing: 6) {
-        Text("Suggestions").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+        Text("Title suggestions").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
         DSFlowLayout(spacing: 6) {
           ForEach(model.suggestions) { s in suggestionChip(s) }
         }
@@ -96,38 +96,21 @@ struct EditorTitleSection: View {
 
   private func suggestionChip(_ s: TitleSuggestion) -> some View {
     let chosen = model.title == s.text
-    return Button { model.accept(s) } label: {
-      VStack(alignment: .leading, spacing: 1) {
-        // Long agent titles wrap to two lines inside the column, then truncate (the tooltip has the rest).
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-          if chosen { Image(systemName: "checkmark").font(.system(size: 9.5, weight: .bold)) }
-          Text(s.text).font(DS.type.captionMedium).lineLimit(2)
-        }
-        .foregroundStyle(DS.color.text)
-        if let d = detail(s) {
-          Text(d).font(.system(size: 10.5)).foregroundStyle(DS.color.textTertiary).lineLimit(2)
-        }
-      }
-      .padding(.horizontal, 11).padding(.vertical, 5)
-      .background(chosen ? DS.color.selected : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-      .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .strokeBorder(chosen ? DS.color.text.opacity(0.35) : DS.color.borderStrong))
-      .contentShape(RoundedRectangle(cornerRadius: 14))
+    return EditorSuggestionChip(text: s.text, detail: Self.detail(s), chosen: chosen, tooltip: tooltip(s, chosen: chosen)) {
+      model.accept(s)
     }
-    .buttonStyle(EditorPressStyle())
-    .dsTooltip(tooltip(s, chosen: chosen))
   }
 
   /// The chip truncates in the 340 pt column, so its tooltip leads with the full title (the bubble shows 3 lines;
   /// matched tracks follow when there's room).
   private func tooltip(_ s: TitleSuggestion, chosen: Bool) -> String {
     var t = "“\(s.text)” · " + (chosen ? "the Title" : "click to use as the Title")
-    if let d = detail(s) { t += "\n" + d }
+    if let d = Self.detail(s) { t += "\n" + d }
     return t
   }
 
   /// "Yayo – Kabza De Small · 82 %" — matched tracks and confidence, as subtle text.
-  private func detail(_ s: TitleSuggestion) -> String? {
+  static func detail(_ s: TitleSuggestion) -> String? {
     var parts: [String] = []
     let tracks = s.tracks.map { t in t.artist.map { "\(t.title) – \($0)" } ?? t.title }
     if !tracks.isEmpty { parts.append(tracks.joined(separator: ", ")) }
@@ -177,6 +160,39 @@ struct EditorTitleSection: View {
         .dsTooltip("Set the kind; Talking clips start with no text")
     }
     .padding(.top, DS.space.xxs)
+  }
+}
+
+/// One suggestion chip (Title or Text on the video): the text, an optional subtle detail line (tracks, confidence),
+/// a check when it's the current value. Long text wraps inside the column, then truncates; the tooltip has it all.
+struct EditorSuggestionChip: View {
+  let text: String
+  var detail: String?
+  var chosen: Bool
+  var lineLimit = 2
+  var tooltip: String
+  var action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      VStack(alignment: .leading, spacing: 1) {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+          if chosen { Image(systemName: "checkmark").font(.system(size: 9.5, weight: .bold)) }
+          Text(text).font(DS.type.captionMedium).lineLimit(lineLimit).multilineTextAlignment(.leading)
+        }
+        .foregroundStyle(DS.color.text)
+        if let d = detail {
+          Text(d).font(.system(size: 10.5)).foregroundStyle(DS.color.textTertiary).lineLimit(2)
+        }
+      }
+      .padding(.horizontal, 11).padding(.vertical, 5)
+      .background(chosen ? DS.color.selected : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+      .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .strokeBorder(chosen ? DS.color.text.opacity(0.35) : DS.color.borderStrong))
+      .contentShape(RoundedRectangle(cornerRadius: 14))
+    }
+    .buttonStyle(EditorPressStyle())
+    .dsTooltip(tooltip)
   }
 }
 
