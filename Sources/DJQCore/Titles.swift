@@ -31,9 +31,8 @@ public struct SuggestionInput: Codable, Sendable, Hashable {
 /// `text`: the on-video overlay text — line breaks, hooks — for the current version. Stored in separate tables.
 public enum SuggestionKind: String, Codable, Sendable, CaseIterable {
   case title, text
+  /// Also the videos.json / `djq suggest` key.
   var table: String { self == .title ? "title_suggestions" : "text_suggestions" }
-  /// The videos.json / `djq suggest` key.
-  public var jsonKey: String { table }
 }
 
 /// A stored suggestion (title or overlay text, see `SuggestionKind`). `origin` is "manifest" (synced from
@@ -97,7 +96,7 @@ public enum SuggestionImport {
     } else if let bare = try? dec.decode([SuggestionInput].self, from: data) {
       entries = [Entry(videoId: nil, titleSuggestions: bare)]
     } else {
-      throw ImportError("unreadable suggestions JSON — expected [{\"video_id\": …, \"title_suggestions\": [{\"text\": …}]}]")
+      throw ImportError("unreadable suggestions JSON — expected [{\"video_id\": …, \"title_suggestions\": [{\"text\": …}], \"text_suggestions\": [{\"text\": …}]}]")
     }
     return try entries.map { e in
       guard let id = e.videoId ?? videoId, !id.isEmpty else {
@@ -139,6 +138,10 @@ extension Store {
 
   /// Overlay-text suggestions for a clip, best first.
   public func textSuggestions(videoId: String) throws -> [TitleSuggestion] { try suggestions(.text, videoId: videoId) }
+
+  public func suggestionCount(_ kind: SuggestionKind, videoId: String) throws -> Int {
+    try db.one("SELECT COUNT(*) AS n FROM \(kind.table) WHERE video_id=?", [videoId])?.int("n") ?? 0
+  }
 
   public func suggestions(_ kind: SuggestionKind, videoId: String) throws -> [TitleSuggestion] {
     try db.query("SELECT * FROM \(kind.table) WHERE video_id=? ORDER BY COALESCE(confidence,-1) DESC, sort, id", [videoId])

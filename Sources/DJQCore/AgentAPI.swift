@@ -119,7 +119,7 @@ public enum AgentAPI {
       suggestion_count: sugg.count, needs_title_help: AgentPrompts.needsTitleHelp(v, suggestions: sugg),
       issues: issues.map(\.message), held_in_edit: v.heldInEdit, stage: ClipStage.of(v)?.rawValue,
       reasons: ClipStage.of(v) == .edit ? issues.sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText) : [],
-      text_suggestion_count: try store.textSuggestions(videoId: v.id).count)
+      text_suggestion_count: try store.suggestionCount(.text, videoId: v.id))
   }
 
   static func suggestion(_ s: TitleSuggestion) -> SuggestionOut {

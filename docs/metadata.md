@@ -35,9 +35,9 @@ Each suggestion:
 
 | Key | Required | Notes |
 |---|---|---|
-| `text` | yes | Title suggestions: one line, songs joined with `x` (never an arrow; no emoji). Text suggestions: the text as it appears on the video, `\n` for line breaks (`Song One\nx\nSong Two`). |
+| `text` | yes | Title suggestions: one line is best, songs joined with `x` (never an arrow; no emoji); older tools such as `prefill_titles.py` may still send line breaks. Text suggestions: the text as it appears on the video, `\n` for line breaks (`Song One\nx\nSong Two`). |
 | `tracks` | no | Songs in order; `artist` optional. |
-| `confidence` | no | 0…1. Below 0.6 the clip still counts as "needs title help" (the app offers an *Ask an agent* prompt). |
+| `confidence` | no | 0…1. For title suggestions: below 0.6 the clip still counts as "needs title help" (the app offers an *Ask an agent* prompt). Text suggestions never affect it. |
 | `source` | no | Where it came from (`rekordbox history`, `tracklist`, `prefill_titles.py`, …). |
 
 Example entry:

@@ -34,7 +34,7 @@ djq bulk batches --json         # bulk journal (for undo)
 ```
 
 `videos` items: `id, display_name, title, title_source, raw_tag, name, session, type, kind, state, score, excluded,
-missing, part, duration, marked_start, marked_end, audio, file, suggestion_count, needs_title_help, issues[],
+missing, part, duration, marked_start, marked_end, audio, file, suggestion_count, text_suggestion_count, needs_title_help, issues[],
 held_in_edit, stage, reasons[]`. `stage` is what Eric sees (`score`/`edit`/`queue`/`scheduled`/`posted`, null for
 long-form, excluded, or unscored with a missing file); `reasons` are the Edit reason chips ("No crop", "Too long for
 X", "File missing", "Sent back from Queue", …). `state` keeps its stored values for compatibility (`needs_edit` =

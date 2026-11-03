@@ -82,7 +82,7 @@ public enum AgentPrompts {
       }
       if v.type == .short, let r = try store.resolvedVersion(videoId: v.id, number: 1, settings: settings) {
         let text = r.noText ? "no text" : r.hasText ? "\"\(lines(r.text))\"" : "none yet"
-        md += "- Text on the video now: \(text)\(r.isDefault("text") ? "" : " (typed by Eric)")\n"
+        md += "- Text on the video now: \(text)\(r.isDefault("text") ? "" : " (chosen by Eric)")\n"
       }
       let textSugg = try store.textSuggestions(videoId: v.id)
       if !textSugg.isEmpty {

@@ -599,7 +599,11 @@ final class EditorModel: ObservableObject {
   func accept(_ s: TitleSuggestion) { titleDraft = nil; setTitle(s.text, tracks: s.tracks.isEmpty ? nil : s.tracks, source: "suggestion") }
 
   /// Puts a text suggestion on the video for the current version (typed text, so it no longer follows the Title).
-  func acceptText(_ s: TitleSuggestion) { setText(s.text) }
+  /// One undo step per tap; tapping the text that's already on the video changes nothing (it keeps following).
+  func acceptText(_ s: TitleSuggestion) {
+    guard !isCurrentText(s) else { return }
+    updateVersion(coalesce: false) { v in v.text = s.text; v.noText = nil }
+  }
 
   /// True when this version's text on the video is exactly the suggestion.
   func isCurrentText(_ s: TitleSuggestion) -> Bool { !resolved.noText && resolved.text == s.text }
@@ -628,7 +632,8 @@ final class EditorModel: ObservableObject {
 
   // MARK: Mutations — version
 
-  func updateVersion(_ f: (inout Version) -> Void) {
+  /// `coalesce: false` for one-shot changes (a chip tap) that get their own undo step.
+  func updateVersion(coalesce: Bool = true, _ f: (inout Version) -> Void) {
     guard !readOnly, video != nil else { return }
     var all = versions
     var inserted = false
@@ -638,7 +643,7 @@ final class EditorModel: ObservableObject {
     var v = all[i]
     f(&v)
     guard v != all[i] || inserted else { return }
-    markUndo()
+    markUndo(coalesce: coalesce)
     if inserted { pendingVersions.insert(1) }
     all[i] = v
     versions = all.sorted { $0.number < $1.number }
