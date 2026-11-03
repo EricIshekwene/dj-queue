@@ -228,7 +228,7 @@ enum DSTooltipProbe {
       for (page, label) in [("library-grid", "Preview the clip and its status"), ("queue-grid", QueueClipActions.postTodayHelp),
                             ("edit-grid", EditClipActions.openHelp), ("library-grid-dark", "Preview the clip and its status"),
                             ("queue-grid-dark", QueueClipActions.postTodayHelp)]
-      where !records.contains(where: { $0.name.contains("-\(page)-") && $0.label == label && $0.name.hasSuffix("-hover") }) {
+      where !records.contains(where: { $0.note == "\(page): hover" && $0.label == label }) {
         problems.append("\(page): its hovered tile's \"\(label)\" button wasn't reached (tile picks: \(tilePicks[page] ?? 0))")
       }
       if !sawReason { problems.append("no disabled trigger (label + why) was reached") }
@@ -252,11 +252,10 @@ enum DSTooltipProbe {
   static func nested(out: URL) async throws -> [String] {
     let c = DSTooltipController.shared
     c.requireActiveApp = false
-    let fixture = ZStack {
-      DS.color.surface.frame(width: 320, height: 200).dsTooltip("Outer trigger")
-      DS.color.hover.frame(width: 90, height: 44).dsTooltip("Inner trigger")
-    }
-    .frame(width: 420, height: 280)
+    let fixture = DS.color.surface.frame(width: 320, height: 200)
+      .overlay { DS.color.hover.frame(width: 90, height: 44).dsTooltip("Inner trigger") }
+      .dsTooltip("Outer trigger")
+      .frame(width: 420, height: 280)
     .background(DS.color.surfaceRaised)
     let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
     let w = SnapshotWindow.make(NSRect(x: screen.midX - 210, y: screen.midY - 140, width: 420, height: 280), [.borderless])
