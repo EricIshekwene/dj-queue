@@ -118,10 +118,10 @@ struct EditorTitleSection: View {
     .dsTooltip(tooltip(s, chosen: chosen))
   }
 
-  /// The chip truncates in the 340 pt column, so its tooltip carries the full title and matched tracks.
+  /// The chip truncates in the 340 pt column, so its tooltip leads with the full title (the bubble shows 3 lines;
+  /// matched tracks follow when there's room).
   private func tooltip(_ s: TitleSuggestion, chosen: Bool) -> String {
-    var t = chosen ? "This is the Title: “\(s.text)”" : "Use “\(s.text)” as the Title"
-    if !s.source.isEmpty { t += " (from \(s.source))" }
+    var t = "“\(s.text)” · " + (chosen ? "the Title" : "click to use as the Title")
     if let d = detail(s) { t += "\n" + d }
     return t
   }

@@ -38,11 +38,13 @@ struct EditorFrameSection: View {
         // Zoom and Place are part of Crop, so they get small secondary labels, not field headers.
         HStack(spacing: DS.space.xs) {
           Text("Zoom").font(DS.type.caption).foregroundStyle(DS.color.textSecondary).frame(width: 34, alignment: .leading)
+            .accessibilityHidden(true)
           DSSlider(value: Binding(get: { model.zoom }, set: { model.setZoom($0) }),
-                   range: 1...EditorGeometry.maxZoom, step: 0.05, showsValue: false, accessibilityName: "Zoom")
+                   range: 1...EditorGeometry.maxZoom, step: 0.05, format: Self.zoomText, showsValue: false, accessibilityName: "Zoom")
             .dsTooltip("Zoom in; or scroll/pinch on the Frame view")
-          Text(String(format: "%.2f×", model.zoom)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+          Text(Self.zoomText(model.zoom)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
             .frame(width: 38, alignment: .trailing)
+            .accessibilityHidden(true)
         }
         HStack(spacing: 6) {
           Text("Place").font(DS.type.caption).foregroundStyle(DS.color.textSecondary).frame(width: 34, alignment: .leading)
@@ -67,6 +69,8 @@ struct EditorFrameSection: View {
       }
     }
   }
+
+  private static func zoomText(_ z: Double) -> String { String(format: "%.2f×", z) }
 
   private var trim: some View {
     let t = model.trim
