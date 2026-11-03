@@ -451,27 +451,18 @@ struct DSSuggestionChip: View {
   }
 }
 
-/// Small round buttons floating on media (grid tile hover actions). The label shows only its icon, so its title
-/// becomes the tooltip automatically — an icon-only action can't be left unexplained (round 3, F5).
+/// Small round buttons floating on media (grid tile hover actions), drawn icon-only. Each call site gives its button
+/// an explicit `.dsTooltip(…)` naming the consequence (round 3, F5); the label's title is never reused as the tooltip
+/// — the popup is a separate panel, where a `Label`'s title view renders empty (v0.6.1 fix).
 struct DSMediaActionStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .labelStyle(DSIconWithTitleTooltip())
+      .labelStyle(.iconOnly)
       .font(.system(size: 12, weight: .semibold))
       .foregroundStyle(.white)
       .frame(width: 28, height: 28)
       .background(Color.black.opacity(configuration.isPressed ? 0.75 : 0.55), in: Circle())
       .contentShape(Circle())
-  }
-}
-
-/// Icon only, with the label's title as the tooltip (DSMediaActionStyle).
-struct DSIconWithTitleTooltip: LabelStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.icon
-      .frame(width: 28, height: 28)
-      .contentShape(Circle())
-      .dsTooltip(view: configuration.title)
   }
 }
 
