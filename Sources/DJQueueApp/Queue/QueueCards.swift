@@ -105,16 +105,15 @@ struct QueueClipActions: View {
   var body: some View {
     switch mode {
     case .grid:
-      // Grid hover buttons render icon-only (DSMediaActionStyle): each one names its consequence in a tooltip. Back
+      // Grid hover buttons render icon-only (DSMediaActionButton): each one names its consequence in a tooltip. Back
       // is soft-disabled (dimmed, still hoverable so the tooltip says why; a click says it again).
       let back = model.stageBlocker(video, .back)
-      Button(model.stageBackTitle(video), systemImage: "chevron.left") {
+      DSMediaActionButton(model.stageBackTitle(video), systemImage: "chevron.left", tooltip: model.stageBackTitle(video),
+                          disabledReason: back) {
         if let back { model.show(back, error: true) } else { model.stageBack([video.id]) }
       }
-      .opacity(back == nil ? 1 : 0.45)
-      .dsTooltip(model.stageBackTitle(video), disabledReason: back)
-      Button("Post today", systemImage: "bolt") { postToday() }.dsTooltip(Self.postTodayHelp)
-      Button("Pin to date…", systemImage: "pin") { onPin() }.dsTooltip(Self.pinHelp)
+      DSMediaActionButton("Post today", systemImage: "bolt", tooltip: Self.postTodayHelp) { postToday() }
+      DSMediaActionButton("Pin to date…", systemImage: "pin", tooltip: Self.pinHelp) { onPin() }
     case .single:
       VStack(alignment: .leading, spacing: DS.space.sm) {
         DSButton("Post today", icon: "bolt", variant: .outline, tooltip: Self.postTodayHelp) { postToday() }

@@ -314,7 +314,7 @@ struct DSClipCard<Actions: View>: View {
         .overlay(alignment: .bottomLeading) { durationBadge.padding(8) }
         .overlay(alignment: .bottom) {
           if hot && !clip.isMissing {
-            HStack(spacing: 4) { actions }.buttonStyle(DSMediaActionStyle()).padding(.bottom, 34).transition(.opacity)
+            HStack(spacing: 4) { actions }.padding(.bottom, 34).transition(.opacity)
           }
         }
         .overlay {
@@ -451,10 +451,34 @@ struct DSSuggestionChip: View {
   }
 }
 
-/// Small round buttons floating on media (grid tile hover actions), drawn icon-only. Each call site gives its button
-/// an explicit `.dsTooltip(…)` naming the consequence (round 3, F5); the label's title is never reused as the tooltip
-/// — the popup is a separate panel, where a `Label`'s title view renders empty (v0.6.1 fix).
-struct DSMediaActionStyle: ButtonStyle {
+/// Small round button floating on media (grid tile hover actions), drawn icon-only. Its tooltip is required, like
+/// DSIconButton's: an icon-only action can't be left unexplained (round 3, F5), and neither the lint nor the popup
+/// can use the label's title (the bubble is a separate panel, where a `Label`'s title view draws nothing — round 5).
+/// `disabledReason` soft-disables it: dimmed, still hoverable, the tooltip says why (the action decides what a click does).
+struct DSMediaActionButton: View {
+  let title: String
+  let systemImage: String
+  let tooltip: String
+  var disabledReason: String?
+  let action: () -> Void
+
+  init(_ title: String, systemImage: String, tooltip: String, disabledReason: String? = nil, action: @escaping () -> Void) {
+    self.title = title
+    self.systemImage = systemImage
+    self.tooltip = tooltip
+    self.disabledReason = disabledReason
+    self.action = action
+  }
+
+  var body: some View {
+    Button(action: action) { Label(title, systemImage: systemImage) }
+      .buttonStyle(DSMediaActionStyle())
+      .opacity(disabledReason == nil ? 1 : 0.45)
+      .dsTooltip(tooltip, disabledReason: disabledReason)
+  }
+}
+
+private struct DSMediaActionStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
       .labelStyle(.iconOnly)

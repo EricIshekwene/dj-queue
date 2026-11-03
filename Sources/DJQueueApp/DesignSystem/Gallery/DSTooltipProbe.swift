@@ -39,6 +39,11 @@ enum DSTooltipProbe {
     let out = URL(fileURLWithPath: outputDir)
     do {
       try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+      var problems = try await nested(out: out)
+      if ProcessInfo.processInfo.environment["DJQ_TOOLTIP_PROBE"] == "nested" {
+        problems.forEach { print("tooltip-probe: FAIL \($0)") }
+        return problems.isEmpty ? 0 : 1
+      }
       let model = try makeModel()
       let w = WindowManager.makeMainWindow(model: model, make: SnapshotWindow.make)
       w.isReleasedWhenClosed = false
@@ -157,6 +162,7 @@ enum DSTooltipProbe {
       // Each is captured on hover and again after the pointer leaves; the bubble must hold text and then be gone.
       w.setFrameOrigin(NSPoint(x: screen.midX - 720, y: screen.midY - 450))
       var sawReason = false, sawKeys = false
+      var tilePicks: [String: Int] = [:]
       let pages: [(String, Screen, DSViewMode?, NSAppearance.Name)] = [
         ("library-grid", .library, .grid, .aqua), ("queue-grid", .queue, .grid, .aqua), ("edit-grid", .edit, .grid, .aqua),
         ("score-grid", .score, .grid, .aqua), ("queue-cards", .queue, .wide, .aqua), ("edit-cards", .edit, .wide, .aqua),
@@ -186,6 +192,7 @@ enum DSTooltipProbe {
             let k = legend(a)
             if (seen[k] ?? 0) > 0 { seen[k]! -= 1 } else if !picks.contains(where: { legend($0) == k }) { picks.append(a) }
           }
+          tilePicks[page] = picks.count
         }
         let rest = anchors(in: w).filter { a in !picks.contains { $0 === a } }
         if !sawReason, let r = rest.first(where: { !($0.content.disabledReason ?? "").isEmpty }) { picks.append(r); sawReason = true }
@@ -212,21 +219,89 @@ enum DSTooltipProbe {
       DSClipCardDebug.hoverIds = []
       w.appearance = NSAppearance(named: .aqua)
 
-      // A hover that opened nothing, an empty bubble, or a bubble that stayed after leaving fails the run.
-      let failed = records.filter { r in
-        r.name.hasSuffix("-hover") && (r.bubble == nil || (r.textPixels ?? 0) < 12 || r.hiddenAfterLeave != true)
+      // A hover that opened nothing, an empty bubble, or a bubble that stayed (or another that opened) after leaving
+      // fails the run — and so does a sweep that didn't reach what it covers: each grid's hovered-tile buttons, a
+      // disabled trigger and a keycaps trigger.
+      for r in records where r.name.hasSuffix("-hover") && (r.bubble == nil || (r.textPixels ?? 0) < 12 || r.hiddenAfterLeave != true) {
+        problems.append("\(r.name) · bubble \(r.bubble == nil ? "none" : "shown") · text px \(r.textPixels ?? 0) · hidden after leave \(r.hiddenAfterLeave.map { "\($0)" } ?? "-")")
       }
-      for f in failed { print("tooltip-probe: FAIL \(f.name) · bubble \(f.bubble == nil ? "none" : "shown") · text px \(f.textPixels ?? 0) · hidden after leave \(f.hiddenAfterLeave.map { "\($0)" } ?? "-")") }
+      for (page, label) in [("library-grid", "Preview the clip and its status"), ("queue-grid", QueueClipActions.postTodayHelp),
+                            ("edit-grid", EditClipActions.openHelp), ("library-grid-dark", "Preview the clip and its status"),
+                            ("queue-grid-dark", QueueClipActions.postTodayHelp)]
+      where !records.contains(where: { $0.name.contains("-\(page)-") && $0.label == label && $0.name.hasSuffix("-hover") }) {
+        problems.append("\(page): its hovered tile's \"\(label)\" button wasn't reached (tile picks: \(tilePicks[page] ?? 0))")
+      }
+      if !sawReason { problems.append("no disabled trigger (label + why) was reached") }
+      if !sawKeys { problems.append("no keycaps trigger was reached") }
+      problems.forEach { print("tooltip-probe: FAIL \($0)") }
 
       try JSONEncoder.pretty.encode(records).write(to: out.appendingPathComponent("probe.json"))
       print("tooltip-probe: \(records.count) cases → \(out.path) (SwiftUI hover-ins: \(c.debugHoverEvents), forwarded moves: \(forwarded))")
       w.orderOut(nil)
       w.close()
-      return failed.isEmpty ? 0 : 1
+      return problems.isEmpty ? 0 : 1
     } catch {
       FileHandle.standardError.write(Data("tooltip-probe failed: \(error)\n".utf8))
       return 1
     }
+  }
+
+  /// A trigger nested in another (a probe-only fixture in its own small window). Leaving both at once must not open
+  /// the parent's bubble on the way out (the round-5 flash), and moving from the inner one onto the parent must
+  /// open the parent's at once (delay group). Returns what failed.
+  static func nested(out: URL) async throws -> [String] {
+    let c = DSTooltipController.shared
+    c.requireActiveApp = false
+    let fixture = ZStack {
+      DS.color.surface.frame(width: 320, height: 200).dsTooltip("Outer trigger")
+      DS.color.hover.frame(width: 90, height: 44).dsTooltip("Inner trigger")
+    }
+    .frame(width: 420, height: 280)
+    .background(DS.color.surfaceRaised)
+    let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
+    let w = SnapshotWindow.make(NSRect(x: screen.midX - 210, y: screen.midY - 140, width: 420, height: 280), [.borderless])
+    w.isReleasedWhenClosed = false
+    w.contentView = NSHostingView(rootView: fixture)
+    w.ignoresMouseEvents = true
+    w.orderFrontRegardless()
+    defer { w.orderOut(nil); w.close() }
+    try await Task.sleep(for: .milliseconds(900))
+    w.displayIfNeeded()
+    let all = anchors(in: w)
+    guard let inner = all.first(where: { $0.content.label == "Inner trigger" }), let outer = all.first(where: { $0.content.label == "Outer trigger" }),
+          let ir = inner.visibleScreenRect, let or = outer.visibleScreenRect else { return ["nested: fixture triggers not found"] }
+    var problems: [String] = []
+    func wait(for a: DSTooltipAnchorView, ms: Int) async throws -> Int? {
+      let start = Date()
+      while Date().timeIntervalSince(start) * 1000 < Double(ms) {
+        if c.debugShown === a, c.debugPanelFrame != nil { return Int(Date().timeIntervalSince(start) * 1000) }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      return nil
+    }
+    // 1. Inner open, then leave both at once: nothing else may open.
+    await post(.mouseMoved, at: CGPoint(x: ir.midX, y: ir.midY), in: w)
+    if try await wait(for: inner, ms: 1500) == nil { problems.append("nested: inner bubble didn't open") }
+    try capture(w, panel: c.debugPanelWindow)?.write(to: out.appendingPathComponent("00-nested-inner-hover.png"))
+    let presented = c.debugPresented
+    await post(.mouseMoved, at: CGPoint(x: w.frame.minX + 8, y: w.frame.minY + 8), in: w)
+    try await Task.sleep(for: .milliseconds(400))
+    if c.debugPresented != presented || c.debugPanelFrame != nil { problems.append("nested: the parent's bubble opened while leaving both") }
+    try capture(w, panel: c.debugPanelWindow)?.write(to: out.appendingPathComponent("00-nested-left-both.png"))
+    c.hide(resetGroup: true)
+    try await Task.sleep(for: .milliseconds(450))
+    // 2. Inner open, then onto the parent only: the parent's opens at once.
+    await post(.mouseMoved, at: CGPoint(x: ir.midX, y: ir.midY), in: w)
+    _ = try await wait(for: inner, ms: 1500)
+    await post(.mouseMoved, at: CGPoint(x: or.minX + 20, y: or.midY), in: w)
+    if (try await wait(for: outer, ms: 150)) == nil { problems.append("nested: moving onto the parent didn't open its bubble at once") }
+    try capture(w, panel: c.debugPanelWindow)?.write(to: out.appendingPathComponent("00-nested-onto-parent.png"))
+    await post(.mouseMoved, at: CGPoint(x: w.frame.minX + 8, y: w.frame.minY + 8), in: w)
+    c.hide(resetGroup: true)
+    c.simulatedPointer = nil
+    try await Task.sleep(for: .milliseconds(450))
+    print("tooltip-probe: nested · \(problems.isEmpty ? "pass" : problems.joined(separator: "; "))")
+    return problems
   }
 
   enum ProbeError: Error { case noAnchors(String) }
@@ -297,7 +372,7 @@ enum DSTooltipProbe {
   /// Posts a real mouse-moved event to our own queue (never the user's cursor). AppKit derives tracking-area
   /// enter/exit from the window server's pointer, not from posted events; if no enter arrives within 80 ms the
   /// probe forwards the move to the tracking logic exactly as an enter/exit pair would (counted in probe.json).
-  private static func post(_ type: NSEvent.EventType, at screenPoint: CGPoint, in w: NSWindow) async {
+  static func post(_ type: NSEvent.EventType, at screenPoint: CGPoint, in w: NSWindow) async {
     let c = DSTooltipController.shared
     c.simulatedPointer = screenPoint
     let before = c.debugHoverEvents
@@ -326,7 +401,7 @@ enum DSTooltipProbe {
   private static func arr(_ r: CGRect) -> [Double] { [r.minX, r.minY, r.width, r.height].map { Double($0) } }
 
   /// Counts the panel's pixels that contrast with the bubble's own fill (its median luminance): the text and keycaps.
-  /// An empty bubble — the round-4 bug — scores ~0.
+  /// An empty bubble — the round-5 bug — scores ~0.
   static func textPixels(_ panel: NSWindow?) -> Int {
     guard let panel, panel.isVisible, let fromArray else { return 0 }
     var ids: [UnsafeRawPointer?] = [UnsafeRawPointer(bitPattern: UInt(panel.windowNumber))]

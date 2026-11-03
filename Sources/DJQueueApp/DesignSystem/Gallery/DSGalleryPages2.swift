@@ -168,8 +168,8 @@ struct GalleryClips: View {
   private func tile(_ c: DSClip, selected: Bool = false, selectionMode: Bool = false) -> some View {
     DSClipCard(c, mode: .grid, isSelected: selected, config: .init(autoplay: autoplay && c.id == "a", selectionMode: selectionMode),
                onToggleSelect: {}) {
-      Button {} label: { Label("Edit", systemImage: "slider.horizontal.3") }.dsTooltip("Open editor")
-      Button {} label: { Label("Pin", systemImage: "pin") }.dsTooltip("Pin to date")
+      DSMediaActionButton("Edit", systemImage: "slider.horizontal.3", tooltip: "Open editor") {}
+      DSMediaActionButton("Pin", systemImage: "pin", tooltip: "Pin to date") {}
     }
     .frame(width: 140)
   }

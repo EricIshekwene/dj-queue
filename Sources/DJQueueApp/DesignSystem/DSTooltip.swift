@@ -18,7 +18,7 @@ typealias DSTooltipEdge = TooltipSide
 
 /// What a tooltip says: a short verb phrase, an optional shortcut, and — for a disabled trigger — why.
 /// Plain text only: the bubble is drawn in its own panel, outside the trigger's view tree, so a view from that tree
-/// (e.g. a `Label`'s title) would render empty there (v0.6.1 fix).
+/// (e.g. a `Label`'s title) would render empty there (round 5).
 struct DSTooltipContent: Equatable {
   var label: String?
   var shortcut: String?
@@ -480,12 +480,13 @@ final class DSTooltipController {
   var debugPanelWindow: NSWindow? { panel }
   var debugPanelFrame: CGRect? { panel?.isVisible == true && shown != nil ? panel?.frame : nil }
 
-  /// What SwiftUI hover would do for a pointer at `p`: exit triggers it left, enter the ones it is
-  /// now over (outermost first, so the innermost wins).
+  /// What SwiftUI hover would do for a pointer at `p`: exit triggers it left (innermost first, as SwiftUI delivers
+  /// them, which is the order that could hand a nested trigger's bubble to its parent on the way out), then enter
+  /// the ones it is now over (outermost first, so the innermost wins).
   func debugPointerMoved(to p: CGPoint, in w: NSWindow) {
     func depth(_ v: NSView) -> Int { var d = 0; var s = v.superview; while let x = s { d += 1; s = x.superview }; return d }
     let inside = DSTooltipProbe.anchors(in: w).filter { $0.visibleScreenRect?.contains(p) ?? false }.sorted { depth($0) < depth($1) }
-    for h in hovered.compactMap(\.view) where !inside.contains(where: { $0 === h }) { hoverEnded(h) }
+    for h in hovered.compactMap(\.view).reversed() where !inside.contains(where: { $0 === h }) { hoverEnded(h) }
     for a in inside where !hovered.contains(where: { $0.view === a }) { hoverBegan(a) }
   }
 
