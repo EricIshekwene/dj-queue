@@ -98,13 +98,14 @@ struct EditorTitleSection: View {
     let chosen = model.title == s.text
     return Button { model.accept(s) } label: {
       VStack(alignment: .leading, spacing: 1) {
-        HStack(spacing: 4) {
+        // Long agent titles wrap to two lines inside the column, then truncate (the tooltip has the rest).
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
           if chosen { Image(systemName: "checkmark").font(.system(size: 9.5, weight: .bold)) }
-          Text(s.text).font(DS.type.captionMedium).lineLimit(1)
+          Text(s.text).font(DS.type.captionMedium).lineLimit(2)
         }
         .foregroundStyle(DS.color.text)
         if let d = detail(s) {
-          Text(d).font(.system(size: 10.5)).foregroundStyle(DS.color.textTertiary).lineLimit(1)
+          Text(d).font(.system(size: 10.5)).foregroundStyle(DS.color.textTertiary).lineLimit(2)
         }
       }
       .padding(.horizontal, 11).padding(.vertical, 5)
@@ -114,7 +115,15 @@ struct EditorTitleSection: View {
       .contentShape(RoundedRectangle(cornerRadius: 14))
     }
     .buttonStyle(EditorPressStyle())
-    .dsTooltip(chosen ? "This is the Title" : "Use “\(s.text)” as the Title\(s.source.isEmpty ? "" : " (from \(s.source))")")
+    .dsTooltip(tooltip(s, chosen: chosen))
+  }
+
+  /// The chip truncates in the 340 pt column, so its tooltip carries the full title and matched tracks.
+  private func tooltip(_ s: TitleSuggestion, chosen: Bool) -> String {
+    var t = chosen ? "This is the Title: “\(s.text)”" : "Use “\(s.text)” as the Title"
+    if !s.source.isEmpty { t += " (from \(s.source))" }
+    if let d = detail(s) { t += "\n" + d }
+    return t
   }
 
   /// "Yayo – Kabza De Small · 82 %" — matched tracks and confidence, as subtle text.
@@ -161,7 +170,7 @@ struct EditorTitleSection: View {
 
   private var kindRow: some View {
     HStack {
-      Text("Kind").font(DS.type.calloutMedium).foregroundStyle(DS.color.text)
+      Text("Kind").font(DS.type.calloutMedium).foregroundStyle(DS.color.textSecondary)
       Spacer()
       DSSegmented(selection: Binding(get: { model.video?.kind ?? .djVid }, set: { model.setKind($0) }),
                   segments: Kind.allCases.map { DSSegment(value: $0, title: $0.displayName) }, size: .sm)

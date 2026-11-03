@@ -176,9 +176,34 @@ enum EditorSnapshot {
                           backing: .buffered, defer: false)
     window.titlebarAppearsTransparent = true
     window.title = "DJ Queue — Editor (dev)"
-    window.contentView = NSHostingView(rootView: EditorView(store: store, videoId: video, videoIds: ids, onDone: {}))
+    let env = ProcessInfo.processInfo.environment
+    let model = EditorModel(store: store, videoId: video)
+    window.contentView = NSHostingView(rootView: EditorView(model: model, videoIds: ids, onDone: {}))
     window.isReleasedWhenClosed = false
+    if let a = env["DJQ_EDITOR_LIVE_APPEARANCE"] { window.appearance = NSAppearance(named: a == "dark" ? .darkAqua : .aqua) }
     NSApp.setActivationPolicy(.regular)
+    // `DJQ_EDITOR_LIVE_SECTIONS=<dir>`: one window-server capture per inspector section (`live-<section>.png`), with the
+    // window shown without taking focus from whatever app is in front.
+    if let dir = env["DJQ_EDITOR_LIVE_SECTIONS"] {
+      window.orderFrontRegardless()
+      print("editor-live: window \(window.windowNumber)")
+      try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+      try? await Task.sleep(for: .seconds(6))
+      for s in EditorSection.allCases {
+        model.scrollTarget = s
+        try? await Task.sleep(for: .seconds(1.5))
+        let file = (dir as NSString).appendingPathComponent("live-\(s.rawValue.lowercased()).png")
+        if let data = WindowCapture.png(window) {
+          try? data.write(to: URL(fileURLWithPath: file))
+          print("editor-live: captured \(file)")
+        } else {
+          print("editor-live: window capture unavailable")
+        }
+      }
+      fflush(stdout)
+      window.close()
+      return 0
+    }
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     print("editor-live: window \(window.windowNumber)")
