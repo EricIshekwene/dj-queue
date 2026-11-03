@@ -83,15 +83,16 @@ import Testing
     #expect(Date().timeIntervalSince(t0) < 5)
     #expect(r.steps["proxies"]?.hasPrefix("queued 5") == true && r.errors.isEmpty)
     for _ in 0..<5 { gate.signal() }
-    let deadline = Date().addingTimeInterval(5)
-    while ps.pendingCount > 0, Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+    // Wait for the work itself, with room for a loaded machine (the auto-update gate runs the suite in parallel).
+    let deadline = Date().addingTimeInterval(30)
+    while ps.pendingCount > 0 || made.value.count < 5, Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
     #expect(made.value.first == "clip-2" && made.value.count == 5)  // clips to score first
     #expect(try f.store.kv("proxyFail.clip-2", as: String.self) != nil)
     // Next tick: the failed clip isn't retried in the background (nothing here caches, so the others are retried).
     for _ in 0..<10 { gate.signal() }
     e.tick(reason: "t")
-    let d2 = Date().addingTimeInterval(5)
-    while ps.pendingCount > 0, Date() < d2 { Thread.sleep(forTimeInterval: 0.02) }
+    let d2 = Date().addingTimeInterval(30)
+    while ps.pendingCount > 0 || made.value.count < 9, Date() < d2 { Thread.sleep(forTimeInterval: 0.02) }
     #expect(made.value.filter { $0 == "clip-2" }.count == 1 && made.value.count == 9)
     // A visible request always tries.
     let done = DispatchSemaphore(value: 0)
