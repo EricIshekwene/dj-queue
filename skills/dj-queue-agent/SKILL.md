@@ -42,7 +42,8 @@ Edit, `ready` = Queue), but say the stage name to Eric — never "ready", "needs
 `held_in_edit`: sent back to Edit from the Queue ("Back to Edit"); it stays in Edit with the reason "Sent back from
 Queue" until it's sent to the Queue again.
 
-`video` adds: `title_tracks, title_suggestions[{id,text,tracks,confidence,source,origin}], edit` (stored overrides
+`video` adds: `title_tracks, title_suggestions[{id,text,tracks,confidence,source,origin}]`, `text_suggestions` (same
+shape, for the text on the video), `edit` (stored overrides
 only — absent/null fields follow the defaults), `resolved_edit` (effective values + `defaulted[]`), `versions`,
 `resolved_v1` (effective text/caption settings + `defaulted[]`), `captions{platform: text}`, `youtube_title`,
 `issues[{kind, platform, message, count, limit, countWithoutHashtags}]`, `plan`, `posts`.
@@ -50,8 +51,9 @@ only — absent/null fields follow the defaults), `resolved_edit` (effective val
 ## Write
 
 ```sh
-djq suggest --file answer.json                 # many clips: [{"video_id": "…", "title_suggestions": [ … ]}]
-djq suggest <video> --file one.json            # one clip ({"title_suggestions": [ … ]} or a bare array); --file - reads stdin
+djq suggest --file answer.json                 # many clips: [{"video_id": "…", "title_suggestions": [ … ], "text_suggestions": [ … ]}]
+djq suggest <video> --file one.json            # one clip ({"title_suggestions": [ … ], "text_suggestions": [ … ]} or a bare
+                                               # array of title suggestions); --file - reads stdin
 djq title <video> "Song One x Song Two" | --clear
 djq text <video> "Overlay text" | --none | --default [--version N]
 djq caption <video> "Caption" | --default [--platform P] [--version N]
@@ -59,9 +61,16 @@ djq kind <video> "dj vid"|talking
 djq score <video> <0-100|clear>
 ```
 
-Suggestion fields (same as `videos.json` `title_suggestions`, see `docs/metadata.md`): `text` (required; `\n` line
-breaks; join songs with `x`, no arrows, no emoji), `tracks[{title, artist?}]`, `confidence` 0…1, `source`.
-Re-sending the same `text` + `source` updates it.
+Suggestion fields (same as `videos.json` `title_suggestions` / `text_suggestions`, see `docs/metadata.md`): `text`
+(required), `tracks[{title, artist?}]`, `confidence` 0…1, `source`. Re-sending the same `text` + `source` updates it.
+Either list may be left out.
+
+- **Title** (`title_suggestions`): the song names on one line, joined with `x` (no arrows, no emoji). It names the
+  clip on every screen and in search. Eric picks it.
+- **Text on the video** (`text_suggestions`): what goes on screen. Usually the song names laid out on lines with `x`
+  alone between them (`"Song One\nx\nSong Two"`); short pairs may stay on one line. A hook ("Piano is sweet!!") is
+  a separate, lower-confidence suggestion. Eric taps one in the editor's Text section; it becomes that version's text.
+  Use `djq text` only when Eric asks you to set it.
 
 ## Stages: move a clip back or forward
 

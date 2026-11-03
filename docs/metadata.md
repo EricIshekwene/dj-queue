@@ -14,12 +14,13 @@ Existing fields (unchanged): `id`, `name`, `tags`, `type` (`short-form` / `long-
 (`dj vid` / `talking`), `file`, `session`, `part`, `marked_start`, `marked_end`, `start`, `end`, `duration`,
 `grace`, `audio`, `status`.
 
-New, both optional:
+Optional:
 
 | Field | Type | Meaning |
 |---|---|---|
 | `title` | string | The clip's title if the tool knows it for sure. **Seeds** DJ Queue's title only if the clip never had one. A title Eric set — or deliberately cleared — is never overwritten; a different manifest title then shows up as a suggestion (source `videos.json title`). |
 | `title_suggestions` | array | Guesses for Eric to pick from, best first. Re-synced on every intake (the list in the file replaces the previous file list; suggestions added with `djq suggest` are kept). Malformed values are ignored, never fatal. |
+| `text_suggestions` | array | Guesses for the **text on the video**, same shape and sync rules as `title_suggestions`. Keeps line breaks (`\n`); may include a hook. |
 
 Each suggestion:
 
@@ -34,7 +35,7 @@ Each suggestion:
 
 | Key | Required | Notes |
 |---|---|---|
-| `text` | yes | Overlay text / title as it would appear. `\n` for line breaks (`Song One\nx\nSong Two`). Join songs with `x`, never an arrow; no emoji. |
+| `text` | yes | Title suggestions: one line, songs joined with `x` (never an arrow; no emoji). Text suggestions: the text as it appears on the video, `\n` for line breaks (`Song One\nx\nSong Two`). |
 | `tracks` | no | Songs in order; `artist` optional. |
 | `confidence` | no | 0…1. Below 0.6 the clip still counts as "needs title help" (the app offers an *Ask an agent* prompt). |
 | `source` | no | Where it came from (`rekordbox history`, `tracklist`, `prefill_titles.py`, …). |
@@ -53,6 +54,9 @@ Example entry:
   "duration": 24.0, "grace": 3.0, "audio": "camera",
   "title_suggestions": [
     {"text": "Sungba x Tshwala Bam", "tracks": [{"title": "Sungba"}, {"title": "Tshwala Bam"}], "confidence": 0.85, "source": "rekordbox history"}
+  ],
+  "text_suggestions": [
+    {"text": "Sungba\nx\nTshwala Bam", "confidence": 0.85, "source": "rekordbox history"}
   ]
 }
 ```
@@ -64,14 +68,17 @@ Example entry:
   display name everywhere.
 - With no title, every screen shows the raw marker tag **verbatim**, and captions/titles use it verbatim. Nothing
   is tidied or guessed in the app.
-- Suggestions appear as chips in the editor and on Edit cards; *Accept top suggestion* (also `djq bulk
-  accept-title`) copies the best one into the title.
+- Title suggestions appear as chips in the editor's Title section and on Edit cards; *Accept top suggestion* (also
+  `djq bulk accept-title`) copies the best one into the title.
+- **Text** (the overlay on the video, per version) follows the Title until Eric types it or taps a text suggestion
+  in the editor's Text section. Title and Text are separate on purpose: the Title is one clean line for lists and
+  search; the Text carries line breaks and hooks. Caption `{text}` and the YouTube title use the Text on one line.
 
 ## Adding suggestions after intake
 
 ```sh
-djq suggest --file answer.json          # [{"video_id": "…", "title_suggestions": [ … ]}, …]
-djq suggest <video> --file one.json     # {"title_suggestions": [ … ]} or a bare [ … ] for that clip
+djq suggest --file answer.json          # [{"video_id": "…", "title_suggestions": [ … ], "text_suggestions": [ … ]}, …]
+djq suggest <video> --file one.json     # {"title_suggestions": [ … ], "text_suggestions": [ … ]} or a bare [ … ] (titles)
 djq agent-prompt titles --needs-title   # Markdown prompt for an agent; its answer is the file above
 ```
 
