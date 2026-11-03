@@ -161,9 +161,9 @@ struct LibraryView: View {
 
   @ViewBuilder private func actions(_ v: Video, mode: DSViewMode) -> some View {
     if mode == .grid {
-      // Icon-only in Grid (DSMediaActionStyle): the tooltip names it. Space opens the first *selected* clip, so it
+      // Icon-only in Grid (DSMediaActionButton): the tooltip names it. Space opens the first *selected* clip, so it
       // isn't advertised on a hover button.
-      Button { quickLook(v) } label: { Label("Quick look", systemImage: "eye") }.dsTooltip("Preview the clip and its status")
+      DSMediaActionButton("Quick look", systemImage: "eye", tooltip: "Preview the clip and its status") { quickLook(v) }
     } else if mode == .single {
       HStack(spacing: DS.space.xs) {
         DSButton("Quick look", icon: "eye", variant: .outline, size: .sm, tooltip: "Preview the clip and its status") { quickLook(v) }

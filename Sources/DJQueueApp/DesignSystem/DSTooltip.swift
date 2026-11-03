@@ -17,18 +17,15 @@ typealias DSTooltipSide = TooltipSide
 typealias DSTooltipEdge = TooltipSide
 
 /// What a tooltip says: a short verb phrase, an optional shortcut, and — for a disabled trigger — why.
+/// Plain text only: the bubble is drawn in its own panel, outside the trigger's view tree, so a view from that tree
+/// (e.g. a `Label`'s title) would render empty there (round 5).
 struct DSTooltipContent: Equatable {
   var label: String?
   var shortcut: String?
   var disabledReason: String?
-  /// A label view instead of `label` — used where only a view is at hand (a `Label`'s title drawn icon-only).
-  var richLabel: AnyView? = nil
 
-  var isEmpty: Bool { (label ?? "").isEmpty && (disabledReason ?? "").isEmpty && richLabel == nil }
+  var isEmpty: Bool { (label ?? "").isEmpty && (disabledReason ?? "").isEmpty }
 
-  static func == (a: Self, b: Self) -> Bool {
-    a.label == b.label && a.shortcut == b.shortcut && a.disabledReason == b.disabledReason && (a.richLabel == nil) == (b.richLabel == nil)
-  }
   /// Spoken by VoiceOver (as the hint).
   var spoken: String { [label, disabledReason].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ". ") }
 }
@@ -48,9 +45,7 @@ struct DSTooltipBubble: View {
     let label = (content.label ?? "").isEmpty ? nil : content.label
     let reason = (content.disabledReason ?? "").isEmpty ? nil : content.disabledReason
     VStack(alignment: .leading, spacing: 2) {
-      if let rich = content.richLabel {
-        rich.font(DS.type.captionMedium).lineLimit(2).labelStyle(.titleOnly)
-      } else if let title = label ?? reason {
+      if let title = label ?? reason {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(title).font(DS.type.captionMedium).lineLimit(3).fixedSize(horizontal: false, vertical: true)
           if reason == nil, let shortcut = content.shortcut, !shortcut.isEmpty {
@@ -157,11 +152,6 @@ private extension TooltipSide {
 }
 
 extension View {
-  /// Tooltip whose label is a view (e.g. a `Label`'s title shown icon-only on media). Prefer `dsTooltip(_:)`.
-  func dsTooltip<V: View>(view: V, side: DSTooltipSide = .top) -> some View {
-    modifier(DSTooltipModifier(content: DSTooltipContent(richLabel: AnyView(view)), side: side, forceVisible: false))
-  }
-
   /// Hover tooltip (Base UI anatomy). `text` is a short verb phrase ("Post today"), `shortcut` shows as keycaps,
   /// `disabledReason` (non-nil = the control is disabled) adds why on a second line and hides the shortcut.
   /// nil/empty text and reason = no tooltip. `forceVisible` draws the bubble in place (gallery/snapshots).
@@ -325,7 +315,9 @@ final class DSTooltipController {
     if t === shown { return }
     let wait = group.openDelay(now: Date())
     if wait == 0 {
-      present(t, animated: false)
+      // Instant hand-off only to a trigger the pointer is really over: leaving a nested trigger hands back to its
+      // parent before the parent's own exit arrives, which would flash the parent's bubble on the way out.
+      if t.containsMouse { present(t, animated: false) } else if shown != nil { hide(resetGroup: false) }
       return
     }
     if shown != nil { hide(resetGroup: false) }
@@ -354,6 +346,7 @@ final class DSTooltipController {
     if bounds.width < size.width || bounds.height < size.height * 3 { bounds = screen.insetBy(dx: edgePadding, dy: edgePadding) }
     let placed = TooltipPlacement.place(anchor: anchorRect, size: size, preferred: a.side, bounds: bounds, gap: gap)
     lastSide = placed.side
+    debugPresented += 1
 
     panel.appearance = NSAppearance(named: a.scheme == .dark ? .darkAqua : .aqua)
     panel.hasShadow = a.scheme == .light  // DS: no shadows in dark mode
@@ -480,17 +473,20 @@ final class DSTooltipController {
   var simulatedPointer: CGPoint?
   /// Hover-ins seen (tells the probe whether SwiftUI delivered hover from its posted mouse events).
   var debugHoverEvents = 0
+  /// Bubbles presented (a bubble opening while the pointer leaves is a flash).
+  var debugPresented = 0
   var debugShown: DSTooltipAnchorView? { shown }
   var debugSide: TooltipSide? { shown == nil ? nil : lastSide }
   var debugPanelWindow: NSWindow? { panel }
   var debugPanelFrame: CGRect? { panel?.isVisible == true && shown != nil ? panel?.frame : nil }
 
-  /// What SwiftUI hover would do for a pointer at `p`: exit triggers it left, enter the ones it is
-  /// now over (outermost first, so the innermost wins).
+  /// What SwiftUI hover would do for a pointer at `p`: exit triggers it left (innermost first, as SwiftUI delivers
+  /// them, which is the order that could hand a nested trigger's bubble to its parent on the way out), then enter
+  /// the ones it is now over (outermost first, so the innermost wins).
   func debugPointerMoved(to p: CGPoint, in w: NSWindow) {
     func depth(_ v: NSView) -> Int { var d = 0; var s = v.superview; while let x = s { d += 1; s = x.superview }; return d }
     let inside = DSTooltipProbe.anchors(in: w).filter { $0.visibleScreenRect?.contains(p) ?? false }.sorted { depth($0) < depth($1) }
-    for h in hovered.compactMap(\.view) where !inside.contains(where: { $0 === h }) { hoverEnded(h) }
+    for h in hovered.compactMap(\.view).reversed() where !inside.contains(where: { $0 === h }) { hoverEnded(h) }
     for a in inside where !hovered.contains(where: { $0.view === a }) { hoverBegan(a) }
   }
 

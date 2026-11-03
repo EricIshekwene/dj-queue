@@ -314,7 +314,7 @@ struct DSClipCard<Actions: View>: View {
         .overlay(alignment: .bottomLeading) { durationBadge.padding(8) }
         .overlay(alignment: .bottom) {
           if hot && !clip.isMissing {
-            HStack(spacing: 4) { actions }.buttonStyle(DSMediaActionStyle()).padding(.bottom, 34).transition(.opacity)
+            HStack(spacing: 4) { actions }.padding(.bottom, 34).transition(.opacity)
           }
         }
         .overlay {
@@ -451,27 +451,42 @@ struct DSSuggestionChip: View {
   }
 }
 
-/// Small round buttons floating on media (grid tile hover actions). The label shows only its icon, so its title
-/// becomes the tooltip automatically — an icon-only action can't be left unexplained (round 3, F5).
-struct DSMediaActionStyle: ButtonStyle {
+/// Small round button floating on media (grid tile hover actions), drawn icon-only. Its tooltip is required, like
+/// DSIconButton's: an icon-only action can't be left unexplained (round 3, F5), and neither the lint nor the popup
+/// can use the label's title (the bubble is a separate panel, where a `Label`'s title view draws nothing — round 5).
+/// `disabledReason` soft-disables it: dimmed, still hoverable, the tooltip says why (the action decides what a click does).
+struct DSMediaActionButton: View {
+  let title: String
+  let systemImage: String
+  let tooltip: String
+  var disabledReason: String?
+  let action: () -> Void
+
+  init(_ title: String, systemImage: String, tooltip: String, disabledReason: String? = nil, action: @escaping () -> Void) {
+    self.title = title
+    self.systemImage = systemImage
+    self.tooltip = tooltip
+    self.disabledReason = disabledReason
+    self.action = action
+  }
+
+  var body: some View {
+    Button(action: action) { Label(title, systemImage: systemImage) }
+      .buttonStyle(DSMediaActionStyle())
+      .opacity(disabledReason == nil ? 1 : 0.45)
+      .dsTooltip(tooltip, disabledReason: disabledReason)
+  }
+}
+
+private struct DSMediaActionStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .labelStyle(DSIconWithTitleTooltip())
+      .labelStyle(.iconOnly)
       .font(.system(size: 12, weight: .semibold))
       .foregroundStyle(.white)
       .frame(width: 28, height: 28)
       .background(Color.black.opacity(configuration.isPressed ? 0.75 : 0.55), in: Circle())
       .contentShape(Circle())
-  }
-}
-
-/// Icon only, with the label's title as the tooltip (DSMediaActionStyle).
-struct DSIconWithTitleTooltip: LabelStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.icon
-      .frame(width: 28, height: 28)
-      .contentShape(Circle())
-      .dsTooltip(view: configuration.title)
   }
 }
 

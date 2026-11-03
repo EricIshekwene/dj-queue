@@ -54,7 +54,7 @@ Eric delegated these calls. Each decision gives a one-line reason. The component
 ## Evidence
 24. **Gallery page "Tooltips" (`DSGalleryPage.tooltips`, `ds-08-tooltips-{light,dark}.png`)** shows the anatomy on four sides, the content variants, wrapping, the in-context toolbar, ⋯ and bulk bar, a collision demo drawn from the production `TooltipPlacement` output, and the behaviour and writing rules.
 25. **Live probe (`DJQ_SNAPSHOT_GALLERY=1 DJQ_TOOLTIP_PROBE=1 DJQueueApp --snapshot <dir>`)** runs against the real main window on a throwaway copy of the dev DB.
-    - It runs in the background: it never activates the app, never moves the user's cursor, and keeps its panel just above its own window.
+    - It never activates the app, never moves the user's cursor, and keeps its panel just above its own window. Since round 5 its window is in front but click-through (`ignoresMouseEvents`): macOS doesn't draw a fully covered window's SwiftUI layers, which made the captures blank.
     - It drives hover per case and captures the window server's composite of the main window plus the panel. Cases:
       - Toolbar at the window's top edge (flips below).
       - Delay-group hand-off (~110 ms including the probe's 80 ms poll, versus ~600 ms for a first open).
@@ -85,10 +85,10 @@ Eric delegated these calls. Each decision gives a one-line reason. The component
 34. **Eric's acceptance rule is enforced in code. Every icon-only `Button`/`Menu` needs a tooltip:**
     - `scripts/check-icon-tooltips.py` is a small Swift-aware parser of labels and modifier chains. `IconTooltipLintTests` runs it inside `swift test`, so a new offender fails the build check.
     - `DSIconButton`'s tooltip is required at compile time.
-    - Grid-tile hover actions (`DSMediaActionStyle`) render the Label's own title as the tooltip (`dsTooltip(view:)`), so the most common icon-only case can't be unexplained even if a screen forgets it.
+    - Grid-tile hover actions are `DSMediaActionButton`, whose tooltip is required at compile time like `DSIconButton`'s. (Round 3 instead had the container's label style reuse the Label's title as the tooltip; that drew an empty bubble and was removed in round 5, see #41.)
     - Why: the lint can't see a label style applied by a container, so the DS closes that gap itself.
 35. **Tile overlay badges speak plainly: "Score 28", "Length 2:23", "Number 3 in the posting order", "Select for bulk actions · ⌘-click".** Why: Eric's Edit-grid example. Each badge says what the number is.
-36. **Page-pass evidence comes from the real window, not mock-ups (`DJQ_TOOLTIP_PASS=1`).** Each screen, view mode and overlay is drawn in light and dark, with the first tile in its hover state (`DSClipCardDebug.hoverIds`). Every tooltip anchor is numbered from the live view tree, with a legend of what it says, and one real tooltip panel is shown. It runs in the background: no focus change, no cursor moves.
+36. **Page-pass evidence comes from the real window, not mock-ups (`DJQ_TOOLTIP_PASS=1`).** Each screen, view mode and overlay is drawn in light and dark, with the first tile in its hover state (`DSClipCardDebug.hoverIds`). Every tooltip anchor is numbered from the live view tree, with a legend of what it says, and one real tooltip panel is shown. No focus change, no cursor moves; its window is in front but click-through (see #25).
 37. **Real-pointer hover was not exercised, because Eric was at the Mac** (HID idle 0–1 s every time it was checked). Proven:
     - Placement, flip and shift, the panel, light and dark, Esc, and the delay-group timing in the real window (`DJQ_TOOLTIP_PROBE`). The probe drives the same `hoverBegan`/`hoverEnded` that `.onHover` calls.
     - Every anchor's text (`DJQ_TOOLTIP_PASS`).
@@ -100,3 +100,8 @@ Eric delegated these calls. Each decision gives a one-line reason. The component
     - Queue date/pin tag: "Next planned post day" / "Pinned to this day".
     - Edit "Cover": "Cover frame chosen in the editor".
     - Library state chips, long-form, missing file, Posts state and problem badges, and the editor crop badges.
+41. **Round 5: tooltips are plain text only; the video-preview buttons' empty bubble.** Eric saw an empty pill over a grid tile's round buttons, and the text flashed for a moment on leaving.
+    - Cause: the buttons' label style attached a second, inner tooltip whose label was the `Label`'s title view. That view only draws inside its own view tree; the bubble lives in a separate panel, so it drew nothing. Being innermost, it won over the button's own explicit tooltip; leaving it handed the bubble to that parent for a moment.
+    - `DSTooltipContent` is label · shortcut · disabled reason as strings; `richLabel` and `dsTooltip(view:)` are gone, so no view can reach the panel. Media buttons are `DSMediaActionButton` with a required tooltip.
+    - The delay group's instant hand-off goes only to a trigger the pointer is really over, so leaving a nested trigger never flashes its parent's bubble.
+    - Why it slipped through: the gallery drew bubbles in place (inside the view tree, where the title view does draw), and the page pass hid nested anchors. The live probe now sweeps every tooltip type on every page (each grid's tile buttons, disabled, keycaps, plain; light and dark) plus a nested-trigger fixture, captures hover and after-leave, measures the rendered text pixels, and fails on an empty bubble, one that stays or flashes on leaving, or a sweep that didn't reach its cases. On v0.6.0 it fails on exactly the preview buttons.

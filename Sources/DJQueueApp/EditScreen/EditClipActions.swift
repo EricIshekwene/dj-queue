@@ -112,16 +112,15 @@ struct EditClipActions: View {
       }
       .fixedSize()
     case .grid:
-      // Grid hover buttons render icon-only (DSMediaActionStyle): each one names its consequence in a tooltip.
+      // Grid hover buttons render icon-only (DSMediaActionButton): each one names its consequence in a tooltip.
       let fwd = model.stageBlocker(video, .forward)
-      Button(model.stageForwardTitle(video), systemImage: "chevron.right") {
+      DSMediaActionButton(model.stageForwardTitle(video), systemImage: "chevron.right", tooltip: model.stageForwardTitle(video),
+                          disabledReason: fwd) {
         if let fwd { model.show(fwd, error: true) } else { model.stageForward([video.id]) }
       }
-      .opacity(fwd == nil ? 1 : 0.45)
-      .dsTooltip(model.stageForwardTitle(video), disabledReason: fwd)
-      Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { open() }.dsTooltip(Self.openHelp)
+      DSMediaActionButton("Open editor", systemImage: "slider.horizontal.below.rectangle", tooltip: Self.openHelp) { open() }
       if needs.askAgent {
-        Button("Ask an agent", systemImage: "sparkles") { model.copyAgentPrompt([video.id]) }.dsTooltip(Self.askAgentHelp)
+        DSMediaActionButton("Ask an agent", systemImage: "sparkles", tooltip: Self.askAgentHelp) { model.copyAgentPrompt([video.id]) }
       }
     case .list:
       StageControl(model: model, video: video, compact: true)

@@ -3,7 +3,7 @@
 One central SwiftUI design system with ChatGPT-calm tokens (`design/DESIGN-v2.md` §2). It mirrors the component anatomy of shadcn/ui and Base UI. Code lives in `Sources/DJQueueApp/DesignSystem/`. Decisions and deviations are in `design/DS-DECISIONS.md`.
 
 - **Gallery:** `DSGallery()` is a standalone view with a sidebar of pages, showing every component in every state.
-- **Tooltip probe:** `DJQ_SNAPSHOT_GALLERY=1 DJQ_TOOLTIP_PROBE=1 .build/debug/DJQueueApp --snapshot <dir>` hovers real triggers in the real main window (in the background) and captures the window plus the tooltip panel, along with `probe.json`.
+- **Tooltip probe:** `DJQ_SNAPSHOT_GALLERY=1 DJQ_TOOLTIP_PROBE=1 .build/debug/DJQueueApp --snapshot <dir>` hovers every tooltip type in the real main window (in front but click-through, never activating the app) and captures the window plus the tooltip panel on hover and after leaving, along with `probe.json`; it exits 1 on an empty bubble or one that stays or flashes (TOOLTIPS-DECISIONS #41).
 - **PNG render:** `DJQ_SNAPSHOT_GALLERY=1 [DJQ_GALLERY_MEDIA=<local folder>] .build/debug/DJQueueApp --snapshot <dir>` writes `ds-0N-<page>-{light,dark}.png` at 1440×900. You can also call `await DSGallerySnapshot.run(outputDir:)`, or `DSGallerySnapshot.render(_:size:name:to:)` for any view.
 
 ## Rules (read first)
@@ -41,8 +41,9 @@ States everywhere: default · hover · pressed · focused (accent ring) · disab
 |---|---|---|---|---|
 | `DSButton` | [icon/spinner] title [trailing icon] | primary, secondary, outline, ghost, destructive, destructiveSolid × sm/md/lg; `isLoading`, `disabledReason`, `tooltip`, `shortcut`, `fullWidth` | Button | One primary per screen. destructiveSolid only in confirm sheets |
 | `DSIconButton` | circle + symbol | same variants; `isOn`; tooltip **required** | Button size=icon + Tooltip | Never icon-only without a tooltip |
+| `DSMediaActionButton` | round icon-only button on media (grid tile hover actions) | `disabledReason` (dimmed, still hoverable); tooltip **required** | Button size=icon + Tooltip | Only on media; the tooltip names the consequence |
 | `DSButtonStyle` | style for any `Button` | variant, size | buttonVariants() | Use on custom labels |
-| `DSTooltip` (`.dsTooltip`) / `DSTooltipBubble` | trigger → positioner (side, 6 pt, flip + shift) → inverse popup in a click-through panel; label · keycaps · disabled reason | `shortcut`, `disabledReason`, `side`, `forceVisible` (gallery); one delay group (500 ms, instant hand-off for 400 ms) | Tooltip (Provider/Trigger/Positioner/Popup) | A verb phrase that says the consequence; ≤ 45 chars; required for icon-only controls. See `TOOLTIPS-DECISIONS.md` |
+| `DSTooltip` (`.dsTooltip`) / `DSTooltipBubble` | trigger → positioner (side, 6 pt, flip + shift) → inverse popup in a click-through panel; label · keycaps · disabled reason | `shortcut`, `disabledReason`, `side`, `forceVisible` (gallery); one delay group (500 ms, instant hand-off for 400 ms to the trigger under the pointer); plain text only | Tooltip (Provider/Trigger/Positioner/Popup) | A verb phrase that says the consequence; ≤ 45 chars; required for icon-only controls. See `TOOLTIPS-DECISIONS.md` |
 | `DSKeyHint` | keycap | inverted | Kbd | Put shortcut hints at the right edge |
 | `DSCard` + `DSCardHeader` / `DSCardFooter` | header (title, description, action) · content · footer | outline (e1), filled, elevated; interactive hover; selected | Card | Don't nest cards |
 | `DSBadge` (`DSPill`) | [icon] text capsule | soft(tone), outline, solid; sm/md | Badge | Keep text short |
