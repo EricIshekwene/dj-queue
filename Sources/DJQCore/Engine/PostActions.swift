@@ -104,6 +104,8 @@ public final class PostActions: @unchecked Sendable {
       try ensureNotHeld(p.videoId)
       let v = versionNo ?? p.versionNo
       if try store.resolvedVersion(videoId: p.videoId, number: v) == nil { throw EngineError("Add v\(v) first") }
+      let live = try store.posts(where: "video_id=? AND platform=? AND version_no=? AND state='posted'", [p.videoId, p.platform.rawValue, v])
+      guard live.isEmpty else { throw EngineError("v\(v) is already posted on \(p.platform.displayName) — pick another version") }
       let n = try newAttempt(from: p, kind: .retry, versionNo: v, note: "re-upload after \(p.state.rawValue)")
       p.resolution = "reuploaded"
       try store.save(p, note: "re-upload → attempt \(n.attemptNo)")
@@ -152,6 +154,7 @@ public final class PostActions: @unchecked Sendable {
     p.resolution = nil
     try store.save(p, note: "reset")
     try store.releasePostizJobs(postId: p.id)  // a reset post may go through Postiz again (never a published one)
+    try store.clearNotified(Self.problemKey(p.id))  // a later failure of this post gets its own alert
     try store.refreshState(videoId: p.videoId)
   }
 

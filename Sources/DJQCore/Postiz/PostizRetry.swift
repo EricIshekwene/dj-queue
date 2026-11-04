@@ -30,14 +30,23 @@ extension PostizService {
   /// Added to a temporary failure's message (every screen and the alert show `errorMessage`).
   public static let retriesTomorrowNote = "retries tomorrow automatically"
   public static let retriesUsedUpNote = "automatic retries used up, mark Fixed when it's ready"
+  public static let noRetryNote = "no automatic retry for this one, mark Fixed when it's ready"
 
-  /// Only clear wording counts; an unclear message stays a normal failure. Copyright always wins.
+  /// Words that mean more than "not now": a policy or rights problem, an account problem or a paid limit. One of
+  /// them anywhere beats a temporary word, because re-posting a flagged clip risks a strike on the account.
+  static let notTemporary = #"\b(violat\w*|infring\w*|intellectual property|dmca|content[- ]?id|copy right|(un)?licen[sc]\w*|"#
+    + #"songs?|sounds?|tracks?|strikes?|takedowns?|polic(y|ies)|guidelines?|terms|spam\w*|rejected|removed|revoked|banned|"#
+    + #"suspend\w*|restrict\w*|blocked|disabled|terminated|denied|forbidden|unauthori[sz]ed|upgrade\w*|plans?|subscri\w*|storage)\b"#
+  /// Word boundaries: never "quotation", "moderate limit" or "separate limit".
+  static let plainlyTemporary = #"\bquotas?\b|\brate[- ]?limit|\btoo many requests\b|\btry again later\b"#
+    + #"|\breschedule this post for a later time\b|\btemporarily unavailable\b"#
+
+  /// Only clear wording counts; an unclear message stays a normal failure. Copyright and every `notTemporary` word win.
   public static func isTemporary(_ message: String) -> Bool {
     guard !isCopyright(message) else { return false }
     let m = message.lowercased()
-    if m.range(of: #"\bquotas?\b"#, options: .regularExpression) != nil { return true }  // never "quotation"
-    return ["rate limit", "rate-limit", "ratelimit", "too many requests", "try again later",
-            "reschedule this post for a later time", "temporarily unavailable"].contains { m.contains($0) }
+    guard m.range(of: notTemporary, options: .regularExpression) == nil else { return false }
+    return m.range(of: plainlyTemporary, options: .regularExpression) != nil
   }
 
   static let autoRetryPrefix = "postiz.autoRetry."
@@ -49,10 +58,12 @@ extension PostizService {
 
   func autoRetries(_ p: PlatformPost) throws -> PostizAutoRetries { try store.kv(Self.autoRetryKey(p)) ?? PostizAutoRetries() }
 
-  /// The sentence a Postiz ERROR adds to the post's message ("" for a normal failure).
+  /// The sentence a Postiz ERROR adds to the post's message ("" for a normal failure). It promises a retry only when
+  /// nothing permanent rules one out; a reason to wait (held clip, platform off Postiz) keeps the promise.
   func retryNote(_ message: String, _ p: PlatformPost) throws -> String {
     guard Self.isTemporary(message) else { return "" }
-    return " — " + (try autoRetries(p).count < Self.maxAutoRetries ? Self.retriesTomorrowNote : Self.retriesUsedUpNote)
+    if try autoRetries(p).count >= Self.maxAutoRetries { return " — \(Self.retriesUsedUpNote)" }
+    return " — " + (try retryRuledOut(p) ? Self.noRetryNote : Self.retriesTomorrowNote)
   }
 
   /// This attempt came from a test-run job, so it must not go public.
@@ -61,16 +72,24 @@ extension PostizService {
     return try autoRetries(p).testRunPosts.contains(p.id)
   }
 
-  /// The clip + platform can't get a new attempt: a job is open, published or was a copyright problem (any kind of
-  /// post), or another post is live, posted or has a copyright problem. The whole clip + platform, not one lineage.
-  func retryBlocked(_ p: PlatformPost) throws -> Bool {
+  /// This failure can never retry by itself: skipped in the editor, or a job of the clip + platform was published or
+  /// was a copyright problem, or another post of it is posted or has one. The whole clip + platform, not one lineage.
+  func retryRuledOut(_ p: PlatformPost) throws -> Bool {
+    if (try? store.resolvedEdit(videoId: p.videoId))?.isSkipped(p.platform) == true { return true }
     let jobs = try store.postizJobs(where: """
-      video_id=? AND platform=? AND kind='post'
-        AND (closed_at IS NULL OR close_reason IN ('published','inbox','copyright') OR remote_state='PUBLISHED')
+      video_id=? AND platform=? AND kind='post' AND (close_reason IN ('published','inbox','copyright') OR remote_state='PUBLISHED')
       """, [p.videoId, p.platform.rawValue])
     guard jobs.isEmpty else { return true }
     return try store.posts(where: "video_id=? AND platform=?", [p.videoId, p.platform.rawValue])
-      .contains { $0.id != p.id && (!$0.state.isTerminal || $0.state == .posted || $0.state.isCopyright) }
+      .contains { $0.id != p.id && ($0.state == .posted || $0.state.isCopyright) }
+  }
+
+  /// Another job of the clip + platform is open, or another post of it is live: not while that lasts.
+  func retryMustWait(_ p: PlatformPost) throws -> Bool {
+    let open = try store.postizJobs(where: "video_id=? AND platform=? AND kind='post' AND closed_at IS NULL", [p.videoId, p.platform.rawValue])
+    guard open.isEmpty else { return true }
+    return try store.posts(where: "video_id=? AND platform=?", [p.videoId, p.platform.rawValue])
+      .contains { $0.id != p.id && !$0.state.isTerminal }
   }
 
   /// The failed job when `p` may be retried automatically now. Waiting reasons (platform paused or on Manual, clip
@@ -82,8 +101,7 @@ extension PostizService {
           try autoRetries(p).count < Self.maxAutoRetries,
           Self.settingsAllow(p.platform, settings), router.route(p.platform).isPostiz,
           let v = try store.video(id: p.videoId), !v.heldInEdit,
-          try !store.resolvedEdit(videoId: v.id).isSkipped(p.platform),
-          try !retryBlocked(p) else { return nil }
+          try !retryRuledOut(p), try !retryMustWait(p) else { return nil }
     return job
   }
 

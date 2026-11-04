@@ -662,6 +662,9 @@ public final class Store: @unchecked Sendable {
     try db.one("SELECT 1 AS x FROM sent_notifications WHERE key=?", [key]) != nil
   }
 
+  /// Forgets a notification, so its key can go out again.
+  public func clearNotified(_ key: String) throws { try db.run("DELETE FROM sent_notifications WHERE key=?", [key]) }
+
   // MARK: Derived video state
 
   /// Recomputes a video's state from its flags, edit, versions and posts (spec §3 States).

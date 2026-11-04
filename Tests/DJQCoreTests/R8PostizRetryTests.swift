@@ -10,6 +10,7 @@ import Testing
 
   static let quota = "YouTube's daily upload quota is exhausted for today, please reschedule this post for a later time."
   static let monday = "2026-11-02"
+  static let noRetry = " — no automatic retry for this one, mark Fixed when it's ready"
 
   /// One YouTube post scheduled in Postiz on Monday.
   func ytRig(_ change: ((inout Settings) -> Void)? = nil) throws -> (Rig, PlatformPost) {
@@ -52,6 +53,33 @@ import Testing
   @Test(arguments: ["Copyright claim, try again later", "Music rights quota exceeded", "audio rate limit", "Rights holder: too many requests"])
   func copyrightAlwaysWins(_ m: String) {
     #expect(PostizService.isCopyright(m) && !PostizService.isTemporary(m))
+  }
+
+  /// A veto word anywhere beats a temporary word (these are test strings, not captured Postiz errors).
+  @Test(arguments: ["This video violates our Community Guidelines. Please try again later.",
+                    "Your upload violates our Terms. Quota for this account has been revoked.",
+                    "Your reel may infringe someone's intellectual property. Try again later.",
+                    "DMCA takedown received, upload quota revoked", "Content ID match found. Service temporarily unavailable.",
+                    "This sound isn't available for business accounts. Try again later.",
+                    "Song not licensed for your region, try again later", "Unlicensed track detected: too many requests",
+                    "Copy right strike on channel, quota",
+                    "Your account is restricted for violating our policies. Try again later.",
+                    "Your account is banned from posting. Please try again later.", "Account suspended. Try again later.",
+                    "Channel disabled, try again later", "Unauthorized: too many requests",
+                    "Your storage quota is full, upgrade your plan",
+                    "You have used your plan's post quota. Upgrade to continue.",
+                    "Subscription quota exceeded", "Video rejected: spam. Too many requests",
+                    "Exceeds the moderate limit for video size", "Exceeds the separate limit on hashtags"])
+  func aVetoWordBeatsATemporaryWord(_ m: String) { #expect(!PostizService.isTemporary(m)) }
+
+  @Test func aPolicyErrorIsAPlainFailureAndNeverRetries() throws {
+    let (rig, yt) = try ytRig()
+    let m = "Your account is banned from posting. Please try again later."
+    try fail(rig, yt, m)
+    rig.tick(3)
+    let p = try #require(try rig.store.post(id: yt.id))
+    #expect(p.state == .failed && p.resolution == nil && p.errorMessage == m)
+    #expect(try attempts(rig, yt).count == 1 && problems(rig) == [yt.id])
   }
 
   // MARK: The retry
@@ -158,6 +186,7 @@ import Testing
     rig.tick(3)
     #expect(try attempts(rig, yt).count == 2)
     #expect(try problems(rig) == [again.id])
+    #expect(try rig.store.post(id: again.id)?.errorMessage == Self.quota + Self.noRetry)
   }
 
   @Test(arguments: [PostState.skipped, .removed])
@@ -179,6 +208,39 @@ import Testing
     try rig.store.save(e, videoId: yt.videoId)
     rig.tick(3)
     #expect(try attempts(rig, yt).count == 1)
+  }
+
+  @Test func aSkippedPlatformGetsNoPromise() throws {
+    let (rig, yt) = try ytRig()
+    var e = try rig.store.edit(videoId: yt.videoId)
+    e.skippedPlatforms = [.youtube]
+    try rig.store.save(e, videoId: yt.videoId)
+    #expect(try rig.service.retryNote(Self.quota, yt) == Self.noRetry)
+  }
+
+  @Test func aHeldClipKeepsThePromiseBecauseItOnlyWaits() throws {
+    let (rig, yt) = try ytRig()
+    try rig.store.setHeldInEdit(yt.videoId, true)
+    #expect(try rig.service.retryNote(Self.quota, yt) == " — retries tomorrow automatically")
+  }
+
+  @Test func aRetryAfterResetHasItsOwnAlert() throws {
+    let (rig, yt) = try ytRig()
+    try fail(rig, yt, "Upload failed at the platform")
+    rig.tick()
+    let key = "problem:\(yt.id)"
+    #expect(rig.notifier.delivered.filter { $0.key == key }.count == 1)
+    try PostActions(store: rig.store).reset(postId: yt.id)
+    rig.tick(2)
+    let j = try #require(try rig.job(yt))
+    rig.fake.fail(j.postizId!, error: Self.quota)
+    rig.f.clock.advance(3600)
+    rig.tick()
+    #expect(try rig.store.post(id: yt.id)?.state == .failed)
+    rig.tick()
+    let alerts = rig.notifier.delivered.filter { $0.key == key }
+    #expect(alerts.count == 2 && alerts.last?.body.contains(Self.quota) == true)
+    #expect(try attempts(rig, yt).count == 2)
   }
 
   @Test func aHeldClipWaitsAndAReleasedOneRetries() throws {
@@ -304,6 +366,9 @@ import Testing
     rig.tick(3)
     #expect(try attempts(rig, yt).count == 2)
     #expect(try problems(rig) == [repost.id])
+    // No promise that can't be kept, in the message or the alert.
+    #expect(try rig.store.post(id: repost.id)?.errorMessage == Self.quota + Self.noRetry)
+    #expect(rig.notifier.delivered.first { $0.key == "problem:\(repost.id)" }?.body.contains("retries tomorrow") == false)
   }
 
   /// Eric's Fixed on that repost is sent: its own job, and only that job's result marks it posted.
@@ -342,6 +407,27 @@ import Testing
     #expect(posted.state == .posted && posted.url == "https://youtube.com/shorts/second" && posted.url != original)
     #expect(try rig.store.post(id: yt.id)?.url == original)
     #expect(rig.fake.createCount == creates + 1)
+  }
+
+  /// A repost attempt really sends, so Re-upload can't pick a version the platform already has.
+  @Test func reuploadRefusesAVersionAlreadyPosted() throws {
+    let (rig, yt) = try ytRig()
+    let j = try #require(try rig.job(yt))
+    rig.fake.publish(j.postizId!)
+    rig.f.setTime(Self.monday, "23:30")
+    rig.tick()
+    var v2 = Version(number: 2)
+    v2.caption = "second cut"
+    try rig.store.save(v2, videoId: yt.videoId)
+    let actions = PostActions(store: rig.store)
+    let repost = try actions.repost(videoId: yt.videoId, platform: .youtube)
+    rig.f.setTime(rig.f.dm.key(repost.scheduledAt), "00:10")
+    rig.tick(4)
+    try fail(rig, try #require(try rig.store.post(id: repost.id)), "Copyright claim on this video")
+    #expect(throws: EngineError.self) { try actions.resolveCopyright(postId: repost.id, .reuploadAnyway(versionNo: 1)) }
+    #expect(try attempts(rig, yt).count == 2)
+    try actions.resolveCopyright(postId: repost.id, .reuploadAnyway(versionNo: 2))
+    #expect(try attempts(rig, yt).count == 3)
   }
 
   // MARK: Two processes

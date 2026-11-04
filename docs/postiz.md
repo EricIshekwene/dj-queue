@@ -94,8 +94,8 @@ Notes that shape the build:
   every setting except `title` is dropped. Postiz still reports it `PUBLISHED`. TikTok Business has **no privacy field for
   videos** (`privacy_level` applies to photo posts), so "private" isn't a TikTok test option; `UPLOAD` is.
 - **TikTok media is pulled by URL** from Postiz storage (Postiz's verified domain), so it must be a Postiz upload.
-- **Facebook via Postiz is a Page video** (`/{page}/videos`), not a Reel. DJ Queue keeps its 90 s Facebook limit (a
-  Reel-length choice); it can be raised in Settings → Limits if Page videos are fine.
+- **Facebook via Postiz came back as a `/reel/` link** on the first live post (2026-11-04). DJ Queue's 90 s Facebook limit
+  stays Eric's choice (Settings → Limits).
 - **X** has no thumbnail; links are stripped only in articles (DJ Queue never sends articles).
 
 ### What DJ Queue's cover means per platform
@@ -116,7 +116,7 @@ window shows the text.
 |---|---|---|---|---|---|
 | TikTok | 600 s (all creators: 3 min; some 5 or 10 min; per-account cap `max_video_post_duration_sec`) | 4 GB | **2200** (was 4000 in DJ Queue) | 90 | TikTok Content Posting API; Postiz schema |
 | Instagram | 180 s (API allows 3 s–15 min; DJ Queue keeps Reels at 3 min) | 300 MB | 2200 | — | IG Graph API `ig-user/media` |
-| Facebook | 90 s (Reel length, see above) | 4 GB | 63206 (DJ Queue keeps 2200) | — | Postiz schema |
+| Facebook | 90 s (Eric's choice, see above) | 4 GB | 63206 (DJ Queue keeps 2200) | — | Postiz schema |
 | YouTube Shorts | 180 s (vertical ≤ 3 min = Short since 2024-10-15; longer is a regular video) | 4 GB | 5000 | 100 | YouTube Help 15424877 |
 | Threads | 300 s | 1 GB | 500 | — | Threads API posts |
 | X | 140 s | 512 MB | 280 | — | spec default; X's official media page was unreachable, Postiz only knows 2 and 10 min account errors |
@@ -178,8 +178,12 @@ while a job is within six hours of its slot or waiting for a result, otherwise h
 
 **Temporary failures retry by themselves** (`PostizRetry.swift`, DECISIONS-R8.md). An `ERROR` is temporary only on clear
 wording: quota, rate limit / too many requests, "try again later", "reschedule this post for a later time", temporarily
-unavailable. Everything else stays a normal failure, and copyright wins over temporary, always. A temporary failure still
-reads Failed and still gets its alert, with the message plus "retries tomorrow automatically". A tick step `retry` (right
+unavailable. Copyright wins over temporary, always, and so does any word that means more than "not now": a policy or
+rights word (violates, DMCA, Content ID, licensed, song, sound, …), an account word (banned, suspended, restricted,
+disabled, unauthorized, …) or a paid limit (upgrade, plan, subscription, storage). One of them anywhere makes it a normal
+failure, or `copyright_blocked` when the copyright words above match. Everything else stays a normal failure too. A
+temporary failure still reads Failed and still gets its alert, with the message plus "retries tomorrow automatically",
+or the Fixed wording when no retry can come (retries used up, or ruled out below). A tick step `retry` (right
 after `alerts`, and only once the post's alert went out) re-queues it through `PostActions.fixed`: next day, the usual
 stagger, a new attempt the publish step submits. At most 2 automatic retries per clip + platform + version (kv
 `postiz.autoRetry.<clip>#<platform>#v<N>`); after that it stays Failed for Eric, and the message says so. No retry for
@@ -189,7 +193,11 @@ off, no usable channel or key). It also waits while another job of the clip + pl
 and it never happens once one was published (so a repost of a clip Postiz published stays Failed for Eric). The retry
 uses the Test run switch like any new post, except that a retry of a test-run post stays a test run (the attempt's id is
 kept in that kv row and `submit` forces test mode for it), even after Test run is turned off. Doctor (`postiz.auto_retry`)
-and `djq postiz status` show pending retries. A failure already sitting Failed when this shipped qualifies too.
+and `djq postiz status` show pending retries. A failure already sitting Failed when this shipped qualifies too. Reset
+clears a post's alert, so a later failure of the same post is loud again before it retries.
+
+The quota error that started this is Postiz's shared Google project (`defaultVideoInsertPerDayPerProject`), not Eric's
+channel. It resets at midnight Pacific.
 
 **Missed slots.** A Postiz post isn't "missed" while Postiz still holds it: the overdue/shift logic applies only to
 manual posts and to Postiz posts that never got a job (they fall back to the Today screen). Retries follow the existing
