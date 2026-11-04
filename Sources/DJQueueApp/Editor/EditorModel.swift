@@ -41,16 +41,16 @@ final class EditorModel: ObservableObject {
   let snapshotMode: Bool
 
   @Published private(set) var videoId: String
-  @Published private(set) var video: Video?
+  @Published private(set) var video: Video? { didSet { resolvedCache = nil } }
   @Published private(set) var sessionName = ""
   @Published private(set) var fileURL: URL?
   @Published private(set) var fileMissing = false
   @Published private(set) var sourceSize = CGSize(width: 3840, height: 2160)
   @Published private(set) var fps = 30000.0 / 1001
   @Published var edit = Edit()
-  @Published private(set) var versions: [Version] = []
-  @Published var versionNo = 1
-  @Published private(set) var settings = Settings()
+  @Published private(set) var versions: [Version] = [] { didSet { resolvedCache = nil } }
+  @Published var versionNo = 1 { didSet { resolvedCache = nil } }
+  @Published private(set) var settings = Settings() { didSet { resolvedCache = nil } }
   @Published private(set) var sets: [HashtagSet] = []
   @Published private(set) var templates: [CaptionTemplate] = []
   @Published private(set) var posts: [PlatformPost] = []
@@ -163,6 +163,7 @@ final class EditorModel: ObservableObject {
   /// Switches to a clip. Pending edits (and a typed, uncommitted Title) are saved first; the store is read on the
   /// save queue — never on the main thread — except in snapshot mode, which renders synchronously.
   func load(_ id: String) {
+    commitCaptionDraft()
     commitTitleDraft()  // switching clips is an explicit commit point for a typed Title
     flush()  // queued before the read below on the same serial queue
     loadToken &+= 1
@@ -202,6 +203,7 @@ final class EditorModel: ObservableObject {
     video = l.video; sessionName = l.sessionName; fileURL = l.fileURL; fileMissing = l.fileMissing
     suggestions = l.suggestions; textSuggestions = l.textSuggestions; edit = l.edit; versions = l.versions; posts = l.posts; issues = l.issues
     readOnly = l.readOnly; loadError = l.error
+    fieldRevision &+= 1
     if let v = l.video, let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
     if !posting(previewPlatform) { previewPlatform = postingPlatforms.first ?? .tiktok }
     refreshOverlay()
@@ -271,9 +273,15 @@ final class EditorModel: ObservableObject {
 
   // MARK: Derived — version
 
+  /// Cached until versions, the version number, settings or the clip change (every view reads it many times per
+  /// update; round 7: typing in a long caption re-resolved it dozens of times per keystroke).
   var resolved: ResolvedVersion {
-    VersionResolver.resolve(versions.isEmpty ? [Version(number: 1)] : versions, number: versionNo, settings: settings, video: video)
+    if let r = resolvedCache { return r }
+    let r = VersionResolver.resolve(versions.isEmpty ? [Version(number: 1)] : versions, number: versionNo, settings: settings, video: video)
+    resolvedCache = r
+    return r
   }
+  private var resolvedCache: ResolvedVersion?
 
   var versionNumbers: [Int] {
     let n = versions.map(\.number)
@@ -316,10 +324,23 @@ final class EditorModel: ObservableObject {
                             templates: templates, settings: settings)
   }
 
-  /// The caption most platforms share (no per-platform caption) — what the caption field shows when empty.
+  /// The caption the field shows and edits (round 7, WYSIWYG): exactly what every platform without its own caption or
+  /// its own default template posts — the written caption, else the chosen (or default) template, hashtags included.
   var mainCaption: String {
-    let base = postingPlatforms.first { resolved.platformCaptions[$0] == nil && defaults.platformCaptionTemplates[$0] == nil }
-    return caption(for: base ?? postingPlatforms.first ?? .tiktok)
+    guard let v = video else { return "" }
+    return Captions.sharedCaption(version: resolved, video: v, sessionName: sessionName, sets: sets, templates: templates,
+                                  settings: settings)
+  }
+
+  /// True when this version (or an earlier one it carries forward) has a written caption instead of a template.
+  var captionIsWritten: Bool { !resolved.caption.isEmpty }
+
+  /// Platforms that post something else than the field: their own caption, or their own default template.
+  var platformsWithOtherCaption: [Platform] {
+    postingPlatforms.filter { p in
+      resolved.platformCaptions[p] != nil || (!captionIsWritten && resolved.captionTemplateId == nil
+        && defaults.platformCaptionTemplates[p].map { $0 != defaults.captionTemplateId } == true)
+    }
   }
 
   func captionLimit(_ p: Platform) -> Int { settings.limits[p]?.captionLimit ?? 2200 }
@@ -395,14 +416,23 @@ final class EditorModel: ObservableObject {
     return out
   }
 
-  static func section(for k: ValidationIssue.Kind) -> EditorSection {
-    switch k {
-    case .noCrop: .frame
-    case .noText: .text
-    case .noTitle: .title
-    case .tooLong: .platforms
-    default: .caption
+  /// Round 7 (C1): core's exhaustive mapping. nil = no inspector section (held → the stage control; missing file /
+  /// unreadable edit → the header says so), so a warning dot never points at a section with nothing to fix.
+  static func section(for k: ValidationIssue.Kind) -> EditorSection? {
+    switch k.editorSection {
+    case .title: .title
+    case .frame: .frame
+    case .text: .text
+    case .caption: .caption
+    case .cover: .cover
+    case .platforms: .platforms
+    case nil: nil
     }
+  }
+
+  /// Caption-kind issues that aren't a live length warning (e.g. "template doesn't exist"), shown in the Caption section.
+  var captionIssues: [ValidationIssue] {
+    liveIssues.filter { $0.kind.editorSection == .caption && $0.kind != .captionTooLong && $0.kind != .titleTooLong }
   }
 
   // MARK: Safe zones (view preference, remembered per aspect)
@@ -632,9 +662,13 @@ final class EditorModel: ObservableObject {
 
   // MARK: Mutations — version
 
-  /// `coalesce: false` for one-shot changes (a chip tap) that get their own undo step.
-  func updateVersion(coalesce: Bool = true, _ f: (inout Version) -> Void) {
+  /// `coalesce: false` for one-shot changes (a chip tap) that get their own undo step. `fromField` = typed into a
+  /// caption / YouTube title field (that field keeps its own text); every other change re-syncs those fields
+  /// (`fieldRevision`), so a template, group or reset shows up in them at once.
+  func updateVersion(coalesce: Bool = true, fromField: Bool = false, _ f: (inout Version) -> Void) {
     guard !readOnly, video != nil else { return }
+    if !fromField { commitCaptionDraft() }
+    defer { if !fromField { fieldRevision &+= 1 } }
     var all = versions
     var inserted = false
     if !all.contains(where: { $0.number == 1 }) { all.insert(Version(number: 1), at: 0); inserted = true }
@@ -666,24 +700,137 @@ final class EditorModel: ObservableObject {
     updateVersion { $0[keyPath: kp] = value == fb ? nil : value }
   }
 
-  /// Hashtag sets: same rule, compared as a set (order follows the Settings list).
+  /// Hashtag groups: same rule, compared as a set (order follows the Settings list). A written caption gets the
+  /// hashtags swapped in place (round 7, `Captions.retag`); a template caption follows by itself.
   func setHashtagSets(_ ids: [String]) {
     let fb = fallback(\.hashtagSetIds, \.hashtagSetIds)
-    updateVersion { $0.hashtagSetIds = Set(ids) == Set(fb) ? nil : ids }
+    retagging(coalesce: false) { $0.hashtagSetIds = Set(ids) == Set(fb) ? nil : ids }
   }
 
   func setExtraHashtags(_ tags: [String]) {
     let fb = fallback(\.extraHashtags, \.extraHashtags)
-    updateVersion { $0.extraHashtags = tags == fb ? nil : tags }
+    retagging(coalesce: true) { $0.extraHashtags = tags == fb ? nil : tags }
   }
 
-  /// Caption template: picking the default template (or "Default") follows the default.
+  private func retagging(coalesce: Bool, _ f: (inout Version) -> Void) {
+    commitCaptionDraft()
+    let before = resolved
+    updateVersion(coalesce: coalesce) { v in
+      f(&v)
+      var vs = versions.isEmpty ? [Version(number: 1)] : versions
+      if let i = vs.firstIndex(where: { $0.number == versionNo }) { vs[i] = v } else { vs.append(v) }
+      let after = VersionResolver.resolve(vs, number: versionNo, settings: settings, video: video)
+      Captions.retag(&v, before: before, after: after, sets: sets)
+    }
+  }
+
+  /// Caption template (round 7): choosing one rewrites the caption from it — a written caption is replaced (one undo
+  /// step, ⌘Z brings it back), so Eric can try templates back to back. Picking the default template follows the default.
   func setCaptionTemplate(_ id: String?) {
+    commitCaptionDraft()
     var vs = versions.isEmpty ? [Version(number: 1)] : versions
-    if let i = vs.firstIndex(where: { $0.number == versionNo }) { vs[i].captionTemplateId = nil }
+    if let i = vs.firstIndex(where: { $0.number == versionNo }) { vs[i].captionTemplateId = nil; vs[i].caption = nil }
     let fb = VersionResolver.resolve(vs, number: versionNo, settings: settings, video: video).captionTemplateId
     let value = id.flatMap { $0.isEmpty ? nil : $0 }
-    updateVersion { $0.captionTemplateId = value == fb || (fb == nil && value == defaults.captionTemplateId) ? nil : value }
+    let hadWritten = captionIsWritten
+    updateVersion(coalesce: false) { v in
+      v.captionTemplateId = value == fb || (fb == nil && value == defaults.captionTemplateId) ? nil : value
+      v.caption = nil
+    }
+    if hadWritten { show("Caption rewritten from the template — ⌘Z brings your text back") }
+  }
+
+  // MARK: Caption field (round 7): what you type is what posts
+
+  /// Bumped by every change that isn't typing in the caption / YouTube title fields, so they re-read the model.
+  @Published private(set) var fieldRevision = 0
+  /// Typed caption text not applied yet (applied 250 ms after the last keystroke, and before anything else changes).
+  private var captionDraft: (platform: Platform?, text: String)?
+  private var captionDraftTask: Task<Void, Never>?
+
+  /// Typing in the caption field (or a platform's own caption when `platform` is set). Cheap per keystroke: the model
+  /// (and everything that observes it) updates once typing pauses.
+  func typeCaption(_ text: String, platform: Platform? = nil) {
+    if let d = captionDraft, d.platform != platform { commitCaptionDraft() }
+    captionDraft = (platform, text)
+    saving = true
+    captionDraftTask?.cancel()
+    captionDraftTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: 250_000_000)
+      guard !Task.isCancelled else { return }
+      self?.commitCaptionDraft()
+    }
+  }
+
+  /// Applies a typed caption now. Text equal to the template's output stays "follows the template"; anything else is
+  /// this version's written caption (Custom), taken literally.
+  func commitCaptionDraft() {
+    captionDraftTask?.cancel()
+    captionDraftTask = nil
+    guard let d = captionDraft else { return }
+    captionDraft = nil
+    defer { if !pendingEdit && pendingVersions.isEmpty { saving = false } }
+    if let p = d.platform {
+      var m = resolved.platformCaptions
+      m[p] = d.text
+      updateVersion(fromField: true) { $0.platformCaptions = m.isEmpty ? nil : m }
+      return
+    }
+    guard d.text != mainCaption else { saving = pendingEdit || !pendingVersions.isEmpty; return }
+    let r = resolved
+    let templateText = video.map {
+      Captions.templateCaption(r.captionTemplateId, version: r, video: $0, sessionName: sessionName, sets: sets,
+                               templates: templates, settings: settings)
+    }
+    let blank = d.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    updateVersion(fromField: true) { v in
+      if blank || d.text == templateText {
+        v.caption = nil
+      } else {
+        v.caption = d.text
+      }
+    }
+  }
+
+  /// "↺ Use the template": drops the written caption (this version's, or an override of an inherited one).
+  func resetCaptionToTemplate() {
+    commitCaptionDraft()
+    updateVersion(coalesce: false) { $0.caption = nil }
+  }
+
+  /// A written caption carried forward from an earlier version: this version can't switch back to a template (a
+  /// version only adds to the one before it), so the picker says why.
+  var captionInheritedFrom: Int? { captionIsWritten && !ownsField(["caption"]) ? source(of: "caption") : nil }
+
+  // MARK: YouTube title (round 7): pick a template, then edit the real title
+
+  var youtubeTitleTemplates: [TitleTemplate] { settings.youtubeTitleTemplates }
+
+  /// What template `id` (nil = the default) makes for this clip.
+  func youtubeTitle(template id: String?) -> String {
+    guard let v = video else { return "" }
+    return Captions.youtubeTitle(fromTemplate: settings.youtubeTitleTemplate(id: id), version: resolved, video: v,
+                                 limit: settings.limits[.youtube]?.titleLimit ?? 100)
+  }
+
+  /// Typing in the YouTube title field: text equal to the template's title follows the template; anything else is
+  /// typed (Custom). An empty field goes back to the template.
+  func typeYouTubeTitle(_ t: String) {
+    let tpl = youtubeTitle(template: resolved.youtubeTitleTemplateId)
+    updateVersion(fromField: true) { v in
+      v.youtubeTitle = t.trimmingCharacters(in: .whitespaces).isEmpty || t == tpl ? nil : t
+    }
+  }
+
+  /// Choosing a template rewrites the title from it (a typed title is replaced; ⌘Z brings it back).
+  func setYouTubeTitleTemplate(_ id: String?) {
+    let value = id.flatMap { $0.isEmpty ? nil : $0 }
+    let hadTyped = !resolved.youtubeTitle.isEmpty
+    updateVersion(coalesce: false) { v in
+      v.youtubeTitleTemplateId = value == nil || value == defaults.youtubeTitleTemplateId ? nil : value
+      v.youtubeTitle = nil
+    }
+    if hadTyped { show("YouTube title rewritten from the template — ⌘Z brings your title back") }
   }
 
   /// Typed overlay text. An empty field is an explicit "empty" (it must not snap back to the Title); "Follow the
@@ -722,6 +869,7 @@ final class EditorModel: ObservableObject {
         case "hashtagSetIds": v.hashtagSetIds = nil
         case "extraHashtags": v.extraHashtags = nil
         case "youtubeTitle": v.youtubeTitle = nil
+        case "youtubeTitleTemplateId": v.youtubeTitleTemplateId = nil
         case "platformCaptions": v.platformCaptions = nil
         default: break
         }
@@ -746,6 +894,7 @@ final class EditorModel: ObservableObject {
       case "hashtagSetIds": v.hashtagSetIds != nil
       case "extraHashtags": v.extraHashtags != nil
       case "youtubeTitle": v.youtubeTitle != nil
+      case "youtubeTitleTemplateId": v.youtubeTitleTemplateId != nil
       case "platformCaptions": v.platformCaptions != nil
       default: false
       }
@@ -776,6 +925,7 @@ final class EditorModel: ObservableObject {
 
   func newVersion(copying source: Int?) {
     guard !readOnly else { return }
+    commitCaptionDraft()
     flush()
     markUndo(coalesce: false)
     let n = (versions.map(\.number).max() ?? 1) + 1
@@ -793,6 +943,7 @@ final class EditorModel: ObservableObject {
       if !r.isDefault("extraHashtags") { v.extraHashtags = r.extraHashtags }
       if !r.isDefault("hashtagSetIds") { v.hashtagSetIds = r.hashtagSetIds }
       if !r.youtubeTitle.isEmpty { v.youtubeTitle = r.youtubeTitle }
+      v.youtubeTitleTemplateId = r.youtubeTitleTemplateId
       if !r.platformCaptions.isEmpty { v.platformCaptions = r.platformCaptions }
     }
     if !versions.contains(where: { $0.number == 1 }) { versions.insert(Version(number: 1), at: 0); pendingVersions.insert(1) }
@@ -818,7 +969,9 @@ final class EditorModel: ObservableObject {
   }
 
   func selectVersion(_ n: Int) {
+    commitCaptionDraft()
     versionNo = n
+    fieldRevision &+= 1
     refreshOverlay()
   }
 
@@ -869,6 +1022,7 @@ final class EditorModel: ObservableObject {
   }
 
   func undo() {
+    commitCaptionDraft()
     guard !readOnly, let s = undoStack.popLast() else { show("Nothing to undo in this clip"); return }
     redoStack.append(undoState)
     restoreUndo(s)
@@ -876,6 +1030,7 @@ final class EditorModel: ObservableObject {
   }
 
   func redo() {
+    commitCaptionDraft()
     guard !readOnly, let s = redoStack.popLast() else { show("Nothing to redo"); return }
     undoStack.append(undoState)
     restoreUndo(s)
@@ -905,6 +1060,7 @@ final class EditorModel: ObservableObject {
     }
     if s.title != video?.title || s.titleTracks != video?.titleTracks { setTitle(s.title, tracks: s.titleTracks, source: s.titleSource ?? "app") }
     if let k = s.kind, k != video?.kind { setKind(k) }
+    fieldRevision &+= 1
     scheduleSave()
     refreshOverlay()
   }
@@ -923,6 +1079,7 @@ final class EditorModel: ObservableObject {
 
   /// Writes pending changes now (still off the main thread) — used before switching videos and on Done.
   func flush() {
+    commitCaptionDraft()
     saveTask?.cancel()
     guard pendingEdit || !pendingVersions.isEmpty, let video else { saving = false; return }
     let store = store, id = videoId, e = pendingEdit ? edit : nil
@@ -959,7 +1116,17 @@ final class EditorModel: ObservableObject {
 
   // MARK: Text overlay (TextOverlay PNG drawn over the player — preview == export)
 
-  private struct OverlayKey: Hashable { var v: ResolvedVersion; var a: Aspect }
+  /// Only what the text overlay draws (round 7: the whole resolved version was the key, so every caption keystroke
+  /// re-rendered the overlay PNG).
+  private struct OverlayKey: Hashable {
+    var v: ResolvedVersion; var a: Aspect
+    static func == (l: Self, r: Self) -> Bool { l.a == r.a && Self.drawn(l.v) == Self.drawn(r.v) }
+    func hash(into h: inout Hasher) { h.combine(a); h.combine(Self.drawn(v)) }
+    static func drawn(_ v: ResolvedVersion) -> [String] {
+      [v.text, "\(v.noText)", v.style.rawValue, "\(v.size)", "\(v.posX)", "\(v.posY)", v.align.rawValue,
+       "\(v.textStart ?? -1)", "\(v.textEnd ?? -1)"]
+    }
+  }
 
   func refreshOverlay() {
     let key = OverlayKey(v: resolved, a: aspect)

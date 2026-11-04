@@ -55,7 +55,7 @@ struct EditorInspector: View {
   }
 
   /// Sections that hold a validation problem get a small warning dot in the index.
-  private var flagged: Set<EditorSection> { Set(model.liveIssues.map { EditorModel.section(for: $0.kind) }) }
+  private var flagged: Set<EditorSection> { Set(model.liveIssues.compactMap { EditorModel.section(for: $0.kind) }) }
 }
 
 /// Compact text index (caption size, so all six fit in 340 pt). Selected = soft grey capsule; a warning dot marks

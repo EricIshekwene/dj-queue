@@ -262,15 +262,33 @@ struct EditorHeader: View {
       // Round 4 S1: no "Ready" label — stage is readiness; the stage control beside it names where the clip goes.
       DSBadge("Nothing to fix", style: .soft(.success), icon: "checkmark").dsTooltip("Nothing missing; it can go to the Queue")
     } else {
+      // Round 7 (C1): jump to the first issue that has a section; a held clip is fixed with the stage control beside the
+      // chip ("Send to Queue"), so the chip says that instead of pointing at an inspector section.
+      let target = issues.first { EditorModel.section(for: $0.kind) != nil }
+      let held = issues.first { $0.kind == .heldInEdit }
       Button {
-        if let first = issues.first { model.scrollTarget = EditorModel.section(for: first.kind) }
+        if let t = target, let s = EditorModel.section(for: t.kind) { model.scrollTarget = s }
+        else if let h = held { model.show(h.message) }
+        else if let first = issues.first { model.show(first.message) }
       } label: {
         DSBadge("\(issues.count) to fix", style: .soft(.warning), icon: "exclamationmark.circle.fill")  // tooltip-on-parent
       }
       .buttonStyle(EditorPressStyle())
-      .dsTooltip(issues.count == 1 ? "Jump to: \(issues[0].message)"
-                 : "Jump to the first of \(issues.count): \(issues[0].message)")
+      .dsTooltip(chipHelp(issues, target: target, held: held))
     }
+  }
+}
+
+extension EditorHeader {
+  /// "Jump to: …" for the first issue with a section; held / missing / unreadable say what to do instead.
+  func chipHelp(_ issues: [ValidationIssue], target: ValidationIssue?, held: ValidationIssue?) -> String {
+    var parts: [String] = []
+    if let t = target {
+      parts.append(issues.count == 1 ? "Jump to: \(t.message)" : "Jump to the first of \(issues.count): \(t.message)")
+    }
+    if held != nil { parts.append("Sent back from the Queue: use Send to Queue (next to this) when it's done") }
+    for i in issues where EditorModel.section(for: i.kind) == nil && i.kind != .heldInEdit { parts.append(i.message) }
+    return parts.joined(separator: " · ")
   }
 }
 
