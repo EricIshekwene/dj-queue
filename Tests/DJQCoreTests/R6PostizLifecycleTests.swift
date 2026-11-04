@@ -616,7 +616,7 @@ import Testing
     rig.f.clock.advance(PostizService.staleCreate + 1)
     rig.tick(3)
     let j = try #require(try rig.store.openPostizJobs().first)
-    #expect(j.phase == .unknown && rig.fake.createCount == 1)  // stopped, loud, not re-created
+    #expect(j.isUnconfirmed && rig.fake.createCount == 1)  // stopped, loud, not re-created
     #expect(rig.notifier.delivered.contains { $0.key.hasPrefix("postiz.unknown:") && $0.critical })
     rig.f.clock.advance(3600)
     rig.tick(3)
@@ -842,6 +842,37 @@ import Testing
     _ = t
   }
 
+  @Test func inboxPostsNeverGoOverdueAndDisplayStatesMatchTheEngine() throws {
+    let rig = try Rig(1, platforms: [.tiktok, .x]) { $0.publishing.testMode = true }
+    rig.settle()
+    let tt = try #require(try rig.f.post(.tiktok, day: "2026-11-02"))
+    let x = try #require(try rig.f.post(.x, day: "2026-11-02"))
+    #expect(try rig.service.displayState(for: x) == .draft)
+    if case .scheduled = try rig.service.displayState(for: tt) {} else { Issue.record("TikTok not scheduled") }
+    rig.f.setTime("2026-11-02", "19:10")
+    rig.fake.publishDue(now: rig.f.clock.now)
+    rig.tick()
+    let ttNow = try #require(try rig.store.post(id: tt.id))
+    #expect(try rig.service.displayState(for: ttNow) == .inbox)
+    rig.f.setTime("2026-11-04", "09:00")  // two days later, still in the inbox
+    rig.tick(2)
+    let p = try #require(try rig.store.post(id: tt.id))
+    let problems = try PostActions(store: rig.store).problems()
+    #expect(p.state != .overdue && problems.allSatisfy { $0.id != tt.id })
+    #expect(rig.notifier.delivered.filter { $0.key.hasPrefix("overdue:\(tt.id)") }.isEmpty)
+    // Manual platform: nil; an unconfirmed create reads "Check Postiz".
+    let ig = try #require(try rig.f.post(.instagram, day: "2026-11-02"))
+    #expect(try rig.service.displayState(for: ig) == nil)
+    var j = PostizJob(postId: "p", videoId: "v", platform: .x, integrationId: "c", renderId: "r", contentHash: "h",
+                      scheduledAt: rig.f.clock.now, remoteDate: rig.f.clock.now, testMode: false, postType: "schedule",
+                      createdAt: rig.f.clock.now, updatedAt: rig.f.clock.now)
+    j.remoteState = PostizJob.unconfirmed
+    #expect(PostizDisplayState.of(post: x, job: j, route: .manual, now: rig.f.clock.now) == .unconfirmed)
+    #expect(PostizDisplayState.of(post: ig, job: nil, route: .postiz(integrationId: "c", provider: "x"), handedToToday: true,
+                                  now: rig.f.clock.now)?.text == "Fell back to manual")
+    #expect(PostizChannelCache(fetchedAt: rig.f.clock.now, integrations: []).integrations.isEmpty)
+  }
+
   // MARK: Fuzz
 
   /// Random planner ops on two engines sharing one database, with failing deletes, refused/garbage/timed-out creates
@@ -926,7 +957,7 @@ import Testing
     engine2.tick(reason: "t")
     #expect(try rig.invariants().isEmpty)
     #expect(try rig.settingsRespected().isEmpty)
-    #expect(try rig.store.openPostizJobs().allSatisfy { $0.phase == .live || $0.phase == .unknown }, "seed \(seed)")
+    #expect(try rig.store.openPostizJobs().allSatisfy { $0.phase == .live || $0.isUnconfirmed }, "seed \(seed)")
     #expect(try rig.f.doublePosts().isEmpty)
     #expect(rig.fake.deleteCount > 5 && rig.fake.createCount > 20, "seed \(seed): \(rig.fake.deleteCount) deletes")
   }

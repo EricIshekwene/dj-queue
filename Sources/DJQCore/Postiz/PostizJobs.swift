@@ -8,10 +8,6 @@ public enum PostizJobPhase: String, Codable, Sendable {
   case live
   /// DJ Queue wants it gone; the DELETE hasn't succeeded yet. Nothing is created for the post meanwhile.
   case deleting
-  /// The create was sent but its outcome is unknown and Postiz didn't show it after a sync. Never re-created blindly:
-  /// it blocks its clip + platform until it is found in Postiz (adopted) or Eric confirms it isn't there
-  /// (`PostizService.resolveUnknown`). Loud notice + Doctor `postiz.create_unknown`.
-  case unknown
   case closed
 }
 
@@ -94,6 +90,12 @@ public struct PostizJob: Codable, Sendable, Hashable, Identifiable {
   public var lineage: String = ""
 
   public var isOpen: Bool { closedAt == nil }
+
+  /// `remoteState` of a `creating` job whose create was sent but never confirmed and that Postiz didn't show after a
+  /// sync. Never re-created blindly: it blocks its clip + platform until found in Postiz (adopted) or Eric confirms it
+  /// isn't there (`PostizService.resolveUnknown`). Loud notice; Doctor should report it (`postiz.create_unknown`).
+  public static let unconfirmed = "UNCONFIRMED"
+  public var isUnconfirmed: Bool { isOpen && phase == .creating && remoteState == Self.unconfirmed }
 
   /// "video#platform#main" for regular posts and retries (one live post per clip and platform, ever), and
   /// "video#platform#v<N>" for a repost of version N.

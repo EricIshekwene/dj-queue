@@ -232,7 +232,7 @@ app doesn't trigger a Keychain prompt on every update. Agents keep using the Pos
   a post with an open job is never overdue or shifted. Everything else is exactly as before (Today).
 - **A create whose outcome is unknown** (5xx, timeout, an unreadable 2xx, a database error while recording it): the
   claim stays and blocks the lineage. The sync step adopts the one Postiz post with the same channel and date
-  (±60 s; past slots go out rounded up to a whole minute). Not found → phase `unknown`: a critical notice, Doctor
+  (±60 s; past slots go out rounded up to a whole minute). Not found → unconfirmed (`isUnconfirmed`): a critical notice, Doctor
   `postiz.create_unknown`, and nothing is sent again until `PostizService.resolveUnknown` (`djq postiz resolve`)
   confirms it isn't in Postiz. Only a definite refusal (400/413 → Today, 401/429) closes a sent create. A claim whose
   create was never sent (crash before it) is released after 10 min.

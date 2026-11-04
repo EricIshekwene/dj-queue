@@ -135,6 +135,26 @@ public final class PostizService: @unchecked Sendable {
     return try store.finalPostizJob(postId: p.id) == nil && !handedToToday(p)
   }
 
+  /// A test-run TikTok post Postiz delivered to the TikTok inbox and Eric hasn't marked posted yet.
+  public func isInTikTokInbox(_ p: PlatformPost) throws -> Bool {
+    guard !p.state.isTerminal else { return false }
+    return try store.postizJobs(postId: p.id).last?.closeReason == .inbox
+  }
+
+  /// What Postiz is doing with a post, for every screen (nil = a manual post, shown as before). Reads the post's
+  /// newest job, an earlier copy of the same clip + platform that Postiz still holds, the route and whether the post
+  /// was already handed to Today — the same facts the engine acts on.
+  public func displayState(for p: PlatformPost, router: PostizRouter? = nil) throws -> PostizDisplayState? {
+    let r = try router ?? self.router()
+    var job = try store.postizJobs(postId: p.id).last { $0.kind == "post" }
+    if job == nil || job?.isOpen == false, !p.state.isTerminal,
+       let earlier = try store.openPostizJobs(lineage: PostizJob.lineage(p)).first {
+      job = earlier  // re-planned: Postiz still holds the earlier copy
+    }
+    let route = Self.settingsAllow(p.platform, r.settings) ? r.route(p.platform) : .manual
+    return PostizDisplayState.of(post: p, job: job, route: route, handedToToday: try handedToToday(p), now: now)
+  }
+
   /// nil when calls can be made; otherwise why not (no key / key refused). Asks the Keychain only for presence.
   func keyProblem() throws -> PostizFallbackReason? {
     if try store.postizKeyInvalid() != nil { return .keyInvalid }
@@ -490,7 +510,7 @@ public final class PostizService: @unchecked Sendable {
   /// adopted, still absent → the claim is released and the post may be sent again.
   @discardableResult
   public func resolveUnknown(postId: String) throws -> String {
-    guard let j = try store.livePostizJob(postId: postId), j.phase == .unknown || j.phase == .creating else {
+    guard let j = try store.livePostizJob(postId: postId), j.phase == .creating else {
       throw EngineError("No unconfirmed Postiz create for \(postId)")
     }
     let settings = try store.settings()
@@ -517,7 +537,7 @@ public final class PostizService: @unchecked Sendable {
   /// unconfirmed; otherwise 60.
   func syncInterval(_ jobs: [PostizJob]) -> TimeInterval {
     let hot = jobs.contains { j in
-      j.phase == .creating || j.phase == .unknown || j.phase == .deleting || j.remoteDate <= now
+      j.phase == .creating || j.phase == .deleting || j.remoteDate <= now
         || abs(j.remoteDate.timeIntervalSince(now)) <= 6 * 3600
     }
     return hot ? 600 : 3600
@@ -612,7 +632,7 @@ public final class PostizService: @unchecked Sendable {
     for var j in jobs {
       guard let current = try store.postizJob(id: j.id), current.isOpen else { continue }  // another process moved on
       j = current
-      if j.postizId == nil && (j.phase == .creating || j.phase == .unknown) {
+      if j.postizId == nil && j.phase == .creating {
         if j.submittedAt == nil {
           // Claimed but the create was never sent (crash before it): free to try again.
           if now.timeIntervalSince(j.updatedAt) >= Self.staleCreate {
@@ -622,8 +642,8 @@ public final class PostizService: @unchecked Sendable {
           continue
         }
         if try adopt(j, remote, &claimed) { n["found", default: 0] += 1; continue }
-        if j.phase == .creating, now.timeIntervalSince(j.submittedAt!) >= 120 {
-          j.phase = .unknown
+        if !j.isUnconfirmed, now.timeIntervalSince(j.submittedAt!) >= 120 {
+          j.remoteState = PostizJob.unconfirmed
           try store.save(j)
           let tag = try j.videoId.flatMap { try store.video(id: $0)?.tag } ?? ""
           try store.logEvent("postiz", "\(j.platform.displayName): Postiz never confirmed a create and it isn't in Postiz — nothing is sent again until it's checked (`djq postiz resolve`)",
@@ -1044,5 +1064,92 @@ public enum PostizAnalytics {
   public static func isUnknownShape(_ d: Data) -> Bool {
     if let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any], o["missing"] as? Bool == true { return false }
     return parse(d) == nil
+  }
+}
+
+/// A post's Postiz status for display (`PostizService.displayState(for:)`), matching DECISIONS-R6 UI #10.
+public enum PostizDisplayState: Equatable, Sendable {
+  /// Routed to Postiz; sent once its render exists.
+  case queued
+  /// The create is in flight, or a replace is waiting for its delete.
+  case sending
+  /// Sent, but Postiz never confirmed it and it isn't in the Postiz list: check Postiz (`resolveUnknown`).
+  case unconfirmed
+  case scheduled(Date)
+  /// Postiz still holds it after its time: it's going out now.
+  case posting
+  /// Test run: a Postiz draft until released.
+  case draft
+  case posted(url: String?)
+  /// Test-run TikTok: in the TikTok app's inbox; finish it there, then Mark posted.
+  case inbox
+  case failed(String)
+  case copyright(String)
+  /// Set to Postiz but back on Today (the sentence says why).
+  case fellBack(String)
+
+  public var text: String {
+    switch self {
+    case .queued: "To Postiz"
+    case .sending: "Sending to Postiz"
+    case .unconfirmed: "Check Postiz"
+    case .scheduled: "Scheduled in Postiz"
+    case .posting: "Posting…"
+    case .draft: "Draft in Postiz"
+    case .posted: "Posted"
+    case .inbox: "In TikTok inbox"
+    case .failed: "Failed"
+    case .copyright: "© Blocked"
+    case .fellBack: "Fell back to manual"
+    }
+  }
+
+  /// Postiz holds it: nothing for Eric to do (no task on Today, no "due" count).
+  public var isHeld: Bool {
+    switch self {
+    case .queued, .sending, .unconfirmed, .scheduled, .posting, .draft: true
+    default: false
+    }
+  }
+
+  /// Pure: from the post's newest job (or an earlier copy Postiz holds), the platform's route and whether the post was
+  /// already handed to Today.
+  public static func of(post p: PlatformPost, job: PostizJob?, route: PublishRoute, handedToToday: Bool = false,
+                        now: Date) -> PostizDisplayState? {
+    if let j = job, j.kind == "post" {
+      if j.isOpen {
+        if j.isUnconfirmed { return .unconfirmed }
+        switch j.phase {
+        case .creating, .deleting: return .sending
+        case .live:
+          if j.remoteState == "DRAFT" { return .draft }
+          return j.remoteDate <= now ? .posting : .scheduled(j.remoteDate)
+        case .closed: break
+        }
+      } else if let r = j.closeReason {
+        switch r {
+        case .published: return .posted(url: p.url ?? j.releaseURL)
+        case .inbox: return p.state == .posted ? .posted(url: p.url) : .inbox
+        case .error where p.state == .failed:
+          return .failed(j.remoteError ?? j.lastError ?? p.errorMessage ?? "Postiz reported an error (no details)")
+        case .copyright where [.copyrightBlocked, .copyrightMuted, .removed].contains(p.state):
+          return .copyright(j.remoteError ?? j.lastError ?? p.errorMessage ?? "Copyright problem")
+        case .rejected where !p.state.isTerminal && p.publisher == "manual":
+          return .fellBack(PostizFallbackReason.createRejected(j.lastError ?? "no details").message)
+        case .vanished where !p.state.isTerminal && p.publisher == "manual":
+          return .fellBack(PostizFallbackReason.vanished.message)
+        case .testDraft: return nil
+        case .error, .copyright, .rejected, .vanished, .replaced, .cancelled, .interrupted: break  // decided by the route
+        }
+      }
+    }
+    guard !p.state.isTerminal, p.resolution == nil else { return nil }
+    switch route {
+    case .manual: return nil
+    case .postiz:
+      if handedToToday { return .fellBack("It was already on Today when Postiz came back — post it by hand") }
+      return p.state == .planned || p.state == .rendering ? .queued : .sending
+    case .fallback(let r): return .fellBack(r.message)
+    }
   }
 }

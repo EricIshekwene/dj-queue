@@ -304,6 +304,8 @@ public final class Engine: @unchecked Sendable {
               !settings.pausedPlatforms.contains(p.platform), isOverdue(p, now: now, settings: settings, dm: dm) else { return }
         // Postiz holds it (posts with the Mac off): never overdue, nothing shifts. Without a job it is a manual post.
         if try postiz?.holds(p) == true { return }
+        // Test-run TikTok waiting in the TikTok inbox: Eric finishes it there — never "missed".
+        if try postiz?.isInTikTokInbox(p) == true { return }
         let again = try store.history(postId: p.id).contains { $0.toState == PostState.overdue.rawValue }
         let days = max(1, dm.days(from: dm.key(p.scheduledAt), to: today))
         p.state = .overdue
