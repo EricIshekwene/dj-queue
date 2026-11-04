@@ -77,11 +77,16 @@ import Testing
       if v.id == "clip-2" { throw MediaError("boom") }
       return URL(fileURLWithPath: "/tmp/\(v.id).mp4")
     }
+    // Hold background work until the tick has queued all five, so the order (clips to score first) doesn't race the
+    // worker picking up the first request while the rest are still being queued (seen under load in the gate, v0.7.1).
+    let hold = Locked(true)
+    ps.shouldPause = { hold.value }
     e.proxyService = ps
     let t0 = Date()
     let r = e.tick(reason: "t")
     #expect(Date().timeIntervalSince(t0) < 5)
     #expect(r.steps["proxies"]?.hasPrefix("queued 5") == true && r.errors.isEmpty)
+    hold.mutate { $0 = false }
     for _ in 0..<5 { gate.signal() }
     // Wait for the work itself, with room for a loaded machine (the auto-update gate runs the suite in parallel).
     let deadline = Date().addingTimeInterval(30)
