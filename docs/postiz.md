@@ -170,15 +170,30 @@ while a job is within six hours of its slot or waiting for a result, otherwise h
 | `DRAFT` | test mode: "Draft in Postiz" (release from DJ Queue or the Postiz calendar) |
 | `PUBLISHED` + `releaseURL` | `posted`, `url` = `releaseURL`, `externalId` = `releaseId`, `postedAt` = `publishDate` |
 | `PUBLISHED`, `releaseId` = `missing` | `posted` without a link; Doctor `postiz.link_missing` (fix: `djq postiz link`) |
-| `ERROR` + `error` | `failed` with the error; text mentioning copyright / rights / music / audio claims → `copyright_blocked` (loud, never auto-retried); the existing "fixed → re-queue next day" rules apply |
+| `ERROR` + `error` | `failed` with the error; text mentioning copyright / rights / music / audio claims → `copyright_blocked` (loud, never auto-retried); a clearly temporary error retries by itself (below); otherwise the existing "fixed → re-queue next day" rules apply |
 | missing from the list (deleted in Postiz) | the job is closed and the post falls back to Manual (Today) with a loud note |
 
 `error` is curated by Postiz (the platform's message when it is a known "bad body" error, otherwise null); null on
 `ERROR` reads "Postiz reported an error (no details)".
 
+**Temporary failures retry by themselves** (`PostizRetry.swift`, DECISIONS-R8.md). An `ERROR` is temporary only on clear
+wording: quota, rate limit / too many requests, "try again later", "reschedule this post for a later time", temporarily
+unavailable. Everything else stays a normal failure, and copyright wins over temporary, always. A temporary failure still
+reads Failed and still gets its alert, with the message plus "retries tomorrow automatically". A tick step `retry` (right
+after `alerts`, and only once the post's alert went out) re-queues it through `PostActions.fixed`: next day, the usual
+stagger, a new attempt the publish step submits. At most 2 automatic retries per clip + platform + version (kv
+`postiz.autoRetry.<clip>#<platform>#v<N>`); after that it stays Failed for Eric, and the message says so. No retry for
+copyright (on this post or any job of the clip + platform), a skipped or removed post, or a platform skipped in the
+editor. It waits, and stays Failed, while the clip is held in Edit or the platform isn't routed to Postiz (Manual, paused,
+off, no usable channel or key). It also waits while another job of the clip + platform is open or another post is live,
+and it never happens once one was published (so a repost of a clip Postiz published stays Failed for Eric). The retry
+uses the Test run switch like any new post, except that a retry of a test-run post stays a test run (the attempt's id is
+kept in that kv row and `submit` forces test mode for it), even after Test run is turned off. Doctor (`postiz.auto_retry`)
+and `djq postiz status` show pending retries. A failure already sitting Failed when this shipped qualifies too.
+
 **Missed slots.** A Postiz post isn't "missed" while Postiz still holds it: the overdue/shift logic applies only to
 manual posts and to Postiz posts that never got a job (they fall back to the Today screen). Retries follow the existing
-rules: `fixed` makes a new attempt the next day, which the publish step submits again.
+rules: `fixed`, by hand or from the `retry` step, makes a new attempt the next day, which the publish step submits again.
 
 **Fallback.** Per platform: no key, an invalid key, no mapped channel, a disabled channel or a create that fails
 validation → that platform's post goes to Today exactly as today, with the reason. Manual never goes away.
@@ -222,7 +237,7 @@ app doesn't trigger a Keychain prompt on every update. Agents keep using the Pos
   its jobs is open (not confirmed deleted, or unconfirmed) or once one was published (a later post of that lineage is
   then recorded as posted with that link). The check runs inside the claim's `BEGIN IMMEDIATE`, so two engines can't
   both pass.
-- **Tick**: `… render → publish → sync → …`. *publish* first deletes open jobs that must go (post removed or
+- **Tick**: `… alerts → retry → render → publish → sync → …`. *publish* first deletes open jobs that must go (post removed or
   re-planned, terminal or marked posted by hand, moved, edited, render changed, platform off/paused, Manual, global
   pause, channel changed), then creates for every Postiz-routed post with its render attached within the render
   horizon, soonest first. The same "settings allow Postiz" check decides both (no delete/create churn).

@@ -10,7 +10,8 @@ import Foundation
 /// - a replaced or cancelled job is deleted in Postiz first — nothing new is created for that post until the DELETE
 ///   returned OK or 404 (the open job blocks it);
 /// - a job Postiz reports PUBLISHED is never deleted or sent again;
-/// - an ERROR mentioning copyright is `copyright_blocked` and never retried by itself.
+/// - an ERROR mentioning copyright is `copyright_blocked` and never retried by itself; one that clearly says "not
+///   now" (a quota, a rate limit) retries by itself (`PostizRetry.swift`).
 public final class PostizService: @unchecked Sendable {
   public let store: Store
   public let keyStore: PostizKeyStore
@@ -479,6 +480,8 @@ public final class PostizService: @unchecked Sendable {
   /// unreadable 2xx, a database error while recording it) keeps the claim for the sync step to find in Postiz — it is
   /// never created again blindly.
   func submit(_ p: PlatformPost, integrationId: String, provider: String, settings: Settings) throws -> SubmitOutcome {
+    var settings = settings
+    if try mustStayTestRun(p) { settings.publishing.testMode = true }  // an automatic retry of a test run never goes public
     let spec: PostizPostSpec
     do {
       spec = try PostizPayload.spec(store: store, post: p, settings: settings, integrationId: integrationId, provider: provider)
@@ -924,7 +927,7 @@ public final class PostizService: @unchecked Sendable {
     let copyright = Self.isCopyright(msg)
     if let p = try store.post(id: j.postId), !p.state.isTerminal {
       try PostActions(store: store).reportProblem(postId: p.id, type: copyright ? .copyrightBlocked : .uploadFailed,
-                                                  message: msg, raw: "postiz:\(r.id)")
+                                                  message: msg + (try retryNote(msg, p)), raw: "postiz:\(r.id)")
     }
     try store.closePostizJob(id: j.id, reason: copyright ? .copyright : .error, note: msg)
     try store.logEvent("postiz", "\(j.platform.displayName) failed in Postiz: \(msg)", videoId: j.videoId, postId: j.postId)
@@ -1025,7 +1028,7 @@ public final class PostizService: @unchecked Sendable {
       budgetUsed: budget.used(now: now), budgetLimit: settings.publishing.hourlyBudget,
       pausedUntil: budget.isPaused(now: now) ? budget.pausedUntil : nil, openJobs: open.count,
       stuck: try stuckJobs().map(\.id), linkMissing: try linkMissingPosts().map(\.id),
-      lastSync: try store.kv(Self.syncKey), channelsFetchedAt: cache?.fetchedAt)
+      autoRetries: try pendingAutoRetries().map(\.post.id), lastSync: try store.kv(Self.syncKey), channelsFetchedAt: cache?.fetchedAt)
   }
 
   /// Open jobs Postiz still holds as QUEUE more than an hour after their slot.
@@ -1199,6 +1202,8 @@ public struct PostizStatus: Codable, Sendable {
   public var openJobs: Int
   public var stuck: [String]
   public var linkMissing: [String]
+  /// Posts with an automatic retry still to come (the attempt, or the failure about to be re-queued).
+  public var autoRetries: [String]
   public var lastSync: Date?
   public var channelsFetchedAt: Date?
 }
@@ -1301,7 +1306,7 @@ public enum PostizDisplayState: Equatable, Sendable {
         case .published: return .posted(url: p.url ?? j.releaseURL)
         case .inbox: return p.state == .posted ? .posted(url: p.url) : .inbox
         case .error where p.state == .failed:
-          return .failed(j.remoteError ?? j.lastError ?? p.errorMessage ?? "Postiz reported an error (no details)")
+          return .failed(p.errorMessage ?? j.remoteError ?? j.lastError ?? "Postiz reported an error (no details)")
         case .copyright where [.copyrightBlocked, .copyrightMuted, .removed].contains(p.state):
           return .copyright(j.remoteError ?? j.lastError ?? p.errorMessage ?? "Copyright problem")
         case .rejected where !p.state.isTerminal && p.publisher == "manual":

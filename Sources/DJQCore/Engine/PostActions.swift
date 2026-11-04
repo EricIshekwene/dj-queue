@@ -119,21 +119,24 @@ public final class PostActions: @unchecked Sendable {
   }
 
   /// The cause of a (non-copyright) failure is fixed: new attempt on the next day's slot, ≥ 3 h from that day's
-  /// regular post on the platform. A failure found before its day keeps its original time.
+  /// regular post on the platform. A failure found before its day keeps its original time. Runs in one transaction,
+  /// so Eric's Fixed and an automatic retry (`by: "auto-retry"`, the word in the post's history) make one attempt.
   @discardableResult
-  public func fixed(postId: String) throws -> PlatformPost {
-    var p = try post(postId)
-    try ensureNotHeld(p.videoId)
-    guard !p.state.isCopyright else {
-      throw EngineError("Copyright problems are never retried automatically — choose Re-upload anyway, Skip platform or Accept")
+  public func fixed(postId: String, by who: String = "fixed") throws -> PlatformPost {
+    try store.db.transaction {
+      var p = try post(postId)
+      try ensureNotHeld(p.videoId)
+      guard !p.state.isCopyright else {
+        throw EngineError("Copyright problems are never retried automatically — choose Re-upload anyway, Skip platform or Accept")
+      }
+      guard p.state == .failed else { throw EngineError("Only a failed post can be marked fixed (this one is \(p.state.displayName))") }
+      guard p.resolution == nil else { throw EngineError("Already handled (\(p.resolution!))") }
+      let n = try newAttempt(from: p, kind: .retry, versionNo: p.versionNo, note: "\(who): \(p.errorType?.rawValue ?? "failed")")
+      p.resolution = "retried"
+      try store.save(p, note: "\(who) → attempt \(n.attemptNo)")
+      try store.refreshState(videoId: p.videoId)
+      return n
     }
-    guard p.state == .failed else { throw EngineError("Only a failed post can be marked fixed (this one is \(p.state.displayName))") }
-    guard p.resolution == nil else { throw EngineError("Already handled (\(p.resolution!))") }
-    let n = try newAttempt(from: p, kind: .retry, versionNo: p.versionNo, note: "fixed: \(p.errorType?.rawValue ?? "failed")")
-    p.resolution = "retried"
-    try store.save(p, note: "fixed → attempt \(n.attemptNo)")
-    try store.refreshState(videoId: p.videoId)
-    return n
   }
 
   /// Back to planned with the error/URL cleared (the engine makes it due again at its time).
@@ -311,6 +314,9 @@ public final class PostActions: @unchecked Sendable {
     return try store.posts(where: "(scheduled_at>=? AND scheduled_at<?) OR (scheduled_at<? AND state IN ('due','overdue'))",
                            [start, end, start])
   }
+
+  /// The once-only key of a post's "Failed on …" alert.
+  public static func problemKey(_ postId: String) -> String { "problem:\(postId)" }
 
   /// Failed / copyright / overdue posts nobody has handled yet.
   public func problems() throws -> [PlatformPost] {

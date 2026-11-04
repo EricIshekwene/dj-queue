@@ -364,7 +364,8 @@ extension Doctor {
   /// Every id the Postiz checks can report (skills/dj-queue-doctor/SKILL.md has the safe fix for each).
   public static let postizCheckIds = ["postiz.not_connected", "postiz.key_invalid", "postiz.mapping_missing",
                                       "postiz.channel_disabled", "postiz.stuck", "postiz.link_missing", "postiz.rate_limited",
-                                      "postiz.fallback", "postiz.test_mode", "postiz.delete_pending", "postiz.create_unknown"]
+                                      "postiz.fallback", "postiz.test_mode", "postiz.delete_pending", "postiz.create_unknown",
+                                      "postiz.auto_retry"]
 
   /// Doctor never reaches Postiz except in `postizLive` mode.
   final class OfflinePostiz: PostizTransport, @unchecked Sendable {
@@ -539,6 +540,17 @@ extension Doctor {
                        detail: pending.map { "\($0.platform.displayName) · \(tag($0.videoId ?? "")): \($0.lastError ?? "error")" }.joined(separator: " · "),
                        where_: pending.map(\.postId),
                        fix: "DJ Queue keeps retrying and creates nothing new for these meanwhile. If one must not post, Eric deletes it in the Postiz calendar."))
+    }
+
+    let retries = try svc.pendingAutoRetries()
+    if !retries.isEmpty {
+      out.append(.init(id: "postiz.auto_retry", severity: .info, title: "\(retries.count) automatic retr\(retries.count == 1 ? "y" : "ies") pending",
+                       detail: retries.map { r in
+                         "\(r.post.platform.displayName) · \(tag(r.post.videoId)) · retry \(r.number) of \(PostizService.maxAutoRetries) · "
+                           + (r.queued ? Sched.shortTime(r.post.scheduledAt, settings) : "re-queued on the next tick")
+                       }.joined(separator: " · ") + ". A temporary platform limit: nothing to fix.",
+                       where_: retries.map(\.post.id),
+                       fix: "Nothing to do: the post goes out again by itself. After \(PostizService.maxAutoRetries) automatic retries it stays Failed for Eric."))
     }
     return out
   }

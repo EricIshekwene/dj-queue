@@ -657,6 +657,11 @@ public final class Store: @unchecked Sendable {
     try db.run("INSERT OR IGNORE INTO sent_notifications(key,at) VALUES(?,?)", [key, now]) > 0
   }
 
+  /// The notification with this key went out.
+  public func wasNotified(_ key: String) throws -> Bool {
+    try db.one("SELECT 1 AS x FROM sent_notifications WHERE key=?", [key]) != nil
+  }
+
   // MARK: Derived video state
 
   /// Recomputes a video's state from its flags, edit, versions and posts (spec §3 States).

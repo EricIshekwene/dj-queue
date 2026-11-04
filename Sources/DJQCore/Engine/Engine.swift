@@ -11,15 +11,15 @@ public struct TickReport: Sendable {
     self.started = started; self.steps = steps; self.errors = errors
   }
   /// Step names in the order a tick runs them (for display).
-  public static let order = ["intake", "stages", "plan", "missed", "due", "platform", "alerts", "render", "publish", "sync",
-                              "proxies", "move", "heartbeat", "backup"]
+  public static let order = ["intake", "stages", "plan", "missed", "due", "platform", "alerts", "retry", "render", "publish",
+                              "sync", "proxies", "move", "heartbeat", "backup"]
 }
 
 /// The background engine (spec §8). One `tick` does whatever is pending; it is safe to call at any time and never
 /// overlaps another tick. The app runs it on a background queue via `start()`; the CLI calls `tick` once.
 ///
-/// Tick order: intake → stages (invalid Queue clips → Edit) → plan housekeeping → missed/overdue → due → platform checks → alerts → render-ahead →
-/// move/cleanup → heartbeat → backup. Missed runs before due so a post that is about to be shifted never gets a
+/// Tick order: intake → stages (invalid Queue clips → Edit) → plan housekeeping → missed/overdue → due → platform checks → alerts →
+/// automatic retries (after alerts, so a temporary failure is loud first) → render-ahead → publish → sync → move/cleanup → heartbeat → backup. Missed runs before due so a post that is about to be shifted never gets a
 /// "due" notification first; rendering (slow) runs after every notification step so it never delays one, and at
 /// most one new render happens per tick (due posts first). Every step catches its own errors into the report.
 public final class Engine: @unchecked Sendable {
@@ -151,6 +151,8 @@ public final class Engine: @unchecked Sendable {
     step("due", &r) { try due() }
     step("platform", &r) { try platformChecks() }
     step("alerts", &r) { try alerts() }
+    // Round 8: temporary Postiz failures re-queue by themselves, once their alert went out, in time for this tick's publish.
+    step("retry", &r) { try postiz?.retryTemporary() ?? "off" }
     step("render", &r) { try renderAhead(&ctx) }
     // Round 6: submit ahead / replace / cancel in Postiz (after render-ahead attached renders), then read back states.
     step("publish", &r) { try postiz?.publish() ?? "off" }
@@ -457,7 +459,7 @@ public final class Engine: @unchecked Sendable {
     for p in try actions.problems() where p.state != .overdue {
       let tag = try store.video(id: p.videoId)?.tag ?? p.videoId
       let title = p.state.isCopyright ? "\(p.state.displayName) on \(p.platform.displayName)" : "Failed on \(p.platform.displayName)"
-      if notify(AppNotification(key: "problem:\(p.id)", title: title,
+      if notify(AppNotification(key: PostActions.problemKey(p.id), title: title,
                                 body: "\(tag) — \(p.errorMessage ?? p.state.displayName)", critical: p.state.isCopyright,
                                 actions: [.open], postId: p.id, videoId: p.videoId)) {
         sent.append("problem")
