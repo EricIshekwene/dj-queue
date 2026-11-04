@@ -3,15 +3,16 @@ import DJQCore
 import Observation
 import SwiftUI
 
-/// The ten Settings sections (DESIGN-v2 §6.9), in nav order.
+/// The eleven Settings sections (DESIGN-v2 §6.9), in nav order.
 enum SettingsSection: String, CaseIterable, Identifiable {
-  case general, platforms, schedule, queue, newClipDefaults, captions, rendering, playback, alerts, engine
+  case general, platforms, publishing, schedule, queue, newClipDefaults, captions, rendering, playback, alerts, engine
   var id: String { rawValue }
 
   var title: String {
     switch self {
     case .general: "General"
     case .platforms: "Platforms"
+    case .publishing: "Publishing"
     case .schedule: "Schedule"
     case .queue: "Queue"
     case .newClipDefaults: "New clip defaults"
@@ -27,6 +28,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     switch self {
     case .general: "gearshape"
     case .platforms: "square.stack.3d.up"
+    case .publishing: "paperplane"
     case .schedule: "clock"
     case .queue: "list.number"
     case .newClipDefaults: "slider.horizontal.3"
@@ -49,11 +51,17 @@ final class SettingsUIState {
   var confirm: SettingsConfirm?
   /// Anchor id the New clip defaults pane scrolls to when it appears (consumed once).
   var scrollTarget: String?
+  /// Publishing rows open when the pane appears (snapshots).
+  var publishingExpanded: Set<Platform> = []
+  /// Publishing opens with the key field in Replace mode (snapshots).
+  var publishingReplacingKey = false
 
   func reset() {
     draft = nil
     confirm = nil
     scrollTarget = nil
+    publishingExpanded = []
+    publishingReplacingKey = false
   }
 
   func isDirty(_ saved: NewClipDefaults) -> Bool { draft.map { $0 != saved } ?? false }
@@ -130,6 +138,7 @@ struct SettingsModal: View {
     switch model.settingsSection {
     case .general: SettingsScroll { GeneralSettings(model: model) }
     case .platforms: SettingsScroll { PlatformsSettings(model: model) }
+    case .publishing: SettingsScroll { PublishingSection(model: model) }
     case .schedule: SettingsScroll { ScheduleSettings(model: model) }
     case .queue: SettingsScroll { QueueSettings(model: model) }
     case .newClipDefaults: NewClipDefaultsSettings(model: model, ui: ui)

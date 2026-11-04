@@ -24,3 +24,23 @@ Facebook keeps 90 s, one v0.7.0 ship) are in the session record and docs/postiz.
 16. **Test-mode TikTok PUBLISHED closes the job as "inbox"** and the post goes back to Manual with a notification ("finish it in the app, then Mark posted"); it is never resubmitted.
 17. **A cancelled job sets the post's `publisher` back to "manual"**; the `publisher` column always says who delivers the post now.
 18. **Marked posted by hand while Postiz still holds it → the Postiz copy is deleted** (unless Postiz already published it), so it never posts twice.
+
+## UI (agent/r6-ui)
+
+Mobbin references (viewed 2026-11-03): Meetup "Mailchimp sync" (status chip + one action; dependent controls wait for
+the connection) https://mobbin.com/screens/9a6077fe-c60a-4d32-8ce4-743766568e57 · Unify Integrations (one row per
+integration, "● Connected") https://mobbin.com/screens/6717566f-1d46-4fb0-8432-8f7554342584 · Mintlify agent settings
+(Connected chip + Disconnect) https://mobbin.com/screens/d0da4f87-9b9f-4786-85ce-d3d7b1dcf0ce · Buffer queue (a failed
+post is a loud bar above the post with its message) https://mobbin.com/screens/af871c1d-00d1-4c74-a4a4-87ae2e9455c8 ·
+Customer.io Deliveries (a quiet "Test mode" chip on every affected row next to its status)
+https://mobbin.com/screens/c2bc5440-c6ca-4dd4-bfd2-ec70a26039c5.
+
+1. **Publishing is its own Settings section, right after Platforms.** The connection, six platform rows with details and Test run don't fit under Platforms' rows and limits table in a 560 pt modal, and core's fallback sentences already say "Settings → Publishing". Platforms keeps a one-line "Who posts" summary with "Open Publishing".
+2. **Manual | Postiz is a two-segment control, not a menu.** Two options read at a glance; the Postiz segment is dimmed with its reason on hover (no key, key refused, no channel) — native menus can't show why an item is off. `DSSegment` gained `disabledReason` (stays hoverable, like `DSChip`).
+3. **One row per platform; the channel and options sit in a ⌄ detail.** The row says who posts it and through which channel ("Postiz · DJ Lovd · tiktok-business"); a disabled channel is a red "Channel disabled" chip, any other fallback an amber "Goes to Today" chip with core's sentence as its tooltip.
+4. **"Match channels" (auto-map) only fills platforms without a usable channel**, picking the first enabled channel of the platform's provider (or the only one even if disabled, so the row says why). Undoable like every setting.
+5. **The key field is a `DSTextField(isSecure:)` with Save (the pane's one primary).** Once saved: "Saved in Keychain · never shown here" with Replace / Remove; Remove asks first (it can't be undone from the app). Saving runs Check connection at once.
+6. **Test run sits in the Postiz group (not at the bottom)** because it changes what every Postiz post does; the sidebar footer shows a quiet "Test run · On" row while it's on (click → Settings → Publishing). A header badge truncated "DJ Queue".
+7. **Snapshots and dev runs never touch the Keychain or the network.** `--snapshot` uses an in-memory key store (shots set the key's presence) and `DJQ_FAKE_POSTIZ=1` an in-memory key plus a sample transport answering `is-connected` / `integrations` with six made-up channels. Run dev builds with `DJQ_POSTIZ_OFFLINE=1` too, so the in-process engine's live store stays off.
+8. **Snapshots get a third model (`SnapshotContext.postiz`)**: a copy of the seeded sample with Postiz on for five platforms (Facebook Manual, Threads' channel disabled). Existing shots keep their all-Manual look; `r6-*` shots show Postiz.
+9. **Limits: TikTok's title (90) is editable next to YouTube's (100)**, since core made it a real default; the other platforms still show "—".

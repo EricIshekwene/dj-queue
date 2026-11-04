@@ -39,6 +39,10 @@ final class AppModel {
   let postActions: PostActions
   let renderer: Renderer
   let publisher: ManualPublisher
+  /// Postiz key, check and draft release (fake in snapshots and `DJQ_FAKE_POSTIZ=1` dev runs).
+  let postizBridge: PostizBridge
+  /// What the app shows about Postiz (connection, channels, the job behind each post).
+  var postiz = PostizUI()
   var engine: Engine?
   /// False when another process already holds the engine lock.
   var engineInProcess = false
@@ -221,6 +225,7 @@ final class AppModel {
     postActions = PostActions(store: store)
     renderer = Renderer(store: store)
     publisher = ManualPublisher(store: store, renderer: renderer)
+    postizBridge = PostizBridge(store: store, keyStore: PostizEnvironment.keyStore(), transport: PostizEnvironment.transport(store))
     proxies = ProxyService(store: store)
     bulk = BulkActions(store: store)
     bulk.postsChangeSignal = true
@@ -324,6 +329,7 @@ final class AppModel {
     var hashtagSets: [HashtagSet] = []
     var weekSlots: [PlanSlot] = []
     var weekAwake: [DateInterval] = []
+    var postiz = PostizLoaded()
     var error: String?
   }
 
@@ -380,6 +386,7 @@ final class AppModel {
         l.weekSlots = try store.planSlots(where: "week_start=?", [weekStart])
         l.weekAwake = try Health.awakePeriods(store: store, since: dm.date(weekStart))
       }
+      l.postiz = try PostizLoaded.load(store: store, now: now)
     } catch {
       l.error = "\(error)"
     }
@@ -436,6 +443,7 @@ final class AppModel {
     loaded = true
     weekSlots = l.weekSlots
     weekAwake = l.weekAwake
+    postiz.apply(l.postiz)
     applyPreviewStamps(l)
     lastRefresh = Date()
     loadError = nil

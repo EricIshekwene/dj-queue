@@ -89,6 +89,8 @@ struct DSTextField: View {
   var size: DSButtonSize = .md
   /// Capsule search field (DESIGN-v2: search is a capsule).
   var isSearch = false
+  /// Secure entry (API keys): the typed characters show as dots and never come back as text.
+  var isSecure = false
   var onSubmit: (() -> Void)? = nil
   @FocusState private var focused: Bool
   @State private var hovering = false
@@ -96,7 +98,8 @@ struct DSTextField: View {
 
   init(_ label: String? = nil, placeholder: String, text: Binding<String>, icon: String? = nil, hint: String? = nil,
        error: String? = nil, limit: Int? = nil, disabledReason: String? = nil, size: DSButtonSize = .md, isSearch: Bool = false,
-       onSubmit: (() -> Void)? = nil) {
+       isSecure: Bool = false, onSubmit: (() -> Void)? = nil) {
+    self.isSecure = isSecure
     self.label = label
     self.placeholder = placeholder
     _text = text
@@ -117,7 +120,9 @@ struct DSTextField: View {
     DSFieldFrame(label: label, hint: disabledReason ?? hint, error: error, counter: limit.map { (text.count, $0) }) {
       HStack(spacing: 8) {
         if let icon { Image(systemName: icon).font(.system(size: 13, weight: .medium)).foregroundStyle(DS.color.textTertiary) }
-        TextField(placeholder, text: $text)
+        Group {
+          if isSecure { SecureField(placeholder, text: $text) } else { TextField(placeholder, text: $text) }
+        }
           .textFieldStyle(.plain)
           .font(size == .sm ? DS.type.callout : size == .lg ? Font.system(size: 15) : DS.type.body)
           .foregroundStyle(DS.color.text)

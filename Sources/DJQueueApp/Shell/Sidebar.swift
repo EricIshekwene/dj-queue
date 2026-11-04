@@ -27,6 +27,12 @@ struct AppSidebar: View {
       .padding(.horizontal, DS.space.xs)
       Spacer(minLength: DS.space.md)
       VStack(alignment: .leading, spacing: 2) {
+        if model.postizTestRun {
+          SidebarRow(title: "Test run", icon: "testtube.2", hint: compact ? nil : "On", tooltip: TestRunBadge.help,
+                     compact: compact) {
+            WindowManager.shared.showSettings(section: .publishing)
+          }
+        }
         EngineLine(model: model, compact: compact)
         SidebarRow(title: "Settings", icon: "gearshape", hint: compact ? nil : "⌘,", shortcut: "⌘,", tooltip: "Open Settings",
                    compact: compact) {
@@ -226,5 +232,14 @@ struct EngineMenu: View {
         DSMenuItem(title: "Open Health", icon: "heart") { close(); model.screen = .health },
       ])
     }
+  }
+}
+
+/// "Test run" (Settings → Publishing): quiet, always visible while the switch is on; also on every affected post.
+struct TestRunBadge: View {
+  static let help = "Test run: TikTok to inbox, YouTube unlisted, rest as drafts"
+  var size: DSBadgeSize = .sm
+  var body: some View {
+    DSBadge("Test run", style: .outline, icon: "testtube.2", size: size, help: Self.help)
   }
 }

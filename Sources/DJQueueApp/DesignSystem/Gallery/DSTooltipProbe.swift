@@ -219,6 +219,55 @@ enum DSTooltipProbe {
       DSClipCardDebug.hoverIds = []
       w.appearance = NSAppearance(named: .aqua)
 
+      // 9. Round 6 (Postiz): the sidebar's Test run row, then Settings → Publishing with no key — the disabled
+      // "Postiz" segment (label + why), the "Channel disabled" status badge and a platform's detail chevron. Each must be
+      // reached and pass like every other case.
+      var r6Missing: [String] = []
+      do {
+        SnapshotContext.resetUI(model)
+        if var st = try? model.store.settings() {
+          st.publishing.testMode = true
+          try? model.store.save(st)
+        }
+        model.postiz.hasKey = false
+        model.refreshNow()
+        model.screen = .queue
+        try await settle(1600)
+        func probeOne(_ page: String, _ want: (DSTooltipAnchorView) -> Bool, _ what: String) async throws {
+          guard let a = anchors(in: w).first(where: want) else { r6Missing.append("\(page): \(what) not found"); return }
+          let slug = (a.content.label ?? a.content.disabledReason ?? "").lowercased()
+            .map { $0.isLetter || $0.isNumber ? $0 : "-" }.prefix(28)
+          let name = String(format: "%02d-%@-%@", n, page, String(slug))
+          n += 1
+          let opened = try await hover(a)
+          try await record(name + "-hover", a, opened: opened, note: "\(page): \(what)")
+          let presented = c.debugPresented
+          await post(.mouseMoved, at: emptyPoint(in: w), in: w)
+          try await Task.sleep(for: .milliseconds(400))
+          records[records.count - 1].hiddenAfterLeave = c.debugPanelFrame == nil && c.debugPanelWindow?.isVisible != true
+            && c.debugPresented == presented
+          try capture(w, panel: c.debugPanelWindow)?.write(to: out.appendingPathComponent(name + "-left.png"))
+          try await park()
+        }
+        try await probeOne("r6-sidebar", { $0.content.label == TestRunBadge.help }, "Test run row")
+        SettingsUIState.shared.reset()
+        model.settingsSection = .publishing
+        model.showSettings = true
+        try await settle(1600)
+        try await probeOne("r6-publishing", { ($0.content.disabledReason ?? "").hasPrefix("Add your Postiz API key") && $0.content.label?.hasPrefix("Postiz posts") == true },
+                           "disabled Postiz segment")
+        try await probeOne("r6-publishing", { $0.content.label?.hasSuffix("needs reconnecting in Postiz") == true }, "Channel disabled badge")
+        try await probeOne("r6-publishing", { $0.content.label?.hasPrefix("Show ") == true && $0.content.label?.hasSuffix("Postiz options") == true },
+                           "platform detail chevron")
+        model.showSettings = false
+        if var st = try? model.store.settings() {
+          st.publishing.testMode = false
+          try? model.store.save(st)
+        }
+        model.refreshNow()
+      }
+      problems += r6Missing
+
       // A hover that opened nothing, an empty bubble, or a bubble that stayed (or another that opened) after leaving
       // fails the run — and so does a sweep that didn't reach what it covers: each grid's hovered-tile buttons, a
       // disabled trigger and a keycaps trigger.
@@ -332,6 +381,7 @@ enum DSTooltipProbe {
     let store = try Store(paths: paths, clock: clock)
     if try store.videos().isEmpty { try Intake(store: store).run() }
     try SampleData.seed(store: store, clock: clock, now: now)
+    try SampleData.seedPostiz(store: store, clock: clock, now: now)
     clock.set(now)
     let model = AppModel(store: store)
     model.frozen = true
