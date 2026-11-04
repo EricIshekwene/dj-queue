@@ -84,6 +84,13 @@ extension Store {
   }
 
   func sessionName(for v: Video) throws -> String { try session(id: v.sessionId)?.name ?? "" }
+
+  /// Round 6 (F5): slots on a day before `today` in a week that isn't approved and that never got a post (pinned or
+  /// not). They can't post any more; left in place they would keep their clip out of the queue for good.
+  public func stalePastDraftSlots(today: String) throws -> [PlanSlot] {
+    try planSlots(where: "date<? AND week_start NOT IN (SELECT week_start FROM weeks WHERE state='approved') "
+                    + "AND id NOT IN (SELECT plan_slot_id FROM platform_posts WHERE plan_slot_id IS NOT NULL)", [today])
+  }
 }
 
 

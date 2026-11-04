@@ -175,17 +175,30 @@ public final class Engine: @unchecked Sendable {
 
   // MARK: Steps
 
-  /// Proposes the current and next week once (when they have never been proposed and the queue has videos).
+  /// Drops past draft-week days that never got posts (round 6, F5: their clips go back to the queue; pinned ones too,
+  /// since a pin on a day that passed unapproved can't post), then proposes the current and next week once (when they
+  /// have never been proposed and the queue has videos).
   func planHousekeeping() throws -> String {
     let dm = try store.dayMath()
     let thisWeek = dm.weekStart(of: store.clock.now)
     var done: [String] = []
+    let stale = try store.db.transaction { () throws -> [PlanSlot] in
+      let list = try store.stalePastDraftSlots(today: store.today(dm))
+      for s in list {
+        try store.deletePlanSlot(s.id)
+        try store.refreshState(videoId: s.videoId)
+        try store.logEvent("plan", "Past draft day \(s.date) dropped (never approved)\(s.pinned ? ", pin removed" : "") — back in the Queue",
+                           videoId: s.videoId)
+      }
+      return list
+    }
+    if !stale.isEmpty { done.append("dropped \(stale.count) past draft day\(stale.count == 1 ? "" : "s")") }
     for w in [thisWeek, dm.addDays(thisWeek, 7)] where try store.week(w) == nil {
       guard try !queue.ordered().isEmpty else { break }
       try planner.proposeWeek(w)
-      done.append(w)
+      done.append("proposed \(w)")
     }
-    return done.isEmpty ? "ok" : "proposed \(done.joined(separator: ", "))"
+    return done.isEmpty ? "ok" : done.joined(separator: " · ")
   }
 
   /// A render that failed is retried only after this long, unless its edit/version (hash) changed.

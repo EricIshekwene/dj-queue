@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 4
+  public static let schemaVersion = 5
 
   public init(paths: Paths, clock: Clock = SystemClock(), path: String? = nil) throws {
     self.paths = paths
@@ -85,6 +85,7 @@ public final class Store: @unchecked Sendable {
     if v < 2 { try migrateToV2(from: v) }
     if v < 3 { try migrateToV3(from: v) }
     if v < 4 { try migrateToV4(from: v) }
+    if v < 5 { try migrateToV5(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -176,6 +177,24 @@ public final class Store: @unchecked Sendable {
     }
   }
 
+  /// Postiz publisher (round 6): `postiz_jobs` (one row per Postiz post DJ Queue made) and `postiz_media` (uploaded
+  /// media per render). Additive and lossless (no existing row changes). No foreign key to platform_posts: the
+  /// planner may delete a post and its job must survive so the engine can cancel it in Postiz. A file database with
+  /// data is copied to `<app support>/backups/` first.
+  private func migrateToV5(from v: Int) throws {
+    if v >= 4, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-schema5-\(f.string(from: Date())).sqlite").path)
+    }
+    try db.transaction {
+      try db.exec(Self.postizSchema + "\nPRAGMA user_version = 5;")
+    }
+  }
+
   private func seedDefaults() throws {
     if try hashtagSets().isEmpty {
       for s in Defaults.hashtagSets { try save(s) }
@@ -209,6 +228,14 @@ public final class Store: @unchecked Sendable {
         if let x = obj["defaultPosY"] as? Double { out.defaults.textPosY = x }
         if let x = obj["defaultCaptionTemplateId"] as? String { out.defaults.captionTemplateId = x }
         if let x = obj["defaultHashtagSetIds"] as? [String] { out.defaults.hashtagSetIds = x }
+      }
+      // Round 6: limits stored against an older `PlatformLimits.defaults` move only where they still equal the old
+      // default (in memory; the next save writes them with the current revision).
+      let obj = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any]
+      let rev = (obj?["limitsRevision"] as? Int) ?? 1
+      if rev < PlatformLimits.revision {
+        out.limits = PlatformLimits.migrateStored(out.limits, from: rev)
+        out.limitsRevision = PlatformLimits.revision
       }
       return out
     } catch {

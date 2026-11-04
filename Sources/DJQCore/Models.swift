@@ -688,6 +688,12 @@ public struct Settings: Codable, Sendable, Hashable {
   public var defaults = NewClipDefaults()
   public var wakeBeforeFirstSlot: Bool = false
   public var limits: [Platform: PlatformLimits] = PlatformLimits.defaults
+  /// Which revision of `PlatformLimits.defaults` the stored limits were written against. Rows saved before round 6
+  /// have none (= 1); `Store.settings()` then moves only the limits that still equal the old defaults (round 6:
+  /// TikTok caption 4000 → 2200, title — → 90; Instagram size 4 GB → 300 MB) and keeps every value Eric changed.
+  public var limitsRevision: Int = PlatformLimits.revision
+  /// Publishing (round 6): Manual or Postiz per platform, Postiz channels, test mode and per-platform options.
+  public var publishing = PublishingSettings()
 
   public init() {}
 
@@ -713,12 +719,38 @@ public struct PlatformLimits: Codable, Sendable, Hashable {
   public var captionLimit: Int
   public var titleLimit: Int?
 
+  /// Bumped whenever `defaults` changes; see `Settings.limitsRevision` and `migrateStored(_:from:)`.
+  public static let revision = 2
+
+  /// Round 6 (docs/postiz.md §3, re-verified): TikTok caption 2200 (was 4000) and title 90; Instagram 300 MB (was 4 GB).
   public static let defaults: [Platform: PlatformLimits] = [
-    .tiktok: .init(maxDuration: 600, maxBytes: 4_000_000_000, captionLimit: 4000, titleLimit: nil),
-    .instagram: .init(maxDuration: 180, maxBytes: 4_000_000_000, captionLimit: 2200, titleLimit: nil),
+    .tiktok: .init(maxDuration: 600, maxBytes: 4_000_000_000, captionLimit: 2200, titleLimit: 90),
+    .instagram: .init(maxDuration: 180, maxBytes: 300_000_000, captionLimit: 2200, titleLimit: nil),
     .facebook: .init(maxDuration: 90, maxBytes: 4_000_000_000, captionLimit: 2200, titleLimit: nil),
     .youtube: .init(maxDuration: 180, maxBytes: 4_000_000_000, captionLimit: 5000, titleLimit: 100),
     .threads: .init(maxDuration: 300, maxBytes: 1_000_000_000, captionLimit: 500, titleLimit: nil),
     .x: .init(maxDuration: 140, maxBytes: 512_000_000, captionLimit: 280, titleLimit: nil),
   ]
+
+  /// Revision 1 values that revision 2 changed (platform → old value per field).
+  static let revision1: [Platform: PlatformLimits] = [
+    .tiktok: .init(maxDuration: 600, maxBytes: 4_000_000_000, captionLimit: 4000, titleLimit: nil),
+    .instagram: .init(maxDuration: 180, maxBytes: 4_000_000_000, captionLimit: 2200, titleLimit: nil),
+  ]
+
+  /// Stored limits written against revision `from`, brought to the current defaults field by field: a field moves
+  /// only when it still equals the old default (Eric's own edits stay).
+  public static func migrateStored(_ stored: [Platform: PlatformLimits], from: Int) -> [Platform: PlatformLimits] {
+    var out = stored
+    guard from < 2 else { return out }
+    for (p, old) in revision1 {
+      guard var cur = out[p], let new = defaults[p] else { continue }
+      if cur.captionLimit == old.captionLimit { cur.captionLimit = new.captionLimit }
+      if cur.maxBytes == old.maxBytes { cur.maxBytes = new.maxBytes }
+      if cur.titleLimit == old.titleLimit { cur.titleLimit = new.titleLimit }
+      if cur.maxDuration == old.maxDuration { cur.maxDuration = new.maxDuration }
+      out[p] = cur
+    }
+    return out
+  }
 }
