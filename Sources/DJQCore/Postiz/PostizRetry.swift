@@ -43,10 +43,19 @@ extension PostizService {
 
   /// Only clear wording counts; an unclear message stays a normal failure. Copyright and every `notTemporary` word win.
   public static func isTemporary(_ message: String) -> Bool {
-    guard !isCopyright(message) else { return false }
+    !isVetoed(message) && message.lowercased().range(of: plainlyTemporary, options: .regularExpression) != nil
+  }
+
+  static func isVetoed(_ message: String) -> Bool {
+    isCopyright(message) || message.lowercased().range(of: notTemporary, options: .regularExpression) != nil
+  }
+
+  /// This failure may retry by itself on `platform`. YouTube only for the upload quota, where no video was created:
+  /// any other error may come after the video exists (a rate limit on the thumbnail step), and a retry would double-post.
+  public static func retriesByItself(_ message: String, on platform: Platform) -> Bool {
+    guard platform == .youtube else { return isTemporary(message) }
     let m = message.lowercased()
-    guard m.range(of: notTemporary, options: .regularExpression) == nil else { return false }
-    return m.range(of: plainlyTemporary, options: .regularExpression) != nil
+    return !isVetoed(message) && (m.contains("daily upload quota") || m.contains("defaultvideoinsertperdayperproject"))
   }
 
   static let autoRetryPrefix = "postiz.autoRetry."
@@ -61,7 +70,7 @@ extension PostizService {
   /// The sentence a Postiz ERROR adds to the post's message ("" for a normal failure). It promises a retry only when
   /// nothing permanent rules one out; a reason to wait (held clip, platform off Postiz) keeps the promise.
   func retryNote(_ message: String, _ p: PlatformPost) throws -> String {
-    guard Self.isTemporary(message) else { return "" }
+    guard Self.retriesByItself(message, on: p.platform) else { return "" }
     if try autoRetries(p).count >= Self.maxAutoRetries { return " — \(Self.retriesUsedUpNote)" }
     return " — " + (try retryRuledOut(p) ? Self.noRetryNote : Self.retriesTomorrowNote)
   }
@@ -97,7 +106,7 @@ extension PostizService {
   func retryableJob(_ p: PlatformPost, settings: Settings, router: PostizRouter) throws -> PostizJob? {
     guard p.state == .failed, p.resolution == nil, p.errorType == .uploadFailed,
           let job = try store.finalPostizJob(postId: p.id), job.closeReason == .error,
-          Self.isTemporary(job.lastError ?? ""),
+          Self.retriesByItself(job.lastError ?? "", on: p.platform),
           try autoRetries(p).count < Self.maxAutoRetries,
           Self.settingsAllow(p.platform, settings), router.route(p.platform).isPostiz,
           let v = try store.video(id: p.videoId), !v.heldInEdit,

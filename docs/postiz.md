@@ -181,8 +181,10 @@ wording: quota, rate limit / too many requests, "try again later", "reschedule t
 unavailable. Copyright wins over temporary, always, and so does any word that means more than "not now": a policy or
 rights word (violates, DMCA, Content ID, licensed, song, sound, …), an account word (banned, suspended, restricted,
 disabled, unauthorized, …) or a paid limit (upgrade, plan, subscription, storage). One of them anywhere makes it a normal
-failure, or `copyright_blocked` when the copyright words above match. Everything else stays a normal failure too. A
-temporary failure still reads Failed and still gets its alert, with the message plus "retries tomorrow automatically",
+failure, or `copyright_blocked` when the copyright words above match. Everything else stays a normal failure too. On
+YouTube only the upload quota ("daily upload quota" / `defaultVideoInsertPerDayPerProject`) counts, because no video was
+created; any other error may come after the video exists (a rate limit on the thumbnail step), so it stays a normal
+failure and a retry can't double-post. A temporary failure still reads Failed and still gets its alert, with the message plus "retries tomorrow automatically",
 or the Fixed wording when no retry can come (retries used up, or ruled out below). A tick step `retry` (right
 after `alerts`, and only once the post's alert went out) re-queues it through `PostActions.fixed`: next day, the usual
 stagger, a new attempt the publish step submits. At most 2 automatic retries per clip + platform + version (kv

@@ -82,6 +82,36 @@ import Testing
     #expect(try attempts(rig, yt).count == 1 && problems(rig) == [yt.id])
   }
 
+  /// YouTube: only the upload quota, where no video was created. The other platforms keep every temporary wording.
+  @Test func youTubeRetriesOnlyTheUploadQuota() {
+    for m in [Self.quota, "defaultVideoInsertPerDayPerProject exceeded"] { #expect(PostizService.retriesByItself(m, on: .youtube)) }
+    for m in ["Rate limit reached while setting the thumbnail", "Too Many Requests", "Please try again later.",
+              "Service temporarily unavailable", "Quota exceeded", "Your channel is suspended: daily upload quota"] {
+      #expect(!PostizService.retriesByItself(m, on: .youtube), "\(m)")
+    }
+    #expect(PostizService.retriesByItself("Rate limit reached", on: .x))
+    #expect(!PostizService.retriesByItself("Account suspended, rate limit", on: .x))
+  }
+
+  @Test func aYouTubeRateLimitStaysAPlainFailure() throws {
+    let (rig, yt) = try ytRig()
+    let m = "Rate limit reached while setting the thumbnail, try again later"
+    try fail(rig, yt, m)
+    rig.tick(3)
+    let p = try #require(try rig.store.post(id: yt.id))
+    #expect(p.state == .failed && p.resolution == nil && p.errorMessage == m)
+    #expect(try attempts(rig, yt).count == 1 && problems(rig) == [yt.id])
+  }
+
+  @Test func aRateLimitOnAnotherPlatformStillRetries() throws {
+    let rig = try Rig(1, platforms: [.x])
+    rig.settle()
+    let x = try #require(try rig.f.post(.x, day: Self.monday))
+    try fail(rig, x, "Rate limit reached")
+    rig.tick(3)
+    #expect(try attempts(rig, x).count == 2)
+  }
+
   // MARK: The retry
 
   @Test func quotaFailureStaysFailedAndLoudThenRetriesTheNextDay() throws {
