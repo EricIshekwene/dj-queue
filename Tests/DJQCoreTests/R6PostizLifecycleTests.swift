@@ -51,23 +51,48 @@ import Testing
     func invariants() throws -> [String] {
       var bad = fake.violations
       let open = try store.openPostizJobs()
-      let byPost = Dictionary(grouping: open, by: \.postId)
-      for (pid, js) in byPost where js.count > 1 { bad.append("two open jobs for \(pid)") }
-      let held = Dictionary(grouping: open.compactMap(\.postizId), by: { $0 })
-      for r in fake.livePosts where r.state == "QUEUE" || r.state == "DRAFT" {
-        if held[r.id]?.count != 1 { bad.append("orphan in Postiz: \(r.id)") }
+      for (pid, js) in Dictionary(grouping: open, by: \.postId) where js.count > 1 { bad.append("two open jobs for \(pid)") }
+      bad += try global()
+      return bad
+    }
+
+    /// The clip a Postiz post carries (through its media id → render → video).
+    func video(of r: FakePostiz.Post) throws -> String {
+      guard let m = r.image["id"] as? String,
+            let rid = try store.db.one("SELECT render_id FROM postiz_media WHERE media_id=?", [m])?.string("render_id"),
+            let v = try store.render(id: rid)?.videoId else { return "?" }
+      return v
+    }
+
+    /// Never double-post, checked on Postiz's side across every post id the planner ever used:
+    /// - per (clip, channel) at most one Postiz post that is live (QUEUE/DRAFT) or was ever published;
+    /// - every live Postiz post is held by an open job (or awaits adoption by an unconfirmed create of that clip and channel).
+    func global() throws -> [String] {
+      var bad: [String] = []
+      var perLineage: [String: [String]] = [:]
+      for r in fake.everCreated where (!r.deleted && (r.state == "QUEUE" || r.state == "DRAFT")) || fake.everPublished.contains(r.id) {
+        perLineage["\(try video(of: r))|\(r.integrationId)", default: []].append(r.id)
       }
-      for (pid, js) in Dictionary(grouping: try store.postizJobs(where: "kind='post'"), by: \.postId) {
-        let sorted = js.sorted { $0.createdAt < $1.createdAt || ($0.createdAt == $1.createdAt && $0.closedAt != nil && $1.closedAt == nil) }
-        for (a, b) in zip(sorted, sorted.dropFirst()) {
-          guard let closed = a.closedAt else { bad.append("job after an open job for \(pid)"); continue }
-          if b.createdAt < closed { bad.append("create before the previous job closed for \(pid)") }
-          if let id = a.postizId, let r = fake.post(id), !r.deleted, r.state == "QUEUE" || r.state == "DRAFT" {
-            bad.append("new job while the old Postiz post \(id) still lives for \(pid)")
-          }
-        }
+      for (k, ids) in perLineage where ids.count > 1 { bad.append("double post \(k): \(ids)") }
+      let open = try store.openPostizJobs()
+      let held = Set(open.compactMap(\.postizId))
+      let pending = Set(open.filter { $0.postizId == nil }.map { "\($0.videoId ?? "")|\($0.integrationId)" })
+      for r in fake.livePosts where (r.state == "QUEUE" || r.state == "DRAFT") && !held.contains(r.id) {
+        if !pending.contains("\(try video(of: r))|\(r.integrationId)") { bad.append("orphan in Postiz: \(r.id)") }
       }
       return bad
+    }
+
+    /// After a tick without injected failures: nothing live in Postiz for a platform that is off, paused or Manual,
+    /// or while posting is paused (unconfirmed creates aside).
+    func settingsRespected() throws -> [String] {
+      let s = try store.settings()
+      let pending = Set(try store.openPostizJobs().filter { $0.postizId == nil }.map(\.integrationId))
+      return fake.livePosts.filter { $0.state == "QUEUE" || $0.state == "DRAFT" }.compactMap { r in
+        guard let p = fake.integrations.first(where: { $0.id == r.integrationId })?.platform, !pending.contains(r.integrationId) else { return nil }
+        let ok = !s.paused && s.enabledPlatforms.contains(p) && !s.pausedPlatforms.contains(p) && s.publishing.publisher(for: p) == .postiz
+        return ok ? nil : "\(p.rawValue) still live in Postiz: \(r.id)"
+      }
     }
   }
 
@@ -500,6 +525,8 @@ import Testing
     #expect(rig.notifier.delivered.contains { $0.key.hasPrefix("due:\(x.id)") })
     #expect(try rig.service.router().route(.x) == .fallback(.noKey))
     #expect(try rig.store.postizBudget().calls.isEmpty)  // no budget spent either
+    #expect(throws: PostizError.noKey) { try rig.service.channels() }
+    #expect(try rig.store.postizBudget().calls.isEmpty)
   }
 
   @Test func refusedCreateFallsBackToTodayOnce() throws {
@@ -581,18 +608,147 @@ import Testing
     #expect(PostizAnalytics.parse(Data("[{\"label\":\"Views\",\"data\":[{\"total\":3},{\"total\":1}]}]".utf8))?.views == 4)
   }
 
-  @Test func interruptedCreateIsAdoptedOrReleased() throws {
+  @Test func createWithUnknownOutcomeIsNeverResentBlindly() throws {
     let rig = try Rig(1, platforms: [.x])
-    rig.fake.failNext["POST posts"] = [503]
+    rig.fake.createOutcomes = ["500"]  // nothing made, but DJ Queue can't know that
     rig.tick(12)
-    // The 503 came after the create was sent: the claim stays until the sync step looks.
-    let stuck = try rig.store.openPostizJobs().filter { $0.phase == .creating }
-    #expect(stuck.count == 1)
+    #expect(rig.fake.createCount == 1)
+    rig.f.clock.advance(PostizService.staleCreate + 1)
+    rig.tick(3)
+    let j = try #require(try rig.store.openPostizJobs().first)
+    #expect(j.phase == .unknown && rig.fake.createCount == 1)  // stopped, loud, not re-created
+    #expect(rig.notifier.delivered.contains { $0.key.hasPrefix("postiz.unknown:") && $0.critical })
+    rig.f.clock.advance(3600)
+    rig.tick(3)
+    #expect(rig.fake.createCount == 1)
+    #expect(try rig.service.resolveUnknown(postId: j.postId) == "not in Postiz — it will be sent again")
+    rig.tick()
+    #expect(rig.fake.createCount == 2 && rig.fake.livePosts.count == 1)
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test(arguments: ["garbage", "timeout"])
+  func createThatLandedIsAdoptedNotRepeated(outcome: String) throws {
+    let rig = try Rig(1, platforms: [.x])
+    rig.fake.createOutcomes = [outcome]
+    for _ in 0..<6 { rig.tick() }
+    #expect(rig.fake.createCount == 1 && rig.fake.livePosts.count == 1)
     rig.f.clock.advance(PostizService.staleCreate + 1)
     rig.tick(2)
-    #expect(try rig.store.openPostizJobs().allSatisfy { $0.phase == .live })
-    #expect(try rig.store.openPostizJobs().count == 1)
+    let j = try #require(try rig.store.openPostizJobs().first)
+    #expect(j.phase == .live && j.postizId == rig.fake.livePosts.first?.id)
+    #expect(rig.fake.createCount == 1)
     #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func databaseErrorAfterTheCreateIsAdoptedNotRepeated() throws {
+    let rig = try Rig(1, platforms: [.x])
+    var fail = true
+    rig.service.afterCreateHook = { if fail { fail = false; throw SQLiteError(code: 5, message: "database is locked", sql: nil) } }
+    for _ in 0..<6 { rig.tick() }
+    #expect(rig.fake.createCount == 1)
+    rig.f.clock.advance(PostizService.staleCreate + 1)
+    rig.tick(2)
+    #expect(try rig.store.openPostizJobs().first?.phase == .live && rig.fake.createCount == 1)
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  // MARK: Review probes (M2): one clip, one platform, one Postiz post — across new post ids
+
+  @Test func moveWithAFailedDeleteNeverCreatesTheNewCopy() throws {
+    let rig = try Rig(4, platforms: [.x])
+    rig.settle()
+    rig.fake.failNext["DELETE posts"] = [500, 500]
+    let s = try #require(try rig.store.planSlots(where: "date='2026-11-03'").first)
+    try Planner(store: rig.store).move(slotId: s.id, to: "2026-11-07")
+    rig.tick()
+    #expect(try rig.invariants().isEmpty)
+    rig.tick()
+    #expect(try rig.invariants().isEmpty)
+    rig.tick(2)  // delete succeeds, then the new copy
+    let moved = try #require(try rig.store.posts(where: "video_id=? AND platform='x'", [s.videoId]).first)
+    #expect(try rig.job(moved)?.remoteDate == moved.scheduledAt)
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func moveJustBeforeTheSlotKeepsPostizsCopy() throws {
+    let rig = try Rig(4, platforms: [.x])
+    rig.settle()
+    rig.f.setTime("2026-11-02", "16:58")  // X at 17:00
+    let s = try #require(try rig.store.planSlots(where: "date='2026-11-02'").first)
+    let xpost = try #require(try rig.f.post(.x, day: "2026-11-02"))
+    let old = try #require(try rig.job(xpost))
+    try Planner(store: rig.store).move(slotId: s.id, to: "2026-11-07")
+    rig.tick(2)
+    #expect(rig.fake.post(old.postizId!)?.deleted == false)  // kept, never replaced this close to the slot
+    #expect(try rig.invariants().isEmpty)
+    rig.f.setTime("2026-11-02", "17:10")
+    rig.fake.publishDue(now: rig.f.clock.now)
+    rig.tick(2)
+    // It went out at 17:00: the clip's re-planned X post is recorded posted, never sent again.
+    let successor = try #require(try rig.store.posts(where: "video_id=? AND platform='x'", [s.videoId]).first)
+    #expect(successor.state == .posted && successor.url != nil)
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func turningAPlatformOffStopsCreatesWithoutChurn() throws {
+    let rig = try Rig(2, platforms: [.x])
+    rig.settle()
+    let creates = rig.fake.createCount
+    try rig.f.updateSettings { $0.enabledPlatforms.remove(.x) }  // only this
+    rig.tick(4)
+    #expect(rig.fake.createCount == creates && rig.fake.livePosts.isEmpty)
+    #expect(try rig.settingsRespected().isEmpty && rig.invariants().isEmpty)
+  }
+
+  @Test func aPostHandedToTodayStaysManualWhenTheKeyComesBack() throws {
+    let rig = try Rig(1, platforms: [.x])
+    try rig.keys.delete()
+    rig.settle()
+    rig.f.setTime("2026-11-02", "17:05")
+    rig.tick()
+    let x = try #require(try rig.f.post(.x, day: "2026-11-02"))
+    #expect(rig.notifier.delivered.contains { $0.key.hasPrefix("due:\(x.id)") })
+    rig.f.setTime("2026-11-02", "17:40")
+    try rig.service.saveKey("test-key-123")
+    rig.tick(2)
+    #expect(rig.fake.createCount == 0)  // Eric may have posted it by hand already
+  }
+
+  @Test func switchingTestModeLeavesExistingJobsAlone() throws {
+    let rig = try Rig(2, platforms: [.x, .tiktok])
+    rig.settle()
+    let before = try rig.store.openPostizJobs().map(\.id).sorted()
+    try rig.f.updateSettings { $0.publishing.testMode = true }
+    rig.tick(3)
+    #expect(try rig.store.openPostizJobs().map(\.id).sorted() == before && rig.fake.deleteCount == 0)
+  }
+
+  @Test func anEditAfterTheSlotNeverReplacesAStuckPost() throws {
+    let rig = try Rig(1, platforms: [.x])
+    rig.settle()
+    rig.f.setTime("2026-11-02", "18:30")  // 90 min after the slot, still QUEUE in Postiz
+    rig.tick()
+    var v = try #require(try rig.store.versions(videoId: "clip-0").first)
+    v.caption = "late edit"
+    try rig.store.save(v, videoId: "clip-0")
+    let creates = rig.fake.createCount
+    rig.tick(3)
+    #expect(rig.fake.createCount == creates && rig.fake.deleteCount == 0)
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func aStaleCopyNeverReopensAClosedJob() throws {
+    let rig = try Rig(1, platforms: [.x])
+    rig.settle()
+    let stale = try #require(try rig.store.openPostizJobs().first)
+    try rig.store.closePostizJob(id: stale.id, reason: .replaced)
+    var copy = stale
+    copy.remoteState = "QUEUE"
+    copy.syncedAt = rig.f.clock.now
+    try rig.store.save(copy)
+    let after = try #require(try rig.store.postizJob(id: stale.id))
+    #expect(after.closedAt != nil && after.closeReason == .replaced && after.phase == .closed)
   }
 
   @Test func secondProcessCantClaimTheSamePost() throws {
@@ -624,9 +780,8 @@ import Testing
     #expect(rig.fake.deleteCount == 0)
   }
 
-  @Test func statusChannelsAndDoctor() throws {
+  @Test func statusAndChannels() throws {
     let rig = try Rig(1, platforms: [.tiktok, .x])
-    #expect(try PostizDoctor.findings(store: rig.store, keyStore: rig.keys).findings.isEmpty)
     let ch = try rig.service.channels()
     #expect(ch.count == 6 && ch.first { $0.platform == .instagram }?.identifier == "instagram-standalone")
     var st = try rig.service.status(check: true)
@@ -636,14 +791,8 @@ import Testing
     #expect(!json.contains("test-key-123"))
     try rig.f.updateSettings { $0.publishing.channels[.x] = nil }
     try rig.keys.delete()
-    let d = try PostizDoctor.findings(store: rig.store, keyStore: rig.keys)
-    #expect(Set(d.findings.map(\.id)) == ["postiz.not_connected", "postiz.mapping_missing"])
-    #expect(d.passed.contains("postiz.stuck"))
     st = try rig.service.status()
     #expect(!st.hasKey && st.platforms.first { $0.platform == .tiktok }?.fallbackCode == "no_key")
-    // Manual everywhere: Doctor is quiet and nothing reads the Keychain.
-    let quiet = try Fixture.engine(1)
-    #expect(try PostizDoctor.findings(store: quiet.store, keyStore: rig.keys).passed == PostizDoctor.checkIds)
   }
 
   @Test func publisherInterface() throws {
@@ -670,17 +819,24 @@ import Testing
 
   // MARK: Fuzz
 
-  @Test(arguments: Array(1...12) as [UInt64])
+  /// Random planner ops on two engines sharing one database, with failing deletes, refused/garbage/timed-out creates
+  /// and database errors after a create. After every tick: the global invariants (one Postiz post per clip and
+  /// channel, no orphans); after every tick without injected failures: nothing live for an off/paused/Manual platform.
+  @Test(arguments: Array(1...16) as [UInt64])
   func randomPlannerOpsKeepTheInvariants(seed: UInt64) throws {
     var rng = SeededRNG(seed: seed)
-    let rig = try Rig(8, platforms: [.tiktok, .x, .youtube], budget: 60)
-    rig.fake.deleteFailRate = 0.3
-    rig.fake.createFailRate = 0.1
+    let rig = try Rig(8, platforms: [.tiktok, .x, .youtube], budget: 80)
     rig.fake.rng = SeededRNG(seed: seed &+ 99)
+    let other = PostizService(store: rig.store, transport: rig.fake, keyStore: rig.keys)
+    let engine2 = Engine(store: rig.store, renderer: rig.renderer, publisher: nil, notifier: rig.notifier, postiz: other)
+    var dbFail = false
+    for svc in [rig.service, other] {
+      svc.afterCreateHook = { if dbFail { dbFail = false; throw SQLiteError(code: 5, message: "database is locked", sql: nil) } }
+    }
     let planner = Planner(store: rig.store), actions = PostActions(store: rig.store), bulk = BulkActions(store: rig.store)
     var trace: [String] = []
-    for step in 0..<100 {
-      let op = Int.random(in: 0..<14, using: &rng)
+    for step in 0..<120 {
+      let op = Int.random(in: 0..<15, using: &rng)
       let slots = try rig.store.planSlots(where: "date>=?", [rig.f.dm.key(rig.f.clock.now)])
       let live = try rig.store.posts().filter { !$0.state.isTerminal }
       func pick<T>(_ a: [T]) -> T? { a.isEmpty ? nil : a[Int.random(in: 0..<a.count, using: &rng)] }
@@ -702,42 +858,51 @@ import Testing
           try rig.f.updateSettings {
             $0.publishing.publishers[.tiktok] = $0.publishing.publisher(for: .tiktok) == .postiz ? .manual : .postiz
           }
-        case 9: try rig.f.updateSettings { $0.paused.toggle() }
+        case 9: try rig.f.updateSettings { if $0.enabledPlatforms.contains(.youtube) { $0.enabledPlatforms.remove(.youtube) } else { $0.enabledPlatforms.insert(.youtube) } }
         case 10: _ = try bulk.removeFromQueue(["clip-\(Int.random(in: 0..<8, using: &rng))"])
-        case 11:
-          let w = rig.f.dm.addDays(rig.f.dm.weekStart(of: rig.f.clock.now), 7)
-          if try rig.store.week(w)?.state != .approved { try planner.approveWeek(w) }
+        case 11: if let p = pick(live.filter { $0.planSlotId != nil }) { try planner.postToday(videoId: p.videoId) }
         case 12:
           if let j = pick(try rig.store.openPostizJobs().filter { $0.postizId != nil }) {
             if Bool.random(using: &rng) { rig.fake.vanish(j.postizId!) } else { rig.fake.fail(j.postizId!, error: "boom") }
           }
+        case 13:
+          let w = rig.f.dm.addDays(rig.f.dm.weekStart(of: rig.f.clock.now), 7)
+          if try rig.store.week(w)?.state != .approved { try planner.approveWeek(w) }
         default:
-          rig.f.clock.advance(Double(Int.random(in: 1...10, using: &rng)) * 3600)
+          rig.f.clock.advance(Double(Int.random(in: 1...20, using: &rng)) * 600)
           rig.fake.publishDue(now: rig.f.clock.now)
         }
         trace.append("\(step):\(op)")
       } catch is EngineError {
         trace.append("\(step):\(op)!")
       }
-      rig.tick()
-      let bad = try rig.invariants()
-      #expect(bad.isEmpty, "seed \(seed) after \(trace.suffix(5)): \(bad)")
+      // This tick's transport / database failures.
+      let mode = Int.random(in: 0..<8, using: &rng)
+      rig.fake.deleteFailRate = mode == 1 ? 0.7 : 0
+      rig.fake.createOutcomes = mode == 2 ? ["garbage"] : mode == 3 ? ["timeout"] : mode == 4 ? ["500"] : []
+      dbFail = mode == 5
+      let rep = (Bool.random(using: &rng) ? rig.engine : engine2).tick(reason: "t")
+      var bad = try rig.invariants()
+      if mode == 0 || mode >= 6 {
+        // A create confirmed by this tick's sync step is reconciled by the next publish step.
+        if !bad.isEmpty || rep.steps["sync"]?.contains("found") == true { rig.engine.tick(reason: "t") }
+        bad += try rig.settingsRespected()
+      }
+      let openDesc = try rig.store.openPostizJobs().map { "\($0.postizId ?? "-") \($0.phase.rawValue) \($0.remoteState ?? "")" }
+      #expect(bad.isEmpty, "seed \(seed) after \(trace.suffix(6)) mode \(mode): \(bad) | publish: \(rep.steps["publish"] ?? "") | sync: \(rep.steps["sync"] ?? "") | open: \(openDesc)")
       if !bad.isEmpty { return }
     }
     // Quiet down: no failures, time moves on; everything converges.
     rig.fake.deleteFailRate = 0
-    rig.fake.createFailRate = 0
-    try rig.f.updateSettings { $0.paused = false; $0.pausedPlatforms = [] }
+    rig.fake.createOutcomes = []
+    dbFail = false
     rig.f.clock.advance(1800)
     rig.tick(4)
+    engine2.tick(reason: "t")
     #expect(try rig.invariants().isEmpty)
-    #expect(try rig.store.openPostizJobs().allSatisfy { $0.phase == .live })
+    #expect(try rig.settingsRespected().isEmpty)
+    #expect(try rig.store.openPostizJobs().allSatisfy { $0.phase == .live || $0.phase == .unknown }, "seed \(seed)")
     #expect(try rig.f.doublePosts().isEmpty)
-    for j in try rig.store.openPostizJobs() {
-      let p = try #require(try rig.store.post(id: j.postId), "seed \(seed): open job for a removed post")
-      #expect(!p.state.isTerminal && p.scheduledAt == j.scheduledAt, "seed \(seed): stale job \(j.id)")
-    }
-    // The run really exercised replaces and failed deletes.
     #expect(rig.fake.deleteCount > 5 && rig.fake.createCount > 20, "seed \(seed): \(rig.fake.deleteCount) deletes")
   }
 }

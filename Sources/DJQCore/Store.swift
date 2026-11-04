@@ -89,6 +89,10 @@ public final class Store: @unchecked Sendable {
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
+    let jcols = Set(try db.query("PRAGMA table_info(postiz_jobs)").compactMap { $0.string("name") })
+    if !jcols.isEmpty, !jcols.contains("lineage") {
+      try db.exec("ALTER TABLE postiz_jobs ADD COLUMN lineage TEXT NOT NULL DEFAULT ''; CREATE INDEX IF NOT EXISTS postiz_jobs_lineage ON postiz_jobs(lineage)")
+    }
   }
 
   /// Round 2: titles + suggestions, batch journal, cached source size, override-only edits.
