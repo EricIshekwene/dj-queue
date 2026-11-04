@@ -1,13 +1,14 @@
 import DJQCore
 import SwiftUI
 
-/// Captions & titles: caption templates and hashtag sets (create, edit, delete — saved as you type), and where
-/// titles come from. Which template/sets are the default is chosen in New clip defaults.
+/// Captions & titles: caption templates, Eric's own hashtag groups and YouTube title templates (create, edit, delete —
+/// saved as you type), and where titles come from. Which template / groups / title template are the default is chosen
+/// in New clip defaults. Round 7: no groups ship with the app; "hashtag groups" in all copy.
 struct CaptionsSettings: View {
   @Bindable var model: AppModel
   @State private var templates: [CaptionTemplate] = []
   @State private var sets: [HashtagSet] = []
-  @State private var newCategory = ""
+  @State private var titles: [TitleTemplate] = []
 
   private var defaults: NewClipDefaults { model.settings.defaults }
 
@@ -20,23 +21,21 @@ struct CaptionsSettings: View {
       DSButton("Add template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add an empty caption template") { addTemplate() }
         .padding(.top, DS.space.xs)
 
-      SettingsGroupHeader("Hashtag sets", description: "Grouped by primary category. A clip's hashtags come from its chosen sets.")
-      ForEach(categories, id: \.self) { cat in
-        DSEyebrow(cat).padding(.top, DS.space.md)
-        ForEach($sets) { $s in
-          if s.category == cat { HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), onSave: save, onDelete: deleteSet) }
-        }
-        DSButton("Add set to \(cat)", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add an empty hashtag set to \(cat)") { addSet(cat) }
-          .padding(.top, DS.space.xxs)
+      SettingsGroupHeader("Hashtag groups", description: "Your own groups. A clip has no hashtags until you pick a group in the editor (or set default groups in New clip defaults); extra hashtags can always be added per clip.")
+      if sets.isEmpty {
+        Text("No hashtag groups yet").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+          .padding(.top, DS.space.sm)
       }
-      HStack(spacing: DS.space.xs) {
-        DSTextField(placeholder: "New category, e.g. Afrobeats", text: $newCategory, size: .sm, onSubmit: addCategory)
-          .frame(width: 260)
-        DSButton("Add category", variant: .outline, size: .sm,
-                 disabledReason: newCategory.trimmingCharacters(in: .whitespaces).isEmpty ? "Type a category name first" : nil,
-                 tooltip: "Create the category with one empty set", shortcut: "↩") { addCategory() }
+      ForEach($sets) { $s in
+        HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), onSave: save, onDelete: deleteSet)
       }
-      .padding(.top, DS.space.md)
+      DSButton("Add hashtag group", icon: "plus", variant: .ghost, size: .sm, tooltip: "Make a new hashtag group: a name and its hashtags") { addSet() }
+        .padding(.top, DS.space.xs)
+
+      SettingsGroupHeader("YouTube title templates", description: "{text} = the clip's overlay text, else its title, else the raw marker tag. Over YouTube's limit only {text} is shortened. In the editor, pick one and then edit the title freely.")
+      ForEach($titles) { $t in titleRow($t) }
+      DSButton("Add title template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add a YouTube title template") { addTitle() }
+        .padding(.top, DS.space.xs)
 
       SettingsGroupHeader("Titles")
       SettingsRow("Where titles come from", description: "videos.json (title, title_suggestions) or an agent running djq title / djq suggest. The app never makes titles up.") {
@@ -107,38 +106,85 @@ struct CaptionsSettings: View {
       })
   }
 
-  // MARK: Hashtag sets
+  // MARK: Hashtag groups
 
-  private var categories: [String] {
-    var seen: [String] = []
-    for s in sets where !seen.contains(s.category) { seen.append(s.category) }
-    return seen
-  }
+  private func save(_ s: HashtagSet) { try? model.store.save(s); ChangeSignal.post() }
 
-  private func save(_ s: HashtagSet) { try? model.store.save(s) }
-
-  private func addSet(_ cat: String) {
-    let s = HashtagSet(id: newId(), name: "New set", category: cat, tags: [],
-                       sort: (sets.filter { $0.category == cat }.map(\.sort).max() ?? -1) + 1)
+  private func addSet() {
+    let s = HashtagSet(id: newId(), name: "New group", category: "My groups", tags: [],
+                       sort: (sets.map(\.sort).max() ?? -1) + 1)
     try? model.store.save(s)
     sets.append(s)
   }
 
-  private func addCategory() {
-    let c = newCategory.trimmingCharacters(in: .whitespaces)
-    guard !c.isEmpty else { return }
-    addSet(c)
-    newCategory = ""
-  }
-
-  /// Asks first: hashtag sets aren't in the undo history, and clips that chose this one lose its tags.
+  /// Undoable (⌘Z): the group, and its place in the default groups, come back. Written captions keep the tags as
+  /// they are (they're the clip's own text).
   private func deleteSet(_ s: HashtagSet) {
     model.confirm(ConfirmRequest(
       title: "Delete “\(s.name)”?",
-      message: "Clips that chose this set lose its hashtags (\(s.tags.isEmpty ? "it has none" : s.tags.joined(separator: " "))). You can't undo this.",
-      verb: "Delete set", icon: "trash", destructive: true) {
-        if model.perform("Hashtag set “\(s.name)” deleted", { try model.store.deleteHashtagSet(s.id) }) {
+      message: "Clips that use this group stop getting its hashtags (\(s.tags.isEmpty ? "it has none" : s.tags.joined(separator: " "))); captions you wrote yourself keep their text. Undo (⌘Z) brings it back.",
+      verb: "Delete group", icon: "trash", destructive: true) {
+        if model.undoable("Hashtag group “\(s.name)” deleted", "hashtag-group-delete", settings: true, hashtagGroups: true, {
+          try model.store.deleteHashtagSet(s.id)
+          var st = try model.store.settings()
+          if st.defaults.hashtagSetIds.contains(s.id) {
+            st.defaults.hashtagSetIds.removeAll { $0 == s.id }
+            try model.store.save(st)
+          }
+        }) {
           sets.removeAll { $0.id == s.id }
+        }
+      })
+  }
+
+  // MARK: YouTube title templates
+
+  private func titleRow(_ t: Binding<TitleTemplate>) -> some View {
+    let id = t.wrappedValue.id
+    let isDefault = id == defaults.youtubeTitleTemplateId
+    return VStack(alignment: .leading, spacing: DS.space.xs) {
+      HStack(spacing: DS.space.xs) {
+        DSTextField(placeholder: "Template name", text: t.name, size: .sm).frame(width: 240)
+          .accessibilityLabel("Title template name")
+        if isDefault { DSBadge("Default", style: .soft(.neutral), help: "New clips use this title template") }
+        Spacer(minLength: 0)
+        DSIconButton("trash", tooltip: "Delete this title template…", size: .sm,
+                     disabledReason: isDefault ? "New clip defaults uses it — choose another YouTube title template there first"
+                       : titles.count <= 1 ? "Keep at least one title template" : nil) {
+          deleteTitle(t.wrappedValue)
+        }
+      }
+      DSTextField(placeholder: "{text} | DJ Lovd", text: t.template, size: .sm)
+        .accessibilityLabel("Title template")
+    }
+    .padding(.vertical, DS.space.md)
+    .overlay(alignment: .bottom) { DSSeparator() }
+    .onChange(of: t.wrappedValue) { _, _ in saveTitles() }
+  }
+
+  private func saveTitles() {
+    guard var s = try? model.store.settings(), s.youtubeTitleTemplates != titles else { return }
+    s.youtubeTitleTemplates = titles
+    _ = model.perform { try model.store.save(s) }
+  }
+
+  private func addTitle() {
+    titles.append(TitleTemplate(id: newId(), name: "New title template", template: "{text} | DJ Lovd"))
+    saveTitles()
+  }
+
+  /// Undoable (⌘Z). Clips that chose it follow the default title template.
+  private func deleteTitle(_ t: TitleTemplate) {
+    model.confirm(ConfirmRequest(
+      title: "Delete “\(t.name)”?",
+      message: "Clips that chose this title template use the default one instead; titles you typed stay. Undo (⌘Z) brings it back.",
+      verb: "Delete title template", icon: "trash", destructive: true) {
+        if model.undoable("Title template “\(t.name)” deleted", "title-template-delete", settings: true, {
+          var s = try model.store.settings()
+          s.youtubeTitleTemplates.removeAll { $0.id == t.id }
+          try model.store.save(s)
+        }) {
+          titles.removeAll { $0.id == t.id }
         }
       })
   }
@@ -146,10 +192,11 @@ struct CaptionsSettings: View {
   private func load() {
     templates = (try? model.store.captionTemplates()) ?? []
     sets = (try? model.store.hashtagSets()) ?? []
+    titles = (try? model.store.settings().youtubeTitleTemplates) ?? []
   }
 }
 
-/// One hashtag set: name, space-separated tags (typed freely, saved as a list), Default badge, delete.
+/// One hashtag group: name, space-separated tags (typed freely, saved as a list), Default badge, delete.
 private struct HashtagSetRow: View {
   @Binding var set: HashtagSet
   let isDefault: Bool
@@ -159,17 +206,16 @@ private struct HashtagSetRow: View {
 
   var body: some View {
     HStack(spacing: DS.space.xs) {
-      DSTextField(placeholder: "Set name", text: $set.name, size: .sm).frame(width: 170)
-        .accessibilityLabel("Set name")
-      DSTextField(placeholder: "#tag #another", text: Binding(get: { tags }, set: { t in
+      DSTextField(placeholder: "Group name", text: $set.name, size: .sm).frame(width: 170)
+        .accessibilityLabel("Group name")
+      DSTextField(placeholder: "#amapiano #piano", text: Binding(get: { tags }, set: { t in
         tags = t
         let parsed = t.split(whereSeparator: \.isWhitespace).map(String.init)
         if parsed != set.tags { set.tags = parsed }
       }), size: .sm)
       .accessibilityLabel("Hashtags")
-      if isDefault { DSBadge("Default", style: .soft(.neutral), help: "New clips use this set") }
-      DSIconButton("trash", tooltip: "Delete this hashtag set…", size: .sm,
-                   disabledReason: isDefault ? "Used by New clip defaults — remove it from Hashtag sets there first" : nil) {
+      if isDefault { DSBadge("Default", style: .soft(.neutral), help: "New clips get this group") }
+      DSIconButton("trash", tooltip: "Delete this hashtag group…", size: .sm) {
         onDelete(set)
       }
     }

@@ -143,13 +143,13 @@ struct NewClipDefaultsSettings: View {
 
   @ViewBuilder private var captionGroup: some View {
     VStack(alignment: .leading, spacing: 0) {
-      SettingsGroupHeader("Caption", description: "Default caption and YouTube title. Templates and hashtag sets live in Captions & titles.")
+      SettingsGroupHeader("Caption", description: "Default caption and YouTube title. Templates, hashtag groups and title templates live in Captions & titles.")
       SettingsRow("Caption template") {
         SettingsSelect(label: "Default caption template", selection: b(\.captionTemplateId), options: templateOptions(current: d.captionTemplateId))
       }
-      SettingsRow("Hashtag sets", description: "Added to {hashtags} in the caption.", stacked: true) {
+      SettingsRow("Hashtag groups", description: "Groups every new clip starts with (none = no hashtags). Filled into {hashtags}.", stacked: true) {
         if sets.isEmpty {
-          Text("No hashtag sets yet — add them in Captions & titles.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+          Text("No hashtag groups yet — make your own in Captions & titles.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
         } else {
           // One chip per set (DSChip, not DSChipGroup) so each says which tags it adds.
           DSFlowLayout(spacing: 6) {
@@ -160,21 +160,21 @@ struct NewClipDefaultsSettings: View {
                 if on { ids.remove(s.id) } else { ids.insert(s.id) }
                 hashtagBinding.wrappedValue = ids
               }
-              .dsTooltip(s.tags.isEmpty ? "This set has no hashtags yet"
+              .dsTooltip(s.tags.isEmpty ? "This group has no hashtags yet"
                          : "\(on ? "Stop adding" : "Add") \(s.tags.joined(separator: " ")) to new clips")
             }
           }
         }
       }
-      SettingsRow("Extra hashtags", description: "Added after the sets, separated by spaces.", stacked: true) {
+      SettingsRow("Extra hashtags", description: "Added after the groups, separated by spaces.", stacked: true) {
         DSTextField(placeholder: "#tag #another", text: Binding(get: { extraTags }, set: { t in
           extraTags = t
           let tags = parse(t)
           if tags != d.extraHashtags { b(\.extraHashtags).wrappedValue = tags }
         }), size: .sm)
       }
-      SettingsRow("YouTube title template", description: "{text} = the clip's overlay text, else its title, else the raw marker tag.", stacked: true) {
-        DSTextField(placeholder: "{text}", text: b(\.youtubeTitleTemplate), size: .sm)
+      SettingsRow("YouTube title template", description: "The title template new clips use. Edit the templates in Captions & titles.") {
+        SettingsSelect(label: "Default YouTube title template", selection: b(\.youtubeTitleTemplateId), options: titleOptions)
       }
       SettingsGroupHeader("Caption template per platform", description: "Default template for one platform when the clip didn't choose one.")
       ForEach(Platform.allCases.sorted()) { p in
@@ -295,6 +295,14 @@ struct NewClipDefaultsSettings: View {
       m[p] = v
       b(\.platformCaptionTemplates).wrappedValue = m
     })
+  }
+
+  private var titleOptions: [DSSelectOption<String>] {
+    var o = model.settings.youtubeTitleTemplates.map { DSSelectOption(value: $0.id, title: $0.name, detail: $0.template) }
+    if !model.settings.youtubeTitleTemplates.contains(where: { $0.id == d.youtubeTitleTemplateId }) {
+      o.append(DSSelectOption(value: d.youtubeTitleTemplateId, title: "Missing template"))
+    }
+    return o
   }
 
   private func templateOptions(current: String?) -> [DSSelectOption<String>] {
