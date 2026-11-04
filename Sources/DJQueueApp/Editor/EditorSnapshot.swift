@@ -141,6 +141,61 @@ enum EditorSnapshot {
           reset(); whole(); model.setPosting(.facebook, false); model.canvasMode = .zones; model.scrollTarget = .platforms
         }
       }
+      // Round 7: the caption section as Eric uses it — his own groups, the real caption in the field, typing, groups and
+      // extra tags updating it in place, template switch + ⌘Z, a 2,000+ character caption, YouTube title templates,
+      // a held clip and a missing-template clip. They change the throwaway DB, so they run last.
+      let groups = [HashtagSet(id: "r7-piano", name: "Piano", category: "My groups", tags: ["#amapiano", "#piano"], sort: 0),
+                    HashtagSet(id: "r7-sa", name: "Piano · SA", category: "My groups", tags: ["#amapianosa", "#yanos"], sort: 1)]
+      let seed = {
+        for g in groups { try? store.save(g) }
+        if var st = try? store.settings(), !st.youtubeTitleTemplates.contains(where: { $0.id == "r7-live" }) {
+          st.youtubeTitleTemplates.append(TitleTemplate(id: "r7-live", name: "Live set", template: "{text} (live set) | DJ Lovd"))
+          try? store.save(st)
+        }
+        model.load(pick.id)
+        model.resetVersion(["caption", "platformCaptions", "hashtagSetIds", "extraHashtags", "captionTemplateId",
+                            "youtubeTitle", "youtubeTitleTemplateId"])
+      }
+      let typed = "Eric's own words about this blend 🎹\n\nFull set on YouTube — link in bio"
+      shot("r7-01-caption-template") { reset(); seed(); model.canvasMode = .preview; model.previewPlatform = .instagram; model.scrollTarget = .caption }
+      shot("r7-02-group-on") { reset(); model.setHashtagSets(["r7-piano"]); model.scrollTarget = .caption }
+      shot("r7-03-typed-custom") {
+        reset(); model.typeCaption(typed + "\n#amapiano #piano"); model.commitCaptionDraft(); model.scrollTarget = .caption
+      }
+      shot("r7-04-second-group-in-place") { reset(); model.setHashtagSets(["r7-piano", "r7-sa"]); model.scrollTarget = .caption }
+      shot("r7-05-extra-tags-no-duplicate") { reset(); model.setExtraHashtags(["#djlovd", "#piano"]); model.scrollTarget = .caption }
+      shot("r7-06-template-switch") { reset(); model.setCaptionTemplate("question"); model.toast = nil; model.scrollTarget = .caption }
+      shot("r7-07-undo-brings-text-back") { reset(); model.undo(); model.toast = nil; model.scrollTarget = .caption }
+      shot("r7-08-long-caption-2000") {
+        reset()
+        var long = ""
+        while long.count < 2050 { long += "That log drum switch into the second track still gets me every time, live at the Afroween Jazz Piano set. " }
+        model.typeCaption(long + "\n#amapiano #piano #amapianosa #yanos #djlovd"); model.commitCaptionDraft()
+        model.canvasMode = .zones; model.scrollTarget = .caption
+      }
+      shot("r7-09-youtube-template-switch") {
+        reset(); model.resetCaptionToTemplate(); model.setYouTubeTitleTemplate("r7-live"); model.toast = nil
+        model.canvasMode = .preview; model.previewPlatform = .youtube; model.scrollTarget = .caption
+      }
+      shot("r7-10-youtube-title-typed") {
+        reset(); model.typeYouTubeTitle("Afroween Jazz Piano — the log drum switch | DJ Lovd")
+        model.canvasMode = .preview; model.previewPlatform = .youtube; model.scrollTarget = .caption
+      }
+      if let held = shorts.first(where: { $0.id != pick.id && $0.titleText != nil }) ?? shorts.first(where: { $0.id != pick.id }) {
+        shot("r7-11-held-clip") {
+          reset(); try? store.setHeldInEdit(held.id, true); model.load(held.id); model.canvasMode = .zones; model.scrollTarget = .title
+        }
+        shot("r7-12-missing-template") {
+          reset()
+          model.load(held.id)
+          try? store.setHeldInEdit(held.id, false)
+          model.load(held.id)
+          model.updateVersion { $0.captionTemplateId = "deleted-template"; $0.caption = nil }
+          model.flushAndWait()
+          model.load(held.id)
+          model.canvasMode = .zones; model.scrollTarget = .caption
+        }
+      }
       if let only = env["DJQ_SNAPSHOT_ONLY"] { shots = shots.filter { $0.0.contains(only) } }
 
       for (name, setup) in shots {
@@ -190,7 +245,7 @@ enum EditorSnapshot {
     let sets = m.resolved.hashtagSetIds
     if let extra = m.sets.first(where: { !sets.contains($0.id) }) {
       m.setHashtagSets(sets + [extra.id])
-      check("adding a hashtag set is Custom", !m.resolved.isDefault("hashtagSetIds"))
+      check("adding a hashtag group is Custom", !m.resolved.isDefault("hashtagSetIds"))
       m.setHashtagSets(sets)
       check("removing it again is Default", m.resolved.isDefault("hashtagSetIds"))
     }
@@ -207,6 +262,43 @@ enum EditorSnapshot {
     check("Follow the Title restores the default", m.resolved.isDefault("text") && m.resolved.text == "Some title")
     m.setNoText(true); m.setNoText(false)
     check("No text on → off follows the Title again", m.resolved.isDefault("text") && m.resolved.text == "Some title")
+    // Round 7 (C1): a held clip puts no dot on Caption, and the chip says to use Send to Queue.
+    try? store.setHeldInEdit(third, true)
+    m.load(third)
+    let flagged = Set(m.liveIssues.compactMap { EditorModel.section(for: $0.kind) })
+    check("held clip: issue listed", m.liveIssues.contains { $0.kind == .heldInEdit })
+    check("held clip: no warning dot on Caption", !flagged.contains(.caption) || !m.captionIssues.isEmpty || !m.captionWarnings.isEmpty)
+    let help = EditorHeader(model: m, videoIds: ids, done: {}).chipHelp(m.liveIssues, target: m.liveIssues.first { EditorModel.section(for: $0.kind) != nil },
+                                                                         held: m.liveIssues.first { $0.kind == .heldInEdit })
+    print("editor-selftest: chip tooltip “\(help)”")
+    check("held clip: chip tooltip names Send to Queue", help.contains("Send to Queue"))
+    try? store.setHeldInEdit(third, false)
+    m.load(third)
+    // Round 7 (C4): WYSIWYG caption.
+    try? store.save(HashtagSet(id: "st-g", name: "G", category: "My groups", tags: ["#g1", "#g2"], sort: 0))
+    m.load(third)
+    m.resetVersion(["caption", "hashtagSetIds", "extraHashtags", "captionTemplateId"])
+    check("field shows the template's caption", !m.captionIsWritten && m.mainCaption == m.caption(for: .tiktok))
+    m.setHashtagSets(["st-g"])
+    check("a group goes into the template caption", m.mainCaption.contains("#g1 #g2"))
+    m.typeCaption("Mine\n#g1 #g2"); m.commitCaptionDraft()
+    check("typing makes it Custom, literally", m.captionIsWritten && m.mainCaption == "Mine\n#g1 #g2")
+    m.setExtraHashtags(["#x", "#g1"])
+    check("extra tags swap in place without duplicates", m.mainCaption == "Mine\n#g1 #g2 #x")
+    m.setHashtagSets([])
+    check("turning the group off takes its tags out", m.mainCaption == "Mine\n#x #g1")
+    m.setCaptionTemplate("short")
+    check("choosing a template rewrites the caption", !m.captionIsWritten && m.mainCaption.hasSuffix("#x #g1"))
+    m.undo()
+    check("⌘Z brings the written caption back", m.captionIsWritten && m.mainCaption == "Mine\n#x #g1")
+    m.resetCaptionToTemplate()
+    check("↺ goes back to the template", !m.captionIsWritten)
+    // Round 7 (C5): YouTube title.
+    let tplTitle = m.youtubeTitle
+    m.typeYouTubeTitle("Typed title")
+    check("typing the YouTube title makes it Custom", m.resolved.youtubeTitle == "Typed title" && m.youtubeTitle == "Typed title")
+    m.typeYouTubeTitle(tplTitle)
+    check("typing the template's title back follows the template", m.resolved.youtubeTitle.isEmpty)
     m.flushAndWait()
     print("editor-selftest: \(failures == 0 ? "all passed" : "\(failures) failed")")
     return failures == 0 ? 0 : 1

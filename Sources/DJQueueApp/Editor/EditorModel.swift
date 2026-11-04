@@ -753,7 +753,7 @@ final class EditorModel: ObservableObject {
   func typeCaption(_ text: String, platform: Platform? = nil) {
     if let d = captionDraft, d.platform != platform { commitCaptionDraft() }
     captionDraft = (platform, text)
-    saving = true
+    if !saving { saving = true }  // @Published fires on every set: only the first keystroke redraws the editor
     captionDraftTask?.cancel()
     captionDraftTask = Task { [weak self] in
       try? await Task.sleep(nanoseconds: 250_000_000)

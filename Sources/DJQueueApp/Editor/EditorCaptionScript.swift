@@ -50,8 +50,49 @@ enum EditorCaptionScript {
       let all = textViews(in: host)
       if let t = all.first(where: { $0.enclosingScrollView?.identifier?.rawValue == "editor.caption"
         || $0.identifier?.rawValue == "editor.caption" || ($0.accessibilityIdentifier() == "editor.caption") }) { return t }
-      let want = model.resolved.caption
-      return all.first { !want.isEmpty && $0.string == want } ?? all.first { $0.string.contains("{hashtags}") || $0.string.count > 1500 }
+      let want = model.resolved.caption, shown = model.mainCaption
+      return all.first { !shown.isEmpty && $0.string == shown } ?? all.first { !want.isEmpty && $0.string == want }
+        ?? all.first { $0.string.contains("{hashtags}") || $0.string.count > 1500 }
+    }
+
+    // 0. Round 7: Eric's own groups; the field shows the real caption, and chips / templates / ⌘Z change the text IN the
+    //    field (read back from the NSTextView, not the model).
+    for g in [HashtagSet(id: "cs-piano", name: "Piano", category: "My groups", tags: ["#amapiano", "#piano"], sort: 0),
+              HashtagSet(id: "cs-sa", name: "Piano · SA", category: "My groups", tags: ["#amapianosa"], sort: 1)] { try? store.save(g) }
+    model.load(video)
+    try? await Task.sleep(for: .seconds(2))
+    model.resetVersion(["caption", "hashtagSetIds", "extraHashtags", "captionTemplateId"])
+    model.scrollTarget = .caption
+    try? await Task.sleep(for: .seconds(1))
+    var checks: [Bool] = []
+    func check(_ name: String, _ ok: Bool) { checks.append(ok); note("\(ok ? "PASS" : "FAIL") \(name)") }
+    if let f = captionView() {
+      check("field holds the template's caption (\(f.string.count) chars)", f.string == model.mainCaption && !f.string.isEmpty)
+      model.setHashtagSets(["cs-piano"])
+      try? await Task.sleep(for: .milliseconds(600))
+      check("Piano chip → #amapiano #piano appear in the field", f.string.hasSuffix("#amapiano #piano"))
+      await shot("group-on")
+      f.setSelectedRange(NSRange(location: 0, length: 0))
+      for ch in "Hook: " { f.insertText(String(ch), replacementRange: f.selectedRange()); try? await Task.sleep(for: .milliseconds(5)) }
+      try? await Task.sleep(for: .milliseconds(600))
+      check("typing at the start → Custom with the typed text", model.captionIsWritten && model.resolved.caption.hasPrefix("Hook: "))
+      model.setHashtagSets(["cs-piano", "cs-sa"])
+      try? await Task.sleep(for: .milliseconds(600))
+      check("second chip on a written caption → tags swapped in place, text kept",
+            f.string.hasPrefix("Hook: ") && f.string.hasSuffix("#amapiano #piano #amapianosa")
+              && f.string.components(separatedBy: "#amapiano ").count == 2)
+      await shot("second-group-in-written-caption")
+      let written = f.string
+      model.setCaptionTemplate("short")
+      try? await Task.sleep(for: .milliseconds(600))
+      check("template switch rewrites the field", f.string == model.mainCaption && !f.string.hasPrefix("Hook: "))
+      await shot("template-switch")
+      model.undo()
+      try? await Task.sleep(for: .milliseconds(600))
+      check("⌘Z puts the written caption back in the field", f.string == written)
+      await shot("undo")
+    } else {
+      check("caption field found", false)
     }
 
     // 1. A 2,000+ character caption.
@@ -60,7 +101,8 @@ enum EditorCaptionScript {
     while long.count < 2100 { long += para }
     long += "\n{hashtags}"
     model.updateVersion(coalesce: false) { $0.caption = long }
-    try? await Task.sleep(for: .seconds(1))
+    model.toast = nil
+    try? await Task.sleep(for: .seconds(4))
     await shot("long-caption")
     guard let tv = captionView() else {
       note("FAIL no caption text view found (\(textViews(in: host).count) text views)")
@@ -104,7 +146,7 @@ enum EditorCaptionScript {
 
     try? log.joined(separator: "\n").write(to: out.appendingPathComponent("timing-\(appearance).txt"), atomically: true, encoding: .utf8)
     model.flushAndWait()
-    return typedOK && delOK && selOK ? 0 : 1
+    return typedOK && delOK && selOK && !checks.contains(false) ? 0 : 1
   }
 
   static func textViews(in v: NSView) -> [NSTextView] {

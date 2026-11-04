@@ -14,14 +14,7 @@ struct CaptionsSettings: View {
 
   var body: some View {
     SettingsScroll {
-      SettingsGroupHeader("Caption templates", description: "{text} overlay text on one line · {tag} raw marker tag · {set} session name · {hashtags} the clip's hashtags", first: true)
-      ForEach($templates) { $t in
-        templateRow($t)
-      }
-      DSButton("Add template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add an empty caption template") { addTemplate() }
-        .padding(.top, DS.space.xs)
-
-      SettingsGroupHeader("Hashtag groups", description: "Your own groups. A clip has no hashtags until you pick a group in the editor (or set default groups in New clip defaults); extra hashtags can always be added per clip.")
+      SettingsGroupHeader("Hashtag groups", description: "Your own groups. A clip has no hashtags until you pick a group in the editor (or set default groups in New clip defaults); extra hashtags can always be added per clip.", first: true)
       if sets.isEmpty {
         Text("No hashtag groups yet").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
           .padding(.top, DS.space.sm)
@@ -35,6 +28,13 @@ struct CaptionsSettings: View {
       SettingsGroupHeader("YouTube title templates", description: "{text} = the clip's overlay text, else its title, else the raw marker tag. Over YouTube's limit only {text} is shortened. In the editor, pick one and then edit the title freely.")
       ForEach($titles) { $t in titleRow($t) }
       DSButton("Add title template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add a YouTube title template") { addTitle() }
+        .padding(.top, DS.space.xs)
+
+      SettingsGroupHeader("Caption templates", description: "{text} overlay text on one line · {tag} raw marker tag · {set} session name · {hashtags} the clip's hashtags")
+      ForEach($templates) { $t in
+        templateRow($t)
+      }
+      DSButton("Add template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add an empty caption template") { addTemplate() }
         .padding(.top, DS.space.xs)
 
       SettingsGroupHeader("Titles")
