@@ -320,7 +320,7 @@ extension AppModel {
     switch s {
     case .queued: return "\(via) · sent once rendered"
     case .sending: return "\(via) · sending now"
-    case .unconfirmed: return "Sent, but Postiz never confirmed it — check the Postiz calendar"
+    case .unconfirmed: return Self.unconfirmedText
     case .scheduled(let d): return "\(via) · goes out at \(Self.clockText(d, tz: tz))"
     case .posting: return "\(via) · going out now"
     case .draft: return "\(via) · draft until released"
@@ -347,5 +347,37 @@ extension AppModel {
           }
         }
       })
+  }
+}
+
+// MARK: Unconfirmed creates (Doctor postiz.create_unknown)
+
+extension AppModel {
+  static let unconfirmedText = "DJ Queue couldn't confirm Postiz got this post. Check the Postiz calendar."
+
+  /// "It's in Postiz": kept as Postiz's (recorded posted, never sent again). "Not in Postiz — post it myself": back
+  /// on Today, which asks first — if Postiz does have it, it would post twice.
+  func resolveUnconfirmed(_ p: PlatformPost, inPostiz: Bool) {
+    let run = { [weak self] in
+      guard let self else { return }
+      let svc = self.postizBridge.service
+      Task.detached {
+        let out: Result<String, Error> = Result { try svc.resolveUnconfirmed(postId: p.id, inPostiz: inPostiz) }
+        await MainActor.run {
+          switch out {
+          case .success: self.show(inPostiz ? "\(p.platform.displayName): kept as Postiz's — add its link when it's up"
+                                            : "\(p.platform.displayName) is on Today to post by hand")
+          case .failure(let e): self.show("\(e)", error: true)
+          }
+          ChangeSignal.post()
+          self.refresh()
+        }
+      }
+    }
+    guard !inPostiz else { run(); return }
+    confirmHere(ConfirmRequest(
+      title: "Post \(p.platform.displayName) yourself?",
+      message: "Only if it isn't in the Postiz calendar. If Postiz does have it, it would go out twice: once from Postiz and once by you. It moves to Today as a manual post.",
+      verb: "Post it myself", icon: "exclamationmark.triangle", destructive: true, action: run))
   }
 }

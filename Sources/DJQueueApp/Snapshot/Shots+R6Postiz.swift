@@ -113,6 +113,21 @@ extension SnapshotShots {
         m.postsSelection = m.posts.first { $0.state == .failed && $0.platform == .x }?.id
         m.screen = .posts
       },
+      c.main("r6-posts-unconfirmed", pm) { m in
+        state(m, testRun: true)
+        BrowseUI.shared.reset()
+        PostsCardState.shared.expanded = []
+        ListPrefs.shared.setStatus(.posts, PostsTab.problems.rawValue)
+        m.postsSelection = m.posts.first { m.postizState($0) == .unconfirmed }?.id
+        m.screen = .posts
+      },
+      c.main("r6-posts-unconfirmed-confirm", pm) { m in
+        state(m, testRun: true)
+        BrowseUI.shared.reset()
+        ListPrefs.shared.setStatus(.posts, PostsTab.problems.rawValue)
+        m.screen = .posts
+        if let p = m.posts.first(where: { m.postizState($0) == .unconfirmed }) { m.resolveUnconfirmed(p, inPostiz: false) }
+      },
       c.main("r6-week-current", pm) { m in
         state(m, testRun: true)
         m.screen = .week

@@ -445,6 +445,9 @@ final class AppModel {
     weekSlots = l.weekSlots
     weekAwake = l.weekAwake
     postiz.apply(l.postiz)
+    // A Postiz create DJ Queue couldn't confirm (Doctor postiz.create_unknown) needs Eric: it's a problem too.
+    let unconfirmed = l.posts.filter { postiz.states[$0.id] == .unconfirmed && !problems.contains($0) }
+    if !unconfirmed.isEmpty { problems = unconfirmed + problems }
     // The key's presence decides fallbacks on every screen: look it up once a platform uses Postiz.
     if postiz.hasKey == nil && !settings.publishing.postizPlatforms.isEmpty { loadPostizKey() }
     applyPreviewStamps(l)
@@ -577,7 +580,7 @@ final class AppModel {
   var problemSummary: (title: String, detail: String) {
     let n = problems.count
     let parts = problems.prefix(3).map { p in
-      "\(p.platform.displayName) \(p.state == .copyrightBlocked || p.state == .copyrightMuted ? "© \(p.state == .copyrightMuted ? "muted" : "blocked")" : p.state.displayName.lowercased())"
+      postizState(p) == .unconfirmed ? "\(p.platform.displayName) unconfirmed in Postiz" : "\(p.platform.displayName) \(p.state == .copyrightBlocked || p.state == .copyrightMuted ? "© \(p.state == .copyrightMuted ? "muted" : "blocked")" : p.state.displayName.lowercased())"
     }
     return ("\(n) post\(n == 1 ? "" : "s") need\(n == 1 ? "s" : "") attention", parts.joined(separator: " · ") + (n > 3 ? " · …" : ""))
   }

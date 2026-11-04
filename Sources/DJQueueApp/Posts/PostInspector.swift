@@ -130,6 +130,15 @@ struct PostInspector: View {
       if let channel { row("Channel") { Text("\(channel.name) · \(channel.identifier)").lineLimit(1) } }
       if let job, job.isOpen { row("Goes out") { Text(Fmt.day(job.remoteDate, tz: model.tz, style: "EEE d MMM, h:mm a")) } }
       if model.isTestRun(post) { row("Test run") { Text(testRunText).fixedSize(horizontal: false, vertical: true) } }
+      if pz == .unconfirmed {
+        VStack(alignment: .leading, spacing: DS.space.xxs) {
+          DSButton("It's in Postiz", icon: "checkmark.circle", variant: .outline, size: .sm,
+                   tooltip: "Keep it as Postiz's; it's never sent again") { model.resolveUnconfirmed(post, inPostiz: true) }
+          DSButton("Not in Postiz — post it myself", variant: .ghost, size: .sm,
+                   tooltip: "Move it to Today as a manual post (asks first)") { model.resolveUnconfirmed(post, inPostiz: false) }
+        }
+        .padding(.top, DS.space.xs)
+      }
       if pz == .draft {
         DSButton("Release draft", icon: "paperplane", variant: .outline, size: .sm,
                  tooltip: "Let Postiz post this draft at its time") { model.releaseDraft(post) }

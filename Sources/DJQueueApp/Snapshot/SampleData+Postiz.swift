@@ -59,6 +59,16 @@ extension SampleData {
       }
     }
     for p in posts where dm.key(p.scheduledAt) == tomorrow && p.platform == .x { try job(p, phase: .live, remote: "QUEUE") }
+    // Tomorrow's YouTube: a create Postiz never confirmed (Doctor postiz.create_unknown) — Eric checks the calendar.
+    if var p = posts.first(where: { dm.key($0.scheduledAt) == tomorrow && $0.platform == .youtube }) {
+      if p.renderId == nil { p.renderId = posts.first { $0.videoId == p.videoId && $0.renderId != nil }?.renderId }
+      var j = PostizJob(postId: p.id, videoId: p.videoId, platform: .youtube, integrationId: channel(.youtube), phase: .creating,
+                        renderId: p.renderId, contentHash: "sample", scheduledAt: p.scheduledAt, remoteDate: p.scheduledAt,
+                        testMode: false, postType: "schedule", remoteState: PostizJob.unconfirmed,
+                        submittedAt: now.addingTimeInterval(-3600), createdAt: now.addingTimeInterval(-3600), updatedAt: now)
+      j.lastError = "The create timed out and the post isn't in the Postiz list"
+      try store.save(j)
+    }
 
     // Yesterday: four extra posts of the first planned clip, one per outcome.
     guard let videoId = posts.first(where: { dm.key($0.scheduledAt) == today })?.videoId,
