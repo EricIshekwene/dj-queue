@@ -45,11 +45,21 @@ public protocol PostizTransport: AnyObject, Sendable {
   func send(_ request: PostizHTTPRequest) throws -> PostizHTTPResponse
 }
 
-/// Turns every live Postiz call off for this process (tests set it; `DJQ_POSTIZ_OFFLINE=1` does the same).
-/// `URLSessionPostizTransport` then fails with `.network` and `KeychainPostizKeyStore` reports no key without
-/// running anything.
+/// Turns every live Postiz call off for this process. `URLSessionPostizTransport` then fails with `.network` and
+/// `KeychainPostizKeyStore` reports no key without running anything. Off when:
+/// - `DJQ_POSTIZ_OFFLINE=1`, or
+/// - the process runs against a scratch home or root (`DJQ_HOME` / `DJQ_ROOT` set: dev runs, the auto-update gate,
+///   `djq` in a dev root) unless `DJQ_POSTIZ_LIVE=1` says so explicitly — a dev run never reads Eric's Keychain item
+///   or reaches Postiz by accident;
+/// - tests set it (the fixture).
 public enum PostizLive {
-  nonisolated(unsafe) public static var disabled: Bool = ProcessInfo.processInfo.environment["DJQ_POSTIZ_OFFLINE"] == "1"
+  nonisolated(unsafe) public static var disabled: Bool = offByEnvironment(ProcessInfo.processInfo.environment)
+
+  public static func offByEnvironment(_ env: [String: String]) -> Bool {
+    if env["DJQ_POSTIZ_OFFLINE"] == "1" { return true }
+    let scratch = !(env["DJQ_HOME"] ?? "").isEmpty || !(env["DJQ_ROOT"] ?? "").isEmpty
+    return scratch && env["DJQ_POSTIZ_LIVE"] != "1"
+  }
 }
 
 /// The real transport: URLSession, blocking the calling (engine/CLI) thread until the response or the timeout.

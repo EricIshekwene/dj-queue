@@ -243,8 +243,9 @@ app doesn't trigger a Keychain prompt on every update. Agents keep using the Pos
   "locked or refused"); saving runs `security -i` with the `add-generic-password -U …` line on stdin, so the key never
   appears in a process argument list and the item trusts `/usr/bin/security` (no prompt after rebuilds). Requests
   print redacted, redirects are never followed, uploads stream from a temp file (stale ones are swept).
-- **Tests** never reach Postiz or the Keychain: `PostizLive.disabled` (set by the test fixture; `DJQ_POSTIZ_OFFLINE=1`
-  for any process) turns the real transport and the real `security` runner off, and every test injects fakes.
+- **Tests and dev runs** never reach Postiz or the Keychain: `PostizLive.disabled` turns the real transport and the
+  real `security` runner off. It is on in tests (the fixture), with `DJQ_POSTIZ_OFFLINE=1`, and in any process with
+  `DJQ_HOME`/`DJQ_ROOT` set unless `DJQ_POSTIZ_LIVE=1`; every test injects fakes.
 
 ## 9. Not supported / follow-ups
 
