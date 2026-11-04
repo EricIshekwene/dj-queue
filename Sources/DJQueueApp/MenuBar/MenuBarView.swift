@@ -125,6 +125,8 @@ struct MenuBarState {
   /// Other posts due now (≤ 3 shown).
   var due: [PlatformPost]
   var problems: [PlatformPost]
+  /// Today's posts Postiz handles (≤ 4 shown).
+  var postiz: [PlatformPost] = []
   var engineRunning: Bool
   var paused: Bool
   var lastTick: Date?
@@ -142,6 +144,7 @@ struct MenuBarState {
     next = dueNow.first ?? m.nextPost
     due = Array(dueNow.dropFirst())
     problems = m.problems
+    postiz = m.postizToday
     engineRunning = m.engineRunning
     paused = m.settings.paused
     lastTick = m.lastHeartbeat?.at
@@ -188,6 +191,7 @@ struct MenuBarContent: View {
       VStack(alignment: .leading, spacing: DS.space.md) {
         if let n = state.next { header(n) } else { nothingNext }
         if !state.due.isEmpty { dueList }
+        if !state.postiz.isEmpty { postizList }
       }
       .padding(DS.space.md)
       if !state.problems.isEmpty || !state.engineRunning || state.update != nil {
@@ -290,6 +294,48 @@ struct MenuBarContent: View {
       }
       if state.due.count > 3 {
         Text("+ \(state.due.count - 3) more in Today").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+      }
+    }
+  }
+
+  // MARK: Postiz today
+
+  /// "Postiz today": one quiet row per post Postiz handles — glyph · platform + time · state chip · its one action
+  /// (open the live post, release a test-run draft).
+  private var postizList: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text("Postiz today").font(DS.type.micro).foregroundStyle(DS.color.textTertiary).padding(.bottom, 2)
+      ForEach(state.postiz.prefix(4)) { p in
+        let s = model.postizState(p) ?? .queued
+        HStack(spacing: DS.space.xs) {
+          DSPlatformIcon(platform: p.platform, size: 22)
+          VStack(alignment: .leading, spacing: 0) {
+            Text(p.platform.displayName).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(1)
+            Text(AppModel.clockText(p.scheduledAt, tz: model.tz)).font(DS.type.caption.monospacedDigit())
+              .foregroundStyle(DS.color.textSecondary)
+          }
+          .dsTooltip(model.video(p.videoId).map(model.displayName))
+          Spacer(minLength: 0)
+          if model.isTestRun(p) {
+            Image(systemName: "testtube.2").font(.system(size: 10, weight: .medium)).foregroundStyle(DS.color.textSecondary)
+              .dsTooltip(TestRunBadge.help)
+          }
+          PostizBadge(model: model, post: p, state: s, size: .sm)
+          switch s {
+          case .posted(let u?):
+            if let url = URL(string: u) {
+              DSIconButton("arrow.up.right.square", tooltip: "Open the live post in your browser", size: .sm) { NSWorkspace.shared.open(url) }
+            }
+          case .draft:
+            DSIconButton("paperplane", tooltip: "Release this draft so Postiz posts it", size: .sm) { model.releaseDraft(p) }
+          default:
+            EmptyView()
+          }
+        }
+        .frame(height: 40)
+      }
+      if state.postiz.count > 4 {
+        Text("+ \(state.postiz.count - 4) more in Today").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
       }
     }
   }

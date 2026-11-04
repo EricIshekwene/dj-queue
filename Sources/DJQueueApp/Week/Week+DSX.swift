@@ -89,6 +89,9 @@ struct DSXSlotChip: View {
   var paused = false
   /// A post exists, so right-click opens the post actions (said in the tooltip).
   var hasActions = false
+  /// Round 6: what Postiz does with it (nil = manual) and whether it's a test-run post.
+  var postiz: PostizPostState? = nil
+  var testRun = false
 
   var body: some View {
     let struck = status == .skipped || paused
@@ -104,7 +107,15 @@ struct DSXSlotChip: View {
         .lineLimit(1)
         .minimumScaleFactor(0.9)
       Spacer(minLength: 2)
-      if status == .copyright {
+      if let pz = postiz, pz.isHeld {
+        // Postiz holds it: its glyph instead of a dot (test-run posts show the test tube).
+        Image(systemName: testRun ? "testtube.2" : (pz.badgeIcon ?? "paperplane"))
+          .font(.system(size: 8.5, weight: .semibold)).foregroundStyle(DS.color.textSecondary)
+      } else if case .inbox? = postiz {
+        Circle().fill(DS.color.warning).frame(width: 6, height: 6)
+      } else if case .fellBack? = postiz {
+        Circle().fill(DS.color.warning).frame(width: 6, height: 6)
+      } else if status == .copyright {
         Image(systemName: "c.circle.fill").font(.system(size: 9)).foregroundStyle(DS.color.danger)
       } else if let dot = status.dot {
         Circle().fill(dot).frame(width: 6, height: 6)
@@ -118,7 +129,7 @@ struct DSXSlotChip: View {
     .background(status.problemTone.map { DS.color.tint($0) } ?? .clear,
                 in: RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
     .contentShape(Rectangle())
-    .dsTooltip("\(platform.displayName) · \(time) · \(status.text)\(paused ? " · platform paused" : "")\(hasActions ? " · right-click for actions" : "")")
+    .dsTooltip("\(platform.displayName) · \(time) · \(postiz?.text ?? status.text)\(testRun ? " · Test run" : "")\(paused ? " · platform paused" : "")\(hasActions ? " · right-click for actions" : "")")
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("\(platform.displayName), \(time), \(status.text)\(paused ? ", paused" : "")")
   }

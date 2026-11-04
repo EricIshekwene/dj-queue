@@ -544,13 +544,26 @@ final class AppModel {
   }
 
   var nextPost: PlatformPost? {
-    posts.filter { !$0.state.isTerminal && $0.scheduledAt > now }.min { $0.scheduledAt < $1.scheduledAt }
+    posts.filter { !$0.state.isTerminal && $0.scheduledAt > now && postizState($0)?.isHeld != true }.min { $0.scheduledAt < $1.scheduledAt }
+  }
+
+  /// Today's posts Postiz handles (held or done by it; the inbox and fallbacks are manual tasks), in time order.
+  var postizToday: [PlatformPost] {
+    dueToday.filter { p in
+      switch postizState(p) {
+      case nil, .fellBack?, .inbox?: false
+      default: dm.key(p.scheduledAt) == todayKey
+      }
+    }.sorted { $0.scheduledAt < $1.scheduledAt }
   }
 
   var postedTodayCount: Int { dueToday.filter { $0.state == .posted && dm.key($0.scheduledAt) == todayKey }.count }
   var todayTotal: Int { dueToday.filter { dm.key($0.scheduledAt) == todayKey && $0.state != .skipped }.count }
-  var dueNow: [PlatformPost] { dueToday.filter { $0.state == .due || $0.state == .overdue || ($0.state.isTerminal == false && $0.scheduledAt <= now) } }
-  var dueBadge: Int { dueToday.filter { !$0.state.isTerminal }.count }
+  /// Manual tasks only: a post Postiz delivers is never "due" for Eric.
+  var dueNow: [PlatformPost] {
+    dueToday.filter { ($0.state == .due || $0.state == .overdue || ($0.state.isTerminal == false && $0.scheduledAt <= now)) && postizState($0)?.isHeld != true }
+  }
+  var dueBadge: Int { dueToday.filter { !$0.state.isTerminal && postizState($0)?.isHeld != true }.count }
 
   func runwayTint(_ days: Int, threshold: Int) -> Color {
     days >= threshold * 2 ? DS.Status.posted : (days >= threshold ? .orange : .red)

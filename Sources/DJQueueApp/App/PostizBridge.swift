@@ -24,66 +24,28 @@ enum PostizEnvironment {
   }
 }
 
-/// The handful of Postiz operations Settings → Publishing and the post rows need. Mirrors the core service's key and
-/// check rules (shared hourly budget, 429 → 15-minute pause, 401 → "key invalid" flag, success clears it).
-// TODO(M2): forward to `PostizService` (saveKey/deleteKey/checkConnection/channels/releaseDraft) once core lands it.
+/// The handful of Postiz operations Settings → Publishing and the post rows need, on the core `PostizService`
+/// (shared hourly budget, 429 pause, "key refused" flag — the same rules as the engine and `djq`). The engine
+/// running in this process gets the same service, so fake runs never reach the Keychain or Postiz.
 final class PostizBridge: @unchecked Sendable {
-  let store: Store
-  let keyStore: PostizKeyStore
-  let transport: PostizTransport
+  let service: PostizService
 
   init(store: Store, keyStore: PostizKeyStore, transport: PostizTransport) {
-    self.store = store
-    self.keyStore = keyStore
-    self.transport = transport
+    service = PostizService(store: store, transport: transport, keyStore: keyStore)
   }
 
-  func hasKey() -> Bool { keyStore.hasKey() }
-
-  func saveKey(_ k: String) throws {
-    try keyStore.save(k)
-    try store.clearPostizKeyInvalid()
-    try store.logEvent("postiz", "Postiz API key saved")
-  }
-
-  func deleteKey() throws {
-    try keyStore.delete()
-    try store.logEvent("postiz", "Postiz API key removed")
-  }
+  func hasKey() -> Bool { service.hasKey() }
+  func saveKey(_ k: String) throws { try service.saveKey(k) }
+  func deleteKey() throws { try service.deleteKey() }
 
   /// `GET /is-connected`, then the channel list (cached in kv for the router and the UI). Two budgeted calls.
   func check() throws -> [PostizIntegration] {
-    let s = try store.settings()
-    let ks = keyStore
-    let client = PostizClient(transport: transport, base: s.publishing.apiBase) {
-      guard let k = try ks.read(), !k.isEmpty else { throw PostizError.noKey }
-      return k
-    }
-    func call<T>(_ body: () throws -> T) throws -> T {
-      guard try store.takePostizCall(.check, limit: s.publishing.hourlyBudget) else { throw PostizError.overBudget }
-      do {
-        let r = try body()
-        try store.clearPostizKeyInvalid()
-        return r
-      } catch PostizError.rateLimited {
-        try store.pausePostiz()
-        throw PostizError.rateLimited
-      } catch PostizError.unauthorized(let m) {
-        try store.setPostizKeyInvalid(m.isEmpty ? "Postiz refused the API key" : m)
-        throw PostizError.unauthorized(m)
-      }
-    }
-    guard try call({ try client.isConnected() }) else { throw PostizError.unauthorized("not connected") }
-    let list = try call { try client.integrations() }
-    // Same shape as `PostizChannelCache` (its memberwise init isn't public in M1).
-    struct Cache: Encodable { var fetchedAt: Date; var integrations: [PostizIntegration] }
-    try store.setKV(PostizChannelCache.kvKey, Cache(fetchedAt: store.clock.now, integrations: list))
-    return list
+    guard try service.checkConnection() else { throw PostizError.unauthorized("not connected") }
+    return try service.channels(refresh: true)
   }
 
-  func releaseDraft(postId: String) throws {
-    throw PostizError.badResponse("releasing drafts arrives with the publisher engine")
-  }
+  /// Test run: a Postiz draft → scheduled (one budgeted call).
+  func releaseDraft(postId: String) throws { try service.releaseDraft(postId: postId) }
 }
 
 /// Answers the two read-only calls Settings makes, from sample channels. Anything else is "not found".

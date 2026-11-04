@@ -384,7 +384,9 @@ struct WeekDayCard: View {
       ?? AppModel.clockText(model.dm.at(slot.date, minutes: model.settings.slot(for: pl) + slot.position * model.settings.secondPostOffsetMinutes),
                             tz: model.tz)
     let status: DSXPostStatus = post.map { model.postStatus($0) } ?? (approved ? .planned : .draft)
-    return DSXSlotChip(platform: pl, time: time, status: status, paused: model.settings.pausedPlatforms.contains(pl), hasActions: post != nil)
+    return DSXSlotChip(platform: pl, time: time, status: status, paused: model.settings.pausedPlatforms.contains(pl), hasActions: post != nil,
+                       postiz: post.flatMap { $0.resolution == nil ? model.postizState($0) : nil },
+                       testRun: post.map(model.isTestRun) ?? false)
       .contextMenu { if let post { PostContextMenu(model: model, post: post) } }
   }
 }

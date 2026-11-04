@@ -76,6 +76,40 @@ extension SnapshotShots {
         state(m, testRun: true)
         m.screen = .queue
       },
+      // U2: post status + links (Postiz model; Test run on so the draft and the inbox carry their badge)
+      c.main("r6-today", pm) { m in
+        state(m, testRun: true)
+        m.screen = .today
+      },
+      c.main("r6-posts-all-open", pm) { m in
+        state(m, testRun: true)
+        BrowseUI.shared.reset()
+        ListPrefs.shared.setStatus(.posts, nil)
+        let today = m.posts.filter { m.dm.key($0.scheduledAt) == m.todayKey }
+        // Just the first planned clip (today's six + yesterday's four Postiz outcomes), oldest first, both cards open.
+        if let v = today.first.flatMap({ m.video($0.videoId) }) { ListPrefs.shared.setSearch(.posts, m.displayName(v)) }
+        ListPrefs.shared.setSort(.posts, "oldest")
+        let mine = m.posts.filter { $0.videoId == today.first?.videoId }
+        PostsCardState.shared.expanded = Set(PostGrouping.group(mine, day: { m.dm.key($0) }).map(\.id))
+        m.postsSelection = today.first { $0.platform == .instagram }?.id
+        m.screen = .posts
+      },
+      c.main("r6-posts-problems", pm) { m in
+        state(m, testRun: true)
+        BrowseUI.shared.reset()
+        PostsCardState.shared.expanded = []
+        ListPrefs.shared.setStatus(.posts, PostsTab.problems.rawValue)
+        m.postsSelection = m.posts.first { $0.state == .failed && $0.platform == .x }?.id
+        m.screen = .posts
+      },
+      c.main("r6-week-current", pm) { m in
+        state(m, testRun: true)
+        m.screen = .week
+      },
+      c.view("r6-menubar", width: 320) {
+        state(pm, testRun: true)
+        return AnyView(MenuBarContent(model: pm, state: MenuBarState(model: pm)))
+      },
       c.main("r6-sidebar-test-run-compact", pm) { m in
         state(m, testRun: true)
         m.screen = .queue

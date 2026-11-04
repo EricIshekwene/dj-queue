@@ -206,3 +206,160 @@ extension AppModel {
     return out
   }
 }
+
+// MARK: Post status (P4)
+
+/// What Postiz is doing with one platform post. nil from `AppModel.postizState` = a manual post (shown as before).
+enum PostizPostState: Equatable {
+  /// Routed to Postiz; sent once its render exists and the week is approved.
+  case queued
+  /// The create is in flight, or a replace is waiting for its delete.
+  case sending
+  case scheduled(Date)
+  /// Postiz still holds it after its time: it's going out now.
+  case posting
+  /// Test run: a Postiz draft until released.
+  case draft
+  case posted(url: String?)
+  /// Test-run TikTok: in the TikTok app's inbox; finish it there, then Mark posted.
+  case inbox
+  case failed(String)
+  case copyright(String)
+  /// Set to Postiz but back on Today (the sentence says why).
+  case fellBack(String)
+
+  var text: String {
+    switch self {
+    case .queued: "To Postiz"
+    case .sending: "Sending to Postiz"
+    case .scheduled: "Scheduled in Postiz"
+    case .posting: "Posting…"
+    case .draft: "Draft in Postiz"
+    case .posted: "Posted"
+    case .inbox: "In TikTok inbox"
+    case .failed: "Failed"
+    case .copyright: "© Blocked"
+    case .fellBack: "Fell back to manual"
+    }
+  }
+
+  var badgeStyle: DSBadgeStyle {
+    switch self {
+    case .queued, .sending, .scheduled, .draft: .outline
+    case .posting: .soft(.info)
+    case .posted: .soft(.success)
+    case .inbox, .fellBack: .soft(.warning)
+    case .failed, .copyright: .soft(.danger)
+    }
+  }
+
+  var badgeIcon: String? {
+    switch self {
+    case .queued, .sending, .scheduled: "paperplane"
+    case .posting: "arrow.up.circle"
+    case .draft: "doc"
+    case .posted: "checkmark"
+    case .inbox: "tray.and.arrow.down"
+    case .failed: "exclamationmark"
+    case .copyright: nil  // the text carries the ©
+    case .fellBack: "arrow.uturn.backward"
+    }
+  }
+
+  /// Postiz holds it: nothing for Eric to do (no task on Today, no "due" count).
+  var isHeld: Bool {
+    switch self {
+    case .queued, .sending, .scheduled, .posting, .draft: true
+    default: false
+    }
+  }
+
+  /// A problem shown loudly (its message on the row, not only in a tooltip).
+  var isLoud: Bool {
+    switch self {
+    case .failed, .copyright: true
+    default: false
+    }
+  }
+}
+
+extension AppModel {
+  /// The Postiz side of `p` (nil = manual). Read from the job behind the post and, without one, the route.
+  func postizState(_ p: PlatformPost) -> PostizPostState? {
+    if let j = postiz.jobs[p.id] {
+      if j.isOpen {
+        switch j.phase {
+        case .creating, .deleting: return .sending
+        case .closed: break
+        case .live:
+          if j.remoteState == "DRAFT" { return .draft }
+          return j.remoteDate <= now ? .posting : .scheduled(j.remoteDate)
+        }
+      } else if let r = j.closeReason {
+        switch r {
+        case .published: return .posted(url: p.url ?? j.releaseURL)
+        case .inbox: return p.state == .posted ? .posted(url: p.url) : .inbox
+        case .error where p.state == .failed:
+          return .failed(j.remoteError ?? j.lastError ?? p.errorMessage ?? "Postiz reported an error (no details)")
+        case .copyright where [.copyrightBlocked, .copyrightMuted, .removed].contains(p.state):
+          return .copyright(j.remoteError ?? j.lastError ?? p.errorMessage ?? "Copyright problem")
+        case .rejected where !p.state.isTerminal && p.publisher == "manual":
+          return .fellBack(PostizFallbackReason.createRejected(j.lastError ?? "no details").message)
+        case .vanished where !p.state.isTerminal && p.publisher == "manual":
+          return .fellBack(PostizFallbackReason.vanished.message)
+        case .error, .copyright, .rejected, .vanished: break  // reset since: decided by the route below
+        case .testDraft: return nil
+        case .replaced, .cancelled, .interrupted: break  // decided by the route below
+        }
+      }
+    }
+    guard !p.state.isTerminal, p.resolution == nil else { return nil }
+    switch postizRoute(p.platform) {
+    case .manual: return nil
+    case .postiz: return p.state == .planned || p.state == .rendering ? .queued : .sending
+    case .fallback(let r): return .fellBack(r.message)
+    }
+  }
+
+  /// A test-run post: its job was made in test mode, or it will be (Test run on, not yet sent).
+  func isTestRun(_ p: PlatformPost) -> Bool {
+    if let j = postiz.jobs[p.id], j.kind == "post" { return j.testMode }
+    guard settings.publishing.testMode, let s = postizState(p) else { return false }
+    return s == .queued || s == .sending
+  }
+
+  /// One line under a post's title: what Postiz does, or why it didn't.
+  func postizLine(_ p: PlatformPost, _ s: PostizPostState) -> String {
+    let channel = postiz.channel(postiz.jobs[p.id]?.integrationId ?? settings.publishing.channels[p.platform])?.name
+    let via = channel.map { "Postiz · \($0)" } ?? "Postiz"
+    switch s {
+    case .queued: return "\(via) · sent once rendered"
+    case .sending: return "\(via) · sending now"
+    case .scheduled(let d): return "\(via) · goes out at \(Self.clockText(d, tz: tz))"
+    case .posting: return "\(via) · going out now"
+    case .draft: return "\(via) · draft until released"
+    case .posted: return "Posted by \(via)"
+    case .inbox: return "Finish it in the TikTok app, then Mark posted with the link"
+    case .failed(let m), .copyright(let m): return m
+    case .fellBack(let why): return why
+    }
+  }
+
+  /// Test run: release a Postiz draft so it posts at its time (asks first: it goes public).
+  func releaseDraft(_ p: PlatformPost) {
+    confirm(ConfirmRequest(
+      title: "Release this \(p.platform.displayName) draft?",
+      message: "Postiz posts it publicly at \(Self.clockText(p.scheduledAt, tz: tz)) (or within minutes if that time has passed). You can't take it back from DJ Queue once it's out.",
+      verb: "Release", icon: "paperplane") { [weak self] in
+        guard let self else { return }
+        let bridge = self.postizBridge
+        Task.detached {
+          let err: String? = { do { try bridge.releaseDraft(postId: p.id); return nil } catch { return "\(error)" } }()
+          await MainActor.run {
+            if let err { self.show(err, error: true) } else { self.show("\(p.platform.displayName) draft released in Postiz") }
+            self.refresh()
+          }
+        }
+      })
+  }
+}

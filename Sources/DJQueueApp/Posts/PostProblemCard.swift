@@ -72,6 +72,16 @@ struct PostProblemCard: View {
             if post.versionNo != 1 || post.attemptNo != 1 || post.kind != .regular {
               Text("v\(post.versionNo) · \(PostText.attempt(post))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
             }
+            if let pz = model.postizState(post) {
+              switch pz {
+              case .failed, .copyright:
+                DSBadge("via Postiz", style: .outline, icon: "paperplane", help: "Postiz reported this; the message is Postiz's or the platform's")
+              case .inbox, .fellBack:
+                PostizBadge(model: model, post: post, state: pz)
+              default: EmptyView()
+              }
+            }
+            if model.isTestRun(post) { TestRunBadge() }
           }
           Text(message).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(3)
             .fixedSize(horizontal: false, vertical: true).padding(.top, 2)
