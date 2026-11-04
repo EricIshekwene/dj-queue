@@ -23,10 +23,10 @@ struct EditorView: View {
   private var trimPlatform: Platform?
 
   init(store: Store, videoId: String, videoIds: [String], onDone: @escaping () -> Void, trimPlatform: Platform? = nil,
-       onDeleteGroup: ((HashtagSet) -> Void)? = nil, headerAccessory: ((String) -> AnyView)? = nil) {
+       appHooks: EditorAppHooks = EditorAppHooks(), headerAccessory: ((String) -> AnyView)? = nil) {
     _model = StateObject(wrappedValue: {
       let m = EditorModel(store: store, videoId: videoId)
-      m.onDeleteGroup = onDeleteGroup
+      m.appHooks = appHooks
       return m
     }())
     self.videoIds = videoIds

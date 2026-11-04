@@ -208,7 +208,7 @@ struct EditorCaptionSection: View {
   private var groupActions: some View {
     HStack(spacing: DS.space.xxs) {
       DSButton("New group", icon: "plus", variant: .ghost, size: .sm, disabledReason: model.groupsOffReason,
-               tooltip: "Make a hashtag group here: it's saved for every clip and goes on for this one") {
+               tooltip: "Make a group and turn it on for this clip") {
         focusMemo.remember()
         dsWithAnimation { model.openGroupForm() }
       }
@@ -409,7 +409,11 @@ struct EditorGroupFormView: View {
       DSTextField("Hashtags", placeholder: "#amapiano #piano", text: $tags,
                   hint: parsed.isEmpty ? "Spaces between them; the # is optional" : "Saves as \(parsed.joined(separator: " "))",
                   size: .sm, focusToken: focusTags, onSubmit: save)
-      if isNew { EditorHint("Saved for every clip, and on for this one.") }
+      if isNew {
+        EditorHint("Saved for every clip, and on for this one.")
+      } else if let reach = form.impact {
+        EditorHint(reach.editSummary, icon: "info.circle")
+      }
       HStack(spacing: DS.space.xxs) {
         Spacer(minLength: 0)
         DSButton("Cancel", variant: .ghost, size: .sm, tooltip: "Close without saving", shortcut: "esc", action: cancel)

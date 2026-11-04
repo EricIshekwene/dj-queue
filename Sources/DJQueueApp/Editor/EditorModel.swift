@@ -28,7 +28,19 @@ struct EditorGroupForm: Identifiable, Equatable {
   var editing: String?
   var name = ""
   var tags = ""
+  /// What saving an edit reaches, from when the form opened.
+  var impact: HashtagGroups.Impact?
   var id: String { "\(editing ?? "new")|\(name)|\(tags)" }
+}
+
+/// What the app gives the editor (nil in the snapshot harnesses, which have no `AppModel`).
+struct EditorAppHooks {
+  /// Asks the app to delete a group (its confirm + journaled undo, same as Settings).
+  var deleteGroup: ((HashtagSet) -> Void)?
+  /// Journals the editor session so far, so a group change sits after it in the history (`splitEditorSession`).
+  var beforeGroupWrite: (() -> Void)?
+  /// True while an overlay covers the editor.
+  var isCovered: (() -> Bool)?
 }
 
 /// A caption length problem for one platform (live, from the in-memory version).
@@ -87,8 +99,9 @@ final class EditorModel: ObservableObject {
   @Published var openPlatformCaption: Platform?
   /// The hashtag group form, when it's open.
   @Published var groupForm: EditorGroupForm?
-  /// Asks the app to delete a group (its confirm + journaled undo, same as Settings). Nil in the snapshot harnesses.
-  var onDeleteGroup: ((HashtagSet) -> Void)?
+  var appHooks = EditorAppHooks()
+  var onDeleteGroup: ((HashtagSet) -> Void)? { appHooks.deleteGroup }
+  var isCovered: (() -> Bool)? { appHooks.isCovered }
   @Published var toast: String?
   /// Bumped when Title should take keyboard focus (header title click).
   @Published var focusTitle = 0
@@ -109,7 +122,7 @@ final class EditorModel: ObservableObject {
   private var overlayTask: Task<Void, Never>?
   private var overlayKey: OverlayKey?
   private var toastTask: Task<Void, Never>?
-  nonisolated(unsafe) private var groupObserver: NSObjectProtocol?
+  nonisolated(unsafe) private var groupObserver: (center: NotificationCenter, token: NSObjectProtocol)?
   private static let saveQueue = DispatchQueue(label: "com.djlovd.queue.editor.save", qos: .userInitiated)
 
   /// Blocks until every queued editor write has landed (the app journals the session after it).
@@ -132,15 +145,14 @@ final class EditorModel: ObservableObject {
     load(videoId)
     // Groups changed elsewhere (Settings over the editor, `djq`, Undo on a delete toast) show up in the chips.
     if !snapshotMode {
-      groupObserver = DistributedNotificationCenter.default().addObserver(forName: .init(ChangeSignal.name), object: nil,
-                                                                          queue: .main) { [weak self] _ in
+      groupObserver = ChangeSignal.observe { [weak self] in
         MainActor.assumeIsolated { self?.reloadGroups() }
       }
     }
   }
 
   deinit {
-    if let groupObserver { DistributedNotificationCenter.default().removeObserver(groupObserver) }
+    if let groupObserver { groupObserver.center.removeObserver(groupObserver.token) }
   }
 
   // MARK: Loading
@@ -751,7 +763,10 @@ final class EditorModel: ObservableObject {
   /// The form opens empty for a new group, or filled in for `group`.
   func openGroupForm(_ group: HashtagSet? = nil) {
     guard groupsOffReason == nil else { return }
-    groupForm = group.map { EditorGroupForm(editing: $0.id, name: $0.name, tags: $0.tags.joined(separator: " ")) } ?? EditorGroupForm()
+    guard let group else { groupForm = EditorGroupForm(); return }
+    let store = store
+    let impact = Self.saveQueue.sync { try? HashtagGroups.impact(of: group.id, store: store) }
+    groupForm = EditorGroupForm(editing: group.id, name: group.name, tags: group.tags.joined(separator: " "), impact: impact)
   }
 
   /// Saves the form into the same table Settings and `djq` use. A new group is available to every clip and goes on for
@@ -762,66 +777,104 @@ final class EditorModel: ObservableObject {
     let tags = HashtagGroups.parseTags(raw), editing = groupForm?.editing
     guard HashtagGroups.problem(name: name, tags: tags, existing: sets, editing: editing) == nil else { return false }
     commitCaptionDraft()
-    return editing.flatMap { id in sets.first { $0.id == id } }.map { updateGroup($0, name: name, tags: tags) }
-      ?? createGroup(name: name, tags: tags)
+    if let editing {
+      guard let old = sets.first(where: { $0.id == editing }) else {  // deleted while the form was open
+        groupForm = nil
+        show("That group was deleted")
+        return false
+      }
+      return updateGroup(old, name: name, tags: tags)
+    }
+    return createGroup(name: name, tags: tags)
   }
 
   private func createGroup(name: String, tags: [String]) -> Bool {
     let group = HashtagGroups.make(name: name, tags: tags, existing: sets)
-    // No clip's validity depends on a group nobody has picked yet, so no revalidation pass.
-    guard writeGroup("hashtag-group-add", revalidate: false, group) else { return false }
+    guard writeGroup({ try HashtagGroups.create(group, store: $0, bulk: $1) }) != nil else { return false }
     groupForm = nil
     setGroup(group.id, on: true)
     show("“\(group.name)” saved and on for this clip")
     return true
   }
 
-  /// Other clips follow Settings' rule (their written captions are their own text); this clip's written caption, on
-  /// screen right now, gets the group's tags swapped in place.
+  /// A clip with scheduled or posted posts was frozen by the core path, so it keeps what it has. Any other clip: its
+  /// written caption, on screen right now, gets the group's tags swapped in place (other clips' written captions are
+  /// their own text).
   private func updateGroup(_ old: HashtagSet, name: String, tags: [String]) -> Bool {
     var group = old
     group.name = HashtagGroups.cleanName(name)
     group.tags = tags
     let written = resolved.caption, before = hashtags
-    guard writeGroup("hashtag-group-edit", revalidate: true, group) else { return false }
+    let saved = group
+    guard let change = writeGroup({ try HashtagGroups.update(saved, store: $0, bulk: $1) }) else { return false }
     groupForm = nil
+    guard sets.contains(where: { $0.id == saved.id }) else {  // deleted just before Save; the core path left it deleted
+      fieldRevision &+= 1
+      show("That group was deleted")
+      return false
+    }
+    if change.kept.contains(videoId) {
+      replaceVersions((try? store.versions(videoId: videoId)) ?? versions)
+      show("“\(group.name)” saved. This clip keeps its tags: it has scheduled or posted posts")
+      return true
+    }
     let after = hashtags
     if !written.isEmpty, !written.contains("{hashtags}"), before != after {
       updateVersion(coalesce: false) { $0.caption = Captions.replaceHashtags(in: written, old: before, new: after) }
+      show("“\(group.name)” saved. ⌘Z restores only this caption")
     } else {
       fieldRevision &+= 1
+      show("“\(group.name)” saved")
     }
-    show("“\(group.name)” saved")
     return true
   }
 
-  /// One journaled write (same action names as `djq hashtag-groups`, so `djq bulk undo` can take it back), behind any
-  /// pending editor saves; the chips re-read the table.
-  private func writeGroup(_ action: String, revalidate: Bool, _ group: HashtagSet) -> Bool {
+  /// Versions changed under the editor (a freeze, or Undo of one): the history no longer applies to them.
+  private func replaceVersions(_ fresh: [Version]) {
+    versions = fresh
+    clearUndo()
+    fieldRevision &+= 1
+    refreshOverlay()
+  }
+
+  /// One journaled write through the core path, after the session so far and any pending editor saves; the chips re-read
+  /// the table.
+  private func writeGroup(_ write: @escaping @Sendable (Store, BulkActions) throws -> HashtagGroups.Change) -> HashtagGroups.Change? {
+    appHooks.beforeGroupWrite?()
+    flush()
     let store = store
     do {
-      sets = try Self.saveQueue.sync {
-        _ = try BulkActions(store: store).record(action, hashtagGroups: true, revalidate: revalidate) { try store.save(group) }
-        return try store.hashtagSets()
+      let (change, fresh) = try Self.saveQueue.sync {
+        (try write(store, BulkActions(store: store)), try store.hashtagSets())
       }
+      sets = fresh
+      if !snapshotMode { ChangeSignal.post() }
+      return change
     } catch {
       show("Couldn't save the group: \(error.localizedDescription)")
-      return false
+      return nil
     }
-    if !snapshotMode { ChangeSignal.post() }
-    return true
   }
 
-  /// Picks up groups changed outside the editor. A typed caption is applied first (the field re-reads the model after).
+  /// Picks up groups changed outside the editor, and what that did to this clip (frozen, or Undo of it). A typed caption
+  /// is applied first (the field re-reads the model after). An edit form for a group that's gone closes.
   func reloadGroups() {
-    let store = store
+    let store = store, id = videoId
     Self.saveQueue.async { [weak self] in
-      guard let fresh = try? store.hashtagSets() else { return }
+      guard let fresh = try? store.hashtagSets(), let saved = try? store.versions(videoId: id) else { return }
       DispatchQueue.main.async {
-        guard let self, fresh != self.sets else { return }
+        guard let self, self.videoId == id, fresh != self.sets else { return }
         self.commitCaptionDraft()
         self.sets = fresh
-        self.fieldRevision &+= 1
+        if let e = self.groupForm?.editing, !fresh.contains(where: { $0.id == e }) {
+          self.groupForm = nil
+          self.show("That group was deleted")
+        }
+        if saved != self.versions, !self.pendingEdit, self.pendingVersions.isEmpty {
+          self.replaceVersions(saved)
+        } else {
+          self.fieldRevision &+= 1
+        }
       }
     }
   }

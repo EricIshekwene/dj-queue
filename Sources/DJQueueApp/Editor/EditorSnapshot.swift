@@ -224,7 +224,13 @@ enum EditorSnapshot {
         reset(); model.groupForm = EditorGroupForm(name: "piano", tags: "#other"); inCaption()
       }
       shot("g-07-edit-group") {
-        reset(); model.openGroupForm(model.sets.first); inCaption()
+        // This clip uses the group and now has a scheduled post, so the form says what saving keeps.
+        reset()
+        _ = try? store.db.run("""
+          INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+          VALUES('g-post',?,'x',1,1,'regular',0,'planned','manual',0,0)
+          """, [pick.id])
+        model.openGroupForm(model.sets.first); inCaption()
       }
       if let broken = shorts.first(where: { $0.id != pick.id }) {
         shot("g-08-read-only-clip") {
@@ -368,6 +374,30 @@ enum EditorSnapshot {
       check("edit form is filled in", m.groupForm?.name == "Piano" && m.groupForm?.tags == "#amapiano #piano")
       check("editing keeps its own name", m.saveGroup(name: "Piano", tags: "#amapiano #yanos"))
       check("edit swaps the tags in this clip's written caption", m.mainCaption == "Typed, not applied yet\n#amapiano #yanos")
+      // Review F6: deleted while its edit form is open → Save doesn't bring it back.
+      m.openGroupForm(m.sets.first)
+      try? store.deleteHashtagSet(made.id)
+      check("a group deleted meanwhile isn't brought back", !m.saveGroup(name: "Piano", tags: "#amapiano")
+            && m.groupForm == nil && ((try? store.hashtagSets()) ?? []).isEmpty)
+      // Review F2: this clip has a scheduled post, so an edit keeps its caption and history starts over.
+      m.resetVersion(["caption", "hashtagSetIds", "extraHashtags", "captionTemplateId"])
+      m.openGroupForm()
+      _ = m.saveGroup(name: "Scheduled", tags: "#one #two")
+      m.flushAndWait()
+      _ = try? store.db.run("""
+        INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+        VALUES('selftest-post',?,'x',1,1,'regular',0,'planned','manual',0,0)
+        """, [third])
+      let frozen = m.mainCaption
+      if let g = m.sets.first(where: { $0.name == "Scheduled" }) {
+        m.openGroupForm(g)
+        check("edit form counts the clip with posts", m.groupForm?.impact?.kept == 1)
+        check("edit saves", m.saveGroup(name: "Scheduled", tags: "#one #three"))
+        check("the scheduled clip's caption is byte-identical", m.mainCaption == frozen && frozen.hasSuffix("#one #two"))
+        check("its tags are frozen, the chip is off", m.resolved.hashtagSetIds.isEmpty && m.resolved.extraHashtags == ["#one", "#two"])
+        check("history starts over after a freeze", !m.canUndo)
+      }
+      _ = try? store.db.run("DELETE FROM platform_posts WHERE id='selftest-post'")
     }
     m.resetVersion(["caption", "hashtagSetIds", "extraHashtags", "captionTemplateId"])
     m.flushAndWait()

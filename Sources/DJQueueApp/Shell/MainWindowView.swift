@@ -13,7 +13,10 @@ struct MainWindowView: View {
       if let ed = model.editor {
         EditorView(store: model.store, videoId: ed.videoId, videoIds: ed.videoIds, onDone: { model.closeEditor() },
                    trimPlatform: ed.trimPlatform,
-                   onDeleteGroup: { model.confirmDeleteGroup($0, undoHint: "Undo on the message that follows brings it back.") },
+                   appHooks: EditorAppHooks(
+                     deleteGroup: { model.confirmDeleteGroup($0, undoHint: "Undo on the message that follows brings it back.") },
+                     beforeGroupWrite: { model.splitEditorSession() },
+                     isCovered: { model.overlayCoversEditor }),
                    headerAccessory: { id in AnyView(EditorStageControl(model: model, videoId: id)) })
           .transition(.opacity)
       } else {
@@ -166,8 +169,8 @@ struct ShortcutButtons: View {
       }
       .keyboardShortcut("a", modifiers: .command)
       // ⌘Z: typing → the text field's own undo; the editor handles its own ⌘Z/⇧⌘Z (EditorUndoKeys, field-level
-      // edit history); otherwise the most recent undoable app action (UndoHistory).
-      if model.editor == nil {
+      // edit history) unless an overlay covers it; otherwise the most recent undoable app action (UndoHistory).
+      if model.editor == nil || model.overlayCoversEditor {
         Button("") {
           if Self.textFieldIsEditing { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) } else { model.undoLast() }
         }

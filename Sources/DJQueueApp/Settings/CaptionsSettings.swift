@@ -8,6 +8,8 @@ struct CaptionsSettings: View {
   @Bindable var model: AppModel
   @State private var templates: [CaptionTemplate] = []
   @State private var sets: [HashtagSet] = []
+  /// What changing each group's tags reaches, shown under its row.
+  @State private var reach: [String: HashtagGroups.Impact] = [:]
   @State private var titles: [TitleTemplate] = []
 
   private var defaults: NewClipDefaults { model.settings.defaults }
@@ -20,7 +22,7 @@ struct CaptionsSettings: View {
           .padding(.top, DS.space.sm)
       }
       ForEach($sets) { $s in
-        HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), onSave: save, onDelete: deleteSet)
+        HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), reach: reach[s.id], onSave: save, onDelete: deleteSet)
       }
       DSButton("Add hashtag group", icon: "plus", variant: .ghost, size: .sm, tooltip: "Make a new hashtag group: a name and its hashtags") { addSet() }
         .padding(.top, DS.space.xs)
@@ -108,7 +110,16 @@ struct CaptionsSettings: View {
 
   // MARK: Hashtag groups
 
-  private func save(_ s: HashtagSet) { try? model.store.save(s); ChangeSignal.post() }
+  private func save(_ s: HashtagSet) {
+    model.saveGroupEdit(s)
+    measureReach()
+  }
+
+  private func measureReach() {
+    reach = Dictionary(uniqueKeysWithValues: sets.compactMap { s in
+      (try? HashtagGroups.impact(of: s.id, store: model.store)).map { (s.id, $0) }
+    })
+  }
 
   private func addSet() {
     let s = HashtagSet(id: newId(), name: "New group", category: "My groups", tags: [],
@@ -176,6 +187,7 @@ struct CaptionsSettings: View {
   private func load() {
     templates = (try? model.store.captionTemplates()) ?? []
     sets = (try? model.store.hashtagSets()) ?? []
+    measureReach()
     titles = (try? model.store.settings().youtubeTitleTemplates) ?? []
   }
 }
@@ -184,11 +196,34 @@ struct CaptionsSettings: View {
 private struct HashtagSetRow: View {
   @Binding var set: HashtagSet
   let isDefault: Bool
+  var reach: HashtagGroups.Impact?
   let onSave: (HashtagSet) -> Void
   let onDelete: (HashtagSet) -> Void
   @State private var tags = ""
+  @State private var saveTask: Task<Void, Never>?
 
   var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      fields
+      if let reach, reach.kept + reach.others > 0 {
+        Text(reach.editSummary).font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .padding(.vertical, DS.space.xs)
+    .onAppear { tags = set.tags.joined(separator: " ") }
+    // Saved once typing pauses: each save is a journaled change that can freeze clips.
+    .onChange(of: set) { _, s in
+      saveTask?.cancel()
+      saveTask = Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(600))
+        guard !Task.isCancelled else { return }
+        onSave(s)
+      }
+    }
+  }
+
+  private var fields: some View {
     HStack(spacing: DS.space.xs) {
       DSTextField(placeholder: "Group name", text: $set.name, size: .sm).frame(width: 170)
         .accessibilityLabel("Group name")
@@ -203,8 +238,5 @@ private struct HashtagSetRow: View {
         onDelete(set)
       }
     }
-    .padding(.vertical, DS.space.xs)
-    .onAppear { tags = set.tags.joined(separator: " ") }
-    .onChange(of: set) { _, s in onSave(s) }
   }
 }

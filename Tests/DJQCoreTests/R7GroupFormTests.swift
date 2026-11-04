@@ -93,3 +93,236 @@ import Testing
     #expect(next == "Words\n#a #c")
   }
 }
+
+/// v0.8.1 review F1, F2: editing or deleting a group never touches a clip with scheduled or posted posts.
+@Suite struct R7GroupChangeTests {
+  static let group = HashtagSet(id: "piano", name: "Piano", category: HashtagGroups.category, tags: ["#amapiano", "#piano"], sort: 0)
+  static let second = HashtagSet(id: "sa", name: "SA", category: HashtagGroups.category, tags: ["#yanos"], sort: 1)
+
+  enum Row: CaseIterable, Sendable { case template, writtenWithHashtags, writtenLiteral, followsDefaults }
+
+  /// One scheduled clip per row, with an X and a YouTube post; clip-3 uses the group and has no posts.
+  func fixture(_ row: Row) throws -> (Fixture, [PlatformPost], Settings) {
+    let f = try Fixture()
+    try f.intake()
+    for g in [Self.group, Self.second] { try f.store.save(g) }
+    var s = try f.store.settings()
+    var v1 = Version(number: 1)
+    switch row {
+    case .template: v1.hashtagSetIds = [Self.second.id, Self.group.id]
+    case .writtenWithHashtags: v1.hashtagSetIds = [Self.second.id, Self.group.id]; v1.caption = "My words\n{hashtags}"
+    case .writtenLiteral: v1.hashtagSetIds = [Self.second.id, Self.group.id]; v1.caption = "My words #amapiano #piano"
+    case .followsDefaults: s.defaults.hashtagSetIds = [Self.group.id]
+    }
+    try f.store.save(s)
+    if row != .followsDefaults { try f.store.save(v1, videoId: "clip-0") }
+    var other = Version(number: 1)
+    other.hashtagSetIds = [Self.group.id]
+    try f.store.save(other, videoId: "clip-3")
+    let now = f.clock.now.timeIntervalSince1970
+    for (i, p) in [Platform.x, .youtube].enumerated() {
+      try f.store.db.run("""
+        INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+        VALUES(?,'clip-0',?,1,1,'regular',?,'planned','manual',?,?)
+        """, ["p\(i)", p.rawValue, now + 86400, now, now])
+    }
+    let render = try FakeRenderer(store: f.store).ensureRender(videoId: "clip-0", versionNo: 1, platform: nil)
+    let posts = try f.store.posts(where: "video_id=?", ["clip-0"]).map { p in
+      var p = p
+      p.renderId = render.id
+      return p
+    }
+    return (f, posts, s)
+  }
+
+  struct Out: Equatable { var hash: String; var caption: String }
+
+  func outputs(_ f: Fixture, _ posts: [PlatformPost]) throws -> [Out] {
+    let s = try f.store.settings()
+    return try posts.sorted { $0.id < $1.id }.map { p in
+      let spec = try PostizPayload.spec(store: f.store, post: p, settings: s, integrationId: "ch-\(p.platform.rawValue)")
+      return Out(hash: spec.contentHash, caption: spec.content)
+    }
+  }
+
+  func caption(_ f: Fixture, _ id: String) throws -> String {
+    let v = try #require(try f.store.video(id: id)), saved = try f.store.versions(videoId: id)
+    let r = VersionResolver.resolve(saved.isEmpty ? [Version(number: 1)] : saved, number: 1, settings: try f.store.settings(), video: v)
+    return Captions.sharedCaption(version: r, video: v, sessionName: "Set", sets: try f.store.hashtagSets(),
+                                  templates: try f.store.captionTemplates(), settings: try f.store.settings())
+  }
+
+  @Test(arguments: Row.allCases) func deleteKeepsTheHashAndUndoRestores(row: Row) throws {
+    let (f, posts, _) = try fixture(row)
+    let before = try outputs(f, posts), versions = try f.store.versions(videoId: "clip-0")
+    #expect(try HashtagGroups.impact(of: Self.group.id, store: f.store).kept == 1)
+    let bulk = BulkActions(store: f.store)
+    let change = try HashtagGroups.delete(Self.group, store: f.store, bulk: bulk)
+    #expect(change.kept == ["clip-0"])
+    #expect(try outputs(f, posts) == before)
+    #expect(!(try caption(f, "clip-3").contains("#amapiano")))
+    #expect(try !f.store.hashtagSets().contains { $0.id == Self.group.id })
+    _ = try bulk.undo(try #require(change.result.batchId))
+    #expect(try f.store.hashtagSets().contains { $0.id == Self.group.id })
+    #expect(try f.store.versions(videoId: "clip-0") == versions)
+    #expect(try outputs(f, posts) == before)
+    #expect(try caption(f, "clip-3").contains("#amapiano #piano"))
+  }
+
+  @Test(arguments: Row.allCases) func editKeepsTheHashAndUndoRestores(row: Row) throws {
+    let (f, posts, _) = try fixture(row)
+    let before = try outputs(f, posts), versions = try f.store.versions(videoId: "clip-0")
+    var edited = Self.group
+    edited.tags = ["#amapiano", "#new"]
+    let bulk = BulkActions(store: f.store)
+    let change = try HashtagGroups.update(edited, store: f.store, bulk: bulk)
+    #expect(change.kept == ["clip-0"])
+    #expect(try outputs(f, posts) == before)
+    #expect(try caption(f, "clip-3").hasSuffix("#amapiano #new"))  // no posts: it follows
+    _ = try bulk.undo(try #require(change.result.batchId))
+    #expect(try f.store.versions(videoId: "clip-0") == versions)
+    #expect(try f.store.hashtagSets().first { $0.id == Self.group.id }?.tags == Self.group.tags)
+  }
+
+  @Test func renamingReachesNoClip() throws {
+    let (f, posts, _) = try fixture(.template)
+    let before = try outputs(f, posts), versions = try f.store.versions(videoId: "clip-0")
+    var edited = Self.group
+    edited.name = "Keys"
+    let change = try HashtagGroups.update(edited, store: f.store, bulk: BulkActions(store: f.store))
+    #expect(change.kept.isEmpty)
+    #expect(try f.store.versions(videoId: "clip-0") == versions)
+    #expect(try outputs(f, posts) == before)
+  }
+
+  @Test func finishedPostsWithoutOutputDontFreeze() throws {
+    let (f, _, _) = try fixture(.template)
+    try f.store.db.run("UPDATE platform_posts SET state='failed' WHERE video_id='clip-0'")
+    #expect(try HashtagGroups.impact(of: Self.group.id, store: f.store).kept == 0)
+    #expect(try HashtagGroups.impact(of: Self.group.id, store: f.store).others == 2)
+  }
+
+  @Test func aGroupDeletedMeanwhileStaysDeleted() throws {
+    let f = try Fixture()
+    let c = try HashtagGroups.update(Self.group, store: f.store, bulk: BulkActions(store: f.store))
+    #expect(c.result.batchId == nil)
+    #expect(try f.store.hashtagSets().isEmpty)
+  }
+
+  @Test func wordingCarriesTheCounts() {
+    typealias I = HashtagGroups.Impact
+    #expect(I(kept: 3, others: 5).deleteSummary
+      == "3 clips with scheduled or posted posts keep these tags. 5 other clips lose them, except tags typed into a caption.")
+    #expect(I(kept: 1, others: 1).deleteSummary
+      == "1 clip with scheduled or posted posts keeps these tags. 1 other clip loses them, except tags typed into a caption.")
+    #expect(I(kept: 2, others: 0).editSummary == "2 clips with scheduled or posted posts keep the current tags.")
+    #expect(I(kept: 0, others: 1).editSummary == "1 other clip follows the change, except tags typed into a caption.")
+    #expect(I(kept: 0, others: 0).deleteSummary == "No clip uses this group.")
+  }
+
+  @Test func editingAGroupThatAlreadySharesItsNameIsAllowed() {
+    let a = HashtagSet(id: "a", name: "Piano", category: "x", tags: ["#a"], sort: 0)
+    let b = HashtagSet(id: "b", name: "piano", category: "x", tags: ["#b"], sort: 1)
+    #expect(HashtagGroups.problem(name: "Piano", tags: ["#c"], existing: [a, b], editing: "a") == nil)
+    #expect(HashtagGroups.problem(name: "piano", tags: ["#c"], existing: [a, b], editing: "a") == nil)
+    let c = HashtagSet(id: "c", name: "Keys", category: "x", tags: ["#c"], sort: 2)
+    #expect(HashtagGroups.problem(name: "PIANO", tags: ["#c"], existing: [a, c], editing: "c") == .duplicateName("Piano"))
+  }
+
+  @Test func duplicateMessageFitsATooltip() {
+    #expect(HashtagGroups.Problem.duplicateName("Piano").message == "A group called “Piano” already exists")
+    #expect(HashtagGroups.Problem.duplicateName("Piano").message.count <= 45)
+  }
+
+  // MARK: ChangeSignal
+
+  /// A hang here is the bug: a local post from the main actor once deadlocked on a `.main` observer.
+  @MainActor @Test(.timeLimit(.minutes(1))) func localSignalFromTheMainActorReturnsAndArrives() async throws {
+    _ = try Fixture()  // sets DJQ_NO_SIGNAL
+    #expect(ChangeSignal.isLocal)
+    await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+      var token: NSObjectProtocol?
+      token = NotificationCenter.default.addObserver(forName: .init(ChangeSignal.name), object: nil, queue: .main) { _ in
+        if let t = token { NotificationCenter.default.removeObserver(t); token = nil; done.resume() }
+      }
+      ChangeSignal.post()
+    }
+    await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+      let box = Box(done)
+      let o = ChangeSignal.observe { box.fire() }
+      box.remove = { o.center.removeObserver(o.token) }
+      ChangeSignal.post()
+    }
+  }
+
+  final class Box: @unchecked Sendable {
+    let done: CheckedContinuation<Void, Never>
+    var remove: (() -> Void)?
+    init(_ d: CheckedContinuation<Void, Never>) { done = d }
+    func fire() {
+      guard let r = remove else { return }
+      remove = nil
+      r()
+      done.resume()
+    }
+  }
+
+  // MARK: ⌘Z
+
+  func key(_ c: String? = "z", cmd: Bool = true, shift: Bool = false, opt: Bool = false, ctrl: Bool = false,
+           typing: Bool = false, covered: Bool = false) -> EditorLogic.UndoKey {
+    EditorLogic.undoKey(characters: c, command: cmd, shift: shift, option: opt, control: ctrl, textEditing: typing, covered: covered)
+  }
+
+  @Test func undoKeys() {
+    #expect(key() == .undo)
+    #expect(key("Z", shift: true) == .redo)
+    #expect(key("z", shift: true) == .redo)
+    #expect(key(typing: true) == .fieldUndo)
+    #expect(key("Z", shift: true, typing: true) == .fieldRedo)
+    #expect(key(covered: true) == .ignore)
+    #expect(key("Z", shift: true, typing: true, covered: true) == .ignore)
+    #expect(key(cmd: false) == .ignore)
+    #expect(key(opt: true) == .ignore)
+    #expect(key(ctrl: true) == .ignore)
+    #expect(key("a") == .ignore)
+    #expect(key(nil) == .ignore)
+  }
+
+  // MARK: djq
+
+  func djq(_ home: URL, _ args: [String]) throws -> (status: Int32, out: String) {
+    let p = Process()
+    p.executableURL = try #require(R6PostizCLITests.binary)
+    p.arguments = args
+    var env = ProcessInfo.processInfo.environment
+    env["DJQ_HOME"] = home.path
+    env["DJQ_ROOT"] = home.appendingPathComponent("DJ Video").path
+    env["DJQ_POSTIZ_OFFLINE"] = "1"; env["DJQ_NO_SIGNAL"] = "1"
+    p.environment = env
+    let out = Pipe()
+    p.standardOutput = out; p.standardError = out
+    try p.run()
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    return (p.terminationStatus, String(decoding: data, as: UTF8.self))
+  }
+
+  @Test func djqAppliesTheSameRules() throws {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent("djq-groups-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: home.appendingPathComponent("DJ Video/Sessions"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let blank = try djq(home, ["hashtag-groups", "add", "   ", "#a"])
+    #expect(blank.status != 0 && blank.out.contains("Give the group a name"))
+    let noTags = try djq(home, ["hashtag-groups", "add", "Piano", "#"])
+    #expect(noTags.status != 0 && noTags.out.contains("Add at least one hashtag"))
+    let ok = try djq(home, ["hashtag-groups", "add", "  Piano ", "Amapiano piano"])
+    #expect(ok.status == 0 && ok.out.contains("“Piano”: #amapiano #piano"))
+    let dup = try djq(home, ["hashtag-groups", "add", "piano", "#b"])
+    #expect(dup.status != 0 && dup.out.contains("already exists"))
+    let edit = try djq(home, ["hashtag-groups", "edit", "piano", "--name", "  Keys "])
+    #expect(edit.status == 0 && edit.out.contains("“Keys”"))
+    let emptied = try djq(home, ["hashtag-groups", "edit", "keys", "--tags", "#"])
+    #expect(emptied.status != 0 && emptied.out.contains("Add at least one hashtag"))
+  }
+}

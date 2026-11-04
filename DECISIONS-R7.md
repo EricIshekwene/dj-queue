@@ -114,7 +114,8 @@ Eric: "allow me to create hashtags groups from within the editor".
    add`): tags split on spaces, commas and new lines, each through `Captions.normalizeTag`, duplicates dropped.
 4. **Duplicate name (ignoring case and outer spaces): Save is refused, with the reason on the field and the button.** Merging
    would silently change a group other clips use, and two chips with one name can't be told apart (and `djq` can't address
-   them). Editing a group may keep its own name. Settings and `djq` still allow duplicates; not changed here.
+   them). Editing a group may keep its name, even one another group shares. `djq` refuses too (review F4); Settings' rows still
+   allow duplicates.
 5. **Saving a new group is journaled (`hashtag-group-add`, `djq bulk undo` can take it back) but isn't in the clip's ⌘Z.** ⌘Z
    takes the group off this clip and keeps the group. The UI doesn't mention it: the chip stays there, off.
 6. **Focus: Save leaves the keyboard nowhere; Cancel/Esc goes back to the caption if Eric was typing there.** After Save a focused
@@ -123,9 +124,9 @@ Eric: "allow me to create hashtags groups from within the editor".
 7. **Edit and delete are on the chip's context menu (cheap, so done).** Edit reuses the form. Delete is Settings' code moved to
    `AppModel.confirmDeleteGroup`: same confirm, same journal, Undo on the toast. The editor's confirm doesn't promise ⌘Z, because
    ⌘Z in the editor belongs to the clip. In the snapshot harnesses (no `AppModel`) the Delete item is absent.
-8. **Editing a group swaps its tags in this clip's written caption (one undo step); other clips follow decision 32** (a written
-   caption is its own text). The clip on screen would otherwise visibly disagree with the group just saved. Edits revalidate
-   (tags can push a clip over a limit); a new group doesn't (no clip uses it yet).
+8. **Editing a group swaps its tags in this clip's written caption (one undo step); other clips without posts follow decision 32.**
+   The clip on screen would otherwise visibly disagree with the group just saved. Clips with posts are decision 16. Edits
+   revalidate (tags can push a clip over a limit); a new group doesn't (no clip uses it yet).
 9. **The editor re-reads groups on ChangeSignal,** so Settings over the editor, `djq` and Undo on a delete toast reach the chips.
    Before this a group made in Settings didn't appear until the clip reloaded.
 10. **The form opens below the fold when New group sits at the bottom edge,** so the inspector's `ScrollViewReader` brings it in
@@ -138,5 +139,31 @@ Eric: "allow me to create hashtags groups from within the editor".
 14. **Model checks live in `DJQ_EDITOR_SELFTEST` and `DJQ_EDITOR_GROUP_SCRIPT`,** not `swift test`: the test target imports only
     DJQCore. Core tests cover the rules; the script drives the real fields, a mouse event through the window's hit testing, and
     keys through AppKit, all handed to this process only.
-15. **Not verified by machine (Eric to try by hand):** the disabled Save tooltip on hover and the chip's right-click menu. macOS blocks
-    synthetic pointer input into a real menu. Their strings and actions are covered by tests and the script.
+15. **Not verified by machine (Eric to try by hand):** ⌘Z and ⇧⌘Z in Caption and in the form's Name field (the decision is tested,
+    `sendAction` needs a real key window); the disabled Save tooltip on hover; the chip's right-click menu (macOS blocks synthetic
+    pointer input into a real menu; its actions are covered by the self-test and script).
+
+### v0.8.1 review fixes
+
+16. **One core path for group edit and delete: `HashtagGroups.update` / `.delete`, used by the editor, Settings and `djq` (F1, F2).**
+    Clips with scheduled or posted posts (`clipsWithPosts`) that use the group are frozen first, as schema 6 did: every version's
+    resolved hashtags go into its extra hashtags and ALL its group ids are cleared, in the same `record` with `ids:`, so undo
+    restores them. All ids, not just this group's: moving one group's tags would reorder them, and order is part of the caption and
+    the hash. Captions, YouTube tags and Postiz content hashes stay byte-identical; the test covers template, `{hashtags}`, literal and
+    default-group clips for both edit and delete, and fails on all of them with the freeze off. A rename reaches nothing and freezes nothing.
+17. **The dialog, edit form and Settings give the counts** ("N clips with scheduled or posted posts keep these tags"), and the false
+    "captions you wrote keep their text" is gone: tags typed into a caption stay, nothing wider is promised.
+18. **Settings' group rows save 600 ms after typing stops,** through the same path: each save is now a journaled change that can
+    freeze clips. A pending save for a group deleted meanwhile leaves it deleted.
+19. **A frozen clip on screen reloads its versions and its ⌘Z history starts over** (the steps refer to versions that changed under
+    them). Tags saved on such a clip say so in the toast.
+20. **While an overlay covers the editor, ⌘Z belongs to the app (F3),** so Settings' "Undo (⌘Z) brings it back" is true over the editor
+    too. `EditorLogic.undoKey` makes that call and has `swift test` coverage (F10).
+21. **`djq hashtag-groups add` and `edit` apply `HashtagGroups.problem` (F4):** blank names, no tags and duplicate names are refused, and
+    the cleaned name is printed. This reverses part of decision 4.
+22. **An edit form closes when its group goes away, and Save never recreates it (F6).** After an edit that swapped this clip's caption,
+    the toast says ⌘Z restores only the caption (F7): the group edit is journaled separately.
+23. **`DJQ_NO_SIGNAL=1` now lives in `ChangeSignal` (F8).** Every `--snapshot` run sets it, as does the test fixture; the signal then stays
+    inside the process, so the scripts still exercise the editor's reload and a dev run can't nudge the installed app.
+    The local post runs off the main queue: an observer on `.main` makes the poster wait for it, which deadlocked a live run from the
+    main actor. A main-queue `async` wouldn't help (that block would wait on the same queue). A test posts from the main actor.

@@ -6,8 +6,9 @@ import SwiftUI
 /// (non-snapshot) editor on a throwaway copy of the dev database, the way `EditorCaptionScript` drives the caption:
 /// text goes through the real fields' `NSTextView.insertText`, buttons and keys are events handed to this window only.
 /// Nothing reaches the system event queue, so Eric's pointer and apps are never touched, and the window never takes
-/// focus. Every check reads the field or the store, not the view model's intent. Saves `group-NN-<step>-<appearance>.png`
-/// and `checks-<appearance>.txt`, then Settings and New clip defaults on the same database.
+/// focus. `SnapshotRunner` sets `DJQ_NO_SIGNAL`, so `ChangeSignal` stays inside this process: the installed app is never
+/// nudged. Every check reads the field or the store, not the view model's intent. Saves
+/// `group-NN-<step>-<appearance>.png` and `checks-<appearance>.txt`, then Settings and New clip defaults on the same database.
 @MainActor
 enum EditorGroupScript {
   static func run(store: Store, video: String, ids: [String], dir: String, appearance: String) async -> Int32 {
@@ -156,6 +157,11 @@ enum EditorGroupScript {
     check("⌘Z takes the group off, the field keeps the typed words", field.string == typedWords)
     check("the group itself stays", groups().count == 1 && model.sets.count == 1)
     await shot("undo")
+    model.appHooks.isCovered = { true }
+    await sendKey("Z", code: 6, flags: [.command, .shift])
+    await sendKey("z", code: 6, flags: .command)
+    check("while an overlay covers the editor ⌘Z leaves the clip alone", field.string == typedWords)
+    model.appHooks.isCovered = nil
     await sendKey("Z", code: 6, flags: [.command, .shift])
     if field.string != saved { note("after ⇧⌘Z: field “\(field.string)”, model “\(model.mainCaption)”, canRedo \(model.canRedo), first responder \(String(describing: window.firstResponder))") }
     check("⇧⌘Z puts it back", field.string == saved)
@@ -227,20 +233,36 @@ enum EditorGroupScript {
     try? await DSGallerySnapshot.render(defaults, size: CGSize(width: 760, height: 900), name: "group-settings-new-clip-defaults", to: out)
     SettingsUIState.shared.reset()
     if let made {
+      // This clip now has a scheduled post and follows the template with the group on.
+      model.resetVersion(["caption", "platformCaptions", "hashtagSetIds", "extraHashtags", "captionTemplateId"])
+      model.setGroup(made.id, on: true)
+      model.flushAndWait()
+      _ = try? store.db.run("""
+        INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+        VALUES('script-post',?,'x',1,1,'regular',0,'planned','manual',0,0)
+        """, [video])
+      await wait(600)
+      let scheduled = model.mainCaption
       app.confirmDeleteGroup(made, undoHint: "Undo on the message that follows brings it back.")
       note("confirm says: \(app.pendingConfirm?.message ?? "nothing")")
-      check("delete asks first", app.pendingConfirm != nil && groups().count == 1)
+      check("delete asks first, with the count", groups().count == 1
+            && app.pendingConfirm?.message.contains("1 clip with scheduled or posted posts keeps these tags") == true)
       let confirm = app.pendingConfirm?.action
       app.pendingConfirm = nil
       confirm?()
       await wait(1500)
       check("delete removes it from the store", groups().isEmpty)
       check("the editor's chips follow (ChangeSignal)", model.sets.isEmpty)
+      check("the scheduled clip's caption is byte-identical", model.mainCaption == scheduled && scheduled.hasSuffix("#amapiano #piano #yanos"))
+      check("its tags are frozen into the extra hashtags", model.resolved.hashtagSetIds.isEmpty
+            && model.resolved.extraHashtags == ["#amapiano", "#piano", "#yanos"])
+      await shot("deleted-keeps-tags")
       if let b = app.undoHistory.top?.batchId {
         app.undo(batch: b)
         await wait(2000)
       }
       check("Undo brings it back, chips too", groups().count == 1 && model.sets.count == 1)
+      check("Undo puts the group back on the clip", model.resolved.hashtagSetIds == [made.id] && model.mainCaption == scheduled)
     }
     return finish()
 

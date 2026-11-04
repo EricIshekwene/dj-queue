@@ -620,9 +620,17 @@ final class AppModel {
   @discardableResult
   func undoable(_ label: String, _ action: String, ids: [String] = [], plan: Bool = false, settings: Bool = false,
                 renders: Bool = false, hashtagGroups: Bool = false, _ body: () throws -> Void) -> Bool {
+    journaled(label) {
+      try bulk.record(action, ids: ids, plan: plan, settings: settings, renders: renders, hashtagGroups: hashtagGroups, body)
+    }
+  }
+
+  /// `undoable`'s steps around any journaled write.
+  @discardableResult
+  func journaled(_ label: String, _ write: () throws -> BulkResult) -> Bool {
     splitEditorSession()
     do {
-      let r = try bulk.record(action, ids: ids, plan: plan, settings: settings, renders: renders, hashtagGroups: hashtagGroups, body)
+      let r = try write()
       ChangeSignal.post()
       refresh()
       if let b = r.batchId {
@@ -643,24 +651,30 @@ final class AppModel {
   /// Asks before a destructive or plan-wide action (in-window dialog; Cancel is the default).
   func confirm(_ r: ConfirmRequest) { pendingConfirm = r }
 
-  /// Deletes a hashtag group after asking (Settings and the editor). Undoable: the group, and its place in the default
-  /// groups, come back. Written captions keep the tags as they are (they're the clip's own text).
+  /// An in-window overlay is over the editor: ⌘Z is the app's, not the hidden clip's.
+  var overlayCoversEditor: Bool {
+    editor != nil && (showSettings || showPalette || showShortcuts || pendingConfirm != nil || pendingBulk != nil || previewVideo != nil)
+  }
+
+  /// Deletes a hashtag group after asking (Settings and the editor), through the core path: clips with scheduled or posted
+  /// posts keep their tags. Undoable: the group, its place in the default groups and those clips come back.
   func confirmDeleteGroup(_ s: HashtagSet, undoHint: String, then done: @escaping () -> Void = {}) {
+    let reach = (try? HashtagGroups.impact(of: s.id, store: store)) ?? HashtagGroups.Impact(kept: 0, others: 0)
+    let holds = s.tags.isEmpty ? "“\(s.name)” has no hashtags." : "“\(s.name)” holds \(s.tags.joined(separator: " "))."
     confirm(ConfirmRequest(
       title: "Delete “\(s.name)”?",
-      message: "Clips that use this group stop getting its hashtags (\(s.tags.isEmpty ? "it has none" : s.tags.joined(separator: " "))); captions you wrote yourself keep their text. \(undoHint)",
+      message: "\(holds) \(reach.deleteSummary) \(undoHint)",
       verb: "Delete group", icon: "trash", destructive: true) { [self] in
-        if undoable("Hashtag group “\(s.name)” deleted", "hashtag-group-delete", settings: true, hashtagGroups: true, {
-          try store.deleteHashtagSet(s.id)
-          var st = try store.settings()
-          if st.defaults.hashtagSetIds.contains(s.id) {
-            st.defaults.hashtagSetIds.removeAll { $0 == s.id }
-            try store.save(st)
-          }
-        }) {
+        if journaled("Hashtag group “\(s.name)” deleted", { try HashtagGroups.delete(s, store: store, bulk: bulk).result }) {
           done()
         }
       })
+  }
+
+  /// Saves a group edited in Settings through the core path.
+  func saveGroupEdit(_ s: HashtagSet) {
+    splitEditorSession()
+    _ = perform { try HashtagGroups.update(s, store: store, bulk: bulk) }
   }
 
   /// One-line toast. Errors use the danger tone and stay 6 s (others 3 s); snapshot mode keeps it on screen.
