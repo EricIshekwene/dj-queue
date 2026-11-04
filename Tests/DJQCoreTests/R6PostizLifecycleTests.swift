@@ -817,6 +817,31 @@ import Testing
     #expect(TickReport.order.firstIndex(of: "sync")! == TickReport.order.firstIndex(of: "publish")! + 1)
   }
 
+  @Test func undoThatWouldGoLiveNeedsAnExplicitConfirm() throws {
+    let rig = try Rig(2)  // all six on Postiz, test run off
+    let b = BulkActions(store: rig.store)
+    let r = try b.record("publisher-manual", settings: true) {
+      try rig.f.updateSettings { for p in Platform.allCases { $0.publishing.publishers[p] = .manual } }
+    }
+    let batch = try #require(r.batchId)
+    #expect(try b.undoWouldGoLive(batch) == Platform.allCases.sorted())
+    #expect(throws: EngineError.self) { try b.undo(batch) }  // old call sites refuse by default
+    #expect(try rig.store.settings().publishing.postizPlatforms.isEmpty)  // nothing restored
+    _ = try b.undo(batch, dryRun: true)  // a preview is fine
+    _ = try b.undo(batch, confirmGoLive: true)
+    #expect(try rig.store.settings().publishing.postizPlatforms.count == 6)
+    // Restoring into a test run isn't "live": no confirm needed.
+    let t = try b.record("test-on-then-manual", settings: true) {
+      try rig.f.updateSettings { $0.publishing.testMode = true }
+    }
+    let m = try b.record("manual", settings: true) {
+      try rig.f.updateSettings { $0.publishing.publishers[.x] = .manual }
+    }
+    #expect(try b.undoWouldGoLive(try #require(m.batchId)).isEmpty)
+    _ = try b.undo(try #require(m.batchId))
+    _ = t
+  }
+
   // MARK: Fuzz
 
   /// Random planner ops on two engines sharing one database, with failing deletes, refused/garbage/timed-out creates

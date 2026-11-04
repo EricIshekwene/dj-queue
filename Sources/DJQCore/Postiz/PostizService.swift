@@ -143,7 +143,7 @@ public final class PostizService: @unchecked Sendable {
 
   /// The settings let `platform` go out through Postiz now: posting not paused, platform on and not paused, set to
   /// Postiz. One predicate for "cancel what Postiz holds" and "create" (no delete/create churn).
-  static func settingsAllow(_ platform: Platform, _ s: Settings) -> Bool {
+  public static func settingsAllow(_ platform: Platform, _ s: Settings) -> Bool {
     !s.paused && s.enabledPlatforms.contains(platform) && !s.pausedPlatforms.contains(platform)
       && s.publishing.publisher(for: platform) == .postiz
   }

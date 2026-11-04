@@ -42,3 +42,4 @@ Facebook keeps 90 s, one v0.7.0 ship) are in the session record and docs/postiz.
 34. **A closed job is never reopened by a stale save; the first close wins** (M2 review #7).
 35. **Adoption needs a single match** (channel + date ±60 s, not held by another job; past slots rounded up to a minute) (M2 review #8); an ambiguous match is treated as not found.
 36. **No key saved → no call and no budget slot** (CLI need #2): `PostizService.call` checks the key's presence before taking budget.
+37. **An undo never goes live silently** (CLI review M1): `BulkActions.undo` refuses when restoring a settings snapshot would put platforms with waiting posts back on Postiz with test run off; `undoWouldGoLive(_:)` previews it and `undo(_:force:dryRun:confirmGoLive: true)` does it. The old `undo(_:force:dryRun:)` (and the app's ⌘Z queue) keep compiling and get the refusal with its reason.
