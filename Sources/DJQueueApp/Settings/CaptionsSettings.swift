@@ -117,24 +117,8 @@ struct CaptionsSettings: View {
     sets.append(s)
   }
 
-  /// Undoable (⌘Z): the group, and its place in the default groups, come back. Written captions keep the tags as
-  /// they are (they're the clip's own text).
   private func deleteSet(_ s: HashtagSet) {
-    model.confirm(ConfirmRequest(
-      title: "Delete “\(s.name)”?",
-      message: "Clips that use this group stop getting its hashtags (\(s.tags.isEmpty ? "it has none" : s.tags.joined(separator: " "))); captions you wrote yourself keep their text. Undo (⌘Z) brings it back.",
-      verb: "Delete group", icon: "trash", destructive: true) {
-        if model.undoable("Hashtag group “\(s.name)” deleted", "hashtag-group-delete", settings: true, hashtagGroups: true, {
-          try model.store.deleteHashtagSet(s.id)
-          var st = try model.store.settings()
-          if st.defaults.hashtagSetIds.contains(s.id) {
-            st.defaults.hashtagSetIds.removeAll { $0 == s.id }
-            try model.store.save(st)
-          }
-        }) {
-          sets.removeAll { $0.id == s.id }
-        }
-      })
+    model.confirmDeleteGroup(s, undoHint: "Undo (⌘Z) brings it back.") { sets.removeAll { $0.id == s.id } }
   }
 
   // MARK: YouTube title templates

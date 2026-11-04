@@ -101,3 +101,42 @@ groups" copy) are D2–D6 in the session record. Routine ones, one line each wit
 - YouTube title: only a placeholder, the template editable only in New clip defaults as raw text → picker + real
   editable title, templates in Settings (C5).
 - Typing a long caption redrew the whole editor and the overlay → fixed (15).
+
+## v0.8.1 — make hashtag groups from the editor
+
+Eric: "allow me to create hashtags groups from within the editor".
+
+1. **Inline form under the chips, not a popover.** The caption stays in view and updates in place, and a typed caption keeps
+   its place. A native popover is a separate window that would take the key window away from the field.
+2. **New group is the main path, also in the empty state;** "Manage in Settings" stays beside it. The form replaces both while
+   it's open, so Esc never has two meanings.
+3. **Same table as Settings and `djq` (`hashtag_sets`).** Rules live in core `HashtagGroups` (shared with `djq hashtag-groups
+   add`): tags split on spaces, commas and new lines, each through `Captions.normalizeTag`, duplicates dropped.
+4. **Duplicate name (ignoring case and outer spaces): Save is refused, with the reason on the field and the button.** Merging
+   would silently change a group other clips use, and two chips with one name can't be told apart (and `djq` can't address
+   them). Editing a group may keep its own name. Settings and `djq` still allow duplicates; not changed here.
+5. **Saving a new group is journaled (`hashtag-group-add`, `djq bulk undo` can take it back) but isn't in the clip's ⌘Z.** ⌘Z
+   takes the group off this clip and keeps the group. The UI doesn't mention it: the chip stays there, off.
+6. **Focus: Save leaves the keyboard nowhere; Cancel/Esc goes back to the caption if Eric was typing there.** After Save a focused
+   text field would take ⌘Z for its own typing instead of taking the group off; with nothing focused ⌘Z undoes the toggle and
+   Space plays. ↩ in Name goes to Hashtags (or saves when tags are already there); ↩ in Hashtags saves.
+7. **Edit and delete are on the chip's context menu (cheap, so done).** Edit reuses the form. Delete is Settings' code moved to
+   `AppModel.confirmDeleteGroup`: same confirm, same journal, Undo on the toast. The editor's confirm doesn't promise ⌘Z, because
+   ⌘Z in the editor belongs to the clip. In the snapshot harnesses (no `AppModel`) the Delete item is absent.
+8. **Editing a group swaps its tags in this clip's written caption (one undo step); other clips follow decision 32** (a written
+   caption is its own text). The clip on screen would otherwise visibly disagree with the group just saved. Edits revalidate
+   (tags can push a clip over a limit); a new group doesn't (no clip uses it yet).
+9. **The editor re-reads groups on ChangeSignal,** so Settings over the editor, `djq` and Undo on a delete toast reach the chips.
+   Before this a group made in Settings didn't appear until the clip reloaded.
+10. **The form opens below the fold when New group sits at the bottom edge,** so the inspector's `ScrollViewReader` brings it in
+    (`NSView.scrollToVisible` does nothing in a SwiftUI scroll view).
+11. **Save is `outline`:** the editor's one primary is Done, and `secondary` disappears on the form's sunken fill.
+12. **`DSTextField` gained `focusToken` and `autoFocus`,** the same contract as `DSSearchField`. No new components.
+13. **Bug found on the way, fixed: ⌘Z could run Redo.** The live script showed a plain ⌘Z firing the hidden ⇧⌘Z button on about half
+    the launches (two SwiftUI shortcuts sharing "z"; which one won changed per launch), leaving the change in place. Undo/redo is now
+    read from the key event in the editor's key monitor (`EditorUndoKeys`), matched on the character so other keyboard layouts work.
+14. **Model checks live in `DJQ_EDITOR_SELFTEST` and `DJQ_EDITOR_GROUP_SCRIPT`,** not `swift test`: the test target imports only
+    DJQCore. Core tests cover the rules; the script drives the real fields, a mouse event through the window's hit testing, and
+    keys through AppKit, all handed to this process only.
+15. **Not verified by machine (Eric to try by hand):** the disabled Save tooltip on hover and the chip's right-click menu. macOS blocks
+    synthetic pointer input into a real menu. Their strings and actions are covered by tests and the script.

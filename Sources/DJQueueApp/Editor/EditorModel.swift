@@ -22,6 +22,15 @@ enum EditorPlatforms {
   static let order: [Platform] = [.tiktok, .instagram, .facebook, .youtube, .threads, .x]
 }
 
+/// The Caption section's inline hashtag group form: `id` nil = a new group, else the group being edited. `name` and
+/// `tags` only seed the form (it owns the text while Eric types, so keystrokes don't redraw the editor).
+struct EditorGroupForm: Identifiable, Equatable {
+  var editing: String?
+  var name = ""
+  var tags = ""
+  var id: String { "\(editing ?? "new")|\(name)|\(tags)" }
+}
+
 /// A caption length problem for one platform (live, from the in-memory version).
 struct EditorCaptionWarning: Identifiable, Hashable {
   var platform: Platform
@@ -76,6 +85,10 @@ final class EditorModel: ObservableObject {
   @Published var scrollTarget: EditorSection?
   /// Platform whose own caption field should open (Write an X caption).
   @Published var openPlatformCaption: Platform?
+  /// The hashtag group form, when it's open.
+  @Published var groupForm: EditorGroupForm?
+  /// Asks the app to delete a group (its confirm + journaled undo, same as Settings). Nil in the snapshot harnesses.
+  var onDeleteGroup: ((HashtagSet) -> Void)?
   @Published var toast: String?
   /// Bumped when Title should take keyboard focus (header title click).
   @Published var focusTitle = 0
@@ -96,6 +109,7 @@ final class EditorModel: ObservableObject {
   private var overlayTask: Task<Void, Never>?
   private var overlayKey: OverlayKey?
   private var toastTask: Task<Void, Never>?
+  nonisolated(unsafe) private var groupObserver: NSObjectProtocol?
   private static let saveQueue = DispatchQueue(label: "com.djlovd.queue.editor.save", qos: .userInitiated)
 
   /// Blocks until every queued editor write has landed (the app journals the session after it).
@@ -116,6 +130,17 @@ final class EditorModel: ObservableObject {
     canvasMode = Self.defaults.string(forKey: "editor.canvasMode").flatMap(EditorCanvasMode.init) ?? .zones
     if !snapshotMode { Self.live = self }
     load(videoId)
+    // Groups changed elsewhere (Settings over the editor, `djq`, Undo on a delete toast) show up in the chips.
+    if !snapshotMode {
+      groupObserver = DistributedNotificationCenter.default().addObserver(forName: .init(ChangeSignal.name), object: nil,
+                                                                          queue: .main) { [weak self] _ in
+        MainActor.assumeIsolated { self?.reloadGroups() }
+      }
+    }
+  }
+
+  deinit {
+    if let groupObserver { DistributedNotificationCenter.default().removeObserver(groupObserver) }
   }
 
   // MARK: Loading
@@ -181,6 +206,7 @@ final class EditorModel: ObservableObject {
     textSuggestions = []
     fileURL = nil
     openPlatformCaption = nil
+    groupForm = nil
     titleDraft = nil
     loading = true
     clearUndo()
@@ -706,6 +732,98 @@ final class EditorModel: ObservableObject {
   func setHashtagSets(_ ids: [String]) {
     let fb = fallback(\.hashtagSetIds, \.hashtagSetIds)
     retagging(coalesce: false) { $0.hashtagSetIds = Set(ids) == Set(fb) ? nil : ids }
+  }
+
+  /// One group on or off for this clip (a chip tap, or a group just made): one undo step.
+  func setGroup(_ id: String, on: Bool) {
+    var ids = sets.map(\.id).filter { resolved.hashtagSetIds.contains($0) }
+    ids.removeAll { $0 == id }
+    if on { ids.append(id) }
+    setHashtagSets(ids)
+  }
+
+  /// Why groups can't be made or changed here right now (nil = they can).
+  var groupsOffReason: String? {
+    if readOnly { return EditorView.readOnlyReason }
+    return video == nil ? "The clip is still loading" : nil
+  }
+
+  /// The form opens empty for a new group, or filled in for `group`.
+  func openGroupForm(_ group: HashtagSet? = nil) {
+    guard groupsOffReason == nil else { return }
+    groupForm = group.map { EditorGroupForm(editing: $0.id, name: $0.name, tags: $0.tags.joined(separator: " ")) } ?? EditorGroupForm()
+  }
+
+  /// Saves the form into the same table Settings and `djq` use. A new group is available to every clip and goes on for
+  /// this one (its own undo step; the group itself stays after ⌘Z). A typed caption is applied first, so its text is kept.
+  @discardableResult
+  func saveGroup(name: String, tags raw: String) -> Bool {
+    guard groupsOffReason == nil else { return false }
+    let tags = HashtagGroups.parseTags(raw), editing = groupForm?.editing
+    guard HashtagGroups.problem(name: name, tags: tags, existing: sets, editing: editing) == nil else { return false }
+    commitCaptionDraft()
+    return editing.flatMap { id in sets.first { $0.id == id } }.map { updateGroup($0, name: name, tags: tags) }
+      ?? createGroup(name: name, tags: tags)
+  }
+
+  private func createGroup(name: String, tags: [String]) -> Bool {
+    let group = HashtagGroups.make(name: name, tags: tags, existing: sets)
+    // No clip's validity depends on a group nobody has picked yet, so no revalidation pass.
+    guard writeGroup("hashtag-group-add", revalidate: false, group) else { return false }
+    groupForm = nil
+    setGroup(group.id, on: true)
+    show("“\(group.name)” saved and on for this clip")
+    return true
+  }
+
+  /// Other clips follow Settings' rule (their written captions are their own text); this clip's written caption, on
+  /// screen right now, gets the group's tags swapped in place.
+  private func updateGroup(_ old: HashtagSet, name: String, tags: [String]) -> Bool {
+    var group = old
+    group.name = HashtagGroups.cleanName(name)
+    group.tags = tags
+    let written = resolved.caption, before = hashtags
+    guard writeGroup("hashtag-group-edit", revalidate: true, group) else { return false }
+    groupForm = nil
+    let after = hashtags
+    if !written.isEmpty, !written.contains("{hashtags}"), before != after {
+      updateVersion(coalesce: false) { $0.caption = Captions.replaceHashtags(in: written, old: before, new: after) }
+    } else {
+      fieldRevision &+= 1
+    }
+    show("“\(group.name)” saved")
+    return true
+  }
+
+  /// One journaled write (same action names as `djq hashtag-groups`, so `djq bulk undo` can take it back), behind any
+  /// pending editor saves; the chips re-read the table.
+  private func writeGroup(_ action: String, revalidate: Bool, _ group: HashtagSet) -> Bool {
+    let store = store
+    do {
+      sets = try Self.saveQueue.sync {
+        _ = try BulkActions(store: store).record(action, hashtagGroups: true, revalidate: revalidate) { try store.save(group) }
+        return try store.hashtagSets()
+      }
+    } catch {
+      show("Couldn't save the group: \(error.localizedDescription)")
+      return false
+    }
+    if !snapshotMode { ChangeSignal.post() }
+    return true
+  }
+
+  /// Picks up groups changed outside the editor. A typed caption is applied first (the field re-reads the model after).
+  func reloadGroups() {
+    let store = store
+    Self.saveQueue.async { [weak self] in
+      guard let fresh = try? store.hashtagSets() else { return }
+      DispatchQueue.main.async {
+        guard let self, fresh != self.sets else { return }
+        self.commitCaptionDraft()
+        self.sets = fresh
+        self.fieldRevision &+= 1
+      }
+    }
   }
 
   func setExtraHashtags(_ tags: [String]) {

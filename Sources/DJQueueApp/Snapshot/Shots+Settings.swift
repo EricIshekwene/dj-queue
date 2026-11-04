@@ -35,6 +35,14 @@ extension SnapshotShots {
       open(m, .newClipDefaults)  // after 46b, which made the groups
       SettingsUIState.shared.scrollTarget = NewClipDefaultsSettings.captionAnchor
     })
+    // v0.8.1: deleting a group from the editor's chip asks in the app's own dialog, over the editor.
+    shots.append(c.main("46c-editor-delete-group-confirm") { m in
+      let group = HashtagSet(id: "r7-piano", name: "Piano", category: "My groups", tags: ["#amapiano", "#piano"], sort: 0)
+      try? m.store.save(group)
+      m.refreshNow()
+      if let id = m.videos.first(where: { $0.type == .short })?.id { m.openEditor(id) }
+      m.confirmDeleteGroup(group, undoHint: "Undo on the message that follows brings it back.")
+    })
     return shots
   }
 

@@ -10,6 +10,8 @@ import SwiftUI
 ///   `DJQ_SNAPSHOT_ONLY=<substring>` filters shots.
 /// - `DJQ_EDITOR_LIVE=<seconds>` instead opens the real editor (live player) in a window for that long and prints
 ///   `editor-live: window <number>` so it can be captured with `screencapture -l <number>`.
+/// - `DJQ_EDITOR_GROUP_SCRIPT=<dir>` makes a hashtag group in the real editor (`EditorGroupScript`);
+///   `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption field (`EditorCaptionScript`).
 @MainActor
 enum EditorSnapshot {
   static func run(outputDir: String) async -> Int32 {
@@ -44,6 +46,10 @@ enum EditorSnapshot {
 
       if env["DJQ_EDITOR_SELFTEST"] != nil { return selfTest(store: store, ids: ids, start: pick.id) }
       if let secs = env["DJQ_EDITOR_LIVE"].flatMap(Double.init) { return await live(store: store, video: pick.id, ids: ids, seconds: secs) }
+      if let dir = env["DJQ_EDITOR_GROUP_SCRIPT"] {
+        return await EditorGroupScript.run(store: store, video: pick.id, ids: ids, dir: dir,
+                                           appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
+      }
       if let dir = env["DJQ_EDITOR_CAPTION_SCRIPT"] {
         return await EditorCaptionScript.run(store: store, video: pick.id, ids: ids, dir: dir,
                                              appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
@@ -196,6 +202,40 @@ enum EditorSnapshot {
           model.canvasMode = .zones; model.scrollTarget = .caption
         }
       }
+      // v0.8.1: hashtag groups made in the editor, from no groups at all. Empty → form → filled → saved (group on,
+      // caption updated), a duplicate name, editing a group, a read-only clip.
+      let clearGroups = {
+        for g in (try? store.hashtagSets()) ?? [] { try? store.deleteHashtagSet(g.id) }
+        if var st = try? store.settings() { st.defaults.hashtagSetIds = []; try? store.save(st) }
+        model.load(pick.id)
+        model.resetVersion(["caption", "platformCaptions", "hashtagSetIds", "extraHashtags", "captionTemplateId"])
+      }
+      let inCaption = { model.canvasMode = .preview; model.previewPlatform = .instagram; model.scrollTarget = .caption }
+      shot("g-01-empty") { reset(); clearGroups(); inCaption() }
+      shot("g-02-form-open") { reset(); model.openGroupForm(); inCaption() }
+      shot("g-03-form-filled") {
+        reset(); model.groupForm = EditorGroupForm(name: "Piano", tags: "Amapiano, #PIANO yanos"); inCaption()
+      }
+      shot("g-04-saved-group-on") {
+        reset(); _ = model.saveGroup(name: "Piano", tags: "Amapiano, #PIANO yanos"); inCaption()
+      }
+      shot("g-05-beside-chips") { reset(); model.toast = nil; inCaption() }
+      shot("g-06-duplicate-name") {
+        reset(); model.groupForm = EditorGroupForm(name: "piano", tags: "#other"); inCaption()
+      }
+      shot("g-07-edit-group") {
+        reset(); model.openGroupForm(model.sets.first); inCaption()
+      }
+      if let broken = shorts.first(where: { $0.id != pick.id }) {
+        shot("g-08-read-only-clip") {
+          reset()
+          model.groupForm = nil
+          _ = try? store.db.run("INSERT OR REPLACE INTO edits(video_id,json,updated_at) VALUES(?,'not json',0)", [broken.id])
+          model.load(broken.id)
+          print("editor-snapshot: read-only \(model.readOnly), reason \(model.groupsOffReason ?? "none")")
+          model.canvasMode = .zones; model.scrollTarget = .caption
+        }
+      }
       if let only = env["DJQ_SNAPSHOT_ONLY"] { shots = shots.filter { $0.0.contains(only) } }
 
       for (name, setup) in shots {
@@ -299,6 +339,37 @@ enum EditorSnapshot {
     check("typing the YouTube title makes it Custom", m.resolved.youtubeTitle == "Typed title" && m.youtubeTitle == "Typed title")
     m.typeYouTubeTitle(tplTitle)
     check("typing the template's title back follows the template", m.resolved.youtubeTitle.isEmpty)
+    // v0.8.1: a hashtag group made from the editor.
+    for g in (try? store.hashtagSets()) ?? [] { try? store.deleteHashtagSet(g.id) }
+    m.load(third)
+    m.resetVersion(["caption", "hashtagSetIds", "extraHashtags", "captionTemplateId"])
+    m.openGroupForm()
+    check("form opens", m.groupForm != nil && m.groupForm?.editing == nil)
+    check("blank form doesn't save", !m.saveGroup(name: "  ", tags: "#a") && !m.saveGroup(name: "Blank", tags: " # ") && m.groupForm != nil)
+    m.typeCaption("Typed, not applied yet")
+    check("New group saves", m.saveGroup(name: " Piano ", tags: "Amapiano, #PIANO piano"))
+    let made = (try? store.hashtagSets())?.first { $0.name == "Piano" }
+    check("group is in the shared store, normalised", made?.tags == ["#amapiano", "#piano"])
+    check("form closes", m.groupForm == nil)
+    check("group is on for this clip", made.map { m.resolved.hashtagSetIds.contains($0.id) } == true)
+    check("typed text kept, tags added in place", m.mainCaption == "Typed, not applied yet\n#amapiano #piano")
+    m.undo()
+    check("⌘Z takes the group off, keeps the text", m.mainCaption == "Typed, not applied yet" && m.sets.contains { $0.name == "Piano" })
+    m.redo()
+    check("⇧⌘Z puts it back", m.mainCaption == "Typed, not applied yet\n#amapiano #piano")
+    m.openGroupForm()
+    check("duplicate name doesn't save", !m.saveGroup(name: "PIANO", tags: "#x") && ((try? store.hashtagSets()) ?? []).count == 1)
+    m.groupForm = nil
+    m.setExtraHashtags(["#piano"])
+    check("no tag twice in the caption", Captions.tags(in: m.mainCaption).filter { $0 == "#piano" }.count == 1)
+    m.setExtraHashtags([])
+    if let made {
+      m.openGroupForm(made)
+      check("edit form is filled in", m.groupForm?.name == "Piano" && m.groupForm?.tags == "#amapiano #piano")
+      check("editing keeps its own name", m.saveGroup(name: "Piano", tags: "#amapiano #yanos"))
+      check("edit swaps the tags in this clip's written caption", m.mainCaption == "Typed, not applied yet\n#amapiano #yanos")
+    }
+    m.resetVersion(["caption", "hashtagSetIds", "extraHashtags", "captionTemplateId"])
     m.flushAndWait()
     print("editor-selftest: \(failures == 0 ? "all passed" : "\(failures) failed")")
     return failures == 0 ? 0 : 1

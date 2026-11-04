@@ -13,6 +13,7 @@ struct MainWindowView: View {
       if let ed = model.editor {
         EditorView(store: model.store, videoId: ed.videoId, videoIds: ed.videoIds, onDone: { model.closeEditor() },
                    trimPlatform: ed.trimPlatform,
+                   onDeleteGroup: { model.confirmDeleteGroup($0, undoHint: "Undo on the message that follows brings it back.") },
                    headerAccessory: { id in AnyView(EditorStageControl(model: model, videoId: id)) })
           .transition(.opacity)
       } else {
@@ -164,7 +165,7 @@ struct ShortcutButtons: View {
         }
       }
       .keyboardShortcut("a", modifiers: .command)
-      // ⌘Z: typing → the text field's own undo; the editor binds its own ⌘Z/⇧⌘Z (EditorUndoShortcuts, field-level
+      // ⌘Z: typing → the text field's own undo; the editor handles its own ⌘Z/⇧⌘Z (EditorUndoKeys, field-level
       // edit history); otherwise the most recent undoable app action (UndoHistory).
       if model.editor == nil {
         Button("") {

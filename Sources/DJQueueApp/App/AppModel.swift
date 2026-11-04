@@ -643,6 +643,26 @@ final class AppModel {
   /// Asks before a destructive or plan-wide action (in-window dialog; Cancel is the default).
   func confirm(_ r: ConfirmRequest) { pendingConfirm = r }
 
+  /// Deletes a hashtag group after asking (Settings and the editor). Undoable: the group, and its place in the default
+  /// groups, come back. Written captions keep the tags as they are (they're the clip's own text).
+  func confirmDeleteGroup(_ s: HashtagSet, undoHint: String, then done: @escaping () -> Void = {}) {
+    confirm(ConfirmRequest(
+      title: "Delete “\(s.name)”?",
+      message: "Clips that use this group stop getting its hashtags (\(s.tags.isEmpty ? "it has none" : s.tags.joined(separator: " "))); captions you wrote yourself keep their text. \(undoHint)",
+      verb: "Delete group", icon: "trash", destructive: true) { [self] in
+        if undoable("Hashtag group “\(s.name)” deleted", "hashtag-group-delete", settings: true, hashtagGroups: true, {
+          try store.deleteHashtagSet(s.id)
+          var st = try store.settings()
+          if st.defaults.hashtagSetIds.contains(s.id) {
+            st.defaults.hashtagSetIds.removeAll { $0 == s.id }
+            try store.save(st)
+          }
+        }) {
+          done()
+        }
+      })
+  }
+
   /// One-line toast. Errors use the danger tone and stay 6 s (others 3 s); snapshot mode keeps it on screen.
   func show(_ text: String, error: Bool = false) {
     show(DSToastModel(message: text, tone: error ? .danger : .neutral, duration: error ? 6 : 3))

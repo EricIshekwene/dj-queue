@@ -437,7 +437,7 @@ func run() throws -> Int32 {
       return 0
     }
     args.removeFirst()
-    func tags(_ raw: String) -> [String] { raw.split(whereSeparator: { $0 == " " || $0 == "," }).map { Captions.normalizeTag(String($0)) }.filter { !$0.isEmpty } }
+    func tags(_ raw: String) -> [String] { HashtagGroups.parseTags(raw) }
     func group(_ id: String) throws -> HashtagSet {
       let m = try store.hashtagSets().filter { $0.id.hasPrefix(id) || $0.name.lowercased() == id.lowercased() }
       guard m.count == 1 else { throw CLIError(m.isEmpty ? "no hashtag group \(id)" : "\(id) matches \(m.count) groups") }
@@ -447,8 +447,7 @@ func run() throws -> Int32 {
     switch sub {
     case "add":
       let name = try arg(0, "group name"), t = tags(try arg(1, "\"#a #b\""))
-      let g = HashtagSet(id: newId(), name: name, category: "My groups", tags: t,
-                         sort: (try store.hashtagSets().map(\.sort).max() ?? -1) + 1)
+      let g = HashtagGroups.make(name: name, tags: t, existing: try store.hashtagSets())
       r = try bulk.record("hashtag-group-add", hashtagGroups: true) { try store.save(g) }
       print("added hashtag group \(g.id) “\(name)”: \(t.joined(separator: " "))")
     case "edit":
