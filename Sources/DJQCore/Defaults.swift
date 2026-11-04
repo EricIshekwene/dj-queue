@@ -2,8 +2,12 @@ import Foundation
 
 /// Starter content (decisions Q15, Q16). Everything here is editable in Settings.
 public enum Defaults {
-  /// Three primary categories; more sets can be added under each.
-  public static let hashtagSets: [HashtagSet] = [
+  /// Round 7: no hashtag groups ship with the app — Eric makes his own in Settings → Captions & titles, and a new
+  /// clip has no hashtags until he picks a group or types extra tags.
+  public static let hashtagSets: [HashtagSet] = []
+
+  /// The six groups rounds 1–6 seeded, kept only so the schema-6 migration can recognise (and remove) them.
+  public static let legacyHashtagSets: [HashtagSet] = [
     HashtagSet(id: "amapiano", name: "Amapiano", category: "Amapiano",
                tags: ["#amapiano", "#amapianomix", "#afrohouse", "#djlovd"], sort: 0),
     HashtagSet(id: "amapiano-sa", name: "Amapiano · South Africa", category: "Amapiano",
@@ -16,6 +20,14 @@ public enum Defaults {
                tags: ["#dj", "#djlife", "#djmix", "#transition", "#djlovd"], sort: 0),
     HashtagSet(id: "dj-live", name: "DJ · Live set", category: "DJ",
                tags: ["#liveset", "#djset", "#clubmix", "#nightlife"], sort: 1),
+  ]
+  /// The default groups rounds 1–6 shipped (`NewClipDefaults.hashtagSetIds` before round 7).
+  public static let legacyDefaultHashtagSetIds = ["amapiano", "dj"]
+
+  /// YouTube title templates seeded on first run (round 7). `{text}` = overlay text on one line, else the Title, else
+  /// the raw tag; over the title limit only `{text}` is shortened.
+  public static let youtubeTitleTemplates: [TitleTemplate] = [
+    TitleTemplate(id: "text-djlovd", name: "Text | DJ Lovd", template: "{text} | DJ Lovd"),
   ]
 
   /// Caption presets (Q15: several styles, "x" not arrows).

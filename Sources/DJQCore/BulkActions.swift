@@ -165,7 +165,7 @@ public final class BulkActions: @unchecked Sendable {
         }
         if sections.contains(.caption) {
           v1.caption = nil; v1.captionTemplateId = nil; v1.hashtagSetIds = nil; v1.extraHashtags = nil
-          v1.youtubeTitle = nil; v1.platformCaptions = nil
+          v1.youtubeTitle = nil; v1.platformCaptions = nil; v1.youtubeTitleTemplateId = nil
         }
         if v1 != o { try store.save(v1, videoId: v.id); changed = true }
       }
@@ -226,23 +226,37 @@ public final class BulkActions: @unchecked Sendable {
     }
   }
 
-  /// Sets v1's hashtag sets (nil = the default sets).
+  /// Sets v1's YouTube title template (nil = the default template) and clears a typed v1 YouTube title so it takes
+  /// effect (round 7).
+  @discardableResult
+  public func setYouTubeTitleTemplate(_ ids: [String], _ templateId: String?, dryRun: Bool = false) throws -> BulkResult {
+    if let t = templateId, try !store.settings().youtubeTitleTemplates.contains(where: { $0.id == t }) {
+      throw EngineError("No YouTube title template \(t)")
+    }
+    return try run("youtube-title-template", ids: ids, params: ["template": templateId ?? "default"], dryRun: dryRun) { _, v, _ in
+      try updateV1(v) { $0.youtubeTitleTemplateId = templateId; $0.youtubeTitle = nil }
+    }
+  }
+
+  /// Sets v1's hashtag groups (nil = the default groups).
   @discardableResult
   public func setHashtagSets(_ ids: [String], _ setIds: [String]?, dryRun: Bool = false) throws -> BulkResult {
     if let s = setIds {
       let known = Set(try store.hashtagSets().map(\.id))
-      if let bad = s.first(where: { !known.contains($0) }) { throw EngineError("No hashtag set \(bad)") }
+      if let bad = s.first(where: { !known.contains($0) }) {
+        throw EngineError("No hashtag group \(bad)" + (known.isEmpty ? " — there are no hashtag groups yet (djq hashtag-groups add)" : " (djq hashtag-groups lists them)"))
+      }
     }
-    return try run("hashtag-sets", ids: ids, params: ["sets": setIds?.joined(separator: ",") ?? "default"], dryRun: dryRun) { _, v, _ in
-      try updateV1(v) { $0.hashtagSetIds = setIds }
+    return try run("hashtag-sets", ids: ids, params: ["sets": setIds?.joined(separator: ",") ?? "default"], dryRun: dryRun) { _, v, s in
+      try updateV1Retagged(v, s) { $0.hashtagSetIds = setIds }
     }
   }
 
   /// Sets v1's extra hashtags (nil = the default extras).
   @discardableResult
   public func setExtraHashtags(_ ids: [String], _ tags: [String]?, dryRun: Bool = false) throws -> BulkResult {
-    try run("extra-hashtags", ids: ids, params: ["extra": tags?.joined(separator: " ") ?? "default"], dryRun: dryRun) { _, v, _ in
-      try updateV1(v) { $0.extraHashtags = tags }
+    try run("extra-hashtags", ids: ids, params: ["extra": tags?.joined(separator: " ") ?? "default"], dryRun: dryRun) { _, v, s in
+      try updateV1Retagged(v, s) { $0.extraHashtags = tags }
     }
   }
 
@@ -252,7 +266,7 @@ public final class BulkActions: @unchecked Sendable {
     try run("drop-hashtags", ids: ids, params: ["platform": platform.rawValue], dryRun: dryRun) { _, v, s in
       guard let r = try store.resolvedVersion(videoId: v.id, number: 1, settings: s) else { return .skipped("no version") }
       let bare = Captions.withoutHashtags(for: platform, version: r, video: v, sessionName: try store.sessionName(for: v),
-                                          templates: try store.captionTemplates(), settings: s)
+                                          templates: try store.captionTemplates(), settings: s, sets: try store.hashtagSets())
       return try updateV1(v) { var pc = $0.platformCaptions ?? r.platformCaptions; pc[platform] = bare; $0.platformCaptions = pc }
     }
   }
@@ -432,7 +446,8 @@ public final class BulkActions: @unchecked Sendable {
   /// undoes the most recent one (round 3, F8).
   @discardableResult
   public func record(_ action: String, ids raw: [String] = [], params: [String: String] = [:], plan: Bool = false,
-                     settings: Bool = false, renders: Bool = false, _ body: () throws -> Void) throws -> BulkResult {
+                     settings: Bool = false, renders: Bool = false, hashtagGroups: Bool = false, revalidate: Bool = true,
+                     _ body: () throws -> Void) throws -> BulkResult {
     var seen = Set<String>()
     let ids = raw.filter { !$0.isEmpty && seen.insert($0).inserted }
     var result = BulkResult(batchId: nil, action: action, dryRun: false, videoIds: ids, changed: [], skipped: [:],
@@ -440,13 +455,18 @@ public final class BulkActions: @unchecked Sendable {
     try store.db.transaction {
       let existing = try ids.filter { try store.video(id: $0) != nil }
       let before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
-                            plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil)
+                            plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil,
+                            hashtagSets: hashtagGroups ? try store.hashtagSets() : nil)
       try body()
       // Round 4 (S1): a settings change (limits, platforms, defaults) can make Queue clips invalid or Edit clips valid —
       // re-derive every Edit/Queue clip's state now (states only; the engine's next tick refills draft days).
-      if settings, try settingsSnapshot() != before.settings { try Revalidation(store: store).run(adjustPlan: false) }
+      if revalidate, settings || hashtagGroups,
+         try settingsSnapshot() != before.settings || (hashtagGroups && store.hashtagSets() != before.hashtagSets) {
+        try Revalidation(store: store).run(adjustPlan: false)
+      }
       let after = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
-                           plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil)
+                           plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil,
+                           hashtagSets: hashtagGroups ? try store.hashtagSets() : nil)
       var changed = Set(zip(before.clips, after.clips).filter { $0 != $1 }.map(\.0.id))
       if let b = before.plan, let a = after.plan, b != a {
         let bs = Dictionary(uniqueKeysWithValues: b.slots.map { ($0.id, $0) }), asl = Dictionary(uniqueKeysWithValues: a.slots.map { ($0.id, $0) })
@@ -455,7 +475,7 @@ public final class BulkActions: @unchecked Sendable {
         for id in Set(bp.keys).union(ap.keys) where bp[id] != ap[id] { changed.formUnion([bp[id]?.videoId, ap[id]?.videoId].compactMap { $0 }) }
         if changed.isEmpty { changed.insert("") }  // weeks only (approve/propose): still a change
       }
-      let settingsChanged = before.settings != after.settings
+      let settingsChanged = before.settings != after.settings || before.hashtagSets != after.hashtagSets
       guard !changed.isEmpty || settingsChanged else {
         result.summary = "\(action): nothing changed"
         return
@@ -463,7 +483,8 @@ public final class BulkActions: @unchecked Sendable {
       changed.remove("")
       result.changed = changed.sorted()
       result.summary = "\(action): \(result.changed.count) clip\(result.changed.count == 1 ? "" : "s")"
-        + (before.plan != nil && before.plan != after.plan ? " · plan" : "") + (settingsChanged ? " · settings" : "")
+        + (before.plan != nil && before.plan != after.plan ? " · plan" : "")
+        + (before.settings != after.settings ? " · settings" : "") + (before.hashtagSets != after.hashtagSets ? " · hashtag groups" : "")
       let batchId = newId()
       try store.db.run("""
         INSERT INTO batches(id,action,params,video_ids,before,after,summary,created_at) VALUES(?,?,?,?,?,?,?,?)
@@ -651,6 +672,17 @@ public final class BulkActions: @unchecked Sendable {
           }
           restored.insert(Self.settingsMarker)
         }
+        if let bset = before.hashtagSets, let aset = after.hashtagSets, !restored.contains(Self.hashtagGroupsMarker) {
+          let cur = try store.hashtagSets()
+          if !force, cur != aset {
+            throw EngineError("Can't undo the hashtag group part of \(rec.action): hashtag groups changed after it. Use force to overwrite.")
+          }
+          if cur != bset {
+            try restoreHashtagSets(bset)
+            try Revalidation(store: store).run(adjustPlan: false)
+          }
+          restored.insert(Self.hashtagGroupsMarker)
+        }
         for v in touched { try store.refreshState(videoId: v) }
         for v in result.changed {
           try store.logEvent("bulk", "Undid \(rec.action) (batch \(id.prefix(8)))", videoId: v)
@@ -732,9 +764,17 @@ public final class BulkActions: @unchecked Sendable {
     var clips: [ClipSnap]
     var plan: PlanSnap?
     var settings: SettingsSnap? = nil
+    /// Round 7: the whole hashtag group table, for actions that change groups (nil = not journaled).
+    var hashtagSets: [HashtagSet]? = nil
   }
 
   static let settingsMarker = "#settings"
+  static let hashtagGroupsMarker = "#hashtag-groups"
+
+  private func restoreHashtagSets(_ sets: [HashtagSet]) throws {
+    try store.db.run("DELETE FROM hashtag_sets")
+    for s in sets { try store.save(s) }
+  }
 
   func settingsSnapshot() throws -> SettingsSnap {
     SettingsSnap(json: try store.db.one("SELECT json FROM kv WHERE key='settings'")?.string("json"))
@@ -816,6 +856,20 @@ public final class BulkActions: @unchecked Sendable {
     let o = v1
     change(&v1)
     guard v1 != o else { return .unchanged }
+    try store.save(v1, videoId: v.id)
+    return .changed
+  }
+
+  /// `updateV1` for a hashtag change: a written v1 caption gets its hashtags swapped in place (round 7, WYSIWYG).
+  private func updateV1Retagged(_ v: Video, _ s: Settings, _ change: (inout Version) -> Void) throws -> Outcome {
+    let all = try store.versions(videoId: v.id)
+    var v1 = all.first { $0.number == 1 } ?? Version(number: 1)
+    let o = v1
+    change(&v1)
+    guard v1 != o else { return .unchanged }
+    let before = VersionResolver.resolve(all.isEmpty ? [o] : all, number: 1, settings: s, video: v)
+    let after = VersionResolver.resolve([v1], number: 1, settings: s, video: v)
+    Captions.retag(&v1, before: before, after: after, sets: try store.hashtagSets())
     try store.save(v1, videoId: v.id)
     return .changed
   }

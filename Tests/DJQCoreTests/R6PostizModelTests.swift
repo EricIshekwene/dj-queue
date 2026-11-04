@@ -130,7 +130,7 @@ import Testing
       before = try s.db.query("SELECT * FROM videos").map { "\($0.string("id")!)|\($0.int("score")!)|\($0.string("title")!)" }
     }
     let s = try Store(paths: paths, clock: FixedClock(Fixture.monday9am), path: file.path)
-    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 5)
+    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") ?? 0 >= 5)  // r7: schema 6 runs after it
     #expect(try s.db.query("SELECT * FROM videos").map { "\($0.string("id")!)|\($0.int("score")!)|\($0.string("title")!)" } == before)
     #expect(try s.openPostizJobs().isEmpty)
     let backups = try FileManager.default.contentsOfDirectory(atPath: paths.appSupport.appendingPathComponent("backups").path)

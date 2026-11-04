@@ -380,6 +380,9 @@ public struct Version: Codable, Sendable, Hashable {
   public var extraHashtags: [String]?
   public var youtubeTitle: String?
   public var platformCaptions: [Platform: String]?
+  /// Round 7: the YouTube title template this version chose (`Settings.youtubeTitleTemplates` id); nil = the default.
+  /// A typed `youtubeTitle` still wins over any template.
+  public var youtubeTitleTemplateId: String?
 
   public init(number: Int) { self.number = number }
 }
@@ -402,6 +405,11 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
   public var extraHashtags: [String]
   public var youtubeTitle: String
   public var platformCaptions: [Platform: String]
+  /// Round 7: the chosen YouTube title template id (carried forward; nil = follows `defaults.youtubeTitleTemplateId`).
+  public var youtubeTitleTemplateId: String? = nil
+  /// The YouTube title template text this version uses (chosen, else the default one). nil only on hand-built values;
+  /// `Captions.youtubeTitle` then uses the template it is given.
+  public var youtubeTitleTemplate: String? = nil
   /// Field names that came from an earlier version (shown faded in the editor).
   public var inherited: Set<String>
   /// Field names (Version property names) that no version set, so they come from `Settings.defaults`
@@ -415,7 +423,8 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
 
   enum CodingKeys: String, CodingKey {
     case number, text, noText, style, size, posX, posY, align, textStart, textEnd, caption, captionTemplateId,
-         hashtagSetIds, extraHashtags, youtubeTitle, platformCaptions, inherited, defaulted
+         hashtagSetIds, extraHashtags, youtubeTitle, platformCaptions, inherited, defaulted, youtubeTitleTemplateId,
+         youtubeTitleTemplate
   }
 
   /// Deterministic JSON (sets sorted), so hashes/snapshots of a resolved version are stable.
@@ -430,6 +439,8 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
     try c.encode(youtubeTitle, forKey: .youtubeTitle)
     try c.encode(Dictionary(uniqueKeysWithValues: platformCaptions.map { ($0.key.rawValue, $0.value) }), forKey: .platformCaptions)
     try c.encode(inherited.sorted(), forKey: .inherited); try c.encode(defaulted.sorted(), forKey: .defaulted)
+    try c.encodeIfPresent(youtubeTitleTemplateId, forKey: .youtubeTitleTemplateId)
+    try c.encodeIfPresent(youtubeTitleTemplate, forKey: .youtubeTitleTemplate)
   }
 
   public init(from dec: Decoder) throws {
@@ -453,6 +464,8 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
     platformCaptions = Dictionary(uniqueKeysWithValues: pc.compactMap { k, v in Platform(rawValue: k).map { ($0, v) } })
     inherited = try c.decodeIfPresent(Set<String>.self, forKey: .inherited) ?? []
     defaulted = try c.decodeIfPresent(Set<String>.self, forKey: .defaulted) ?? []
+    youtubeTitleTemplateId = try c.decodeIfPresent(String.self, forKey: .youtubeTitleTemplateId)
+    youtubeTitleTemplate = try c.decodeIfPresent(String.self, forKey: .youtubeTitleTemplate)
   }
 
   public init(number: Int, text: String, noText: Bool, style: TextStyle, size: Double, posX: Double, posY: Double,
@@ -476,6 +489,14 @@ public struct HashtagSet: Codable, Sendable, Identifiable, Hashable {
   public init(id: String, name: String, category: String, tags: [String], sort: Int) {
     self.id = id; self.name = name; self.category = category; self.tags = tags; self.sort = sort
   }
+}
+
+/// A YouTube title template (round 7): `{text}` = overlay text on one line, else the Title, else the raw tag.
+public struct TitleTemplate: Codable, Sendable, Identifiable, Hashable {
+  public var id: String
+  public var name: String
+  public var template: String
+  public init(id: String, name: String, template: String) { self.id = id; self.name = name; self.template = template }
 }
 
 public struct CaptionTemplate: Codable, Sendable, Identifiable, Hashable {
@@ -694,8 +715,18 @@ public struct Settings: Codable, Sendable, Hashable {
   public var limitsRevision: Int = PlatformLimits.revision
   /// Publishing (round 6): Manual or Postiz per platform, Postiz channels, test mode and per-platform options.
   public var publishing = PublishingSettings()
+  /// Round 7: YouTube title templates (Settings → Captions & titles). New clip defaults picks the default one
+  /// (`defaults.youtubeTitleTemplateId`); a clip can pick another in the editor.
+  public var youtubeTitleTemplates: [TitleTemplate] = Defaults.youtubeTitleTemplates
 
   public init() {}
+
+  /// The YouTube title template text for `id`: that template, else the default one, else the legacy single template.
+  public func youtubeTitleTemplate(id: String?) -> String {
+    if let id, let t = youtubeTitleTemplates.first(where: { $0.id == id }) { return t.template }
+    if let t = youtubeTitleTemplates.first(where: { $0.id == defaults.youtubeTitleTemplateId }) { return t.template }
+    return defaults.youtubeTitleTemplate
+  }
 
   public var tz: TimeZone { TimeZone(identifier: timeZone) ?? .current }
 

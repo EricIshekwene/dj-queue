@@ -44,6 +44,10 @@ enum EditorSnapshot {
 
       if env["DJQ_EDITOR_SELFTEST"] != nil { return selfTest(store: store, ids: ids, start: pick.id) }
       if let secs = env["DJQ_EDITOR_LIVE"].flatMap(Double.init) { return await live(store: store, video: pick.id, ids: ids, seconds: secs) }
+      if let dir = env["DJQ_EDITOR_CAPTION_SCRIPT"] {
+        return await EditorCaptionScript.run(store: store, video: pick.id, ids: ids, dir: dir,
+                                             appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
+      }
 
       let model = EditorModel(store: store, videoId: pick.id, snapshotMode: true)
       // A clip with no title and no suggestions for the "Ask an agent" state.

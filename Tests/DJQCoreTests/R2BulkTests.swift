@@ -126,6 +126,7 @@ import Testing
   @Test func captionHashtagsPlatformsAndApplyDefaults() throws {
     let f = try Fixture()
     try f.intake()
+    for g in Defaults.legacyHashtagSets { try f.store.save(g) }  // round 7: no groups ship; make Eric's own
     let b = bulk(f)
     var v1 = Version(number: 1)
     v1.caption = "written"

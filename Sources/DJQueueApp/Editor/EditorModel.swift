@@ -333,7 +333,7 @@ final class EditorModel: ObservableObject {
       let n = caption(for: p).count, lim = captionLimit(p)
       guard EditorGeometry.lengthLevel(count: n, limit: lim) != .ok else { return nil }
       let bare = tags && (r.platformCaptions[p] ?? "").isEmpty
-        ? Captions.withoutHashtags(for: p, version: r, video: v, sessionName: sessionName, templates: templates, settings: settings).count
+        ? Captions.withoutHashtags(for: p, version: r, video: v, sessionName: sessionName, templates: templates, settings: settings, sets: sets).count
         : nil
       return EditorCaptionWarning(platform: p, count: n, limit: lim, countWithoutHashtags: bare)
     }
@@ -762,7 +762,7 @@ final class EditorModel: ObservableObject {
   func dropHashtags(_ p: Platform) {
     guard let v = video else { return }
     let bare = Captions.withoutHashtags(for: p, version: resolved, video: v, sessionName: sessionName, templates: templates,
-                                        settings: settings)
+                                        settings: settings, sets: sets)
     setPlatformCaption(p, bare)
     show("\(p.displayName) now has its own caption without hashtags")
   }

@@ -72,35 +72,180 @@ public enum Captions {
     return build(platform, v, video, sessionName, hashtags(v, sets: sets), templates, settings)
   }
 
+  /// The caption every platform without its own caption (and without a per-platform default template) posts — what
+  /// the editor's caption field shows and edits (round 7, WYSIWYG): the written caption with `{hashtags}` filled, else
+  /// the chosen (or default) template filled.
+  public static func sharedCaption(version v: ResolvedVersion, video: Video, sessionName: String, sets: [HashtagSet],
+                                   templates: [CaptionTemplate], settings: Settings) -> String {
+    var s = settings
+    s.defaults.platformCaptionTemplates = [:]
+    return build(.tiktok, v, video, sessionName, hashtags(v, sets: sets), templates, s)
+  }
+
+  /// What template `id` fills to for this clip (the editor's template picker rewrites the caption field with it).
+  public static func templateCaption(_ id: String?, version v: ResolvedVersion, video: Video, sessionName: String,
+                                     sets: [HashtagSet], templates: [CaptionTemplate], settings: Settings) -> String {
+    var r = v
+    r.caption = ""
+    r.captionTemplateId = id
+    return sharedCaption(version: r, video: video, sessionName: sessionName, sets: sets, templates: templates, settings: settings)
+  }
+
   /// The same caption with no hashtags at all — what "Drop hashtags for <platform>" writes as that platform's
-  /// caption override (`Version.platformCaptions[platform]`).
+  /// caption override (`Version.platformCaptions[platform]`). A written caption without `{hashtags}` (round 7: taken
+  /// literally) loses the clip's hashtags where they appear in it.
   public static func withoutHashtags(for platform: Platform, version v: ResolvedVersion, video: Video, sessionName: String,
-                                     templates: [CaptionTemplate], settings: Settings) -> String {
+                                     templates: [CaptionTemplate], settings: Settings, sets: [HashtagSet] = []) -> String {
     var r = v
     r.platformCaptions[platform] = nil
+    if !r.caption.isEmpty, !r.caption.contains("{hashtags}") {
+      return replaceHashtags(in: r.caption, old: hashtags(r, sets: sets), new: [])
+    }
     return build(platform, r, video, sessionName, [], templates, settings)
   }
 
+  /// A written caption is taken literally (round 7: WYSIWYG — nothing is appended). `{hashtags}` in it (older
+  /// captions, and every caption the schema-6 migration found without one, which got "\n{hashtags}") is filled with
+  /// the clip's hashtags.
   static func build(_ platform: Platform, _ v: ResolvedVersion, _ video: Video, _ sessionName: String, _ tags: [String],
                     _ templates: [CaptionTemplate], _ settings: Settings) -> String {
     let joined = tags.joined(separator: " ")
     if !v.caption.isEmpty {
       if v.caption.contains("{hashtags}") {
+        if tags.isEmpty, v.caption.hasSuffix(legacySuffix), !v.caption.dropLast(legacySuffix.count).contains("{hashtags}") {
+          return String(v.caption.dropLast(legacySuffix.count))
+        }
+        if v.caption.hasSuffix(legacySuffix), !v.caption.dropLast(legacySuffix.count).contains("{hashtags}") {
+          return String(v.caption.dropLast(legacySuffix.count)) + "\n" + joined
+        }
         return v.caption.replacingOccurrences(of: "{hashtags}", with: joined).trimmingCharacters(in: .whitespacesAndNewlines)
       }
-      return tags.isEmpty ? v.caption : v.caption + "\n" + joined
+      return v.caption
     }
     let tid = templateId(for: platform, version: v, settings: settings)
     let tpl = templates.first { $0.id == tid }?.template ?? Defaults.captionTemplates[0].template
     return fill(tpl, text: textValue(v, video: video), tag: video.tag, set: setName(sessionName), hashtags: tags)
   }
 
-  /// YouTube Shorts title from `defaults.youtubeTitleTemplate` ("{text} | DJ Lovd"), capped at the title limit.
+  /// What the schema-6 migration appends to a written caption that had no `{hashtags}` (rounds 1–6 added the hashtags
+  /// on a new line after it). `build` turns it back into exactly that: the caption as written, then "\n" + tags.
+  public static let legacySuffix = "\n{hashtags}"
+
+  // MARK: Editing hashtags inside a written caption (round 7)
+
+  /// The hashtag tokens in `text`, in order, normalised ("#Amapiano" → "#amapiano").
+  public static func tags(in text: String) -> [String] {
+    guard let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_#])#[\p{L}\p{N}_]+"#) else { return [] }
+    let ns = text as NSString
+    return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { normalizeTag(ns.substring(with: $0.range)) }
+  }
+
+  /// Swaps the clip's hashtags in a written caption in place when its groups or extra tags change: the run of the old
+  /// tags (as `hashtags` wrote them) becomes the new run; if Eric rearranged them by hand, old tags that went away are
+  /// removed one by one and new ones are added to the last hashtag line (else a new line at the end). A tag that is
+  /// already anywhere in the caption is never added twice. Nothing else in the text changes.
+  public static func replaceHashtags(in text: String, old: [String], new: [String]) -> String {
+    let o = old.map(normalizeTag).filter { !$0.isEmpty }, n = new.map(normalizeTag).filter { !$0.isEmpty }
+    if o == n { return text }
+    let ns = text as NSString
+    if !o.isEmpty {
+      let block = o.joined(separator: " ")
+      let r = ns.range(of: block, options: [.backwards, .caseInsensitive])
+      if r.location != NSNotFound, isTagBoundary(ns, r) {
+        let outside = Set(tags(in: ns.replacingCharacters(in: r, with: " ")))
+        let keep = n.filter { !outside.contains($0) }
+        if !keep.isEmpty { return ns.replacingCharacters(in: r, with: keep.joined(separator: " ")) }
+        return removeRange(ns, r)
+      }
+    }
+    // Hand-edited hashtags: token by token.
+    var out = text
+    for t in o where !n.contains(t) { out = removeTag(t, from: out) }
+    let present = Set(tags(in: out))
+    let add = n.filter { !present.contains($0) }
+    guard !add.isEmpty else { return out }
+    let joined = add.joined(separator: " ")
+    var lines = out.components(separatedBy: "\n")
+    if let i = lines.lastIndex(where: { isHashtagLine($0) }) {
+      lines[i] = lines[i].replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression) + " " + joined
+      return lines.joined(separator: "\n")
+    }
+    let body = out.replacingOccurrences(of: #"[ \t]+$"#, with: "", options: .regularExpression)
+    return body.isEmpty ? joined : body + "\n" + joined
+  }
+
+  /// After a version's groups or extra tags changed (`before` → `after`, both resolved with the same settings): a written
+  /// caption without `{hashtags}` gets its hashtags swapped in place (`replaceHashtags`), stored on `version` (it
+  /// becomes this version's own caption when it was carried forward). Template captions and `{hashtags}` captions
+  /// follow by themselves; per-platform captions are their own and stay as written.
+  public static func retag(_ version: inout Version, before: ResolvedVersion, after: ResolvedVersion, sets: [HashtagSet]) {
+    let c = after.caption
+    guard !c.isEmpty, !c.contains("{hashtags}") else { return }
+    let o = hashtags(before, sets: sets), n = hashtags(after, sets: sets)
+    guard o != n else { return }
+    let next = replaceHashtags(in: c, old: o, new: n)
+    if next != c { version.caption = next }
+  }
+
+  /// True when the line holds only hashtags (and spaces).
+  static func isHashtagLine(_ line: String) -> Bool {
+    let words = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+    return !words.isEmpty && words.allSatisfy { $0.hasPrefix("#") && $0.count > 1 }
+  }
+
+  static func isTagBoundary(_ ns: NSString, _ r: NSRange) -> Bool {
+    func word(_ c: unichar) -> Bool {
+      guard let u = UnicodeScalar(c) else { return false }
+      return CharacterSet.alphanumerics.contains(u) || c == 95 || c == 35
+    }
+    if r.location > 0, word(ns.character(at: r.location - 1)) { return false }
+    let end = r.location + r.length
+    if end < ns.length, word(ns.character(at: end)) { return false }
+    return true
+  }
+
+  /// Removes `r` and the spaces before it; if that empties its line, the line goes too (one newline, never more).
+  static func removeRange(_ ns: NSString, _ r: NSRange) -> String {
+    var start = r.location, end = r.location + r.length
+    while start > 0, [32, 9].contains(ns.character(at: start - 1)) { start -= 1 }
+    let atLineStart = start == 0 || ns.character(at: start - 1) == 10
+    var trailing = end
+    while trailing < ns.length, [32, 9].contains(ns.character(at: trailing)) { trailing += 1 }
+    let atLineEnd = trailing == ns.length || ns.character(at: trailing) == 10
+    if atLineStart && atLineEnd {
+      end = trailing
+      if start > 0 { start -= 1 } else if end < ns.length { end += 1 }
+    } else if atLineStart {
+      end = trailing
+    }
+    return ns.replacingCharacters(in: NSRange(location: start, length: end - start), with: "")
+  }
+
+  static func removeTag(_ tag: String, from text: String) -> String {
+    let core = NSRegularExpression.escapedPattern(for: String(tag.dropFirst()))
+    guard let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_#])#"# + core + #"(?![\p{L}\p{N}_])"#,
+                                            options: [.caseInsensitive]) else { return text }
+    var out = text
+    while true {
+      let ns = out as NSString
+      guard let m = re.firstMatch(in: out, range: NSRange(location: 0, length: ns.length)) else { return out }
+      out = removeRange(ns, m.range)
+    }
+  }
+
+  /// YouTube Shorts title from the version's template ("{text} | DJ Lovd"), capped at the title limit.
   /// An explicit title is returned as written (Validation flags it if over the limit); the template keeps its
   /// fixed part and shortens `{text}`.
+  /// Round 7: the version's resolved template (`ResolvedVersion.youtubeTitleTemplate`, the chosen or default entry of
+  /// `Settings.youtubeTitleTemplates`) wins over `template`, which is only the fallback for hand-built versions.
   public static func youtubeTitle(_ v: ResolvedVersion, video: Video, limit: Int = 100,
                                   template: String = NewClipDefaults().youtubeTitleTemplate) -> String {
     if !v.youtubeTitle.isEmpty { return v.youtubeTitle }
+    return youtubeTitle(fromTemplate: v.youtubeTitleTemplate ?? template, version: v, video: video, limit: limit)
+  }
+
+  /// `template` filled for this clip, `{text}` shortened to fit `limit` (the editor's YouTube template picker).
+  public static func youtubeTitle(fromTemplate template: String, version v: ResolvedVersion, video: Video, limit: Int = 100) -> String {
     let base = oneLine(textValue(v, video: video))
     let tpl = template.contains("{text}") ? template : "{text}"
     let fixed = tpl.replacingOccurrences(of: "{text}", with: "").trimmingCharacters(in: .whitespaces)
@@ -110,9 +255,10 @@ public enum Captions {
     return tpl.replacingOccurrences(of: "{text}", with: text)
   }
 
-  /// YouTube title with the settings' template and limit.
+  /// YouTube title with the version's template (else the settings' default template) and the settings' limit.
   public static func youtubeTitle(_ v: ResolvedVersion, video: Video, settings: Settings) -> String {
-    youtubeTitle(v, video: video, limit: settings.limits[.youtube]?.titleLimit ?? 100,
-                 template: settings.defaults.youtubeTitleTemplate)
+    var r = v
+    r.youtubeTitleTemplate = settings.youtubeTitleTemplate(id: v.youtubeTitleTemplateId)
+    return youtubeTitle(r, video: video, limit: settings.limits[.youtube]?.titleLimit ?? 100)
   }
 }

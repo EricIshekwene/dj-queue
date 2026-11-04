@@ -74,11 +74,16 @@ public struct NewClipDefaults: Codable, Sendable, Hashable {
   public var coverOffsetSeconds: Double = 1
   // Caption
   public var captionTemplateId: String = "set-link"
-  public var hashtagSetIds: [String] = ["amapiano", "dj"]
+  /// Round 7: none by default — Eric's own hashtag groups (Settings → Captions & titles) are opt-in.
+  public var hashtagSetIds: [String] = []
   public var extraHashtags: [String] = []
   /// `{text}` = overlay text on one line, else the title, else the raw tag. Over the title limit, `{text}` is
   /// shortened (the rest of the template is kept).
+  /// Round 7: kept in step with the default entry of `Settings.youtubeTitleTemplates` on every save (older builds
+  /// and a rollback read this field); the list + `youtubeTitleTemplateId` are the source of truth.
   public var youtubeTitleTemplate: String = "{text} | DJ Lovd"  // Q17
+  /// Round 7: the default YouTube title template (`Settings.youtubeTitleTemplates` id).
+  public var youtubeTitleTemplateId: String = "text-djlovd"
   /// Caption template id per platform, used when the clip's version didn't choose a template.
   public var platformCaptionTemplates: [Platform: String] = [:]
   // Posting
@@ -94,7 +99,7 @@ public struct NewClipDefaults: Codable, Sendable, Hashable {
   enum CodingKeys: String, CodingKey {
     case aspect, cropAnchor, trimMode, extraSecondsBefore, extraSecondsAfter, textStyle, textSize, textPosX, textPosY,
          textAlign, textTiming, textFirstSeconds, textSource, noTextForTalking, coverIncludesText, coverFrame,
-         coverOffsetSeconds, captionTemplateId, hashtagSetIds, extraHashtags, youtubeTitleTemplate,
+         coverOffsetSeconds, captionTemplateId, hashtagSetIds, extraHashtags, youtubeTitleTemplate, youtubeTitleTemplateId,
          platformCaptionTemplates, platforms, safeZonePlatforms, kind
   }
 
@@ -124,6 +129,7 @@ public struct NewClipDefaults: Codable, Sendable, Hashable {
     hashtagSetIds = v(.hashtagSetIds, z.hashtagSetIds)
     extraHashtags = v(.extraHashtags, z.extraHashtags)
     youtubeTitleTemplate = v(.youtubeTitleTemplate, z.youtubeTitleTemplate)
+    youtubeTitleTemplateId = v(.youtubeTitleTemplateId, z.youtubeTitleTemplateId)
     platformCaptionTemplates = v(.platformCaptionTemplates, z.platformCaptionTemplates)
     platforms = v(.platforms, z.platforms)
     safeZonePlatforms = v(.safeZonePlatforms, z.safeZonePlatforms)

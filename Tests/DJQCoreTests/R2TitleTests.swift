@@ -103,7 +103,7 @@ import Testing
     let r2 = VersionResolver.resolve([Version(number: 1)], number: 1, settings: Settings(), video: v)
     #expect(Captions.youtubeTitle(r2, video: v) == "Yayo x Johnny | DJ Lovd")
     var s = Settings()
-    s.defaults.youtubeTitleTemplate = "DJ Lovd — {text}"
+    s.youtubeTitleTemplates = [TitleTemplate(id: "text-djlovd", name: "x", template: "DJ Lovd — {text}")]
     #expect(Captions.youtubeTitle(r2, video: v, settings: s) == "DJ Lovd — Yayo x Johnny")
     // Template keeps its fixed part when {text} is shortened.
     v.title = String(repeating: "Long ", count: 40)
@@ -118,8 +118,9 @@ import Testing
     let v = try #require(try f.store.video(id: "clip-0"))
     var s = Settings()
     s.defaults.platformCaptionTemplates = [.x: "short"]
+    s.defaults.hashtagSetIds = Defaults.legacyDefaultHashtagSetIds
     let r = VersionResolver.resolve([Version(number: 1)], number: 1, settings: s, video: v)
-    let x = Captions.caption(for: .x, version: r, video: v, sessionName: "s", sets: Defaults.hashtagSets,
+    let x = Captions.caption(for: .x, version: r, video: v, sessionName: "s", sets: Defaults.legacyHashtagSets,
                              templates: Defaults.captionTemplates, settings: s)
     #expect(x.hasPrefix("yayo x johnny #amapiano"))
     var ver = Version(number: 1)
@@ -136,7 +137,7 @@ import Testing
     try f.store.save(e, videoId: "clip-0")
     var v1 = Version(number: 1)
     v1.text = "Yayo x Johnny"
-    v1.extraHashtags = (0..<30).map { "#tag\($0)" }
+    v1.extraHashtags = (0..<45).map { "#tag\($0)" }
     try f.store.save(v1, videoId: "clip-0")
     let v = try #require(try f.store.video(id: "clip-0"))
     let issue = try #require(try Validation.issues(video: v, store: f.store).first { $0.kind == .captionTooLong && $0.platform == .x })
