@@ -24,6 +24,8 @@ enum PostizCommand {
       link <post> [<url>|<release-id>] [--release-id ID]   a post Postiz published without a link: list the
                                           platform's recent posts, or record the right one
       release <post> --yes                test run: release a Postiz draft so it posts at its time
+      resolve <post>                      a create whose outcome is unknown (Doctor postiz.create_unknown), after
+                                          Eric checked the Postiz calendar: found → tracked; not there → sent again
       sync [--force]                      one sync now, budget permitting (asks DJ Queue's engine when it's running)
 
     Settings changes print what changes; --dry-run changes nothing. A change that makes approved posts go out for
@@ -47,6 +49,7 @@ enum PostizCommand {
     case "link": return try link(store, svc, json: json, wrote: &wrote)
     case "release": return try release(store, svc, json: json, wrote: &wrote)
     case "sync": return try sync(store, svc, json: json, wrote: &wrote)
+    case "resolve": return try resolve(store, svc, json: json, wrote: &wrote)
     default: throw CLIError("unknown postiz command \(sub)\n\n\(usage)")
     }
   }
@@ -451,11 +454,10 @@ enum PostizCommand {
     args.removeAll { $0 == raw }
     let open = try store.openPostizJobs().filter { $0.kind == "post" }.count
     var notes = raw == "off"
-      ? ["posts Postiz already published keep their Test badge"]
+      ? ["posts sent from now on go out for real; posts made during the test run keep their Test badge"]
       : ["TikTok → the TikTok inbox, YouTube → unlisted, Instagram/Facebook/Threads/X → Postiz drafts"]
     if open > 0 {
-      notes.append("\(open) post\(open == 1 ? "" : "s") waiting in Postiz \(open == 1 ? "is" : "are") replaced on the next tick by "
-                   + (raw == "off" ? "real scheduled posts" : "test-run versions"))
+      notes.append("the \(open) post\(open == 1 ? "" : "s") already in Postiz keep\(open == 1 ? "s" : "") the form \(open == 1 ? "it was" : "they were") sent in (test mode is fixed per post)")
     }
     return try change(store, "test-mode \(raw)", json: json, ids: ids, notes: notes, wrote: &wrote) { $0.publishing.testMode = raw == "on" }
   }
@@ -552,6 +554,15 @@ enum PostizCommand {
     wrote = true
     if json { try printJSON(["released": p.id]); return 0 }
     print("released \(p.platform.displayName) · \(tagOf(store, p.videoId)): Postiz posts it at \(fmt(p.scheduledAt, try store.settings()))")
+    return 0
+  }
+
+  static func resolve(_ store: Store, _ svc: PostizService, json: Bool, wrote: inout Bool) throws -> Int32 {
+    let p = try resolvePost(store, try arg(0, "post id"))
+    let r = try svc.resolveUnknown(postId: p.id)
+    wrote = true
+    if json { try printJSON(["post": p.id, "result": r]); return 0 }
+    print("\(p.platform.displayName) · \(tagOf(store, p.videoId)): \(r)")
     return 0
   }
 

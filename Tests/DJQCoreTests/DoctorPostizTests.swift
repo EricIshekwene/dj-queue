@@ -127,6 +127,19 @@ import Testing
     #expect(dp.severity == .warning && dp.where_ == [x.id] && dp.detail.contains("server 500"))
   }
 
+  @Test func unconfirmedCreateIsAnErrorWithTheResolveFix() throws {
+    let rig = try Rig(1, platforms: [.facebook])
+    rig.settle()
+    let fb = try #require(try rig.f.post(.facebook, day: "2026-11-02"))
+    var j = try #require(try rig.job(fb))
+    #expect(Self.postiz(Self.doctor(rig.store, keys: rig.keys).run())["postiz.create_unknown"] == nil)
+    j.phase = .creating
+    j.remoteState = PostizJob.unconfirmed
+    try rig.store.save(j)
+    let f = try #require(Self.postiz(Self.doctor(rig.store, keys: rig.keys).run())["postiz.create_unknown"])
+    #expect(f.severity == .error && f.where_ == [fb.id] && f.fix.contains("djq postiz resolve") && f.fix.contains("Postiz calendar"))
+  }
+
   @Test func doctorMakesNoCallUnlessLive() throws {
     let rig = try Rig(1, platforms: [.facebook], approve: false)
     let calls = rig.fake.log.count

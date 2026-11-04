@@ -55,7 +55,7 @@ usage: djq <command> [args]
   postiz map [--dry-run] [--yes] | map <platform> <channel>|--clear   auto-map the six DJ channels by provider
   postiz publisher <platform|all> manual|postiz [--dry-run] [--yes] | postiz test-mode on|off [--dry-run] [--yes]
   postiz test <video> --dry-run|--draft   the six payloads (no call) or Postiz drafts only; never real posts
-  postiz link <post> [<url>|<release-id>] | postiz release <post> --yes | postiz sync [--force]
+  postiz link <post> [<url>|<release-id>] | postiz release <post> --yes | postiz resolve <post> | postiz sync [--force]
                                       (djq postiz help for details; settings changes are undoable with bulk undo)
 
 Ids can be shortened to a unique prefix. Platforms: \(Platform.allCases.map(\.rawValue).joined(separator: " "))
@@ -711,39 +711,22 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
     let raw = try arg(0, "batch id")
     let m = try bulk.batches(limit: 1000).filter { $0.id.hasPrefix(raw) }
     guard m.count == 1 else { throw CLIError(m.isEmpty ? "no batch \(raw)" : "\(raw) matches \(m.count) batches") }
-    // Round 6: undoing a settings batch can switch Postiz back on (a platform to Postiz, a channel, test run off).
-    // Run the undo inside a savepoint, compare Settings → Publishing, and keep it only when nothing would go out for
-    // real through Postiz — or Eric said --yes.
-    let before = try store.settings()
-    struct Rollback: Error { var result: BulkResult; var live: [Platform] }
-    var r: BulkResult
-    var live: [Platform] = []
-    do {
-      r = try store.db.transaction { () throws -> BulkResult in
-        let res = try bulk.undo(m[0].id, force: force, dryRun: false)
-        let l = PostizCommand.goesLive(before, try store.settings())
-        if dry || (!l.isEmpty && !yes) { throw Rollback(result: res, live: l) }
-        live = l
-        return res
+    // Round 6: undoing a settings batch can switch Postiz back on for waiting posts (core's `undoWouldGoLive`).
+    // That's Eric's call: refused (exit 2) unless --yes; --dry-run previews it.
+    let live = try bulk.undoWouldGoLive(m[0].id)
+    if !live.isEmpty && !yes && !dry {
+      let names = live.map(\.displayName).joined(separator: ", ")
+      if json {
+        struct Refused: Encodable { var refused: Bool; var batch: String; var goesLive: [String]; var reason: String }
+        try printJSON(Refused(refused: true, batch: m[0].id, goesLive: live.map(\.rawValue),
+                              reason: "undoing it schedules real posts through Postiz; needs --yes"))
+      } else {
+        print("not undone: undoing \(m[0].action) would schedule real posts — approved posts for \(names) would go out through Postiz (test run off).")
+        print("  That's Eric's call: run it again with --yes (or --dry-run to preview).")
       }
-    } catch let rb as Rollback {
-      r = rb.result
-      r.dryRun = dry
-      live = rb.live
-      if !dry {
-        // Blocked: nothing was undone.
-        let names = live.map(\.displayName).joined(separator: ", ")
-        if json {
-          struct Refused: Encodable { var refused: Bool; var batch: String; var goesLive: [String]; var reason: String }
-          try printJSON(Refused(refused: true, batch: m[0].id, goesLive: live.map(\.rawValue),
-                                reason: "undoing it schedules real posts through Postiz; needs --yes"))
-        } else {
-          print("not undone: undoing \(m[0].action) would schedule real posts — from the next tick, approved posts for \(names) go out through Postiz (test run off).")
-          print("  That's Eric's call: run it again with --yes (or --dry-run to preview).")
-        }
-        return 2
-      }
+      return 2
     }
+    let r = try bulk.undo(m[0].id, force: force, dryRun: dry, confirmGoLive: yes)
     wrote = !dry  // a settings-only undo restores no clip but still changed Settings
     if json { try printJSON(r) } else {
       printBulk(r)

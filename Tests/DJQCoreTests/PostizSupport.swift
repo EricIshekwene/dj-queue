@@ -44,6 +44,13 @@ final class FakePostiz: PostizTransport, @unchecked Sendable {
   /// Probability (0…1) that a DELETE fails with 500, drawn from `rng`.
   var deleteFailRate = 0.0
   var createFailRate = 0.0
+  /// One-shot create outcomes, used in order: "500" (refused, nothing made), "garbage" (made, then an unreadable
+  /// 2xx), "timeout" (made, then the connection drops).
+  var createOutcomes: [String] = []
+  /// Every post ever created (also deleted ones), for the global never-double-post checks.
+  var everCreated: [Post] { withLock { posts.values.sorted { $0.id < $1.id } } }
+  /// Ids that were ever PUBLISHED (a later delete doesn't un-publish).
+  private(set) var everPublished: Set<String> = []
   var rng = SeededRNG(seed: 1)
   /// When set, GET /analytics returns this body.
   var analyticsBody: Data?
@@ -73,6 +80,7 @@ final class FakePostiz: PostizTransport, @unchecked Sendable {
       p.releaseURL = url ?? Fixture.postURLs[platform]!.replacingOccurrences(of: "abc", with: id)
       p.releaseId = releaseId ?? "rel-\(id)"
       posts[id] = p
+      everPublished.insert(id)
     }
   }
 
@@ -116,6 +124,8 @@ final class FakePostiz: PostizTransport, @unchecked Sendable {
         return json(200, ["id": id, "name": file.lastPathComponent, "path": media[id]!.path, "status": "ready"])
       case ("GET", "media"): return json(200, ["status": "ready"])
       case ("POST", "posts"):
+        let outcome = createOutcomes.isEmpty ? "" : createOutcomes.removeFirst()
+        if outcome == "500" { return json(500, ["message": "injected 500"]) }
         if createFailRate > 0, Double.random(in: 0..<1, using: &rng) < createFailRate { return json(500, ["message": "flaky"]) }
         guard case .json(let d) = r.body, let body = try JSONSerialization.jsonObject(with: d) as? [String: Any],
               let items = body["posts"] as? [[String: Any]], let type = body["type"] as? String,
@@ -133,6 +143,8 @@ final class FakePostiz: PostizTransport, @unchecked Sendable {
                            body: ["type": type, "posts": [item]])
           out.append(["postId": id, "integration": integ])
         }
+        if outcome == "garbage" { return PostizHTTPResponse(status: 201, body: Data("<html>ok</html>".utf8)) }
+        if outcome == "timeout" { throw PostizError.network("timed out after 30 s") }
         return json(200, out)
       case ("GET", "posts") where parts.count == 1:
         let q = URLComponents(url: r.url, resolvingAgainstBaseURL: false)?.queryItems ?? []

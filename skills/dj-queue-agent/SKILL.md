@@ -182,6 +182,7 @@ djq postiz publisher <platform|all> manual|postiz [--yes]
 djq postiz test-mode on|off [--yes]              # test run: TikTok → inbox, YouTube → unlisted, others → Postiz drafts
 djq postiz link <post> <url>                     # records the link (after Eric confirms which post it is)
 djq postiz release <post> --yes                  # test run: a Postiz draft goes out for real at its time
+djq postiz resolve <post>                        # Doctor postiz.create_unknown, after Eric checked the Postiz calendar
 ```
 
 A change that makes approved posts go out for real (a platform to Postiz with a channel, a new channel, test run

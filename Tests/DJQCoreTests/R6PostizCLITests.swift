@@ -163,6 +163,13 @@ import Testing
   /// Review M1: undoing a settings batch must not switch real Postiz posting back on without Eric's --yes.
   @Test func bulkUndoThatGoesLiveNeedsYes() throws {
     let env = try Env()
+    // Waiting posts: an approved week (core's undoWouldGoLive counts only platforms with posts to send).
+    let planner = Planner(store: env.store)
+    let dm = DayMath(settings: try env.store.settings())
+    let week = dm.addDays(dm.weekStart(of: Date()), 7)
+    try planner.proposeWeek(week)
+    try planner.approveWeek(week)
+    #expect(try !env.store.posts(where: "state='planned'").isEmpty)
     try env.djq("postiz", "map")
     #expect(try env.djq("postiz", "publisher", "all", "postiz", "--yes").status == 0)
     let manual = try env.json("postiz", "publisher", "all", "manual")

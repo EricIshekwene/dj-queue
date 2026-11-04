@@ -364,7 +364,7 @@ extension Doctor {
   /// Every id the Postiz checks can report (skills/dj-queue-doctor/SKILL.md has the safe fix for each).
   public static let postizCheckIds = ["postiz.not_connected", "postiz.key_invalid", "postiz.mapping_missing",
                                       "postiz.channel_disabled", "postiz.stuck", "postiz.link_missing", "postiz.rate_limited",
-                                      "postiz.fallback", "postiz.test_mode", "postiz.delete_pending"]
+                                      "postiz.fallback", "postiz.test_mode", "postiz.delete_pending", "postiz.create_unknown"]
 
   /// Doctor never reaches Postiz except in `postizLive` mode.
   final class OfflinePostiz: PostizTransport, @unchecked Sendable {
@@ -521,6 +521,16 @@ extension Doctor {
                        detail: "Set to Postiz, but these go to Today to post by hand (next 7 days): "
                          + fallen.map(\.line).joined(separator: " · "), where_: fallen.map(\.id),
                        fix: "Fix the reason (key or channel: see the other postiz findings) and the next tick submits them. A refused, deleted or inbox post stays manual: post it from Today and `djq posted <post> <url>`; `djq reset <post>` lets Postiz try a refused or deleted one again (Eric's call)."))
+    }
+
+    let unknown = open.filter(\.isUnconfirmed)
+    if !unknown.isEmpty {
+      out.append(.init(id: "postiz.create_unknown", severity: .error,
+                       title: "\(unknown.count) Postiz create\(s(unknown.count)) with an unknown outcome",
+                       detail: unknown.map { "\($0.platform.displayName) · \(tag($0.videoId ?? "")) · slot \(Sched.shortTime($0.remoteDate, settings))" }.joined(separator: " · ")
+                         + ". The request was sent but no answer came back, and the sync couldn't tell whether Postiz has it. Nothing new is sent for these until it's settled.",
+                       where_: unknown.map(\.postId),
+                       fix: "Eric checks the Postiz calendar for that channel and time, then `djq postiz resolve <post-id>`: found → DJ Queue tracks it; not there → it's sent again. Never post it by hand meanwhile (double post)."))
     }
 
     let pending = open.filter { $0.phase == .deleting && $0.attempts >= 3 }
