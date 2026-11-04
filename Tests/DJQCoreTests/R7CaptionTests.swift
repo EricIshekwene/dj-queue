@@ -241,6 +241,33 @@ import Testing
     #expect(try f.store.settings().defaults.youtubeTitleTemplate == "{text} · DJ Lovd")
   }
 
+  // MARK: djq
+
+  @Test func djqHashtagGroupsTitleTemplatesAndYouTubeTitle() throws {
+    let env = try R6PostizCLITests.Env(clips: 1)
+    #expect(try env.djq("hashtag-groups").out.contains("no hashtag groups yet"))
+    let add = try env.djq("hashtag-groups", "add", "Piano", "#amapiano piano")
+    #expect(add.status == 0, "\(add.err)")
+    #expect(try env.store.hashtagSets().map(\.tags) == [["#amapiano", "#piano"]])
+    let gid = try #require(try env.store.hashtagSets().first?.id)
+    #expect(try env.djq("bulk", "hashtags", gid, "--ids", "clip-0").status == 0)
+    var r = try #require(try env.store.resolvedVersion(videoId: "clip-0", number: 1))
+    #expect(Captions.hashtags(r, sets: try env.store.hashtagSets()) == ["#amapiano", "#piano"])
+    #expect(try env.djq("title-templates", "add", "Live", "{text} (live) | DJ Lovd").status == 0)
+    #expect(try env.djq("youtube-title", "clip-0", "--template", "Live").out.contains("Text clip-0 (live) | DJ Lovd"))
+    #expect(try env.djq("youtube-title", "clip-0", "My typed title").out.contains("My typed title"))
+    r = try #require(try env.store.resolvedVersion(videoId: "clip-0", number: 1))
+    #expect(r.youtubeTitle == "My typed title")
+    // Deleting a group is one undoable batch.
+    let del = try env.djq("hashtag-groups", "delete", "Piano")
+    #expect(del.status == 0)
+    #expect(try env.store.hashtagSets().isEmpty)
+    let batch = try #require(del.out.components(separatedBy: "djq bulk undo ").last?.trimmingCharacters(in: .whitespacesAndNewlines))
+    #expect(try env.djq("bulk", "undo", batch).status == 0)
+    #expect(try env.store.hashtagSets().map(\.name) == ["Piano"])
+    #expect(try env.djq("title-templates", "delete", "text-djlovd").status != 0)  // the default can't go
+  }
+
   // MARK: C1 — issue → editor section
 
   @Test func everyIssueKindMapsDeliberately() {
