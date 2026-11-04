@@ -19,7 +19,8 @@ The app follows a clip's life — **Score → Edit → Queue → Week → Today*
 - **Defaults + bulk editing** — new-clip defaults for frame, trim, text, cover, captions and platforms (clips store only overrides, so changing a default updates every untouched clip); bulk actions with a confirmation sheet showing exactly what changes and one-step undo.
 - **Weekly approval** — the app proposes the next 7 days; I drag, swap, pin and approve. Only approved weeks ever post.
 - **Background engine** — runs at login, renders the approved week ahead of time (1080×1920 H.264, loudness-normalised to −14 LUFS), and notifies me when each platform post is due.
-- **Manual publisher (phase 1)** — a Today screen: drag the file into the upload page, copy the platform-specific caption, mark posted with the URL. Built behind a `Publisher` interface so an API publisher (Postiz) can replace it later without touching the rest.
+- **Manual publisher (phase 1)** — a Today screen: drag the file into the upload page, copy the platform-specific caption, mark posted with the URL. Built behind a `Publisher` interface.
+- **Postiz publisher (phase 2, v0.7.0)** — per platform, Manual or Postiz. Once a week is approved and a render exists, the engine uploads it and schedules it in Postiz at the slot, so posts go out with the Mac off; edits, re-renders and plan changes replace or cancel the Postiz post, and the engine syncs back the state, the live link, failures and copyright blocks. A one-switch Test run (TikTok inbox, YouTube unlisted, Postiz drafts for the rest), a request budget, and a fallback to the Today screen for any platform Postiz can't take. Contract: [`docs/postiz.md`](docs/postiz.md); first-run checklist: [`docs/postiz-test.md`](docs/postiz-test.md).
 - **Failure handling** — missed slots shift that platform's plan without ever double-posting; failed posts re-queue the next day after a fix; copyright blocks are shown loudly and never auto-retried.
 - **Doctor** — `djq doctor` checks everything (manifests, missing files, renders, overdue posts, runway, DB integrity, disk, tools) and prints a report an AI agent can act on, paired with a skill that documents the safe fix for every finding.
 
@@ -133,7 +134,7 @@ design/                 inventory, design specs v1/v2, design system, decision l
 
 ## Status
 
-Phase 1 (manual publishing) is in daily use (v0.6.0), redesigned in round 2 and refined in rounds 3 and 4 (tooltips and undo everywhere; stage = readiness, one list header with a Filters popover, lists that show the edited clip; auto-update on every commit to main). Next: a Postiz publisher so posts go out with the Mac off, analytics and opt-in reposting of underperforming posts.
+Phase 1 (manual publishing) is in daily use (v0.6.0), redesigned in round 2 and refined in rounds 3 and 4 (tooltips and undo everywhere; stage = readiness, one list header with a Filters popover, lists that show the edited clip; auto-update on every commit to main). Round 6 (v0.7.0) added the Postiz publisher, `djq postiz` and Postiz Doctor checks. Next: analytics-driven, opt-in reposting of underperforming posts and a one-way Notion sync of posts.
 
 ## License
 
