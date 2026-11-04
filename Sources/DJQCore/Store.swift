@@ -220,7 +220,17 @@ public final class Store: @unchecked Sendable {
   public func settings() throws -> Settings {
     guard let s = try db.one("SELECT json FROM kv WHERE key='settings'")?.string("json") else { return Settings() }
     do {
-      var out = try JSONCoding.decodeLenient(Data(s.utf8), defaults: Settings())
+      // A top-level field of the wrong type would fail the whole decode: drop just that field (it takes its default).
+      var raw = Data(s.utf8)
+      if var o = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any] {
+        var changed = false
+        if let p = o["publishing"], !(p is [String: Any]) { o.removeValue(forKey: "publishing"); changed = true }
+        if let r = o["limitsRevision"], !(r is NSNumber) || CFGetTypeID(r as CFTypeRef) == CFBooleanGetTypeID() {
+          o.removeValue(forKey: "limitsRevision"); changed = true
+        }
+        if changed, let d = try? JSONSerialization.data(withJSONObject: o) { raw = d }
+      }
+      var out = try JSONCoding.decodeLenient(raw, defaults: Settings())
       // Round-1 rows kept the text/caption defaults at the top level: carry them into `defaults` once.
       if let obj = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any], obj["defaults"] == nil {
         if let x = (obj["defaultStyle"] as? String).flatMap(TextStyle.init) { out.defaults.textStyle = x }

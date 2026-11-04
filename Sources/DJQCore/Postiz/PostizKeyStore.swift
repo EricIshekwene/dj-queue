@@ -34,20 +34,22 @@ public final class KeychainPostizKeyStore: PostizKeyStore, @unchecked Sendable {
   /// without touching the real Keychain.
   public typealias Runner = (_ tool: String, _ args: [String], _ stdin: Data?) throws -> (status: Int32, stdout: Data)
   let run: Runner
-  /// The real `/usr/bin/security` (not an injected runner): obeys `PostizLive.disabled`.
-  let isLive: Bool
+  /// Obeys `PostizLive.disabled` (always true for the real `/usr/bin/security` runner; tests pass a recording runner
+  /// with `obeysKillSwitch: true` to check the switch without ever holding a store wired to the real tool).
+  let obeysKillSwitch: Bool
 
-  public init(runner: Runner? = nil) {
+  public init(runner: Runner? = nil, obeysKillSwitch: Bool? = nil) {
     run = runner ?? Self.process
-    isLive = runner == nil
+    self.obeysKillSwitch = runner == nil ? true : (obeysKillSwitch ?? false)
   }
 
-  var off: Bool { isLive && PostizLive.disabled }
+  var off: Bool { obeysKillSwitch && PostizLive.disabled }
 
   public func read() throws -> String? {
     guard !off else { return nil }
     let (status, out) = try run(Self.tool, Self.readArgs, nil)
-    guard status == 0 else { return nil }  // 44 = not found
+    if status == 44 { return nil }  // not found
+    guard status == 0 else { throw PostizKeyError("The Keychain is locked or refused access (security exit \(status))") }
     let s = String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     return s.isEmpty ? nil : s
   }

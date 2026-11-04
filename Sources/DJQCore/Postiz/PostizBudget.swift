@@ -72,9 +72,11 @@ extension Store {
   /// Returns true when the flag was newly set (the caller notifies once).
   @discardableResult
   public func setPostizKeyInvalid(_ message: String) throws -> Bool {
-    let was = try postizKeyInvalid() != nil
-    try setKV(PostizBudget.keyInvalidKey, PostizKeyInvalid(at: now, message: message))
-    return !was
+    try db.transaction {
+      let was = try postizKeyInvalid() != nil
+      try setKV(PostizBudget.keyInvalidKey, PostizKeyInvalid(at: now, message: message))
+      return !was
+    }
   }
 
   public func clearPostizKeyInvalid() throws {

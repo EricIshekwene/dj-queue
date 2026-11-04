@@ -117,6 +117,8 @@ public struct PublishingSettings: Codable, Sendable, Hashable {
   public var hourlyBudget = 25
 
   public static let cloudAPIBase = "https://api.postiz.com/public/v1"
+  /// Below this the priority reserves would starve creates or analytics.
+  public static let minimumBudget = 10
 
   public init() {}
 
@@ -146,9 +148,9 @@ public struct PublishingSettings: Codable, Sendable, Hashable {
     instagram = (try? c.decodeIfPresent(InstagramOptions.self, forKey: .instagram)) ?? InstagramOptions()
     x = (try? c.decodeIfPresent(XOptions.self, forKey: .x)) ?? XOptions()
     let base = (try? c.decodeIfPresent(String.self, forKey: .apiBase)) ?? nil
-    apiBase = (base?.isEmpty == false ? base : nil) ?? Self.cloudAPIBase
+    apiBase = base.flatMap { $0.lowercased().hasPrefix("https://") ? $0 : nil } ?? Self.cloudAPIBase  // the key never goes over http
     let b = (try? c.decodeIfPresent(Int.self, forKey: .hourlyBudget)) ?? nil
-    hourlyBudget = max(1, min(1000, b ?? 25))
+    hourlyBudget = max(Self.minimumBudget, min(1000, b ?? 25))
   }
 
   /// String-keyed maps, so the stored JSON reads `{"publishers": {"tiktok": "postiz"}}`.

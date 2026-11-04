@@ -191,9 +191,9 @@ extension Store {
       UPDATE postiz_jobs SET post_id=?, kind=?, video_id=?, platform=?, integration_id=?, phase=?, postiz_id=?, postiz_group=?,
         media_id=?, media_path=?, cover_media_id=?, cover_media_path=?, render_id=?, content_hash=?, scheduled_at=?,
         remote_date=?, test_mode=?, post_type=?, remote_state=?, remote_error=?, release_url=?, release_id=?,
-        submitted_at=?, synced_at=?, closed_at=?, close_reason=?, final=?, delete_reason=?, attempts=?, last_error=?,
+        submitted_at=?, synced_at=?, closed_at=?, close_reason=?, delete_reason=?, attempts=?, last_error=?,
         updated_at=? WHERE id=?
-      """, Array(Self.binds(j).dropFirst().dropLast(2)) + [j.updatedAt, j.id])
+      """, Array(Self.binds(j).dropFirst().dropLast(2)).enumerated().filter { $0.offset != 26 }.map(\.element) + [j.updatedAt, j.id])
   }
 
   /// Closes a job (`phase` closed, `closed_at` now).
@@ -203,7 +203,11 @@ extension Store {
     j.closedAt = now
     j.closeReason = reason
     if let note { j.lastError = note }
-    try save(j)
+    try db.transaction {
+      try save(j)
+      // `final` is written only here and by `releasePostizJobs` (a later save never undoes a release).
+      try db.run("UPDATE postiz_jobs SET final=? WHERE id=?", [reason.isFinal, id])
+    }
   }
 
   /// `PostActions.reset`: a post Eric reset may go through Postiz again — its error/rejected/vanished/interrupted
