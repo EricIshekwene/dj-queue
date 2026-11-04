@@ -363,9 +363,12 @@ public final class Engine: @unchecked Sendable {
       try store.refreshState(videoId: p.videoId)
       let late = now.timeIntervalSince(p.scheduledAt)
       let when = late >= 30 * 60 ? Sched.lateText(late) : "due now"
+      let uncertain = try postiz?.uncertainOnToday(p) == true
       notify(AppNotification(
         key: "due:\(p.id):\(Int(p.scheduledAt.timeIntervalSince1970))", title: "\(p.platform.displayName) · \(v.tag) · \(when)",
-        body: "Open Today to copy the caption and drag the file in.", actions: [.markPosted, .open], postId: p.id, videoId: v.id))
+        body: uncertain ? "Check the Postiz calendar first — a Postiz create for it was never confirmed. Then post it from Today."
+          : "Open Today to copy the caption and drag the file in.",
+        critical: uncertain, actions: [.markPosted, .open], postId: p.id, videoId: v.id))
       n += 1
     }
     return n == 0 ? "none" : "due \(n)"
@@ -586,7 +589,7 @@ public final class Engine: @unchecked Sendable {
     do {
       let r = try renderer.ensureRender(videoId: p.videoId, versionNo: p.versionNo, platform: p.platform)
       p.renderId = r.id
-      p.state = .rendered
+      p.state = prior == .due ? .due : .rendered  // a post already due stays due (Today keeps it)
       try store.save(p, note: "rendered \(r.id.prefix(8))")
       try? store.heartbeat(.tick)
     } catch {

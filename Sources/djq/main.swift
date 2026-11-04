@@ -55,7 +55,7 @@ usage: djq <command> [args]
   postiz map [--dry-run] [--yes] | map <platform> <channel>|--clear   auto-map the six DJ channels by provider
   postiz publisher <platform|all> manual|postiz [--dry-run] [--yes] | postiz test-mode on|off [--dry-run] [--yes]
   postiz test <video> --dry-run|--draft   the six payloads (no call) or Postiz drafts only; never real posts
-  postiz link <post> [<url>|<release-id>] | postiz release <post> --yes | postiz resolve <post> | postiz sync [--force]
+  postiz link <post> [<url>|<release-id>] | postiz release <post> --yes | postiz resolve <post> [--in-postiz|--not-in-postiz] | postiz sync [--force]
                                       (djq postiz help for details; settings changes are undoable with bulk undo)
 
 Ids can be shortened to a unique prefix. Platforms: \(Platform.allCases.map(\.rawValue).joined(separator: " "))

@@ -530,7 +530,7 @@ extension Doctor {
                        detail: unknown.map { "\($0.platform.displayName) · \(tag($0.videoId ?? "")) · slot \(Sched.shortTime($0.remoteDate, settings))" }.joined(separator: " · ")
                          + ". The request was sent but no answer came back, and the sync couldn't tell whether Postiz has it. Nothing new is sent for these until it's settled.",
                        where_: unknown.map(\.postId),
-                       fix: "Eric checks the Postiz calendar for that channel and time, then `djq postiz resolve <post-id>`: found → DJ Queue tracks it; not there → it's sent again. Never post it by hand meanwhile (double post)."))
+                       fix: "Eric checks the Postiz calendar for that channel and time first, then answers: `djq postiz resolve <post-id> --in-postiz` (Postiz has it: never sent again) or `--not-in-postiz` (on Today to post by hand). Never guess, and never post it by hand before that (double post)."))
     }
 
     let pending = open.filter { $0.phase == .deleting && $0.attempts >= 3 }

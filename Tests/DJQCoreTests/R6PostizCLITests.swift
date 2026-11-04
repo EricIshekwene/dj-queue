@@ -195,6 +195,39 @@ import Testing
     #expect(try quiet.djq("bulk", "undo", try #require(m["batchId"] as? String)).status == 0)
   }
 
+  /// An unconfirmed create: Eric's answer is recorded offline; plain resolve needs Postiz (none here) and never guesses.
+  @Test func resolveRecordsEricsAnswerOffline() throws {
+    let env = try Env()
+    let planner = Planner(store: env.store)
+    let dm = DayMath(settings: try env.store.settings())
+    let week = dm.addDays(dm.weekStart(of: Date()), 7)
+    try planner.proposeWeek(week)
+    try planner.approveWeek(week)
+    let posts = try env.store.posts(where: "state='planned'")
+    let (a, b) = (try #require(posts.first), try #require(posts.last))
+    #expect(a.id != b.id)
+    for p in [a, b] {
+      let j = PostizJob(postId: p.id, videoId: p.videoId, platform: p.platform, integrationId: "cid-x", phase: .creating,
+                        renderId: nil, contentHash: "h", scheduledAt: p.scheduledAt, remoteDate: p.scheduledAt, testMode: false,
+                        postType: "schedule", remoteState: PostizJob.unconfirmed, createdAt: Date(), updatedAt: Date())
+      #expect(try env.store.claimPostizJob(j))
+    }
+    #expect(try env.djq("postiz", "resolve", a.id, "--in-postiz", "--not-in-postiz").status == 1)
+    // Plain resolve needs a live look (no key here): it fails and settles nothing.
+    let plain = try env.djq("postiz", "resolve", a.id)
+    #expect(plain.status != 0)
+    #expect(try env.store.livePostizJob(postId: a.id)?.isUnconfirmed == true)
+    let no = try env.json("postiz", "resolve", a.id, "--not-in-postiz")
+    #expect((no["result"] as? String)?.contains("Today") == true)
+    #expect(try env.store.livePostizJob(postId: a.id) == nil && env.store.post(id: a.id)?.publisher == "manual")
+    let yes = try env.djq("postiz", "resolve", b.id, "--in-postiz")
+    #expect(yes.status == 0 && yes.out.contains("recorded posted"), "\(yes.out)\(yes.err)")
+    #expect(try env.store.post(id: b.id)?.state == .posted)
+    // Nothing left to resolve.
+    #expect(try env.djq("postiz", "resolve", b.id, "--in-postiz").status == 1)
+    #expect(try env.store.postizBudget().calls.isEmpty)
+  }
+
   @Test func testRunSaysWhatReachesYouTubeAndTikTok() throws {
     let env = try Env()
     try env.djq("postiz", "map")

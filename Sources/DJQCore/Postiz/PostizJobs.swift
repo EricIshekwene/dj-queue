@@ -88,6 +88,8 @@ public struct PostizJob: Codable, Sendable, Hashable, Identifiable {
   /// One clip on one platform (`PostizJob.lineage`): the never-double-post unit. Planner moves give a post a new id;
   /// the lineage stays, so a new job waits until every other job of the lineage is confirmed gone.
   public var lineage: String = ""
+  /// The caption sent (`value[0].content`), so an unconfirmed create is matched to exactly its own Postiz post.
+  public var content: String = ""
 
   public var isOpen: Bool { closedAt == nil }
 
@@ -147,7 +149,8 @@ extension Store {
       remote_state TEXT, remote_error TEXT, release_url TEXT, release_id TEXT,
       submitted_at REAL, synced_at REAL, closed_at REAL, close_reason TEXT, final INTEGER NOT NULL DEFAULT 0,
       delete_reason TEXT, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
-      created_at REAL NOT NULL, updated_at REAL NOT NULL, lineage TEXT NOT NULL DEFAULT '');
+      created_at REAL NOT NULL, updated_at REAL NOT NULL, lineage TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '');
     CREATE INDEX IF NOT EXISTS postiz_jobs_lineage ON postiz_jobs(lineage);
     CREATE UNIQUE INDEX IF NOT EXISTS postiz_jobs_one_live ON postiz_jobs(post_id) WHERE closed_at IS NULL AND kind='post';
     CREATE INDEX IF NOT EXISTS postiz_jobs_post ON postiz_jobs(post_id);
@@ -233,11 +236,11 @@ extension Store {
         media_id=?, media_path=?, cover_media_id=?, cover_media_path=?, render_id=?, content_hash=?, scheduled_at=?,
         remote_date=?, test_mode=?, post_type=?, remote_state=?, remote_error=?, release_url=?, release_id=?,
         submitted_at=?, synced_at=?, closed_at=COALESCE(closed_at, ?), close_reason=COALESCE(close_reason, ?),
-        delete_reason=?, attempts=?, last_error=?, updated_at=?, lineage=? WHERE id=?
+        delete_reason=?, attempts=?, last_error=?, updated_at=?, lineage=?, content=? WHERE id=?
       """, [j.postId, j.videoId, j.integrationId, j.phase.rawValue, j.postizId, j.postizGroup, j.mediaId, j.mediaPath,
             j.coverMediaId, j.coverMediaPath, j.renderId, j.contentHash, j.scheduledAt, j.remoteDate, j.testMode, j.postType,
             j.remoteState, j.remoteError, j.releaseURL, j.releaseId, j.submittedAt, j.syncedAt, j.closedAt,
-            j.closeReason?.rawValue, j.deleteReason, j.attempts, j.lastError, j.updatedAt, j.lineage, j.id])
+            j.closeReason?.rawValue, j.deleteReason, j.attempts, j.lastError, j.updatedAt, j.lineage, j.content, j.id])
   }
 
   /// Closes a job (`phase` closed, `closed_at` now).
@@ -268,9 +271,9 @@ extension Store {
       INSERT INTO postiz_jobs(id,post_id,kind,video_id,platform,integration_id,phase,postiz_id,postiz_group,media_id,media_path,
         cover_media_id,cover_media_path,render_id,content_hash,scheduled_at,remote_date,test_mode,post_type,remote_state,
         remote_error,release_url,release_id,submitted_at,synced_at,closed_at,close_reason,final,delete_reason,attempts,
-        last_error,created_at,updated_at,lineage)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      """, Self.binds(j) + [j.lineage])
+        last_error,created_at,updated_at,lineage,content)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      """, Self.binds(j) + [j.lineage, j.content])
   }
 
   static func binds(_ j: PostizJob) -> [SQLBindable?] {
@@ -292,7 +295,7 @@ extension Store {
               submittedAt: r.date("submitted_at"), syncedAt: r.date("synced_at"), closedAt: r.date("closed_at"),
               closeReason: r.string("close_reason").flatMap(PostizCloseReason.init), deleteReason: r.string("delete_reason"),
               attempts: r.int("attempts") ?? 0, lastError: r.string("last_error"), createdAt: r.date("created_at")!,
-              updatedAt: r.date("updated_at")!).with { $0.lineage = r.string("lineage") ?? "" }
+              updatedAt: r.date("updated_at")!).with { $0.lineage = r.string("lineage") ?? ""; $0.content = r.string("content") ?? "" }
   }
 
   // MARK: Media cache

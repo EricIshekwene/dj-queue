@@ -24,8 +24,10 @@ enum PostizCommand {
       link <post> [<url>|<release-id>] [--release-id ID]   a post Postiz published without a link: list the
                                           platform's recent posts, or record the right one
       release <post> --yes                test run: release a Postiz draft so it posts at its time
-      resolve <post>                      a create whose outcome is unknown (Doctor postiz.create_unknown), after
-                                          Eric checked the Postiz calendar: found → tracked; not there → sent again
+      resolve <post> [--in-postiz | --not-in-postiz]   a create whose outcome is unknown (Doctor
+                                          postiz.create_unknown): plain = one live look, adopts only an exact single
+                                          match (else exit 2); after Eric checked the Postiz calendar, --in-postiz
+                                          (never sent again) or --not-in-postiz (on Today), offline
       sync [--force]                      one sync now, budget permitting (asks DJ Queue's engine when it's running)
 
     Settings changes print what changes; --dry-run changes nothing. A change that makes approved posts go out for
@@ -558,8 +560,30 @@ enum PostizCommand {
   }
 
   static func resolve(_ store: Store, _ svc: PostizService, json: Bool, wrote: inout Bool) throws -> Int32 {
+    let inPostiz = flag("--in-postiz"), notIn = flag("--not-in-postiz")
+    if inPostiz && notIn { throw CLIError("pick one: --in-postiz or --not-in-postiz") }
     let p = try resolvePost(store, try arg(0, "post id"))
-    let r = try svc.resolveUnknown(postId: p.id)
+    let r: String
+    if inPostiz || notIn {
+      // Eric's answer after checking the Postiz calendar: offline, no key, no call.
+      r = try svc.resolveUnconfirmed(postId: p.id, inPostiz: inPostiz)
+    } else {
+      // One live look; adopts only an exact single match. Anything else is Eric's call (exit 2, both choices).
+      do {
+        r = try svc.resolveUnknown(postId: p.id)
+      } catch let e as EngineError where !"\(e)".hasPrefix("No unconfirmed") {
+        if json {
+          struct Undecided: Encodable { var post: String; var resolved: Bool; var reason: String; var choices: [String] }
+          try printJSON(Undecided(post: p.id, resolved: false, reason: "\(e)",
+                                  choices: ["djq postiz resolve \(p.id) --in-postiz", "djq postiz resolve \(p.id) --not-in-postiz"]))
+        } else {
+          print("\(p.platform.displayName) · \(tagOf(store, p.videoId)): \(e)")
+          print("  djq postiz resolve \(short(p.id)) --in-postiz       Postiz has it: never sent again (add the link with djq postiz link)")
+          print("  djq postiz resolve \(short(p.id)) --not-in-postiz   it isn't there: on Today to post by hand")
+        }
+        return 2
+      }
+    }
     wrote = true
     if json { try printJSON(["post": p.id, "result": r]); return 0 }
     print("\(p.platform.displayName) · \(tagOf(store, p.videoId)): \(r)")
