@@ -20,6 +20,21 @@ extension SnapshotShots {
       d.extraSecondsBefore = 1.5
       SettingsUIState.shared.draft = d
     })
+    // Round 7: Eric's own hashtag groups and a second YouTube title template (seeded into the snapshot store).
+    shots.append(c.main("46b-settings-captions-groups") { m in
+      try? m.store.save(HashtagSet(id: "r7-piano", name: "Piano", category: "My groups", tags: ["#amapiano", "#piano"], sort: 0))
+      try? m.store.save(HashtagSet(id: "r7-sa", name: "Piano · SA", category: "My groups", tags: ["#amapianosa", "#yanos"], sort: 1))
+      if var st = try? m.store.settings(), !st.youtubeTitleTemplates.contains(where: { $0.id == "r7-live" }) {
+        st.youtubeTitleTemplates.append(TitleTemplate(id: "r7-live", name: "Live set", template: "{text} (live set) | DJ Lovd"))
+        try? m.store.save(st)
+      }
+      m.refreshNow()
+      open(m, .captions)
+    })
+    shots.append(c.main("44d-settings-newClipDefaults-caption-groups") { m in
+      open(m, .newClipDefaults)  // after 46b, which made the groups
+      SettingsUIState.shared.scrollTarget = NewClipDefaultsSettings.captionAnchor
+    })
     return shots
   }
 

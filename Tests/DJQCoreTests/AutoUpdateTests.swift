@@ -561,7 +561,7 @@ import Testing
     r.heartbeatTimeout = 4
     r.engine = AutoUpdateEngineControl(restart: {
       let d = try? SQLite(path: db)
-      try? d?.run("INSERT INTO heartbeats(at, kind) VALUES(?, 'start')", [Date().addingTimeInterval(1)])
+      _ = try? d?.run("INSERT INTO heartbeats(at, kind) VALUES(?, 'start')", [Date().addingTimeInterval(1)])
       return (true, "kickstarted")
     }, stop: { (true, "stopped") }, start: { _ in (true, "started") }, expectsHeartbeat: { true })
     result = r.run(trigger: .watch)

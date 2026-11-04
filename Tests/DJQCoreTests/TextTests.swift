@@ -22,8 +22,15 @@ import Testing
   }
 
   @Test func defaultTemplateWithAutoHashtags() {
-    let c = Captions.caption(for: .tiktok, version: resolved(), video: video(), sessionName: "2026-10-23 – Afroween Jazz Piano",
-                             sets: Defaults.hashtagSets, templates: Defaults.captionTemplates, settings: Settings())
+    // Round 7: no groups by default — the template's {hashtags} is empty.
+    let none = Captions.caption(for: .tiktok, version: resolved(), video: video(), sessionName: "2026-10-23 – Afroween Jazz Piano",
+                                sets: Defaults.legacyHashtagSets, templates: Defaults.captionTemplates, settings: Settings())
+    #expect(none == "Yayo x Johnny\n\n🎧 Afroween Jazz Piano — full set on YouTube (link in bio)")
+    var s = Settings()
+    s.defaults.hashtagSetIds = Defaults.legacyDefaultHashtagSetIds
+    let r = VersionResolver.resolve([{ var v = Version(number: 1); v.text = "Yayo x Johnny"; return v }()], number: 1, settings: s)
+    let c = Captions.caption(for: .tiktok, version: r, video: video(), sessionName: "2026-10-23 – Afroween Jazz Piano",
+                             sets: Defaults.legacyHashtagSets, templates: Defaults.captionTemplates, settings: s)
     #expect(c.hasPrefix("Yayo x Johnny\n\n🎧 Afroween Jazz Piano — full set on YouTube (link in bio)\n#amapiano #amapianomix #afrohouse #djlovd #dj #djlife #djmix #transition"))
     #expect(!c.contains("➜"))
   }
@@ -77,7 +84,7 @@ import Testing
     let r = VersionResolver.resolve([Version(number: 1)], number: 1, settings: Settings())
     #expect(r.style == .box)
     #expect(r.posY == 0.5)
-    #expect(r.hashtagSetIds == ["amapiano", "dj"])
+    #expect(r.hashtagSetIds.isEmpty)  // round 7: no hashtag groups by default
   }
 }
 

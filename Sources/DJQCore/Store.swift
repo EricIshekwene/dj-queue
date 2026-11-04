@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 5
+  public static let schemaVersion = 6
 
   public init(paths: Paths, clock: Clock = SystemClock(), path: String? = nil) throws {
     self.paths = paths
@@ -86,6 +86,7 @@ public final class Store: @unchecked Sendable {
     if v < 3 { try migrateToV3(from: v) }
     if v < 4 { try migrateToV4(from: v) }
     if v < 5 { try migrateToV5(from: v) }
+    if v < 6 { try migrateToV6(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -200,6 +201,24 @@ public final class Store: @unchecked Sendable {
     }
   }
 
+  /// Hashtag groups become Eric's own (round 7, `HashtagGroupsMigration`): post clips keep byte-identical captions,
+  /// the six built-in groups go, the default is no groups, a written caption is literal. The data part is one journaled
+  /// batch (`djq bulk undo`). A new database has nothing to migrate. A file database with data is copied to
+  /// `<app support>/backups/` first.
+  private func migrateToV6(from v: Int) throws {
+    guard v >= 1 else { try db.exec("PRAGMA user_version = 6"); return }
+    if db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-schema6-\(f.string(from: Date())).sqlite").path)
+    }
+    let r = try HashtagGroupsMigration.run(self)
+    Log.shared.info("schema 6: hashtag groups — \(r.frozen.count) clip(s) with posts frozen, \(r.dropped.count) dropped built-in groups, \(r.suffixed) written caption(s) kept their hashtags, batch \(r.batchId ?? "none")")
+  }
+
   private func seedDefaults() throws {
     if try hashtagSets().isEmpty {
       for s in Defaults.hashtagSets { try save(s) }
@@ -249,6 +268,14 @@ public final class Store: @unchecked Sendable {
         if let x = obj["defaultCaptionTemplateId"] as? String { out.defaults.captionTemplateId = x }
         if let x = obj["defaultHashtagSetIds"] as? [String] { out.defaults.hashtagSetIds = x }
       }
+      // Round 7: a row from before YouTube title templates: its single template becomes the one entry (same id as
+      // the seeded default, so `defaults.youtubeTitleTemplateId` finds it).
+      if let o = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any], o["youtubeTitleTemplates"] == nil {
+        let t = out.defaults.youtubeTitleTemplate
+        let seed = Defaults.youtubeTitleTemplates[0]
+        out.youtubeTitleTemplates = [TitleTemplate(id: seed.id, name: t == seed.template ? seed.name : t, template: t)]
+        out.defaults.youtubeTitleTemplateId = seed.id
+      }
       // Round 6: limits stored against an older `PlatformLimits.defaults` move only where they still equal the old
       // default (in memory; the next save writes them with the current revision).
       let obj = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any]
@@ -263,7 +290,13 @@ public final class Store: @unchecked Sendable {
       return Settings()
     }
   }
-  public func save(_ s: Settings) throws { try setKV("settings", s) }
+  /// Round 7: `defaults.youtubeTitleTemplate` is written as the default template's text, so an older build (or a
+  /// rollback) reading this row gets the same title.
+  public func save(_ s: Settings) throws {
+    var s = s
+    s.defaults.youtubeTitleTemplate = s.youtubeTitleTemplate(id: s.defaults.youtubeTitleTemplateId)
+    try setKV("settings", s)
+  }
 
   // MARK: Sessions
 
@@ -763,7 +796,7 @@ public enum VersionResolver {
     }
     let start = pick("textStart", \.textStart), end = pick("textEnd", \.textEnd)
     let timingDefault = defaulted.contains("textStart") && defaulted.contains("textEnd")
-    return ResolvedVersion(
+    var r = ResolvedVersion(
       number: number,
       text: text,
       noText: noText,
@@ -782,6 +815,13 @@ public enum VersionResolver {
       platformCaptions: pick("platformCaptions", \.platformCaptions) ?? [:],
       inherited: inherited,
       defaulted: defaulted)
+    // Round 7: a chosen YouTube title template that no longer exists follows the default one.
+    let yt = pick("youtubeTitleTemplateId", \.youtubeTitleTemplateId)
+    r.youtubeTitleTemplateId = yt
+    r.youtubeTitleTemplate = settings.youtubeTitleTemplate(id: yt)
+    r.inherited = inherited
+    r.defaulted = defaulted
+    return r
   }
 }
 

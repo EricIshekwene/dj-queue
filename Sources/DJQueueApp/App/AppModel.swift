@@ -619,10 +619,10 @@ final class AppModel {
   /// slots, weeks or posts; `settings` = it changes Settings. Nothing changed → plain `label` toast, no Undo.
   @discardableResult
   func undoable(_ label: String, _ action: String, ids: [String] = [], plan: Bool = false, settings: Bool = false,
-                renders: Bool = false, _ body: () throws -> Void) -> Bool {
+                renders: Bool = false, hashtagGroups: Bool = false, _ body: () throws -> Void) -> Bool {
     splitEditorSession()
     do {
-      let r = try bulk.record(action, ids: ids, plan: plan, settings: settings, renders: renders, body)
+      let r = try bulk.record(action, ids: ids, plan: plan, settings: settings, renders: renders, hashtagGroups: hashtagGroups, body)
       ChangeSignal.post()
       refresh()
       if let b = r.batchId {

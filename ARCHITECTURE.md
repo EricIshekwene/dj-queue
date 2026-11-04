@@ -148,3 +148,22 @@ SwiftUI app per `design/DESIGN.md`. Talks only to the APIs above and `Store`. Ru
 - **Settings:** `Settings.publishing` (per-platform publisher, channel ids — local only —, Test run, per-provider options). Scratch `DJQ_HOME`/`DJQ_ROOT` runs never touch the Keychain or the network unless `DJQ_POSTIZ_LIVE=1`.
 - **CLI/Doctor:** `djq postiz status|channels|map|publisher|test-mode|test|link|release|resolve|sync`; Doctor `postiz.*` checks (offline unless `--live`).
 - **App:** Settings → Platforms → Publishing (key, connection, channels, Manual | Postiz, Test run), confirms before anything can go public, Postiz state and live links on Today, Posts, Week and the menu bar, editor cover meaning per platform, YouTube/TikTok title limits, Trim/Skip for platforms a clip is too long for.
+
+## Round 7 additions (v0.8.0, schema v6) — caption section
+
+- **Hashtag groups are Eric's own** (`Defaults.hashtagSets` is empty, `defaults.hashtagSetIds` = []). Schema 6
+  (`DJQCore/HashtagGroupsMigration.swift`) freezes the six built-in groups' tags into `extraHashtags` for every clip with
+  a post in flight or posted (captions byte-identical, proven per platform inside the migration), drops them elsewhere,
+  deletes them, and is one journaled batch (`djq bulk undo`); `BulkActions.Snapshot.hashtagSets` journals the group table.
+- **A written caption is literal** (WYSIWYG): `Captions.build` appends nothing; `{hashtags}` still fills (the migration gave
+  every written caption without it `Captions.legacySuffix`, so its output is unchanged). `Captions.sharedCaption` is what
+  the editor's field shows; `replaceHashtags` / `retag` swap the hashtags in a written caption when groups or extra tags
+  change (editor and `djq bulk hashtags`).
+- **YouTube title templates:** `Settings.youtubeTitleTemplates` + `defaults.youtubeTitleTemplateId` + `Version.youtubeTitleTemplateId`
+  (resolved into `ResolvedVersion.youtubeTitleTemplate`, which `Captions.youtubeTitle` prefers); a typed title wins.
+  `defaults.youtubeTitleTemplate` is kept in step on every save for older builds.
+- **Issue → section** is core's exhaustive `ValidationIssue.Kind.editorSection` (held / missing file / unreadable → none).
+- **Editor caption field** owns its text while typing (`EditorCaptionText`, `EditorModel.typeCaption` applied after
+  250 ms; `fieldRevision` re-syncs it after any other change). `DSTextArea` grows to `maxHeight`, then scrolls.
+  `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption NSTextView (typing cost, mid-text edits, chips in place).
+- **djq:** `hashtag-groups`, `title-templates`, `youtube-title`, `bulk youtube-title-template`.

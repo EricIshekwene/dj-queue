@@ -142,8 +142,8 @@ private struct EditBulkBar: View {
           Button("Default template") { setTemplate(nil, "Default") }
           ForEach(templates) { t in Button(t.name) { setTemplate(t.id, t.name) } }
         }
-        Section("Hashtags") {
-          Button("Default hashtags") { setHashtags(nil, "Default") }
+        Section("Hashtag group") {
+          Button("Default groups") { setHashtags(nil, "the default") }
           ForEach(hashtagSets) { s in Button(s.name) { setHashtags([s.id], s.name) } }
         }
       }
@@ -197,8 +197,8 @@ private struct EditBulkBar: View {
 
   private func setHashtags(_ setIds: [String]?, _ name: String) {
     let ids = ids
-    model.pipelineBulk("Use \(name) hashtags for \(AppModel.pipelineClips(ids.count))?", verb: "Set hashtags", ids: ids,
-                       changes: [.init(field: "Hashtags", value: setIds == nil ? "Default set" : "“\(name)”")]) { b, dry in
+    model.pipelineBulk("Use \(name) hashtag group\(setIds == nil ? "s" : "") for \(AppModel.pipelineClips(ids.count))?", verb: "Set hashtags", ids: ids,
+                       changes: [.init(field: "Hashtags", value: setIds == nil ? "Default groups" : "“\(name)”")]) { b, dry in
       try b.setHashtagSets(ids, setIds, dryRun: dry)
     }
   }

@@ -2,7 +2,7 @@ import Foundation
 
 /// Why a video isn't `ready` yet, and per-platform limit problems (spec §6 Validation, §7 platform checks).
 public struct ValidationIssue: Sendable, Hashable, Identifiable, Codable {
-  public enum Kind: String, Sendable, Codable {
+  public enum Kind: String, Sendable, Codable, CaseIterable {
     case noCrop, noText, noCaption, tooLong, tooLarge, missingFile, noTitle, captionTooLong, titleTooLong, corrupt
     /// Sent back to Edit from the Queue (`Video.heldInEdit`, "Back to Edit"); "Send to Queue" clears it.
     case heldInEdit
@@ -23,6 +23,27 @@ public struct ValidationIssue: Sendable, Hashable, Identifiable, Codable {
               countWithoutHashtags: Int? = nil) {
     self.kind = kind; self.platform = platform; self.message = message; self.count = count; self.limit = limit
     self.countWithoutHashtags = countWithoutHashtags
+  }
+}
+
+/// The editor inspector section an issue is fixed in (round 7, C1).
+public enum IssueSection: String, Sendable, CaseIterable {
+  case title, frame, text, caption, cover, platforms
+}
+
+extension ValidationIssue.Kind {
+  /// Where the editor sends Eric to fix it. nil = no inspector section: a missing file or unreadable edit is fixed in
+  /// Health / Doctor (the header says "File missing"), a held clip with the stage control ("Send to Queue").
+  /// Exhaustive on purpose — a new kind must say where it goes.
+  public var editorSection: IssueSection? {
+    switch self {
+    case .noCrop: .frame
+    case .noText: .text
+    case .noTitle: .title
+    case .tooLong, .tooLarge: .platforms
+    case .noCaption, .captionTooLong, .titleTooLong: .caption
+    case .missingFile, .corrupt, .heldInEdit: nil
+    }
   }
 }
 
@@ -83,9 +104,10 @@ public enum Validation {
       let c = Captions.caption(for: p, version: r, video: v, sessionName: session, sets: sets, templates: templates,
                                settings: settings)
       if c.count > lim {
-        let hasTags = !Captions.hashtags(r, sets: sets).isEmpty && (r.platformCaptions[p] ?? "").isEmpty
+        // Round 7: from the caption text itself (typed tags count), unless the platform has its own caption.
+        let hasTags = Captions.hasTags(c) && (r.platformCaptions[p] ?? "").isEmpty
         let bare = hasTags
-          ? Captions.withoutHashtags(for: p, version: r, video: v, sessionName: session, templates: templates, settings: settings).count
+          ? Captions.withoutHashtags(for: p, version: r, video: v, sessionName: session, templates: templates, settings: settings, sets: sets).count
           : nil
         out.append(.init(kind: .captionTooLong, platform: p, message: "Caption too long for \(p.displayName) (\(c.count)/\(lim))",
                          count: Double(c.count), limit: Double(lim), countWithoutHashtags: bare))

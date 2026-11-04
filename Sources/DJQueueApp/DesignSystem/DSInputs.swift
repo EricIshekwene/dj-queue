@@ -159,6 +159,8 @@ struct DSTextArea: View {
   var maxHeight: CGFloat = 220
   @FocusState private var focused: Bool
   @State private var hovering = false
+  /// Height the text needs at the field's width (round 7: the field grows to it, then scrolls).
+  @State private var contentHeight: CGFloat = 0
   @Environment(\.dsForcedState) private var forced
 
   init(_ label: String? = nil, placeholder: String, text: Binding<String>, hint: String? = nil, error: String? = nil,
@@ -173,25 +175,40 @@ struct DSTextArea: View {
     self.maxHeight = maxHeight
   }
 
+  /// Inner height: grows with the text from `minHeight` to `maxHeight` (padding included), then the text scrolls.
+  private var inner: CGFloat {
+    let pad: CGFloat = 20
+    return min(max(contentHeight + pad, minHeight), maxHeight) - pad
+  }
+
   var body: some View {
     let isFocused = forced == .focused || focused
     DSFieldFrame(label: label, hint: hint, error: error, counter: limit.map { (text.count, $0) }) {
       ZStack(alignment: .topLeading) {
         if text.isEmpty {
+          // Clipped to the field: a long placeholder never spills over (or covers) what's below.
           Text(placeholder).font(DS.type.body).foregroundStyle(DS.color.textTertiary)
             .padding(.horizontal, 5).padding(.vertical, 1).allowsHitTesting(false)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).clipped()
         }
         TextEditor(text: $text)
           .font(DS.type.body)
           .foregroundStyle(DS.color.text)
           .scrollContentBackground(.hidden)
-          .scrollIndicators(.never)
+          .scrollIndicators(contentHeight + 20 > maxHeight ? .automatic : .never)
           .focused($focused)
+      }
+      .frame(height: inner)
+      // The text measured at the field's width (never drawn): the field's height follows it.
+      .background(alignment: .topLeading) {
+        Text(text.isEmpty ? placeholder : text + "\n")
+          .font(DS.type.body).padding(.horizontal, 5)
+          .fixedSize(horizontal: false, vertical: true)
+          .hidden()
+          .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
       }
       .padding(.horizontal, 9)
       .padding(.vertical, 10)
-      .frame(minHeight: minHeight, idealHeight: minHeight, maxHeight: maxHeight)
-      .fixedSize(horizontal: false, vertical: true)
       .modifier(DSFieldBox(focused: isFocused, hovering: forced == .hover || hovering, error: error != nil, disabled: false,
                            radius: DS.radius.lg, fill: DS.color.surfaceRaised))
       .onHover { hovering = $0 }

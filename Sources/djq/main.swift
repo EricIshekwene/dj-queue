@@ -23,11 +23,18 @@ usage: djq <command> [args]
                                       (array of {video_id, title_suggestions, text_suggestions} for many)
   text <video> "<text>" | --none | --default [--version N]
   caption <video> "<caption>" | --default [--platform P] [--version N]
+                                      the caption exactly as it posts (nothing appended; {hashtags} = the clip's groups + extras)
+  youtube-title <video> "<title>" | --template <id|default> | --default [--version N]
+  hashtag-groups [--json] | add "<name>" "<#a #b>" | edit <id> [--name N] [--tags "<#a #b>"] | delete <id>
+                                      Eric's own groups (none ship); undo with bulk undo
+  title-templates [--json] | add "<name>" "<template>" | edit <id> [--name N] [--template T] | delete <id> | default <id>
+                                      YouTube title templates ({text}); undo with bulk undo
   kind <video> "dj vid"|talking
   bulk <action> [args] (--ids a,b,c | --filter F) [--dry-run] [--json]
        actions: make-ready | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
-       | score-adjust <±n> | kind <k> | exclude | include | caption-template <id|default> | hashtags <a,b|default>
-       | extra-hashtags "<#a #b>"|default | drop-hashtags <P> | skip-platform <P> | unskip-platform <P>
+       | score-adjust <±n> | kind <k> | exclude | include | caption-template <id|default> | hashtags <group ids a,b|default>
+       | extra-hashtags "<#a #b>"|default | youtube-title-template <id|default> | drop-hashtags <P>
+       | skip-platform <P> | unskip-platform <P>
        | accept-title | title-raw-tag | title "<t>"|--clear | add-to-week <YYYY-MM-DD> | pin-consecutive <YYYY-MM-DD>
        | post-today | re-render | unqueue | requeue
   bulk undo <batch> [--force] [--yes] | bulk batches [--json]   (--yes: Eric's OK when the undo turns Postiz posting back on)
@@ -189,6 +196,9 @@ func printWeek(_ store: Store, _ week: String) throws {
   }
 }
 
+/// Every command `run` handles (checked before the database is opened).
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
+
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
   args.removeFirst()
@@ -199,6 +209,12 @@ func run() throws -> Int32 {
   if cmd == "prefill" {
     throw CLIError("prefill moved out of the app (round 2): run scripts/prefill_titles.py --tag \"<tag>\" or on a videos.json")
   }
+  // Round 7 (C7): help, usage and unknown commands never open (or migrate) the database.
+  if args.contains("--help") || args.contains("-h") || (args.first == "help" && cmd != "bulk") {
+    print(cmd == "postiz" ? PostizCommand.usage : usage); return 0
+  }
+  if cmd == "postiz" && args.isEmpty { print(PostizCommand.usage); return 0 }
+  guard knownCommands.contains(cmd) else { throw CLIError("unknown command \(cmd)\n\n\(usage)") }
   let store = try Store(paths: paths)
   let settings = try store.settings()
   let dm = DayMath(settings: settings)
@@ -208,11 +224,13 @@ func run() throws -> Int32 {
   let writes: Set<String> = ["week", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem",
                              "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted",
                              "score", "exclude", "include", "pause", "resume", "intake", "tick", "render",
-                             "title", "suggest", "text", "caption", "kind", "bulk", "unqueue", "requeue", "stage"]
+                             "title", "suggest", "text", "caption", "kind", "bulk", "unqueue", "requeue", "stage",
+                             "youtube-title", "hashtag-groups", "title-templates"]
   var wrote = writes.contains(cmd) && (cmd != "week" || args.contains { $0.hasPrefix("--") && $0 != "--json" })
     && !(cmd == "bulk" && (args.contains("--dry-run") || args.first == "batches"))
     && !((cmd == "unqueue" || cmd == "requeue" || cmd == "stage") && args.contains("--dry-run"))
     && !(cmd == "stage" && !args.contains("back") && !args.contains("forward"))
+    && !((cmd == "hashtag-groups" || cmd == "title-templates") && (args.isEmpty || args.first == "--json"))
   defer {
     if wrote {
       // Round 4 (S1): after any write, invalid Queue clips move to Edit (and valid Edit clips return) before the app
@@ -311,6 +329,16 @@ func run() throws -> Int32 {
     let re = d.resolved_edit
     print("  trim \(EditorLogic.time(re.trimIn, tenths: true))–\(EditorLogic.time(re.trimOut, tenths: true))\(re.isDefault(.trimIn) && re.isDefault(.trimOut) ? " (default)" : "") · aspect \(re.aspect.rawValue) · crop \(re.cropConfirmed ? "confirmed" : "not confirmed")")
     if let r = d.resolved_v1 { print("  text \(r.noText ? "(no text)" : "\"\(Captions.oneLine(r.text))\"")\(r.isDefault("text") ? " (default)" : "")") }
+    if let r = d.resolved_v1, v.type == .short {
+      let groups = try store.hashtagSets().filter { r.hashtagSetIds.contains($0.id) }.map(\.name)
+      print("  hashtag groups \(groups.isEmpty ? "none" : groups.joined(separator: ", "))\(r.isDefault("hashtagSetIds") ? " (default)" : "") · extra \(r.extraHashtags.isEmpty ? "none" : r.extraHashtags.joined(separator: " "))")
+      let tpl = settings.youtubeTitleTemplates.first { $0.id == (r.youtubeTitleTemplateId ?? settings.defaults.youtubeTitleTemplateId) }
+      print("  YouTube title \(d.youtube_title.map { "\"\($0)\"" } ?? "–") (\(r.youtubeTitle.isEmpty ? "template “\(tpl?.name ?? "default")”" : "typed"))")
+      print("  caption (\(r.caption.isEmpty ? "template" : "written")):")
+      let shared = d.captions[Platform.tiktok.rawValue] ?? d.captions.values.first ?? ""
+      for line in shared.split(separator: "\n", omittingEmptySubsequences: false) { print("    \(line)") }
+      for (p, c) in d.captions.sorted(by: { $0.key < $1.key }) where c != shared { print("  caption for \(p): \(Captions.oneLine(c))") }
+    }
     for i in d.issues { print("  issue  \(i.message)") }
 
   case "defaults":
@@ -374,6 +402,118 @@ func run() throws -> Int32 {
     try store.save(ver, videoId: v.id)
     wrote = true
     print("\(v.tag) v\(n) caption\(p.map { " for \($0.displayName)" } ?? "") → \(value == nil ? "default" : "set")")
+
+  case "youtube-title":
+    let v = try resolveVideo(store, try arg(0, "video id"))
+    let n = try option("--version").map { try intArg($0, "--version", 1...99) } ?? 1
+    var ver = try store.versions(videoId: v.id).first { $0.number == n } ?? Version(number: n)
+    if let t = option("--template") {
+      let m = settings.youtubeTitleTemplates.filter { $0.id.hasPrefix(t) || $0.name.lowercased() == t.lowercased() }
+      if t != "default", m.count != 1 {
+        throw CLIError("no single YouTube title template \(t) (djq title-templates lists them)")
+      }
+      ver.youtubeTitleTemplateId = t == "default" ? nil : m[0].id
+      ver.youtubeTitle = nil
+    } else if flag("--default") {
+      ver.youtubeTitle = nil
+    } else {
+      ver.youtubeTitle = try arg(1, "title (or --template <id> / --default)")
+    }
+    try store.save(ver, videoId: v.id)
+    wrote = true
+    let r = try store.resolvedVersion(videoId: v.id, number: n)
+    print("\(v.tag) v\(n) YouTube title → \(r.map { "\"\(Captions.youtubeTitle($0, video: v, settings: settings))\"" } ?? "?")")
+
+  case "hashtag-groups":
+    let bulk = BulkActions(store: store)
+    let sub = args.first ?? "list"
+    if sub == "list" || sub == "--json" {
+      let groups = try store.hashtagSets()
+      if flag("--json") { try printJSON(groups); return 0 }
+      if groups.isEmpty { print("  (no hashtag groups yet — djq hashtag-groups add \"<name>\" \"#a #b\")") }
+      for g in groups {
+        print("  \(pad(g.id, 38)) \(pad(g.name, 24)) \(g.tags.joined(separator: " "))\(settings.defaults.hashtagSetIds.contains(g.id) ? "  (default)" : "")")
+      }
+      return 0
+    }
+    args.removeFirst()
+    func tags(_ raw: String) -> [String] { raw.split(whereSeparator: { $0 == " " || $0 == "," }).map { Captions.normalizeTag(String($0)) }.filter { !$0.isEmpty } }
+    func group(_ id: String) throws -> HashtagSet {
+      let m = try store.hashtagSets().filter { $0.id.hasPrefix(id) || $0.name.lowercased() == id.lowercased() }
+      guard m.count == 1 else { throw CLIError(m.isEmpty ? "no hashtag group \(id)" : "\(id) matches \(m.count) groups") }
+      return m[0]
+    }
+    let r: BulkResult
+    switch sub {
+    case "add":
+      let name = try arg(0, "group name"), t = tags(try arg(1, "\"#a #b\""))
+      let g = HashtagSet(id: newId(), name: name, category: "My groups", tags: t,
+                         sort: (try store.hashtagSets().map(\.sort).max() ?? -1) + 1)
+      r = try bulk.record("hashtag-group-add", hashtagGroups: true) { try store.save(g) }
+      print("added hashtag group \(g.id) “\(name)”: \(t.joined(separator: " "))")
+    case "edit":
+      var g = try group(try arg(0, "group id"))
+      if let n = option("--name") { g.name = n }
+      if let t = option("--tags") { g.tags = tags(t) }
+      let gg = g
+      r = try bulk.record("hashtag-group-edit", hashtagGroups: true) { try store.save(gg) }
+      print("hashtag group \(g.id) “\(g.name)”: \(g.tags.joined(separator: " "))")
+    case "delete":
+      let g = try group(try arg(0, "group id"))
+      r = try bulk.record("hashtag-group-delete", settings: true, hashtagGroups: true) {
+        try store.deleteHashtagSet(g.id)
+        var st = try store.settings()
+        if st.defaults.hashtagSetIds.contains(g.id) { st.defaults.hashtagSetIds.removeAll { $0 == g.id }; try store.save(st) }
+      }
+      print("deleted hashtag group “\(g.name)” (clips using it lose its tags; written captions keep their text)")
+    default: throw CLIError("hashtag-groups: list | add | edit | delete")
+    }
+    if let b = r.batchId { print("  undo: djq bulk undo \(short(b))") }
+
+  case "title-templates":
+    let bulk = BulkActions(store: store)
+    let sub = args.first ?? "list"
+    if sub == "list" || sub == "--json" {
+      if flag("--json") { try printJSON(settings.youtubeTitleTemplates); return 0 }
+      for t in settings.youtubeTitleTemplates {
+        print("  \(pad(t.id, 38)) \(pad(t.name, 24)) \(t.template)\(t.id == settings.defaults.youtubeTitleTemplateId ? "  (default)" : "")")
+      }
+      return 0
+    }
+    args.removeFirst()
+    func find(_ id: String) throws -> TitleTemplate {
+      let m = settings.youtubeTitleTemplates.filter { $0.id.hasPrefix(id) || $0.name.lowercased() == id.lowercased() }
+      guard m.count == 1 else { throw CLIError(m.isEmpty ? "no title template \(id)" : "\(id) matches \(m.count) templates") }
+      return m[0]
+    }
+    var st = settings
+    var msg = ""
+    switch sub {
+    case "add":
+      let t = TitleTemplate(id: newId(), name: try arg(0, "name"), template: try arg(1, "template"))
+      st.youtubeTitleTemplates.append(t)
+      msg = "added title template \(t.id) “\(t.name)”: \(t.template)"
+    case "edit":
+      var t = try find(try arg(0, "template id"))
+      if let n = option("--name") { t.name = n }
+      if let x = option("--template") { t.template = x }
+      if let i = st.youtubeTitleTemplates.firstIndex(where: { $0.id == t.id }) { st.youtubeTitleTemplates[i] = t }
+      msg = "title template \(t.id) “\(t.name)”: \(t.template)"
+    case "delete":
+      let t = try find(try arg(0, "template id"))
+      if t.id == st.defaults.youtubeTitleTemplateId { throw CLIError("“\(t.name)” is the default — pick another with title-templates default <id> first") }
+      st.youtubeTitleTemplates.removeAll { $0.id == t.id }
+      msg = "deleted title template “\(t.name)” (clips that chose it use the default)"
+    case "default":
+      let t = try find(try arg(0, "template id"))
+      st.defaults.youtubeTitleTemplateId = t.id
+      msg = "default YouTube title template → “\(t.name)”"
+    default: throw CLIError("title-templates: list | add | edit | delete | default")
+    }
+    let final = st
+    let r = try bulk.record("title-templates", settings: true) { try store.save(final) }
+    print(msg)
+    if let b = r.batchId { print("  undo: djq bulk undo \(short(b))") }
 
   case "kind":
     let v = try resolveVideo(store, try arg(0, "video id"))
@@ -774,6 +914,9 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   case "extra-hashtags":
     let t = try arg(0, "\"#a #b\"|default")
     r = try bulk.setExtraHashtags(ids, t == "default" ? nil : t.split(separator: " ").map(String.init), dryRun: dry)
+  case "youtube-title-template":
+    let t = try arg(0, "title template id|default")
+    r = try bulk.setYouTubeTitleTemplate(ids, t == "default" ? nil : t, dryRun: dry)
   case "drop-hashtags": r = try bulk.dropHashtags(ids, platform: try p(), dryRun: dry)
   case "skip-platform", "unskip-platform": r = try bulk.setPlatform(ids, try p(), skipped: action == "skip-platform", dryRun: dry)
   case "accept-title": r = try bulk.acceptTopTitleSuggestion(ids, dryRun: dry)

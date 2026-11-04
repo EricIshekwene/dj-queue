@@ -1,12 +1,15 @@
 import DJQCore
 import SwiftUI
 
-/// Caption (#6): composer-style caption field, ONE labelled length line, warnings only for platforms near or over
-/// their limit — with explicit "Drop hashtags for X" / "Write an X caption" — hashtag sets, YouTube title and
+/// Caption (round 7, WYSIWYG): the field holds the real caption that posts — template filled, hashtags included — and
+/// stays editable at any length (it grows, then scrolls). Typing makes it Custom (↺ back to the template); choosing a
+/// template rewrites it (⌘Z undoes); hashtag groups and extra tags swap the hashtags inside it in place. ONE length
+/// line, warnings only for platforms near or over their limit, YouTube title from a template (then editable), and
 /// per-platform captions. Nothing is shortened silently (#9).
 struct EditorCaptionSection: View {
   @ObservedObject var model: EditorModel
   @State private var extra = ""
+  @State private var extraTask: Task<Void, Never>?
   @State private var showOwn = false
 
   var body: some View {
@@ -36,34 +39,53 @@ struct EditorCaptionSection: View {
     showOwn = !r.platformCaptions.isEmpty
   }
 
-  private func resetter(_ f: [String]) -> (() -> Void)? { model.ownsField(f) ? { model.resetVersion(f) } : nil }
-
   // MARK: Template
+
+  private static let customValue = "\u{1}custom"
 
   private func template(_ r: ResolvedVersion) -> some View {
     let def = model.templates.first { $0.id == model.defaults.captionTemplateId }?.name ?? model.defaults.captionTemplateId
-    var options = [DSSelectOption(value: "", title: "Default · \(def)")]
+    let written = model.captionIsWritten
+    var options: [DSSelectOption<String>] = []
+    if written { options.append(DSSelectOption(value: Self.customValue, title: "Your own text", icon: "pencil")) }
+    options.append(DSSelectOption(value: "", title: "Default · \(def)"))
     options += model.templates.map { DSSelectOption(value: $0.id, title: $0.name) }
-    return EditorField(label: "Template", help: "Used when no caption is typed below", isCustom: !r.isDefault("captionTemplateId"),
+    if let id = r.captionTemplateId, !model.templates.contains(where: { $0.id == id }) {
+      options.append(DSSelectOption(value: id, title: "Missing template", icon: "exclamationmark.triangle"))
+    }
+    let inherited = model.captionInheritedFrom
+    return EditorField(label: "Template", help: "Fills the caption below; pick another to start over from it (⌘Z undoes)",
+                       isCustom: !r.isDefault("captionTemplateId"),
                        inheritedFrom: model.source(of: "captionTemplateId"), resetHelp: "Back to the default template",
-                       onReset: resetter(["captionTemplateId"])) {
-      DSSelect(selection: Binding(get: { r.captionTemplateId ?? "" },
-                                  set: { id in model.setCaptionTemplate(id) }),
-               options: options, size: .sm,
-               disabledReason: r.caption.isEmpty ? nil : "A typed caption is used instead — clear it to use a template")
+                       onReset: model.ownsField(["captionTemplateId"]) ? { model.setCaptionTemplate(nil) } : nil) {
+      DSSelect(selection: Binding(get: { written ? Self.customValue : (r.captionTemplateId ?? "") },
+                                  set: { id in if id != Self.customValue { model.setCaptionTemplate(id) } }),
+               options: options,
+               hint: written && inherited == nil ? "The caption is your own text. Picking a template rewrites it." : nil,
+               size: .sm,
+               disabledReason: inherited.map { "v\($0)'s written caption is used — edit it below; v\($0) can go back to a template" })
     }
   }
 
   // MARK: Caption + length line + warnings
 
   private func caption(_ r: ResolvedVersion) -> some View {
-    EditorField(label: "Caption", isCustom: !r.isDefault("caption"), inheritedFrom: model.source(of: "caption"),
-                resetHelp: "Delete the typed caption; use the template", onReset: resetter(["caption"])) {
+    let written = model.captionIsWritten
+    return EditorField(label: "Caption", isCustom: written, inheritedFrom: model.source(of: "caption"),
+                       resetHelp: "Use the template again (rewrites the caption; ⌘Z undoes)",
+                       onReset: written && model.ownsField(["caption"]) ? { model.resetCaptionToTemplate() } : nil) {
       VStack(alignment: .leading, spacing: DS.space.xs) {
-        DSTextArea(placeholder: model.mainCaption,
-                   text: Binding(get: { r.caption }, set: { c in model.updateVersion { $0.caption = c } }),
-                   minHeight: 104, maxHeight: 220)
+        EditorCaptionText(model: model, platform: nil, placeholder: "Type the caption, or pick a template above",
+                          minHeight: 120, maxHeight: 340)
         lengthLine(r)
+        ForEach(model.captionIssues) { i in
+          EditorHint(i.message, icon: "exclamationmark.triangle.fill", tone: .warning)
+        }
+        let other = model.platformsWithOtherCaption
+        if !other.isEmpty {
+          EditorHint("\(other.map(\.editorShortName).joined(separator: ", ")) post\(other.count == 1 ? "s" : "") a different caption — see Captions for one platform below",
+                     icon: "info.circle")
+        }
         ForEach(model.captionWarnings) { w in warning(w) }
       }
     }
@@ -73,9 +95,7 @@ struct EditorCaptionSection: View {
     let n = model.mainCaption.count
     return HStack(spacing: 5) {
       Text("\(n) characters").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
-      if r.caption.isEmpty {
-        Text("· from the template").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
-      }
+      Text(model.captionIsWritten ? "· your own text" : "· from the template").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
       Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(DS.color.textTertiary)
       Spacer(minLength: 0)
     }
@@ -113,8 +133,9 @@ struct EditorCaptionSection: View {
       HStack(spacing: 6) {
         Image(systemName: w.over ? "exclamationmark.triangle.fill" : "exclamationmark.circle")
           .font(.system(size: 11, weight: .semibold))
-        Text(w.over ? "Too long for \(name)" : "Close to the \(name) limit").font(DS.type.captionMedium)
-        Text("· \(w.count)/\(w.limit)").font(DS.type.caption.monospacedDigit())
+        (Text(w.over ? "Too long for \(name)" : "Close to the \(name) limit").font(DS.type.captionMedium)
+          + Text("  \(w.count)/\(w.limit)").font(DS.type.caption.monospacedDigit()))
+          .fixedSize(horizontal: false, vertical: true)
         Spacer(minLength: 0)
       }
       .foregroundStyle(w.over ? DS.color.warning : DS.color.textSecondary)
@@ -134,7 +155,7 @@ struct EditorCaptionSection: View {
                 in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
   }
 
-  // MARK: Hashtags
+  // MARK: Hashtag groups + extra hashtags
 
   private var categories: [String] {
     var seen = Set<String>()
@@ -142,43 +163,72 @@ struct EditorCaptionSection: View {
   }
 
   private func hashtags(_ r: ResolvedVersion) -> some View {
-    EditorField(label: "Hashtags", isCustom: !r.isDefault("hashtagSetIds") || !r.isDefault("extraHashtags"),
-                inheritedFrom: model.source(of: "hashtagSetIds"), resetHelp: "Back to the default sets; clear extra tags",
-                onReset: resetter(["hashtagSetIds", "extraHashtags"])) {
-      VStack(alignment: .leading, spacing: DS.space.xs) {
-        ForEach(categories, id: \.self) { cat in
-          VStack(alignment: .leading, spacing: 4) {
-            Text(cat).font(DS.type.micro).foregroundStyle(DS.color.textTertiary)
-            DSFlowLayout(spacing: 5) {
-              ForEach(model.sets.filter { $0.category == cat }) { s in
-                let on = r.hashtagSetIds.contains(s.id)
-                DSChip(s.name, isSelected: on, size: .sm) {
-                  var ids = model.sets.map(\.id).filter { r.hashtagSetIds.contains($0) }
-                  if on { ids.removeAll { $0 == s.id } } else { ids.append(s.id) }
-                  model.setHashtagSets(ids)
+    VStack(alignment: .leading, spacing: DS.space.md) {
+      EditorField(label: "Hashtag groups", help: "Your own groups from Settings → Captions & titles",
+                  isCustom: !r.isDefault("hashtagSetIds"), inheritedFrom: model.source(of: "hashtagSetIds"),
+                  resetHelp: "Back to the default groups (New clip defaults)",
+                  onReset: model.ownsField(["hashtagSetIds"]) ? { model.setHashtagSets(model.fallback(\.hashtagSetIds, \.hashtagSetIds)) } : nil) {
+        if model.sets.isEmpty {
+          HStack(spacing: DS.space.xs) {
+            Text("No hashtag groups yet").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+            Spacer(minLength: 0)
+            DSButton("Create groups", icon: "plus", variant: .ghost, size: .sm,
+                     tooltip: "Open Settings → Captions & titles to make your own hashtag groups") {
+              WindowManager.shared.showSettings(section: .captions)
+            }
+          }
+        } else {
+          VStack(alignment: .leading, spacing: DS.space.xs) {
+            ForEach(categories, id: \.self) { cat in
+              VStack(alignment: .leading, spacing: 4) {
+                if categories.count > 1 { Text(cat).font(DS.type.micro).foregroundStyle(DS.color.textTertiary) }
+                DSFlowLayout(spacing: 5) {
+                  ForEach(model.sets.filter { $0.category == cat }) { s in groupChip(s, r) }
                 }
-                .dsTooltip(s.tags.isEmpty ? "This set has no hashtags yet"
-                           : on ? "Remove \(s.tags.joined(separator: " ")) from this caption"
-                           : "Add \(s.tags.joined(separator: " ")) to this caption")
               }
             }
           }
         }
-        DSTextField(placeholder: "Extra hashtags, e.g. #afrohouse", text: $extra, size: .sm, onSubmit: commitExtra)
-          .onChange(of: extra) { _, _ in commitExtra() }
-          .dsTooltip("Added after the sets, separated by spaces", shortcut: "↩")
-        if !model.hashtags.isEmpty {
-          Text(model.hashtags.joined(separator: " ")).font(DS.type.caption).foregroundStyle(DS.color.textTertiary).lineLimit(3)
-        }
+      }
+      EditorField(label: "Extra hashtags", help: "Added after the groups, separated by spaces",
+                  isCustom: !r.isDefault("extraHashtags"), inheritedFrom: model.source(of: "extraHashtags"),
+                  resetHelp: "Back to the default extra hashtags",
+                  onReset: model.ownsField(["extraHashtags"]) ? { model.setExtraHashtags(model.fallback(\.extraHashtags, \.extraHashtags)) } : nil) {
+        DSTextField(placeholder: "e.g. #afrohouse #djlovd", text: $extra, size: .sm, onSubmit: commitExtra)
+          .onChange(of: extra) { _, _ in scheduleExtra() }
+          .dsTooltip("Goes into the caption with the groups' hashtags, separated by spaces", shortcut: "↩")
       }
     }
+  }
+
+  private func groupChip(_ s: HashtagSet, _ r: ResolvedVersion) -> some View {
+    let on = r.hashtagSetIds.contains(s.id)
+    return DSChip(s.name, isSelected: on, size: .sm) {
+      var ids = model.sets.map(\.id).filter { r.hashtagSetIds.contains($0) }
+      if on { ids.removeAll { $0 == s.id } } else { ids.append(s.id) }
+      model.setHashtagSets(ids)
+    }
+    .dsTooltip(s.tags.isEmpty ? "This group has no hashtags yet — add them in Settings → Captions & titles"
+               : on ? "Take \(s.tags.joined(separator: " ")) out of the caption"
+               : "Add \(s.tags.joined(separator: " ")) to the caption")
   }
 
   private func parse(_ s: String) -> [String] {
     s.split(whereSeparator: { $0 == " " || $0 == "," || $0.isNewline }).map(String.init)
   }
 
+  /// Extra tags go into the caption once typing pauses (or on ↩), not on every keystroke.
+  private func scheduleExtra() {
+    extraTask?.cancel()
+    extraTask = Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(600))
+      guard !Task.isCancelled else { return }
+      commitExtra()
+    }
+  }
+
   private func commitExtra() {
+    extraTask?.cancel()
     let tags = parse(extra)
     guard tags != model.resolved.extraHashtags else { return }
     model.setExtraHashtags(tags)
@@ -186,28 +236,38 @@ struct EditorCaptionSection: View {
 
   // MARK: YouTube title
 
-  /// F1: YouTube allows 100 characters. A typed title over the limit is an error (core's `.titleTooLong` keeps the
-  /// clip in Edit); a template title that had to be shortened is a notice with what goes out (core `TitleCheck`).
+  /// Round 7: pick a template, then edit the real title (typing → Custom, ↺ back to the template). F1: YouTube allows
+  /// 100 characters; a typed title over the limit is an error (core's `.titleTooLong` keeps the clip in Edit), a
+  /// template title that had to be shortened is a notice with what goes out (core `TitleCheck`).
   private func youtube(_ r: ResolvedVersion) -> some View {
     let lim = min(model.settings.limits[.youtube]?.titleLimit ?? PostizPayload.youtubeTitleMax, PostizPayload.youtubeTitleMax)
-    let typed = r.youtubeTitle.count
+    let typed = r.youtubeTitle
     let checks = model.video.map { PostizPayload.titleChecks(video: $0, version: r, settings: model.settings) } ?? []
+    let defName = model.youtubeTitleTemplates.first { $0.id == model.defaults.youtubeTitleTemplateId }?.name ?? "Default"
+    var options = [DSSelectOption(value: "", title: "Default · \(defName)")]
+    options += model.youtubeTitleTemplates.map { DSSelectOption(value: $0.id, title: $0.name, detail: $0.template) }
+    if !typed.isEmpty { options.insert(DSSelectOption(value: Self.customValue, title: "Your own title", icon: "pencil"), at: 0) }
+    let n = model.youtubeTitle.count
     return EditorField(label: "YouTube title", help: "The Shorts title (YouTube shows it under the handle)",
-                       value: r.youtubeTitle.isEmpty ? "\(model.youtubeTitle.count)/\(lim)" : nil,
-                       isCustom: !r.isDefault("youtubeTitle"), inheritedFrom: model.source(of: "youtubeTitle"),
-                       resetHelp: "Back to the template (\(model.defaults.youtubeTitleTemplate))", onReset: resetter(["youtubeTitle"])) {
-      VStack(alignment: .leading, spacing: 4) {
-        DSTextField(placeholder: model.youtubeTitleDefault,
-                    text: Binding(get: { r.youtubeTitle }, set: { t in model.updateVersion { $0.youtubeTitle = t } }),
-                    hint: r.youtubeTitle.isEmpty ? "From the template “\(model.defaults.youtubeTitleTemplate)”" : nil,
-                    error: typed > lim && model.posting(.youtube)
-                      ? "\(typed - lim) over YouTube's \(lim) — shorten it; the clip stays in Edit until it fits" : nil,
-                    limit: r.youtubeTitle.isEmpty ? nil : lim, size: .sm)
+                       value: "\(n)/\(lim)", isCustom: !typed.isEmpty || !r.isDefault("youtubeTitleTemplateId"),
+                       inheritedFrom: model.source(of: "youtubeTitle") ?? model.source(of: "youtubeTitleTemplateId"),
+                       resetHelp: typed.isEmpty ? "Back to the default template" : "Use the template's title again (⌘Z undoes)",
+                       onReset: model.ownsField(["youtubeTitle", "youtubeTitleTemplateId"])
+                         ? { model.setYouTubeTitleTemplate(typed.isEmpty ? nil : r.youtubeTitleTemplateId) } : nil) {
+      VStack(alignment: .leading, spacing: 6) {
+        DSSelect(selection: Binding(get: { typed.isEmpty ? (r.youtubeTitleTemplateId ?? "") : Self.customValue },
+                                    set: { id in if id != Self.customValue { model.setYouTubeTitleTemplate(id) } }),
+                 options: options, size: .sm)
+        EditorYouTubeTitleField(model: model,
+                                error: typed.count > lim && model.posting(.youtube)
+                                  ? "\(typed.count - lim) over YouTube's \(lim) — shorten it; the clip stays in Edit until it fits" : nil)
         if !model.posting(.youtube) {
           EditorHint("Not posting on YouTube Shorts.")
         } else {
-          ForEach(checks.filter { $0.message != nil && ($0.platform != .youtube || typed <= lim) }, id: \.platform) { c in
-            EditorHint(c.message ?? "", icon: "scissors", tone: .warning)
+          ForEach(checks.filter { $0.message != nil && ($0.platform != .youtube || typed.count <= lim) }, id: \.platform) { c in
+            // Same numbers as the header (what is sent): "template title is 120 characters — shortened to 99 to fit 100".
+            EditorHint("\(c.platform == .youtube ? "The template's" : "\(c.platform.displayName)'s") title is \(c.full.count) characters — it goes out shortened to \(c.title.count) to fit \(c.limit): “\(c.title)”",
+                       icon: "scissors", tone: .warning)
           }
         }
       }
@@ -232,6 +292,7 @@ struct EditorCaptionSection: View {
       .dsTooltip(showOwn ? "Hide the per-platform captions" : "Give a platform its own caption")
       if showOwn {
         VStack(alignment: .leading, spacing: DS.space.sm) {
+          EditorHint("A platform with its own caption keeps it as written — groups and extra hashtags don't change it.")
           ForEach(model.postingPlatforms) { p in ownRow(p, r) }
         }
         .padding(.top, 4)
@@ -247,10 +308,80 @@ struct EditorCaptionSection: View {
       }), size: .sm)
       .dsTooltip(on ? "Delete \(p.displayName)'s own caption; use the shared one" : "Write a caption just for \(p.displayName)")
       if on {
-        DSTextArea(placeholder: "Caption for \(p.displayName)",
-                   text: Binding(get: { model.resolved.platformCaptions[p] ?? "" }, set: { t in model.setPlatformCaption(p, t) }),
-                   limit: model.captionLimit(p), minHeight: 72, maxHeight: 160)
+        EditorCaptionText(model: model, platform: p, placeholder: "Caption for \(p.displayName)",
+                          limit: model.captionLimit(p), minHeight: 72, maxHeight: 240)
       }
     }
+  }
+}
+
+/// A caption field that owns its text while Eric types (no cursor jumps, cheap keystrokes): it hands each change to
+/// `EditorModel.typeCaption` (applied once typing pauses) and re-reads the model whenever anything else changes the
+/// caption (`fieldRevision`: a template, a group, extra tags, ↺, ⌘Z, another version).
+struct EditorCaptionText: View {
+  @ObservedObject var model: EditorModel
+  var platform: Platform?
+  var placeholder: String
+  var limit: Int? = nil
+  var minHeight: CGFloat
+  var maxHeight: CGFloat
+  @State private var text = ""
+  @State private var synced = ""
+
+  private var source: String {
+    if let p = platform { return model.resolved.platformCaptions[p] ?? "" }
+    return model.mainCaption
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      DSTextArea(placeholder: placeholder, text: $text, limit: limit, minHeight: minHeight, maxHeight: maxHeight)
+        .accessibilityIdentifier(platform.map { "editor.caption.\($0.rawValue)" } ?? "editor.caption")
+      if platform == nil, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !synced.isEmpty {
+        EditorHint("Empty — the template's caption posts until you type one")
+      }
+    }
+    .onAppear { sync() }
+    .onChange(of: model.fieldRevision) { _, _ in sync() }
+    .onChange(of: text) { _, t in
+      guard t != synced else { return }
+      synced = t
+      model.typeCaption(t, platform: platform)
+    }
+  }
+
+  private func sync() {
+    let s = source
+    guard s != text else { synced = s; return }
+    synced = s
+    text = s
+  }
+}
+
+/// The YouTube title as it goes out — the template's title until Eric types (then Custom). Same draft rule as the
+/// caption field.
+struct EditorYouTubeTitleField: View {
+  @ObservedObject var model: EditorModel
+  var error: String?
+  @State private var text = ""
+  @State private var synced = ""
+
+  var body: some View {
+    DSTextField(placeholder: "Type a title, or pick a template", text: $text, error: error, size: .sm)
+      .accessibilityIdentifier("editor.youtubeTitle")
+      .onAppear { sync() }
+      .onChange(of: model.fieldRevision) { _, _ in sync() }
+      .onChange(of: text) { _, t in
+        guard t != synced else { return }
+        synced = t
+        model.typeYouTubeTitle(t)
+      }
+  }
+
+  private func sync() {
+    let s = model.youtubeTitle
+    guard s != text else { synced = s; return }
+    synced = s
+    text = s
   }
 }

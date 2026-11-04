@@ -180,16 +180,20 @@ import Testing
   // R5 / Q15. Round 2 #9 removed the rotating per-video sub-set ("autoHashtagsVaryPerVideo"): every clip uses
   // exactly the chosen/default sets.
   @Test func defaultHashtagsAreTheSameForEveryVideo() {
-    let r = VersionResolver.resolve([Version(number: 1)], number: 1, settings: Settings())
-    let all = Set((0..<12).map { Captions.hashtags(r, sets: Defaults.hashtagSets, videoId: "video-\($0)").joined(separator: " ") })
+    #expect(Captions.hashtags(VersionResolver.resolve([Version(number: 1)], number: 1, settings: Settings()),
+                              sets: Defaults.legacyHashtagSets).isEmpty)  // round 7: none by default
+    var s = Settings()
+    s.defaults.hashtagSetIds = Defaults.legacyDefaultHashtagSetIds
+    let r = VersionResolver.resolve([Version(number: 1)], number: 1, settings: s)
+    let all = Set((0..<12).map { Captions.hashtags(r, sets: Defaults.legacyHashtagSets, videoId: "video-\($0)").joined(separator: " ") })
     #expect(all.count == 1)
-    #expect(Captions.hashtags(r, sets: Defaults.hashtagSets)
+    #expect(Captions.hashtags(r, sets: Defaults.legacyHashtagSets)
       == ["#amapiano", "#amapianomix", "#afrohouse", "#djlovd", "#dj", "#djlife", "#djmix", "#transition"])
     #expect(r.isDefault("hashtagSetIds"))
     var chosen = Version(number: 1)
     chosen.hashtagSetIds = ["afrobeats"]
     let rc = VersionResolver.resolve([chosen], number: 1, settings: Settings())
-    #expect(Captions.hashtags(rc, sets: Defaults.hashtagSets, videoId: "x") == ["#afrobeats", "#afrobeatsmix", "#naija", "#djlovd"])
+    #expect(Captions.hashtags(rc, sets: Defaults.legacyHashtagSets, videoId: "x") == ["#afrobeats", "#afrobeatsmix", "#naija", "#djlovd"])
   }
 
   @Test func corruptVersionRowThrows() throws {
