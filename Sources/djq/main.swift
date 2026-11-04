@@ -30,7 +30,7 @@ usage: djq <command> [args]
        | extra-hashtags "<#a #b>"|default | drop-hashtags <P> | skip-platform <P> | unskip-platform <P>
        | accept-title | title-raw-tag | title "<t>"|--clear | add-to-week <YYYY-MM-DD> | pin-consecutive <YYYY-MM-DD>
        | post-today | re-render | unqueue | requeue
-  bulk undo <batch> [--force] | bulk batches [--json]
+  bulk undo <batch> [--force] [--yes] | bulk batches [--json]   (--yes: Eric's OK when the undo turns Postiz posting back on)
   agent-prompt titles [--ids a,b | --needs-title] [--out FILE]
   stage <video…> [back|forward] [--dry-run] [--json]   a clip's stage (Score→Edit→Queue→Scheduled→Posted), or move it one stage
   unqueue <video…> [--dry-run] [--json]   Back to Edit (held there); its unposted slots/posts are removed
@@ -50,7 +50,7 @@ usage: djq <command> [args]
   autoupdate on|off|status|run|rollback|log   install commits to main automatically (djq autoupdate help)
 
   postiz status [--offline] [--ids] [--json]   Postiz connection, budget, test run, channel + route per platform
-                                      (exit 0 = connected with all six channels mapped, 2 = not ready)
+                                      (exit 0 = connected with all six channels mapped, 2 = not ready, 3 = --offline, unchecked)
   postiz channels [--cached] [--refresh] [--ids] [--json]   live channel list + caption limit per channel
   postiz map [--dry-run] [--yes] | map <platform> <channel>|--clear   auto-map the six DJ channels by provider
   postiz publisher <platform|all> manual|postiz [--dry-run] [--yes] | postiz test-mode on|off [--dry-run] [--yes]
@@ -65,6 +65,13 @@ Title formatting from tags lives upstream: scripts/prefill_titles.py (docs/metad
 struct CLIError: Error, CustomStringConvertible {
   let description: String
   init(_ s: String) { description = s }
+}
+
+/// Tells the app (and its engine) the database changed. `DJQ_NO_SIGNAL=1` turns it off, so tests that run this binary
+/// against a throwaway database never make the installed DJ Queue reload or tick.
+func postChangeSignal() {
+  guard ProcessInfo.processInfo.environment["DJQ_NO_SIGNAL"] != "1" else { return }
+  ChangeSignal.post()
 }
 
 final class PrintNotifier: Notifier, @unchecked Sendable {
@@ -211,7 +218,7 @@ func run() throws -> Int32 {
       // Round 4 (S1): after any write, invalid Queue clips move to Edit (and valid Edit clips return) before the app
       // and engine hear about it.
       Revalidation.afterWrite(store: store, command: cmd)
-      ChangeSignal.post()
+      postChangeSignal()
     }
   }
 
@@ -593,7 +600,7 @@ func run() throws -> Int32 {
     let force = flag("--force")
     let lock = EngineLock.acquire(paths)
     if lock == nil && !force {
-      ChangeSignal.post()
+      postChangeSignal()
       wrote = false
       print("Engine is running in DJ Queue; asked it to tick")
       return 0
@@ -611,6 +618,7 @@ func run() throws -> Int32 {
     // --live: one budgeted Postiz call (refreshes the channel list and the key state) before the postiz checks.
     d.postizLive = flag("--live")
     let r = d.run()
+    wrote = d.postizLive  // a live check can refresh the channel list and the key flag
     if json {
       let e = JSONEncoder()
       e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -688,7 +696,7 @@ func printJSON<T: Encodable>(_ v: T) throws {
 
 func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   let bulk = BulkActions(store: store)
-  let json = flag("--json"), dry = flag("--dry-run"), force = flag("--force")
+  let json = flag("--json"), dry = flag("--dry-run"), force = flag("--force"), yes = flag("--yes")
   let action = try arg(0, "bulk action")
   args.removeFirst()
   if action == "batches" {
@@ -703,9 +711,47 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
     let raw = try arg(0, "batch id")
     let m = try bulk.batches(limit: 1000).filter { $0.id.hasPrefix(raw) }
     guard m.count == 1 else { throw CLIError(m.isEmpty ? "no batch \(raw)" : "\(raw) matches \(m.count) batches") }
-    let r = try bulk.undo(m[0].id, force: force, dryRun: dry)
-    wrote = !dry && !r.changed.isEmpty
-    if json { try printJSON(r) } else { printBulk(r) }
+    // Round 6: undoing a settings batch can switch Postiz back on (a platform to Postiz, a channel, test run off).
+    // Run the undo inside a savepoint, compare Settings → Publishing, and keep it only when nothing would go out for
+    // real through Postiz — or Eric said --yes.
+    let before = try store.settings()
+    struct Rollback: Error { var result: BulkResult; var live: [Platform] }
+    var r: BulkResult
+    var live: [Platform] = []
+    do {
+      r = try store.db.transaction { () throws -> BulkResult in
+        let res = try bulk.undo(m[0].id, force: force, dryRun: false)
+        let l = PostizCommand.goesLive(before, try store.settings())
+        if dry || (!l.isEmpty && !yes) { throw Rollback(result: res, live: l) }
+        live = l
+        return res
+      }
+    } catch let rb as Rollback {
+      r = rb.result
+      r.dryRun = dry
+      live = rb.live
+      if !dry {
+        // Blocked: nothing was undone.
+        let names = live.map(\.displayName).joined(separator: ", ")
+        if json {
+          struct Refused: Encodable { var refused: Bool; var batch: String; var goesLive: [String]; var reason: String }
+          try printJSON(Refused(refused: true, batch: m[0].id, goesLive: live.map(\.rawValue),
+                                reason: "undoing it schedules real posts through Postiz; needs --yes"))
+        } else {
+          print("not undone: undoing \(m[0].action) would schedule real posts — from the next tick, approved posts for \(names) go out through Postiz (test run off).")
+          print("  That's Eric's call: run it again with --yes (or --dry-run to preview).")
+        }
+        return 2
+      }
+    }
+    wrote = !dry  // a settings-only undo restores no clip but still changed Settings
+    if json { try printJSON(r) } else {
+      printBulk(r)
+      if !live.isEmpty {
+        print("  \(dry ? "would schedule" : "schedules") real posts: approved posts for \(live.map(\.displayName).joined(separator: ", ")) go out through Postiz"
+              + (dry ? " (needs --yes)" : ""))
+      }
+    }
     return 0
   }
   let ids: [String]

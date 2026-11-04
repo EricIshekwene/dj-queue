@@ -405,8 +405,14 @@ extension Doctor {
     var liveError: String?
     if postizLive, hasKey {
       let live = PostizService(store: store, transport: postizTransport, keyStore: postizKeyStore)
-      do { _ = try live.channels(refresh: true, settings: settings) } catch PostizError.unauthorized {
+      do {
+        // A stored "key refused" flag blocks ordinary calls: re-check the key first (a success clears the flag).
+        if try store.postizKeyInvalid() != nil { _ = try live.checkConnection() }
+        _ = try live.channels(refresh: true, settings: settings)
+      } catch PostizError.unauthorized {
         // The service set the "key refused" flag; reported below.
+      } catch PostizError.overBudget {
+        // No call was made: the rate_limited finding below says why.
       } catch {
         liveError = "\(error)"
       }
@@ -483,6 +489,7 @@ extension Doctor {
 
     let budget = try store.postizBudget()
     let usedCalls = budget.used(now: now)
+    // A create leaves one slot for sync, so a live check can be refused one call before the limit.
     if budget.isPaused(now: now) || usedCalls >= pub.hourlyBudget {
       out.append(.init(id: "postiz.rate_limited", severity: .info,
                        title: budget.isPaused(now: now) ? "Postiz calls paused after a rate limit" : "Postiz call budget used up this hour",
@@ -494,7 +501,7 @@ extension Doctor {
     // Posts set to Postiz that Postiz won't deliver: they go to Today.
     let upcoming = try store.posts(where: "scheduled_at<=? AND state IN ('planned','rendering','rendered','due','overdue')",
                                    [now.addingTimeInterval(7 * 86400)]).filter { used.contains($0.platform) }
-    let fallen = try upcoming.compactMap { p -> String? in
+    let fallen = try upcoming.compactMap { p -> (id: String, line: String)? in
       guard try !svc.deliversThroughPostiz(p, router: router) else { return nil }
       let why: String
       if let j = try store.finalPostizJob(postId: p.id) {
@@ -507,11 +514,12 @@ extension Doctor {
       } else {
         why = router.route(p.platform).fallbackReason?.message ?? "not in Postiz"
       }
-      return "post \(String(p.id.prefix(8))) · \(p.platform.displayName) · \(tag(p.videoId)) · \(Sched.shortTime(p.scheduledAt, settings)): \(why)"
+      return (p.id, "\(p.platform.displayName) · \(tag(p.videoId)) · \(Sched.shortTime(p.scheduledAt, settings)): \(why)")
     }
     if !fallen.isEmpty {
       out.append(.init(id: "postiz.fallback", severity: .warning, title: "\(fallen.count) post\(s(fallen.count)) fell back to Manual",
-                       detail: "Set to Postiz, but these go to Today to post by hand (next 7 days).", where_: fallen,
+                       detail: "Set to Postiz, but these go to Today to post by hand (next 7 days): "
+                         + fallen.map(\.line).joined(separator: " · "), where_: fallen.map(\.id),
                        fix: "Fix the reason (key or channel: see the other postiz findings) and the next tick submits them. A refused, deleted or inbox post stays manual: post it from Today and `djq posted <post> <url>`; `djq reset <post>` lets Postiz try a refused or deleted one again (Eric's call)."))
     }
 

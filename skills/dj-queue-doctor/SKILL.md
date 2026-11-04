@@ -35,7 +35,8 @@ djq doctor --json     # machine-readable; exit code 2 when there are errors
 djq doctor            # the same as Markdown (what Eric pastes)
 djq status            # runway, today's posts, problems, engine heartbeat
 djq today | djq posts --problems | djq week [YYYY-MM-DD] | djq queue | djq health
-djq postiz status     # Postiz: key/connection, budget, test run, channel + route per platform (exit 2 = not ready)
+djq postiz status     # Postiz: key/connection, budget, test run, channel + route per platform
+                      # (exit 0 = ready, 2 = not ready, 3 = --offline and not checked)
 djq doctor --live     # the same checks after one live Postiz call (refreshes channels and the key state)
 ```
 
@@ -110,7 +111,7 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | `autoupdate.off` | Info: Eric turned auto-update off. Leave it; `djq autoupdate on` turns it back on only if Eric asks. |
 | `postiz.not_connected` | Info "Postiz not in use" while every platform is Manual: nothing to do. Warning when a platform is set to Postiz but no key is saved (its posts go to Today), or with `--live` when Postiz didn't answer: tell Eric; only Eric adds the key in Settings → Publishing. For "didn't answer", check the network and re-run `djq doctor --live` later; posts Postiz already holds still go out. |
 | `postiz.key_invalid` | Postiz refused the key (401/403); posts set to Postiz go to Today and DJ Queue re-checks hourly. Tell Eric to save a valid key in Settings → Publishing (Postiz → Settings → Public API). Never handle the key yourself. |
-| `postiz.mapping_missing` | A platform set to Postiz has no channel, or its channel isn't in Postiz any more (error when it has posts in the next 48 h). Show Eric `djq postiz map --dry-run` (auto-maps by provider; ambiguous or missing providers are listed, nothing Coachable). Eric runs `djq postiz map` or `djq postiz map <platform> "<channel>"`. |
+| `postiz.mapping_missing` | A platform set to Postiz has no channel, or its channel isn't in Postiz any more (error when it has posts in the next 48 h). Show Eric `djq postiz map --dry-run` (auto-maps by provider; ambiguous or missing providers are listed for Eric, never guessed). Eric runs `djq postiz map` or `djq postiz map <platform> "<channel>"`. |
 | `postiz.channel_disabled` | The mapped channel is disabled or its login expired in Postiz; its posts go to Today. Eric reconnects it in Postiz; then `djq postiz channels` refreshes the list and the error clears. |
 | `postiz.stuck` | Postiz still says QUEUE an hour after the slot. Run `djq postiz sync` (or wait for the engine's sync). If it stays, Eric checks the Postiz calendar: if Postiz can't post it, Eric deletes it there and DJ Queue puts it on Today. Never post it by hand while Postiz still holds it (double post). |
 | `postiz.link_missing` | Postiz published but the platform's post id came back missing, so the post has no link. `djq postiz link <post>` lists the platform's recent posts; pick the right one with Eric and `djq postiz link <post> <url>`. |

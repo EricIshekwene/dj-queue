@@ -73,6 +73,7 @@ import Testing
       env["DJQ_ROOT"] = f.paths.root.path
       env["DJQ_HOME"] = f.dir.path
       env["DJQ_POSTIZ_OFFLINE"] = "1"
+      env["DJQ_NO_SIGNAL"] = "1"  // never make the installed DJ Queue reload or tick
       p.environment = env
       let o = Pipe(), e = Pipe()
       p.standardOutput = o
@@ -157,6 +158,43 @@ import Testing
     // Every settings change is in the journal and logged.
     #expect(try BulkActions(store: env.store).batches().filter { $0.action.hasPrefix("postiz") }.count == 5)
     #expect(try env.store.events(limit: 50).contains { $0.message.contains("Settings → Publishing changed from djq") })
+  }
+
+  /// Review M1: undoing a settings batch must not switch real Postiz posting back on without Eric's --yes.
+  @Test func bulkUndoThatGoesLiveNeedsYes() throws {
+    let env = try Env()
+    try env.djq("postiz", "map")
+    #expect(try env.djq("postiz", "publisher", "all", "postiz", "--yes").status == 0)
+    let manual = try env.json("postiz", "publisher", "all", "manual")
+    let batch = try #require(manual["batchId"] as? String)
+    #expect(try env.publishing.postizPlatforms.isEmpty)
+    let refused = try env.djq("bulk", "undo", batch)
+    #expect(refused.status == 2 && refused.out.contains("would schedule real posts") && refused.out.contains("--yes"), "\(refused.out)\(refused.err)")
+    #expect(try env.publishing.postizPlatforms.isEmpty)
+    #expect(try BulkActions(store: env.store).batches().first { $0.id == batch }?.undoneAt == nil)
+    let dry = try env.djq("bulk", "undo", batch, "--dry-run")
+    #expect(dry.status == 0 && dry.out.contains("[dry run]") && dry.out.contains("would schedule real posts"))
+    #expect(try env.publishing.postizPlatforms.isEmpty)
+    #expect(try env.djq("bulk", "undo", batch, "--yes").status == 0)
+    #expect(try env.publishing.postizPlatforms.count == 6)
+    // test-mode on needs no --yes, but undoing it turns the test run off: refused too.
+    let on = try env.json("postiz", "test-mode", "on")
+    let tb = try #require(on["batchId"] as? String)
+    #expect(try env.djq("bulk", "undo", tb).status == 2)
+    #expect(try env.publishing.testMode)
+    // An undo that doesn't go live needs nothing (map while every platform is Manual).
+    let quiet = try Env()
+    let m = try quiet.json("postiz", "map")
+    #expect(try quiet.djq("bulk", "undo", try #require(m["batchId"] as? String)).status == 0)
+  }
+
+  @Test func testRunSaysWhatReachesYouTubeAndTikTok() throws {
+    let env = try Env()
+    try env.djq("postiz", "map")
+    try env.djq("postiz", "test-mode", "on")
+    let r = try env.djq("postiz", "publisher", "all", "postiz")
+    #expect(r.status == 0 && r.out.contains("uploaded to the channel as unlisted") && r.out.contains("TikTok app inbox"))
+    #expect(!(try env.djq("postiz", "publisher", "x", "manual")).out.contains("unlisted"))
   }
 
   @Test func statusJSONIsNotReadyWithoutAKeyAndHidesIds() throws {

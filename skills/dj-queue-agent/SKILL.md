@@ -161,7 +161,8 @@ loop. Channel ids appear only with `--ids`; the key never appears anywhere.
 ```sh
 djq postiz status [--json] [--offline] [--ids]   # key/connection (one live check unless --offline), budget, test run,
                                                  # per platform: publisher, channel (name + provider), route, posts in
-                                                 # Postiz and their states, last sync. Exit 0 = connected + six mapped
+                                                 # Postiz and their states, last sync. Exit 0 = connected + six mapped,
+                                                 # 2 = not ready, 3 = --offline and not checked
 djq postiz channels [--json] [--cached] [--refresh] [--ids]   # Postiz's channels + caption limit each (vs DJ Queue's)
 djq postiz map --dry-run [--json]                # what auto-mapping by provider would set (instagram-standalone,
                                                  # tiktok-business, threads, facebook, x, youtube); ambiguous or missing
@@ -184,7 +185,7 @@ djq postiz release <post> --yes                  # test run: a Postiz draft goes
 ```
 
 A change that makes approved posts go out for real (a platform to Postiz with a channel, a new channel, test run
-off) is refused without `--yes`. `--yes` is Eric's word, not yours: ask first, quoting what the dry run printed.
+off) is refused without `--yes`, and so is a `djq bulk undo` that would do the same (exit 2). `--yes` is Eric's word, not yours: ask first, quoting what the dry run printed.
 `djq postiz test` never schedules real posts (not even with `--yes`); real posts go out only from an approved week.
 Switching a platform back to Manual is always safe (the engine removes its waiting posts from Postiz).
 Problems show up in `djq doctor` as `postiz.*` findings (the `dj-queue-doctor` skill has the fix for each).

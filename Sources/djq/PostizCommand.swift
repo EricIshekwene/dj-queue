@@ -11,7 +11,8 @@ enum PostizCommand {
 
       status [--offline] [--ids]          key and connection (one live check unless --offline), call budget, test run,
                                           per platform: publisher, channel, route, posts in Postiz; last sync.
-                                          Exit 0 = connected with all six channels mapped; 2 = not ready (reasons listed)
+                                          Exit 0 = connected with all six channels mapped; 2 = not ready (reasons
+                                          listed); 3 = --offline and nothing else wrong (connection not checked)
       channels [--cached] [--refresh] [--ids]   the live channel list + each channel's caption limit
       map [--dry-run] [--yes]             auto-map the six DJ channels by provider (instagram-standalone,
                                           tiktok-business, threads, facebook, x, youtube) into Settings → Publishing
@@ -27,7 +28,7 @@ enum PostizCommand {
 
     Settings changes print what changes; --dry-run changes nothing. A change that makes approved posts go out for
     real through Postiz (a platform to Postiz with a channel, a new channel, test run off) needs --yes: that's
-    Eric's call. Undo a settings change with `djq bulk undo <batch>`.
+    Eric's call. Undo a settings change with `djq bulk undo <batch>` (an undo that would go live needs --yes too).
     """
 
   static func run(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
@@ -37,7 +38,7 @@ enum PostizCommand {
     let svc = PostizService(store: store)
     switch sub {
     case "help", "-h", "--help": print(usage); return 0
-    case "status": return try status(store, svc, json: json, ids: ids, offline: flag("--offline"))
+    case "status": return try status(store, svc, json: json, ids: ids, offline: flag("--offline"), wrote: &wrote)
     case "channels": return try channels(store, svc, json: json, ids: ids, cached: flag("--cached"), refresh: flag("--refresh"), wrote: &wrote)
     case "map": return try map(store, svc, json: json, ids: ids, wrote: &wrote)
     case "publisher": return try publisher(store, json: json, ids: ids, wrote: &wrote)
@@ -128,8 +129,10 @@ enum PostizCommand {
     var platforms: [Row]
   }
 
-  static func status(_ store: Store, _ svc: PostizService, json: Bool, ids: Bool, offline: Bool) throws -> Int32 {
-    let st = try svc.status(check: !offline && svc.hasKey())
+  static func status(_ store: Store, _ svc: PostizService, json: Bool, ids: Bool, offline: Bool, wrote: inout Bool) throws -> Int32 {
+    let check = !offline && svc.hasKey()
+    let st = try svc.status(check: check)
+    if check { wrote = true }  // the check spends a budget slot and can set or clear the "key refused" flag
     let settings = try store.settings()
     let now = store.clock.now
     let cache = try cache(store)
@@ -138,7 +141,7 @@ enum PostizCommand {
     let state: String
     if st.keyInvalid != nil { state = "key_invalid" }
     else if !st.hasKey { state = "no_key" }
-    else if paused && st.connected != true { state = "rate_limited" }
+    else if st.connected != true && (paused || (check && st.budgetUsed >= st.budgetLimit)) { state = "rate_limited" }
     else if st.connected == true { state = "connected" }
     else if st.connected == false { state = "unreachable" }
     else { state = "unchecked" }
@@ -147,7 +150,9 @@ enum PostizCommand {
     switch state {
     case "key_invalid": problems.append("Postiz refused the API key: \(st.keyInvalid!.isEmpty ? "401" : st.keyInvalid!) (Eric saves it again in Settings → Publishing)")
     case "no_key": problems.append("no Postiz API key saved (Eric adds it in Settings → Publishing)")
-    case "rate_limited": problems.append("rate limited: no calls until \(fmt(st.pausedUntil!, settings))")
+    case "rate_limited":
+      problems.append(st.pausedUntil.map { "rate limited: no calls until \(fmt($0, settings))" }
+                      ?? "call budget used up this hour (\(st.budgetUsed)/\(st.budgetLimit)); try again later")
     case "unreachable": problems.append("Postiz didn't answer: \(st.checkError ?? "?")")
     default: break
     }
@@ -166,22 +171,24 @@ enum PostizCommand {
       else if c?.disabled == true { problems.append("\(r.platform.displayName): channel \(c!.name) is disabled or expired") }
     }
     if !st.stuck.isEmpty { problems.append("\(st.stuck.count) post(s) still QUEUE in Postiz an hour after the slot") }
-    // Ready: connected (or, with --offline, a saved key Postiz hasn't refused) and all six channels mapped and usable.
-    let keyOK = state == "connected" || (offline && state == "unchecked")
-    let ready = keyOK && problems.isEmpty
+    // Ready: connected (checked now) and all six channels mapped and usable. With --offline nothing was checked, so
+    // an otherwise clean setup exits 3, never 0.
+    let ready = state == "connected" && problems.isEmpty
+    let unchecked = !ready && state == "unchecked" && problems.isEmpty
+    let code: Int32 = ready ? 0 : unchecked ? 3 : 2
     let out = StatusOut(state: state, ready: ready, problems: problems, hasKey: st.hasKey, keyInvalid: st.keyInvalid,
                         connected: st.connected, checkError: st.checkError, rateLimited: paused, pausedUntil: st.pausedUntil,
                         budgetUsed: st.budgetUsed, budgetLimit: st.budgetLimit, testMode: st.testMode, apiBase: st.apiBase,
                         lastSync: st.lastSync, channelsFetchedAt: st.channelsFetchedAt, openJobs: st.openJobs, stuck: st.stuck,
                         linkMissing: st.linkMissing, platforms: rows)
-    if json { try printJSON(out); return ready ? 0 : 2 }
+    if json { try printJSON(out); return code }
 
     let conn: String
     switch state {
     case "connected": conn = "connected (checked now)"
     case "no_key": conn = "not connected · no API key saved"
     case "key_invalid": conn = "key refused · \(st.keyInvalid!.isEmpty ? "401" : st.keyInvalid!)"
-    case "rate_limited": conn = "rate limited · paused until \(fmt(st.pausedUntil!, settings))"
+    case "rate_limited": conn = st.pausedUntil.map { "rate limited · paused until \(fmt($0, settings))" } ?? "not checked · call budget used up this hour"
     case "unreachable": conn = "didn't answer · \(st.checkError ?? "?")"
     default: conn = "key saved · not checked (--offline)"
     }
@@ -209,12 +216,13 @@ enum PostizCommand {
     print("")
     if ready {
       print("Ready: connected, all six channels mapped.")
+    } else if unchecked {
+      print("Ready apart from the connection, which wasn't checked (--offline): run `djq postiz status` to check it.")
     } else {
       print("Not ready:")
       for p in problems { print("  - \(p)") }
-      if problems.isEmpty { print("  - connection not checked (run without --offline)") }
     }
-    return ready ? 0 : 2
+    return code
   }
 
   // MARK: channels
@@ -309,6 +317,17 @@ enum PostizCommand {
     let cache = try cache(store)
     let changes = diff(before, after, cache, ids: ids)
     let live = goesLive(before, after)
+    var notes = notes
+    // Test run isn't fully private on two platforms: say what reaches them.
+    let testReach = after.publishing.testMode ? Platform.allCases.sorted().filter { p in
+      [.youtube, .tiktok].contains(p) && after.enabledPlatforms.contains(p) && after.publishing.publisher(for: p) == .postiz
+        && after.publishing.channels[p] != nil
+        && (before.publishing.publisher(for: p) != .postiz || before.publishing.channels[p] != after.publishing.channels[p] || !before.publishing.testMode)
+    } : []
+    for p in testReach {
+      notes.append(p == .youtube ? "YouTube (test run): approved posts are uploaded to the channel as unlisted videos"
+                                 : "TikTok (test run): approved posts land in the TikTok app inbox as drafts")
+    }
     var out = ChangeOut(command: "postiz \(command)", dryRun: dry, applied: false, changes: changes, notes: notes,
                         goesLive: live.map(\.rawValue), needsYes: !live.isEmpty && !yes, batchId: nil)
     let blocked = !dry && out.needsYes && !changes.isEmpty
@@ -345,6 +364,8 @@ enum PostizCommand {
 
   static func map(_ store: Store, _ svc: PostizService, json: Bool, ids: Bool, wrote: inout Bool) throws -> Int32 {
     let clear = flag("--clear")
+    // A dry run may refresh the cached channel list (that's what it previews against) but signals nothing.
+    let dryRun = args.contains("--dry-run")
     if let raw = args.first(where: { !$0.hasPrefix("--") }) {
       let p = try platform(raw)
       args.removeAll { $0 == raw }
@@ -354,7 +375,7 @@ enum PostizCommand {
       guard let want = args.first(where: { !$0.hasPrefix("--") }) else { throw CLIError("map <platform> <channel name|id> | map <platform> --clear") }
       args.removeAll { $0 == want }
       let (list, note, live) = try channelList(store, svc)
-      if live { wrote = true }  // the cached channel list was refreshed
+      if live && !dryRun { wrote = true }  // the cached channel list was refreshed
       let lw = want.lowercased()
       let m = list.filter { $0.id == want }.nonEmpty ?? list.filter { $0.name.lowercased() == lw }.nonEmpty
         ?? list.filter { $0.name.lowercased().contains(lw) }
@@ -371,7 +392,7 @@ enum PostizCommand {
       return try change(store, "map \(p.rawValue)", json: json, ids: ids, notes: notes, wrote: &wrote) { $0.publishing.channels[p] = m[0].id }
     }
     let (list, note, live) = try channelList(store, svc)
-    if live { wrote = true }  // the cached channel list was refreshed
+    if live && !dryRun { wrote = true }  // the cached channel list was refreshed
     let settings = try store.settings()
     var picks: [Platform: String] = [:]
     var notes = [note].compactMap { $0 }
@@ -489,7 +510,9 @@ enum PostizCommand {
   static func link(_ store: Store, _ svc: PostizService, json: Bool, wrote: inout Bool) throws -> Int32 {
     let releaseOpt = option("--release-id")
     let p = try resolvePost(store, try arg(0, "post id"))
-    let candidates = try svc.linkCandidates(postId: p.id)
+    // Both the URL and the platform's post id given: no need to ask Postiz for candidates.
+    let known = args.count > 1 && args[1].lowercased().hasPrefix("http") && releaseOpt != nil
+    let candidates = known ? [] : try svc.linkCandidates(postId: p.id)
     struct Cand: Encodable { var id: String; var url: String }
     guard args.count > 1 else {
       if json { try printJSON(candidates.map { Cand(id: $0.id, url: $0.url) }); return 0 }
@@ -538,7 +561,7 @@ enum PostizCommand {
     if lock == nil && !force {
       // DJ Queue's engine owns the tick: ask it (one engine per database).
       try svc.requestSync()
-      ChangeSignal.post()
+      postChangeSignal()
       if json { try printJSON(["result": "asked DJ Queue's engine to sync on its next tick"]); return 0 }
       print("Engine is running in DJ Queue; asked it to sync now (see djq postiz status in a minute)")
       return 0

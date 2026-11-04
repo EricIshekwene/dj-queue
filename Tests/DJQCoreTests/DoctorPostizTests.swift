@@ -88,8 +88,9 @@ import Testing
     #expect(p["postiz.mapping_missing"]?.severity == .error)
     // The approved posts fall back to Today, with the reason.
     let fb = try #require(p["postiz.fallback"])
-    #expect(fb.severity == .warning && fb.where_.allSatisfy { $0.contains("X") && $0.contains("No Postiz channel picked") })
-    #expect(!fb.where_.isEmpty)
+    let xPosts = try soon.f.posts(.x).map(\.id)
+    #expect(fb.severity == .warning && !fb.where_.isEmpty && Set(fb.where_).isSubset(of: Set(xPosts)))
+    #expect(fb.detail.contains("X · ") && fb.detail.contains("No Postiz channel picked"))
     // A mapped channel that disappeared from Postiz counts as missing too.
     let gone = try Rig(1, platforms: [.threads], approve: false)
     gone.fake.integrations.removeAll { $0.platform == .threads }
@@ -145,6 +146,18 @@ import Testing
     rig.fake.failNext["GET integrations"] = [503]
     let q = Self.postiz(d.run())
     #expect(q["postiz.not_connected"]?.severity == .warning && q["postiz.not_connected"]?.title.contains("didn't answer") == true)
+    // A stale "key refused" flag is re-checked live (and cleared when Postiz accepts the key again).
+    try rig.store.setPostizKeyInvalid("old 401")
+    let r = Self.postiz(d.run())
+    #expect(r["postiz.key_invalid"] == nil)
+    #expect(try rig.store.postizKeyInvalid() == nil)
+    #expect(rig.fake.log.suffix(2) == ["GET is-connected", "GET integrations"])
+    // No budget left: no call, and it reads as a rate limit, not "didn't answer".
+    let limit = try rig.store.settings().publishing.hourlyBudget
+    while try rig.store.takePostizCall(.sync, limit: limit) {}
+    let before = rig.fake.log.count
+    let b = Self.postiz(d.run())
+    #expect(rig.fake.log.count == before && b["postiz.not_connected"] == nil && b["postiz.rate_limited"]?.severity == .info)
     // Without a key there's nothing to check live.
     try rig.keys.delete()
     let n = rig.fake.log.count
@@ -170,7 +183,7 @@ import Testing
     let th = try #require(try rig.f.post(.threads, day: "2026-11-02"))
     #expect(try rig.store.finalPostizJob(postId: th.id)?.closeReason == .rejected)
     let fb = try #require(Self.postiz(Self.doctor(rig.store, keys: rig.keys).run())["postiz.fallback"])
-    #expect(fb.where_.contains { $0.contains(String(th.id.prefix(8))) && $0.contains("Postiz refused this post") })
+    #expect(fb.where_ == [th.id] && fb.detail.contains("Postiz refused this post"))
   }
 
   /// Every id Doctor can report has a fix in the skill, and nothing reports an id outside the list.
