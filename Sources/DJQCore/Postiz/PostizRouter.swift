@@ -56,6 +56,7 @@ public struct PostizChannelCache: Codable, Sendable, Hashable {
   public var fetchedAt: Date
   public var integrations: [PostizIntegration]
   public static let kvKey = "postiz.channels"
+  public init(fetchedAt: Date, integrations: [PostizIntegration]) { self.fetchedAt = fetchedAt; self.integrations = integrations }
 }
 
 /// Picks Manual or Postiz per platform from settings, the key's state and the channel list. Pure: build it with

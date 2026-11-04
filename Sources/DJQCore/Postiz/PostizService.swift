@@ -73,6 +73,8 @@ public final class PostizService: @unchecked Sendable {
   func call<T>(_ kind: PostizCallKind, _ settings: Settings, _ body: () throws -> T) throws -> T {
     // A refused key isn't retried by every tick (only the hourly probe and an explicit check may call).
     if kind != .check, let inv = try store.postizKeyInvalid() { throw PostizError.unauthorized(inv.message) }
+    // No key saved: nothing to send, and no budget slot spent on it.
+    guard keyStore.hasKey() else { throw PostizError.noKey }
     guard try store.takePostizCall(kind, limit: settings.publishing.hourlyBudget) else { throw PostizError.overBudget }
     do {
       let r = try body()
@@ -117,12 +119,40 @@ public final class PostizService: @unchecked Sendable {
   /// The post has an open Postiz job (Postiz holds it, or a create/delete is in progress).
   public func hasLiveJob(postId: String) throws -> Bool { try store.livePostizJob(postId: postId) != nil }
 
-  /// The post goes out through Postiz: it has an open job, or its platform routes to Postiz and nothing ended Postiz
-  /// delivery for it (a rejected create, a vanished post…). Such a post gets no manual "due" notification.
-  public func deliversThroughPostiz(_ p: PlatformPost, router: PostizRouter) throws -> Bool {
+  /// Postiz holds this post or an earlier copy of the same clip on the same platform (a post the planner re-created
+  /// under a new id): the engine never makes it overdue or shifts it, and sends no manual "due" notice.
+  public func holds(_ p: PlatformPost) throws -> Bool {
     if try hasLiveJob(postId: p.id) { return true }
-    guard router.route(p.platform).isPostiz, !p.state.isTerminal else { return false }
-    return try store.finalPostizJob(postId: p.id) == nil
+    return try !store.openPostizJobs(lineage: PostizJob.lineage(p)).isEmpty
+  }
+
+  /// The post goes out through Postiz: Postiz holds it (`holds`), or its platform routes to Postiz, nothing ended
+  /// Postiz delivery for it, and it wasn't already handed to Today. Such a post gets no manual "due" notification.
+  public func deliversThroughPostiz(_ p: PlatformPost, router: PostizRouter) throws -> Bool {
+    if try holds(p) { return true }
+    guard Self.settingsAllow(p.platform, router.settings), router.route(p.platform).isPostiz, !p.state.isTerminal else { return false }
+    if try store.publishedPostizJob(lineage: PostizJob.lineage(p)) != nil { return true }
+    return try store.finalPostizJob(postId: p.id) == nil && !handedToToday(p)
+  }
+
+  /// A test-run TikTok post Postiz delivered to the TikTok inbox and Eric hasn't marked posted yet.
+  public func isInTikTokInbox(_ p: PlatformPost) throws -> Bool {
+    guard !p.state.isTerminal else { return false }
+    return try store.postizJobs(postId: p.id).last?.closeReason == .inbox
+  }
+
+  /// What Postiz is doing with a post, for every screen (nil = a manual post, shown as before). Reads the post's
+  /// newest job, an earlier copy of the same clip + platform that Postiz still holds, the route and whether the post
+  /// was already handed to Today — the same facts the engine acts on.
+  public func displayState(for p: PlatformPost, router: PostizRouter? = nil) throws -> PostizDisplayState? {
+    let r = try router ?? self.router()
+    var job = try store.postizJobs(postId: p.id).last { $0.kind == "post" }
+    if job == nil || job?.isOpen == false, !p.state.isTerminal,
+       let earlier = try store.openPostizJobs(lineage: PostizJob.lineage(p)).first {
+      job = earlier  // re-planned: Postiz still holds the earlier copy
+    }
+    let route = Self.settingsAllow(p.platform, r.settings) ? r.route(p.platform) : .manual
+    return PostizDisplayState.of(post: p, job: job, route: route, handedToToday: try handedToToday(p), now: now)
   }
 
   /// nil when calls can be made; otherwise why not (no key / key refused). Asks the Keychain only for presence.
@@ -131,62 +161,105 @@ public final class PostizService: @unchecked Sendable {
     return keyStore.hasKey() ? nil : .noKey
   }
 
+  /// The settings let `platform` go out through Postiz now: posting not paused, platform on and not paused, set to
+  /// Postiz. One predicate for "cancel what Postiz holds" and "create" (no delete/create churn).
+  public static func settingsAllow(_ platform: Platform, _ s: Settings) -> Bool {
+    !s.paused && s.enabledPlatforms.contains(platform) && !s.pausedPlatforms.contains(platform)
+      && s.publishing.publisher(for: platform) == .postiz
+  }
+
+  /// The manual "due" notice already went out for this post (Today has it): it stays Manual until Eric re-routes it.
+  func handedToToday(_ p: PlatformPost) throws -> Bool {
+    guard p.state == .due || p.state == .overdue else { return false }
+    return try store.db.one("SELECT 1 AS x FROM post_history WHERE post_id=? AND to_state IN ('due','overdue') AND (note IN ('due','post now') OR note LIKE 'missed%')",
+                            [p.id]) != nil
+  }
+
+  /// From this long before its slot, Postiz's copy is never replaced (only cancelled after a fresh look, or kept).
+  public static let safety: TimeInterval = 300
+
+  enum Decision: Equatable {
+    case keep
+    /// Delete; nothing follows unless the post (or its successor) is a create candidate afterwards.
+    case cancel(String)
+    /// Delete because the content changed; the post is created again afterwards.
+    case replace(String)
+    /// It changed, but too close to the slot to replace safely: Postiz keeps what it has.
+    case hold(String)
+  }
+
+  /// What to do with an open job, from the database alone (every planner path is covered by re-deciding each tick).
+  func decide(_ j: PostizJob, settings: Settings, router: PostizRouter) throws -> Decision {
+    let near = now >= j.remoteDate.addingTimeInterval(-Self.safety)
+    guard let p = try store.post(id: j.postId) else {
+      // Re-planned under a new id (move, swap, pin, post today, skip next…) or removed.
+      let successor = try store.posts(where: "video_id=? AND platform=?", [j.videoId ?? "", j.platform.rawValue])
+        .first { !$0.state.isTerminal && PostizJob.lineage($0) == j.lineage }
+      if successor != nil { return near ? .hold("re-planned close to its slot") : .cancel("re-planned") }
+      return .cancel("post removed from the plan")
+    }
+    if p.state == .posted { return .cancel("marked posted by hand") }
+    if p.state.isTerminal { return .cancel("post \(p.state.displayName.lowercased())") }
+    if settings.paused { return .cancel("posting paused") }
+    if !settings.enabledPlatforms.contains(p.platform) { return .cancel("\(p.platform.displayName) turned off") }
+    if settings.pausedPlatforms.contains(p.platform) { return .cancel("\(p.platform.displayName) paused") }
+    if settings.publishing.publisher(for: p.platform) != .postiz { return .cancel("\(p.platform.displayName) switched to Manual") }
+    var why: String?
+    if case .postiz(let id, _) = router.route(p.platform), id != j.integrationId { why = "Postiz channel changed" }
+    else if p.renderId == nil || p.renderId != j.renderId { why = "render changed" }
+    else if p.scheduledAt != j.scheduledAt { why = "moved to \(Sched.shortTime(p.scheduledAt, settings))" }
+    else if case .postiz(let id, let provider) = router.route(p.platform) {
+      // Test mode is frozen per job (docs §6: switching it changes only new posts).
+      var s = settings
+      s.publishing.testMode = j.testMode
+      if let spec = try? PostizPayload.spec(store: store, post: p, settings: s, integrationId: id, provider: provider),
+         spec.contentHash != j.contentHash {
+        why = "caption, title or settings changed"
+      }
+    }
+    guard let why else { return .keep }
+    return near ? .hold(why) : .replace(why)
+  }
+
   // MARK: Publish step
 
   static let openStates: Set<PostState> = [.planned, .rendering, .rendered, .due]
 
-  /// Why an open job must go (nil = keep it). `replaced` means a new job follows once the delete succeeded.
-  func unwanted(_ j: PostizJob, settings: Settings, router: PostizRouter) throws -> (reason: String, close: PostizCloseReason)? {
-    guard let p = try store.post(id: j.postId) else { return ("post removed from the plan", .cancelled) }
-    if p.state == .posted { return ("marked posted by hand", .cancelled) }
-    if p.state.isTerminal { return ("post \(p.state.displayName.lowercased())", .cancelled) }
-    if settings.paused { return ("posting paused", .cancelled) }
-    if !settings.enabledPlatforms.contains(p.platform) { return ("\(p.platform.displayName) turned off", .cancelled) }
-    if settings.pausedPlatforms.contains(p.platform) { return ("\(p.platform.displayName) paused", .cancelled) }
-    if settings.publishing.publisher(for: p.platform) != .postiz { return ("\(p.platform.displayName) switched to Manual", .cancelled) }
-    if case .postiz(let id, _) = router.route(p.platform), id != j.integrationId { return ("Postiz channel changed", .replaced) }
-    if p.renderId == nil || p.renderId != j.renderId { return ("render changed", .replaced) }
-    if p.scheduledAt != j.scheduledAt { return ("moved to \(Sched.shortTime(p.scheduledAt, settings))", .replaced) }
-    if p.state == .overdue { return ("post overdue", .cancelled) }
-    guard case .postiz(let id, let provider) = router.route(p.platform),
-          let spec = try? PostizPayload.spec(store: store, post: p, settings: settings, integrationId: id, provider: provider) else {
-      return nil  // can't judge now (key/channel problem, render file busy): leave Postiz's copy alone
-    }
-    if spec.contentHash != j.contentHash { return ("caption, title or settings changed", .replaced) }
-    return nil
-  }
-
-  /// The engine's `publish` step: reconcile every open job, then submit every Postiz-routed post that is due for
-  /// submission (approved, render attached, slot within the render horizon, no job for its current content).
+  /// The engine's `publish` step: reconcile every open job (deletes first), then submit every Postiz-routed post that
+  /// is due for submission (render attached, slot within the render horizon, its clip + platform not blocked).
   public func publish() throws -> String {
     let settings = try store.settings()
     let open = try store.openPostizJobs()
     guard !settings.publishing.postizPlatforms.isEmpty || !open.isEmpty else { return "off" }
     let router = try router(settings)
-    var deleted = 0, created = 0, rejected = 0, waiting = 0, failed = 0
+    var deleted = 0, created = 0, rejected = 0, waiting = 0, failed = 0, held = 0, blocked = 0
     var stopped: String?
     if let k = try keyProblem() { stopped = k.message }
 
-    // 1. Jobs that must go (deletes first: highest priority).
+    // 1. Jobs that must go.
     for var j in open where j.phase == .live || j.phase == .deleting {
       if j.remoteState == "PUBLISHED" { continue }  // the sync step records it; never deleted
       if j.phase == .live {
-        guard let (why, close) = try unwanted(j, settings: settings, router: router) else { continue }
+        let close: PostizCloseReason, why: String
+        switch try decide(j, settings: settings, router: router) {
+        case .keep: continue
+        case .hold(let w):
+          held += 1
+          if try store.markNotified("postiz.hold:\(j.id):\(w)") {
+            try store.logEvent("postiz", "\(j.platform.displayName): \(w) within \(Int(Self.safety / 60)) min of its slot — Postiz keeps the version it has",
+                               videoId: j.videoId, postId: j.postId)
+          }
+          continue
+        case .cancel(let w): (close, why) = (.cancelled, w)
+        case .replace(let w): (close, why) = (.replaced, w)
+        }
         j.phase = .deleting
         j.deleteReason = "\(close.rawValue): \(why)"
         try store.save(j)
       }
       guard stopped == nil else { waiting += 1; continue }
-      // Near or past its slot Postiz may have published it since the last look: read the states first (the sync
-      // step right after this one), delete next tick — a PUBLISHED post is never deleted.
-      if j.postizId != nil, j.remoteDate <= now.addingTimeInterval(300), (j.syncedAt ?? .distantPast) < now.addingTimeInterval(-90) {
-        try store.setKV(Self.syncNowKey, true)
-        waiting += 1
-        continue
-      }
       do {
-        try deleteRemote(&j, settings)
-        deleted += 1
+        if try deleteRemote(&j, settings) { deleted += 1 } else { waiting += 1 }
       } catch {
         failed += 1
         if Self.stops(error) { stopped = "\(error)" }
@@ -199,10 +272,16 @@ public final class PostizService: @unchecked Sendable {
       let candidates = try store.posts(where: "state IN ('planned','rendering','rendered','due') AND render_id IS NOT NULL AND scheduled_at<=?",
                                        [horizon])
       for p in candidates {
-        guard case .postiz(let integration, let provider) = router.route(p.platform),
-              !settings.paused, !settings.pausedPlatforms.contains(p.platform),
-              try store.livePostizJob(postId: p.id) == nil, try store.finalPostizJob(postId: p.id) == nil else { continue }
-        if let s = stopped { _ = s; waiting += 1; continue }
+        guard Self.settingsAllow(p.platform, settings), case .postiz(let integration, let provider) = router.route(p.platform),
+              try store.livePostizJob(postId: p.id) == nil, try store.finalPostizJob(postId: p.id) == nil,
+              try !handedToToday(p) else { continue }
+        let lineage = PostizJob.lineage(p)
+        if let pub = try store.publishedPostizJob(lineage: lineage) {
+          try reconcilePublished(p, from: pub)
+          continue
+        }
+        if try !store.openPostizJobs(lineage: lineage).isEmpty { blocked += 1; continue }  // earlier copy not confirmed gone
+        if stopped != nil { waiting += 1; continue }
         do {
           switch try submit(p, integrationId: integration, provider: provider, settings: settings) {
           case .created: created += 1
@@ -219,18 +298,52 @@ public final class PostizService: @unchecked Sendable {
     if created > 0 { parts.append("scheduled \(created)") }
     if deleted > 0 { parts.append("removed \(deleted)") }
     if rejected > 0 { parts.append("refused \(rejected) → Today") }
+    if held > 0 { parts.append("kept \(held) near the slot") }
+    if blocked > 0 { parts.append("waiting on \(blocked) earlier cop\(blocked == 1 ? "y" : "ies")") }
     if failed > 0 { parts.append("failed \(failed)") }
     if waiting > 0 { parts.append("waiting \(waiting)") }
     if let s = stopped { parts.append("paused: \(s)") }
     return parts.isEmpty ? "up to date (\(open.count) in Postiz)" : parts.joined(separator: " · ")
   }
 
-  /// DELETE in Postiz, then close the job (404 = already gone = done). On failure the job stays `deleting`, which
-  /// blocks any new create for the post.
-  func deleteRemote(_ j: inout PostizJob, _ settings: Settings) throws {
+  /// A later post of a clip + platform whose earlier copy Postiz already published: recorded as posted with that
+  /// link (never sent again).
+  func reconcilePublished(_ p: PlatformPost, from j: PostizJob) throws {
+    guard j.closeReason == .published, p.state != .posted else { return }
+    let missing = j.releaseId == nil || j.releaseId == "missing" || (j.releaseURL ?? "").isEmpty
+    try PostActions(store: store).recordPublished(postId: p.id, url: missing ? nil : j.releaseURL,
+                                                  externalId: j.releaseId == "missing" ? nil : j.releaseId,
+                                                  at: j.closedAt ?? now, note: "published by Postiz (earlier copy)")
+  }
+
+  /// The Postiz copy as it is now (one budgeted `GET /posts` around its date): nil = not in Postiz.
+  func freshRemote(_ j: PostizJob, _ settings: Settings) throws -> PostizRemotePost? {
+    guard let pid = j.postizId else { return nil }
+    let list = try call(.sync, settings) {
+      try client(settings).posts(from: j.remoteDate.addingTimeInterval(-86400), to: j.remoteDate.addingTimeInterval(86400))
+    }
+    return list.first { $0.id == pid }
+  }
+
+  /// DELETE in Postiz, then close the job (404 = already gone = done). Within `safety` of the slot it looks first
+  /// (one GET): a post Postiz published meanwhile is recorded, never deleted. On failure the job stays `deleting`,
+  /// which blocks every new create for the clip on that platform. Returns false when it couldn't finish now.
+  @discardableResult
+  func deleteRemote(_ j: inout PostizJob, _ settings: Settings) throws -> Bool {
     let close: PostizCloseReason = (j.deleteReason ?? "").hasPrefix(PostizCloseReason.replaced.rawValue) ? .replaced : .cancelled
     let why = j.deleteReason.map { String($0.drop { $0 != ":" }.dropFirst().drop { $0 == " " }) } ?? ""
     if let id = j.postizId {
+      if j.remoteDate <= now.addingTimeInterval(Self.safety) {
+        let r = try freshRemote(j, settings)
+        switch r?.state {
+        case "PUBLISHED"?: try published(j, r!, settings); return false
+        case "ERROR"?: try errored(j, r!); return false
+        case nil:
+          try finishDelete(j, close, why, note: "already gone from Postiz")
+          return true
+        default: break
+        }
+      }
       do {
         try call(.delete, settings) { try client(settings).deletePost(id) }
       } catch PostizError.notFound {
@@ -239,12 +352,17 @@ public final class PostizService: @unchecked Sendable {
         j.attempts += 1
         j.lastError = "\(error)"
         try store.save(j)
-        try store.logEvent("postiz", "Couldn't remove the \(j.platform.displayName) post from Postiz (\(why)): \(error) — retrying; nothing new is sent meanwhile",
+        try store.logEvent("postiz", "Couldn't remove the \(j.platform.displayName) post from Postiz (\(why)): \(error) — retrying; nothing new is sent for this clip meanwhile",
                            videoId: j.videoId, postId: j.postId)
         throw error
       }
     }
-    try store.closePostizJob(id: j.id, reason: close, note: why)
+    try finishDelete(j, close, why, note: why)
+    return true
+  }
+
+  func finishDelete(_ j: PostizJob, _ close: PostizCloseReason, _ why: String, note: String) throws {
+    try store.closePostizJob(id: j.id, reason: close, note: note)
     if close == .cancelled, var p = try store.post(id: j.postId), !p.state.isTerminal, p.publisher == "postiz" {
       p.publisher = "manual"
       try store.save(p, note: "removed from Postiz: \(why)")
@@ -254,8 +372,21 @@ public final class PostizService: @unchecked Sendable {
 
   enum SubmitOutcome { case created, rejected, skipped }
 
-  /// Upload (reusing the render's media) and create the scheduled post. A refusal (400/413) closes the job as
-  /// rejected and the post falls back to Today with the reason.
+  /// Test hook: runs right after Postiz answered a create, before DJ Queue records it (simulates a crash or a
+  /// database error at the worst moment).
+  var afterCreateHook: (() throws -> Void)?
+
+  /// A past slot goes out at now + 3 min, rounded up to a whole minute (so Postiz's copy is easy to match).
+  func remoteDate(for scheduledAt: Date) -> Date {
+    let earliest = now.addingTimeInterval(Self.leadTime)
+    guard scheduledAt < earliest else { return scheduledAt }
+    return Date(timeIntervalSince1970: (earliest.timeIntervalSince1970 / 60).rounded(.up) * 60)
+  }
+
+  /// Upload (reusing the render's media) and create the scheduled post. Once the create was sent, only a definite
+  /// refusal closes the claim: 400/413 → rejected (Today), 401/429 → released. Any other outcome (5xx, timeout, an
+  /// unreadable 2xx, a database error while recording it) keeps the claim for the sync step to find in Postiz — it is
+  /// never created again blindly.
   func submit(_ p: PlatformPost, integrationId: String, provider: String, settings: Settings) throws -> SubmitOutcome {
     let spec: PostizPostSpec
     do {
@@ -271,64 +402,76 @@ public final class PostizService: @unchecked Sendable {
           budget.remaining(now: now, limit: settings.publishing.hourlyBudget) - PostizCallKind.create.reserve >= needed else {
       throw PostizError.overBudget
     }
-    let remoteDate = max(p.scheduledAt, now.addingTimeInterval(Self.leadTime))
+    let date = remoteDate(for: p.scheduledAt)
     var job = PostizJob(postId: p.id, videoId: p.videoId, platform: p.platform, integrationId: integrationId,
-                        renderId: spec.renderId, contentHash: spec.contentHash, scheduledAt: p.scheduledAt, remoteDate: remoteDate,
+                        renderId: spec.renderId, contentHash: spec.contentHash, scheduledAt: p.scheduledAt, remoteDate: date,
                         testMode: spec.testMode, postType: spec.type, createdAt: now, updatedAt: now)
-    guard try store.claimPostizJob(job) else { return .skipped }  // another process got there first
+    job.lineage = PostizJob.lineage(p)
+    guard try store.claimPostizJob(job) else { return .skipped }  // another process, or the lineage is blocked
     let c = client(settings)
-    var sentCreate = false
+    var video: PostizMedia, cover: PostizMedia?
     do {
-      let video = try cachedVideo.map { PostizMedia(id: $0.mediaId, path: $0.mediaPath) } ?? upload(spec.renderPath, "video", spec.renderId, c, settings)
-      job.mediaId = video.id
-      job.mediaPath = video.path
-      var cover: PostizMedia?
+      video = try cachedVideo.map { PostizMedia(id: $0.mediaId, path: $0.mediaPath) } ?? upload(spec.renderPath, "video", spec.renderId, c, settings)
       if spec.uploadsCover, let cp = spec.coverPath {
         cover = try cachedCover.map { PostizMedia(id: $0.mediaId, path: $0.mediaPath) } ?? upload(cp, "cover", spec.renderId, c, settings)
-        job.coverMediaId = cover?.id
-        job.coverMediaPath = cover?.path
       }
+      job.mediaId = video.id
+      job.mediaPath = video.path
+      job.coverMediaId = cover?.id
+      job.coverMediaPath = cover?.path
+      job.submittedAt = now  // persisted BEFORE the create: from here on the outcome may be "unknown"
       try store.save(job)
-      sentCreate = true
-      let created = try call(.create, settings) { try c.createPost(spec.body(date: remoteDate, video: video, cover: cover)) }
-      job.postizId = created[0].postId
-      job.phase = .live
-      job.remoteState = spec.type == "draft" ? "DRAFT" : "QUEUE"
-      job.submittedAt = now
-      try store.save(job)
-      var post = try store.post(id: p.id) ?? p
-      post.publisher = "postiz"
-      post.externalId = nil
-      try store.save(post, note: spec.type == "draft" ? "draft in Postiz" : "scheduled in Postiz for \(Sched.shortTime(remoteDate, settings))")
-      try store.logEvent("postiz", "\(p.platform.displayName): \(spec.type == "draft" ? "draft saved" : "scheduled") in Postiz for \(Sched.shortTime(remoteDate, settings))\(spec.testMode ? " (test run)" : "")",
-                         videoId: p.videoId, postId: p.id)
-      return .created
     } catch let e as PostizError {
       switch e {
-      case .validation(let m), .server(400, let m):
-        try reject(job, p, m, settings)
-        return .rejected
-      case .payloadTooLarge:
-        try reject(job, p, "the video is too large for Postiz", settings)
-        return .rejected
-      case .network, .server:
-        if sentCreate {
-          // The create may have landed: the sync step adopts it or releases the claim.
-          job.lastError = "\(e)"
-          try store.save(job)
-        } else {
-          try store.closePostizJob(id: job.id, reason: .interrupted, note: "\(e)")
-        }
-        throw e
-      default:
-        // 401 / 429 / budget: the create was refused before Postiz made anything.
-        try store.closePostizJob(id: job.id, reason: .interrupted, note: "\(e)")
-        throw e
+      case .validation(let m): try reject(job, p, m, settings); return .rejected
+      case .payloadTooLarge: try reject(job, p, "the video is too large for Postiz", settings); return .rejected
+      default: try store.closePostizJob(id: job.id, reason: .interrupted, note: "\(e)"); throw e
       }
     } catch {
       try store.closePostizJob(id: job.id, reason: .interrupted, note: "\(error)")
       throw error
     }
+    let created: [PostizCreated]
+    do {
+      created = try call(.create, settings) { try c.createPost(spec.body(date: date, video: video, cover: cover)) }
+      try afterCreateHook?()
+    } catch let e as PostizError {
+      switch e {
+      case .validation(let m): try reject(job, p, m, settings); return .rejected
+      case .payloadTooLarge: try reject(job, p, "the post is too large for Postiz", settings); return .rejected
+      case .unauthorized, .rateLimited, .overBudget, .noKey:
+        // Refused (or never sent): Postiz made nothing.
+        try store.closePostizJob(id: job.id, reason: .interrupted, note: "\(e)")
+        throw e
+      default:
+        try? keepUnknown(job, "\(e)")
+        throw e
+      }
+    } catch {
+      try? keepUnknown(job, "\(error)")
+      throw error
+    }
+    // Record it. A failure here leaves the claim open (creating + submittedAt) for the sync step to adopt.
+    job.postizId = created[0].postId
+    job.phase = .live
+    job.remoteState = spec.type == "draft" ? "DRAFT" : "QUEUE"
+    try store.save(job)
+    var post = try store.post(id: p.id) ?? p
+    post.publisher = "postiz"
+    post.externalId = nil
+    try store.save(post, note: spec.type == "draft" ? "draft in Postiz" : "scheduled in Postiz for \(Sched.shortTime(date, settings))")
+    try store.logEvent("postiz", "\(p.platform.displayName): \(spec.type == "draft" ? "draft saved" : "scheduled") in Postiz for \(Sched.shortTime(date, settings))\(spec.testMode ? " (test run)" : "")",
+                       videoId: p.videoId, postId: p.id)
+    return .created
+  }
+
+  /// The create's outcome is unknown: keep the claim (it blocks the clip + platform) with the error.
+  func keepUnknown(_ job: PostizJob, _ error: String) throws {
+    var j = try store.postizJob(id: job.id) ?? job
+    j.lastError = error
+    try store.save(j)
+    try store.logEvent("postiz", "\(job.platform.displayName): Postiz didn't confirm the create (\(error)) — checking Postiz before anything is sent again",
+                       videoId: job.videoId, postId: job.postId)
   }
 
   func upload(_ path: String, _ kind: String, _ renderId: String, _ c: PostizClient, _ settings: Settings) throws -> PostizMedia {
@@ -363,10 +506,29 @@ public final class PostizService: @unchecked Sendable {
                                postId: p.id, videoId: p.videoId))
   }
 
+  /// Eric checked Postiz for a create whose outcome is unknown (`djq postiz resolve <post>`): one fresh look; found →
+  /// adopted, still absent → the claim is released and the post may be sent again.
+  @discardableResult
+  public func resolveUnknown(postId: String) throws -> String {
+    guard let j = try store.livePostizJob(postId: postId), j.phase == .creating else {
+      throw EngineError("No unconfirmed Postiz create for \(postId)")
+    }
+    let settings = try store.settings()
+    let list = try call(.sync, settings) {
+      try client(settings).posts(from: j.remoteDate.addingTimeInterval(-86400), to: j.remoteDate.addingTimeInterval(86400))
+    }
+    var claimed = Set(try store.postizJobs(where: "postiz_id IS NOT NULL AND kind='post'").compactMap(\.postizId))
+    if try adopt(j, list, &claimed) { return "found in Postiz — tracking it" }
+    try store.closePostizJob(id: j.id, reason: .interrupted, note: "confirmed not in Postiz")
+    try store.logEvent("postiz", "Unconfirmed \(j.platform.displayName) create checked: not in Postiz — it can be sent again",
+                       videoId: j.videoId, postId: j.postId)
+    return "not in Postiz — it will be sent again"
+  }
+
   // MARK: Sync step
 
   public static let syncKey = "postiz.lastSync"
-  /// Set by the publish step when a delete waits for fresh states.
+  /// Set by `djq postiz sync` (`requestSync`, CLI branch): the next sync step looks at once.
   static let syncNowKey = "postiz.syncNow"
   static let channelsKey = "postiz.lastChannels"
   static let probeKey = "postiz.lastProbe"
@@ -375,7 +537,8 @@ public final class PostizService: @unchecked Sendable {
   /// unconfirmed; otherwise 60.
   func syncInterval(_ jobs: [PostizJob]) -> TimeInterval {
     let hot = jobs.contains { j in
-      j.phase == .creating || j.remoteDate <= now || abs(j.remoteDate.timeIntervalSince(now)) <= 6 * 3600
+      j.phase == .creating || j.phase == .deleting || j.remoteDate <= now
+        || abs(j.remoteDate.timeIntervalSince(now)) <= 6 * 3600
     }
     return hot ? 600 : 3600
   }
@@ -384,9 +547,8 @@ public final class PostizService: @unchecked Sendable {
   /// posts; then the hourly key probe / channel refresh and the daily analytics pull when budget allows.
   public func sync(force: Bool = false) throws -> String {
     let settings = try store.settings()
-    let all = try store.openPostizJobs()
-    guard !settings.publishing.postizPlatforms.isEmpty || !all.isEmpty else { return "off" }
-    let jobs = all  // deleting jobs too: their state decides whether the delete may go (never a published one)
+    let jobs = try store.openPostizJobs()
+    guard !settings.publishing.postizPlatforms.isEmpty || !jobs.isEmpty else { return "off" }
     var parts: [String] = []
     if try store.postizKeyInvalid() != nil {
       parts.append(try probeKey(settings))
@@ -434,6 +596,26 @@ public final class PostizService: @unchecked Sendable {
     }
   }
 
+  /// Finds the Postiz post an unconfirmed create made: same channel, same date (±60 s), not held by another job,
+  /// and the only such candidate. Adopts it (job → live). False when there is no single match.
+  func adopt(_ j: PostizJob, _ remote: [PostizRemotePost], _ claimed: inout Set<String>) throws -> Bool {
+    let matches = remote.filter { r in
+      !claimed.contains(r.id) && r.integrationId == j.integrationId
+        && abs((r.publishDate ?? .distantPast).timeIntervalSince(j.remoteDate)) <= 60
+    }
+    guard matches.count == 1, let r = matches.first else { return false }
+    var j = j
+    j.postizId = r.id
+    j.postizGroup = r.group
+    j.phase = .live
+    j.remoteState = r.state
+    j.syncedAt = now
+    try store.save(j)
+    claimed.insert(r.id)
+    try store.logEvent("postiz", "Found the unconfirmed \(j.platform.displayName) create in Postiz — tracking it", videoId: j.videoId, postId: j.postId)
+    return true
+  }
+
   func syncJobs(_ jobs: [PostizJob], _ settings: Settings) throws -> String {
     let dates = jobs.map(\.remoteDate)
     let start = dates.min()!.addingTimeInterval(-86400), end = dates.max()!.addingTimeInterval(86400)
@@ -445,35 +627,40 @@ public final class PostizService: @unchecked Sendable {
     }
     try store.setKV(Self.syncKey, now)
     let byId = Dictionary(remote.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-    let claimed = Set(try store.postizJobs(where: "postiz_id IS NOT NULL AND kind='post'").compactMap(\.postizId))
+    var claimed = Set(try store.postizJobs(where: "postiz_id IS NOT NULL AND kind='post'").compactMap(\.postizId))
     var n: [String: Int] = [:]
     for var j in jobs {
-      if j.phase == .creating {
-        guard j.postizId == nil, now.timeIntervalSince(j.updatedAt) >= Self.staleCreate else { continue }
-        if let r = remote.first(where: { r in
-          !claimed.contains(r.id) && r.integrationId == j.integrationId
-            && abs((r.publishDate ?? .distantPast).timeIntervalSince(j.remoteDate)) < 2
-        }) {
-          j.postizId = r.id
-          j.postizGroup = r.group
-          j.phase = .live
-          j.remoteState = r.state
-          j.submittedAt = j.submittedAt ?? now
-          try store.save(j)
-          try store.logEvent("postiz", "Confirmed an interrupted \(j.platform.displayName) create in Postiz", videoId: j.videoId, postId: j.postId)
-          n["adopted", default: 0] += 1
-        } else {
-          try store.closePostizJob(id: j.id, reason: .interrupted, note: "create never reached Postiz")
-          n["retry", default: 0] += 1
+      guard let current = try store.postizJob(id: j.id), current.isOpen else { continue }  // another process moved on
+      j = current
+      if j.postizId == nil && j.phase == .creating {
+        if j.submittedAt == nil {
+          // Claimed but the create was never sent (crash before it): free to try again.
+          if now.timeIntervalSince(j.updatedAt) >= Self.staleCreate {
+            try store.closePostizJob(id: j.id, reason: .interrupted, note: "create never sent")
+            n["released", default: 0] += 1
+          }
+          continue
         }
+        if try adopt(j, remote, &claimed) { n["found", default: 0] += 1; continue }
+        if !j.isUnconfirmed, now.timeIntervalSince(j.submittedAt!) >= 120 {
+          j.remoteState = PostizJob.unconfirmed
+          try store.save(j)
+          let tag = try j.videoId.flatMap { try store.video(id: $0)?.tag } ?? ""
+          try store.logEvent("postiz", "\(j.platform.displayName): Postiz never confirmed a create and it isn't in Postiz — nothing is sent again until it's checked (`djq postiz resolve`)",
+                             videoId: j.videoId, postId: j.postId)
+          _ = notify(AppNotification(key: "postiz.unknown:\(j.id)", title: "\(j.platform.displayName) · \(tag) · check Postiz",
+                                     body: "A create wasn't confirmed and isn't in the Postiz list. DJ Queue won't send it again until you check.",
+                                     critical: true, actions: [.open], postId: j.postId, videoId: j.videoId))
+        }
+        n["unconfirmed", default: 0] += 1
         continue
       }
       guard let pid = j.postizId else { continue }
       guard let r = byId[pid] else {
         if j.phase == .deleting {
-          // Already gone from Postiz: the delete is done.
           let close: PostizCloseReason = (j.deleteReason ?? "").hasPrefix(PostizCloseReason.replaced.rawValue) ? .replaced : .cancelled
-          try store.closePostizJob(id: j.id, reason: close, note: "already gone from Postiz")
+          try finishDelete(j, close, String((j.deleteReason ?? "").drop { $0 != ":" }.dropFirst().drop { $0 == " " }),
+                           note: "already gone from Postiz")
           n["removed", default: 0] += 1
           continue
         }
@@ -518,6 +705,7 @@ public final class PostizService: @unchecked Sendable {
     var j = j
     j.releaseURL = r.releaseURL
     j.releaseId = r.releaseId
+    j.remoteState = "PUBLISHED"
     try store.save(j)
     if j.testMode && j.platform == .tiktok {
       // UPLOAD: nothing is public yet; it sits in the TikTok inbox.
@@ -534,11 +722,18 @@ public final class PostizService: @unchecked Sendable {
       return
     }
     let missing = r.releaseId == nil || r.releaseId == "missing" || (r.releaseURL ?? "").isEmpty
-    if try store.post(id: j.postId) != nil {
-      try PostActions(store: store).recordPublished(postId: j.postId, url: missing ? nil : r.releaseURL,
+    // The post itself, or — when the planner re-created it under a new id — the clip's current post on that platform.
+    var target = try store.post(id: j.postId)
+    if target == nil {
+      target = try store.posts(where: "video_id=? AND platform=?", [j.videoId ?? "", j.platform.rawValue])
+        .first { !$0.state.isTerminal && PostizJob.lineage($0) == j.lineage }
+    }
+    if let p = target, p.state != .posted {
+      try PostActions(store: store).recordPublished(postId: p.id, url: missing ? nil : r.releaseURL,
                                                     externalId: r.releaseId == "missing" ? nil : r.releaseId,
-                                                    at: r.publishDate ?? now, note: "published by Postiz")
-    } else {
+                                                    at: r.publishDate ?? now,
+                                                    note: p.id == j.postId ? "published by Postiz" : "published by Postiz (earlier copy)")
+    } else if target == nil {
       try store.logEvent("postiz", "\(j.platform.displayName) published by Postiz although the post had left the plan: \(r.releaseURL ?? "no link")",
                          videoId: j.videoId)
       _ = notify(AppNotification(key: "postiz.orphan:\(j.id)", title: "\(j.platform.displayName) posted by Postiz",
@@ -869,5 +1064,92 @@ public enum PostizAnalytics {
   public static func isUnknownShape(_ d: Data) -> Bool {
     if let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any], o["missing"] as? Bool == true { return false }
     return parse(d) == nil
+  }
+}
+
+/// A post's Postiz status for display (`PostizService.displayState(for:)`), matching DECISIONS-R6 UI #10.
+public enum PostizDisplayState: Equatable, Sendable {
+  /// Routed to Postiz; sent once its render exists.
+  case queued
+  /// The create is in flight, or a replace is waiting for its delete.
+  case sending
+  /// Sent, but Postiz never confirmed it and it isn't in the Postiz list: check Postiz (`resolveUnknown`).
+  case unconfirmed
+  case scheduled(Date)
+  /// Postiz still holds it after its time: it's going out now.
+  case posting
+  /// Test run: a Postiz draft until released.
+  case draft
+  case posted(url: String?)
+  /// Test-run TikTok: in the TikTok app's inbox; finish it there, then Mark posted.
+  case inbox
+  case failed(String)
+  case copyright(String)
+  /// Set to Postiz but back on Today (the sentence says why).
+  case fellBack(String)
+
+  public var text: String {
+    switch self {
+    case .queued: "To Postiz"
+    case .sending: "Sending to Postiz"
+    case .unconfirmed: "Check Postiz"
+    case .scheduled: "Scheduled in Postiz"
+    case .posting: "Posting…"
+    case .draft: "Draft in Postiz"
+    case .posted: "Posted"
+    case .inbox: "In TikTok inbox"
+    case .failed: "Failed"
+    case .copyright: "© Blocked"
+    case .fellBack: "Fell back to manual"
+    }
+  }
+
+  /// Postiz holds it: nothing for Eric to do (no task on Today, no "due" count).
+  public var isHeld: Bool {
+    switch self {
+    case .queued, .sending, .unconfirmed, .scheduled, .posting, .draft: true
+    default: false
+    }
+  }
+
+  /// Pure: from the post's newest job (or an earlier copy Postiz holds), the platform's route and whether the post was
+  /// already handed to Today.
+  public static func of(post p: PlatformPost, job: PostizJob?, route: PublishRoute, handedToToday: Bool = false,
+                        now: Date) -> PostizDisplayState? {
+    if let j = job, j.kind == "post" {
+      if j.isOpen {
+        if j.isUnconfirmed { return .unconfirmed }
+        switch j.phase {
+        case .creating, .deleting: return .sending
+        case .live:
+          if j.remoteState == "DRAFT" { return .draft }
+          return j.remoteDate <= now ? .posting : .scheduled(j.remoteDate)
+        case .closed: break
+        }
+      } else if let r = j.closeReason {
+        switch r {
+        case .published: return .posted(url: p.url ?? j.releaseURL)
+        case .inbox: return p.state == .posted ? .posted(url: p.url) : .inbox
+        case .error where p.state == .failed:
+          return .failed(j.remoteError ?? j.lastError ?? p.errorMessage ?? "Postiz reported an error (no details)")
+        case .copyright where [.copyrightBlocked, .copyrightMuted, .removed].contains(p.state):
+          return .copyright(j.remoteError ?? j.lastError ?? p.errorMessage ?? "Copyright problem")
+        case .rejected where !p.state.isTerminal && p.publisher == "manual":
+          return .fellBack(PostizFallbackReason.createRejected(j.lastError ?? "no details").message)
+        case .vanished where !p.state.isTerminal && p.publisher == "manual":
+          return .fellBack(PostizFallbackReason.vanished.message)
+        case .testDraft: return nil
+        case .error, .copyright, .rejected, .vanished, .replaced, .cancelled, .interrupted: break  // decided by the route
+        }
+      }
+    }
+    guard !p.state.isTerminal, p.resolution == nil else { return nil }
+    switch route {
+    case .manual: return nil
+    case .postiz:
+      if handedToToday { return .fellBack("It was already on Today when Postiz came back — post it by hand") }
+      return p.state == .planned || p.state == .rendering ? .queued : .sending
+    case .fallback(let r): return .fellBack(r.message)
+    }
   }
 }

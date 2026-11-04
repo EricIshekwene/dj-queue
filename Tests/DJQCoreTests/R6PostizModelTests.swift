@@ -226,6 +226,16 @@ import Testing
     #expect(ran.isEmpty)
   }
 
+  @Test func scratchHomesStayOfflineUnlessExplicitlyLive() {
+    #expect(!PostizLive.offByEnvironment([:]))  // the installed app / djq on Eric's real data
+    #expect(PostizLive.offByEnvironment(["DJQ_POSTIZ_OFFLINE": "1"]))
+    #expect(PostizLive.offByEnvironment(["DJQ_HOME": "/tmp/scratch"]))
+    #expect(PostizLive.offByEnvironment(["DJQ_ROOT": "/tmp/dev/DJ Video"]))
+    #expect(!PostizLive.offByEnvironment(["DJQ_HOME": "/tmp/scratch", "DJQ_POSTIZ_LIVE": "1"]))
+    #expect(PostizLive.offByEnvironment(["DJQ_HOME": "/tmp/scratch", "DJQ_POSTIZ_LIVE": "1", "DJQ_POSTIZ_OFFLINE": "1"]))
+    #expect(!PostizLive.offByEnvironment(["DJQ_HOME": ""]))
+  }
+
   @Test func keychainReadSeparatesNotFoundFromLockedOrDenied() throws {
     var status: Int32 = 44
     let ks = KeychainPostizKeyStore { _, _, _ in (status, Data()) }

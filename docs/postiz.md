@@ -211,16 +211,31 @@ app doesn't trigger a Keychain prompt on every update. Agents keep using the Pos
   index). Phases `creating` → `live` → (`deleting`) → `closed`. Close reasons: published, inbox (test-mode TikTok),
   error, copyright, vanished, rejected — final, the post is never submitted again by itself (`reset` releases error,
   rejected, vanished) — and replaced, cancelled, interrupted (not final). `postiz_media` caches the media per render.
-- **Tick**: `… render → publish → sync → …`. *publish* first deletes open jobs that must go (post removed, terminal or
-  marked posted by hand, moved, edited, render changed, platform off/paused, Manual, global pause, channel changed),
-  then creates for every Postiz-routed post with its render attached within the render horizon, soonest first. A job
-  whose slot is less than 5 min away (or past) is deleted only after a sync in the last 90 s showed it unpublished.
+- **One clip, one platform, one Postiz post.** Jobs carry a *lineage* (clip + platform, or clip + platform + version for
+  a repost). Planner moves give a post a new id; the lineage stays. Nothing is created for a lineage while another of
+  its jobs is open (not confirmed deleted, or unconfirmed) or once one was published (a later post of that lineage is
+  then recorded as posted with that link). The check runs inside the claim's `BEGIN IMMEDIATE`, so two engines can't
+  both pass.
+- **Tick**: `… render → publish → sync → …`. *publish* first deletes open jobs that must go (post removed or
+  re-planned, terminal or marked posted by hand, moved, edited, render changed, platform off/paused, Manual, global
+  pause, channel changed), then creates for every Postiz-routed post with its render attached within the render
+  horizon, soonest first. The same "settings allow Postiz" check decides both (no delete/create churn).
+- **Near the slot** (from 5 min before it): Postiz's copy is never *replaced* — an edit, a new render or a re-plan
+  is logged and Postiz keeps what it has. A *cancel* there first reads the post's current state (one `GET /posts`):
+  published → recorded, never deleted; gone → done; otherwise deleted.
+- **Test mode is frozen per job**: switching Test run changes only posts submitted afterwards (§6).
+- **Handed to Today**: a post whose manual "due" notice went out stays Manual even when the key or channel comes back
+  (Eric may already have posted it); switching the platform back to Postiz before its slot re-routes later posts.
   *sync* lists posts over the open jobs' window (10 min while hot, else hourly), maps §5, probes a refused key hourly,
   refreshes the channel list every 6 h and pulls analytics daily.
 - **Due / missed**: a post with an open job, or routed to Postiz with no final job, gets no manual "due" notification;
   a post with an open job is never overdue or shifted. Everything else is exactly as before (Today).
-- **Interrupted create** (network/5xx after the create was sent): the claim stays; the sync step adopts the Postiz post
-  with the same channel and date, or releases the claim after 10 min.
+- **A create whose outcome is unknown** (5xx, timeout, an unreadable 2xx, a database error while recording it): the
+  claim stays and blocks the lineage. The sync step adopts the one Postiz post with the same channel and date
+  (±60 s; past slots go out rounded up to a whole minute). Not found → unconfirmed (`isUnconfirmed`): a critical notice, Doctor
+  `postiz.create_unknown`, and nothing is sent again until `PostizService.resolveUnknown` (`djq postiz resolve`)
+  confirms it isn't in Postiz. Only a definite refusal (400/413 → Today, 401/429) closes a sent create. A claim whose
+  create was never sent (crash before it) is released after 10 min.
 - **Budget** (kv `postiz.budget`, `BEGIN IMMEDIATE`): creates leave 1 call/hour for sync, analytics leave 8; uploads
   count. `429` → no calls for 15 min; `401`/`403` → "key refused" (kv), no calls except an hourly probe, notified once,
   cleared by a successful call or saving the key.
@@ -228,8 +243,9 @@ app doesn't trigger a Keychain prompt on every update. Agents keep using the Pos
   "locked or refused"); saving runs `security -i` with the `add-generic-password -U …` line on stdin, so the key never
   appears in a process argument list and the item trusts `/usr/bin/security` (no prompt after rebuilds). Requests
   print redacted, redirects are never followed, uploads stream from a temp file (stale ones are swept).
-- **Tests** never reach Postiz or the Keychain: `PostizLive.disabled` (set by the test fixture; `DJQ_POSTIZ_OFFLINE=1`
-  for any process) turns the real transport and the real `security` runner off, and every test injects fakes.
+- **Tests and dev runs** never reach Postiz or the Keychain: `PostizLive.disabled` turns the real transport and the
+  real `security` runner off. It is on in tests (the fixture), with `DJQ_POSTIZ_OFFLINE=1`, and in any process with
+  `DJQ_HOME`/`DJQ_ROOT` set unless `DJQ_POSTIZ_LIVE=1`; every test injects fakes.
 
 ## 9. Not supported / follow-ups
 

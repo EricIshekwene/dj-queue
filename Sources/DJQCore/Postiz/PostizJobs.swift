@@ -85,8 +85,24 @@ public struct PostizJob: Codable, Sendable, Hashable, Identifiable {
   public var lastError: String?
   public var createdAt: Date
   public var updatedAt: Date
+  /// One clip on one platform (`PostizJob.lineage`): the never-double-post unit. Planner moves give a post a new id;
+  /// the lineage stays, so a new job waits until every other job of the lineage is confirmed gone.
+  public var lineage: String = ""
 
   public var isOpen: Bool { closedAt == nil }
+
+  /// `remoteState` of a `creating` job whose create was sent but never confirmed and that Postiz didn't show after a
+  /// sync. Never re-created blindly: it blocks its clip + platform until found in Postiz (adopted) or Eric confirms it
+  /// isn't there (`PostizService.resolveUnknown`). Loud notice; Doctor should report it (`postiz.create_unknown`).
+  public static let unconfirmed = "UNCONFIRMED"
+  public var isUnconfirmed: Bool { isOpen && phase == .creating && remoteState == Self.unconfirmed }
+
+  /// "video#platform#main" for regular posts and retries (one live post per clip and platform, ever), and
+  /// "video#platform#v<N>" for a repost of version N.
+  public static func lineage(videoId: String, platform: Platform, kind: PostKind, versionNo: Int) -> String {
+    "\(videoId)#\(platform.rawValue)#\(kind == .repost ? "v\(versionNo)" : "main")"
+  }
+  public static func lineage(_ p: PlatformPost) -> String { lineage(videoId: p.videoId, platform: p.platform, kind: p.kind, versionNo: p.versionNo) }
 
   public init(id: String = newId(), postId: String, kind: String = "post", videoId: String?, platform: Platform,
               integrationId: String, phase: PostizJobPhase = .creating, postizId: String? = nil, postizGroup: String? = nil,
@@ -131,7 +147,8 @@ extension Store {
       remote_state TEXT, remote_error TEXT, release_url TEXT, release_id TEXT,
       submitted_at REAL, synced_at REAL, closed_at REAL, close_reason TEXT, final INTEGER NOT NULL DEFAULT 0,
       delete_reason TEXT, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
-      created_at REAL NOT NULL, updated_at REAL NOT NULL);
+      created_at REAL NOT NULL, updated_at REAL NOT NULL, lineage TEXT NOT NULL DEFAULT '');
+    CREATE INDEX IF NOT EXISTS postiz_jobs_lineage ON postiz_jobs(lineage);
     CREATE UNIQUE INDEX IF NOT EXISTS postiz_jobs_one_live ON postiz_jobs(post_id) WHERE closed_at IS NULL AND kind='post';
     CREATE INDEX IF NOT EXISTS postiz_jobs_post ON postiz_jobs(post_id);
     CREATE INDEX IF NOT EXISTS postiz_jobs_open ON postiz_jobs(closed_at);
@@ -168,11 +185,33 @@ extension Store {
     try postizJobs(where: "post_id=? AND closed_at IS NOT NULL AND final=1 AND kind='post'", [postId], order: "closed_at DESC").first
   }
 
-  /// Inserts `job` as the post's open job. False when the post already has one (another process won the race).
+  /// Open jobs of a clip + platform lineage (any post id).
+  public func openPostizJobs(lineage: String) throws -> [PostizJob] {
+    try postizJobs(where: "lineage=? AND closed_at IS NULL AND kind='post'", [lineage])
+  }
+
+  /// A job of the lineage that Postiz published (or holds as PUBLISHED): nothing is ever created for it again.
+  public func publishedPostizJob(lineage: String) throws -> PostizJob? {
+    try postizJobs(where: "lineage=? AND kind='post' AND (close_reason IN ('published','inbox') OR remote_state='PUBLISHED')",
+                   [lineage], order: "updated_at DESC").first
+  }
+
+  /// Why the lineage can't get a new job now (nil = it can): another job is still open (not confirmed deleted), or
+  /// one was published.
+  public func postizLineageBlock(_ lineage: String, except postId: String? = nil) throws -> String? {
+    if let p = try publishedPostizJob(lineage: lineage) { return "already published by Postiz (job \(p.id.prefix(8)))" }
+    if let o = try openPostizJobs(lineage: lineage).first { return "an earlier Postiz post is still \(o.phase.rawValue)" }
+    return nil
+  }
+
+  /// Inserts `job` as the post's open job. False when the post already has one, or its clip + platform lineage is
+  /// blocked (another job not confirmed gone, or a published one) — checked in the same `BEGIN IMMEDIATE`, so two
+  /// processes can't both pass.
   @discardableResult
   public func claimPostizJob(_ job: PostizJob) throws -> Bool {
     try db.transaction {
       if job.kind == "post", try livePostizJob(postId: job.postId) != nil { return false }
+      if job.kind == "post", !job.lineage.isEmpty, try postizLineageBlock(job.lineage) != nil { return false }
       do {
         try insert(job)
         return true
@@ -182,18 +221,23 @@ extension Store {
     }
   }
 
-  /// Writes every column of an existing job.
+  /// Writes an existing job. A closed row is never reopened and keeps its first close (a stale copy from another
+  /// process can't undo a delete); `final` is written only by `closePostizJob` / `releasePostizJobs`.
   public func save(_ j: PostizJob) throws {
     var j = j
     j.updatedAt = now
     if try postizJob(id: j.id) == nil { try insert(j); return }
     try db.run("""
-      UPDATE postiz_jobs SET post_id=?, kind=?, video_id=?, platform=?, integration_id=?, phase=?, postiz_id=?, postiz_group=?,
+      UPDATE postiz_jobs SET post_id=?, video_id=?, integration_id=?,
+        phase=CASE WHEN closed_at IS NULL THEN ? ELSE phase END, postiz_id=COALESCE(postiz_id, ?), postiz_group=?,
         media_id=?, media_path=?, cover_media_id=?, cover_media_path=?, render_id=?, content_hash=?, scheduled_at=?,
         remote_date=?, test_mode=?, post_type=?, remote_state=?, remote_error=?, release_url=?, release_id=?,
-        submitted_at=?, synced_at=?, closed_at=?, close_reason=?, delete_reason=?, attempts=?, last_error=?,
-        updated_at=? WHERE id=?
-      """, Array(Self.binds(j).dropFirst().dropLast(2)).enumerated().filter { $0.offset != 26 }.map(\.element) + [j.updatedAt, j.id])
+        submitted_at=?, synced_at=?, closed_at=COALESCE(closed_at, ?), close_reason=COALESCE(close_reason, ?),
+        delete_reason=?, attempts=?, last_error=?, updated_at=?, lineage=? WHERE id=?
+      """, [j.postId, j.videoId, j.integrationId, j.phase.rawValue, j.postizId, j.postizGroup, j.mediaId, j.mediaPath,
+            j.coverMediaId, j.coverMediaPath, j.renderId, j.contentHash, j.scheduledAt, j.remoteDate, j.testMode, j.postType,
+            j.remoteState, j.remoteError, j.releaseURL, j.releaseId, j.submittedAt, j.syncedAt, j.closedAt,
+            j.closeReason?.rawValue, j.deleteReason, j.attempts, j.lastError, j.updatedAt, j.lineage, j.id])
   }
 
   /// Closes a job (`phase` closed, `closed_at` now).
@@ -204,6 +248,7 @@ extension Store {
     j.closeReason = reason
     if let note { j.lastError = note }
     try db.transaction {
+      guard try postizJob(id: id)?.closedAt == nil else { return }  // first close wins
       try save(j)
       // `final` is written only here and by `releasePostizJobs` (a later save never undoes a release).
       try db.run("UPDATE postiz_jobs SET final=? WHERE id=?", [reason.isFinal, id])
@@ -223,9 +268,9 @@ extension Store {
       INSERT INTO postiz_jobs(id,post_id,kind,video_id,platform,integration_id,phase,postiz_id,postiz_group,media_id,media_path,
         cover_media_id,cover_media_path,render_id,content_hash,scheduled_at,remote_date,test_mode,post_type,remote_state,
         remote_error,release_url,release_id,submitted_at,synced_at,closed_at,close_reason,final,delete_reason,attempts,
-        last_error,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      """, Self.binds(j))
+        last_error,created_at,updated_at,lineage)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      """, Self.binds(j) + [j.lineage])
   }
 
   static func binds(_ j: PostizJob) -> [SQLBindable?] {
@@ -247,7 +292,7 @@ extension Store {
               submittedAt: r.date("submitted_at"), syncedAt: r.date("synced_at"), closedAt: r.date("closed_at"),
               closeReason: r.string("close_reason").flatMap(PostizCloseReason.init), deleteReason: r.string("delete_reason"),
               attempts: r.int("attempts") ?? 0, lastError: r.string("last_error"), createdAt: r.date("created_at")!,
-              updatedAt: r.date("updated_at")!)
+              updatedAt: r.date("updated_at")!).with { $0.lineage = r.string("lineage") ?? "" }
   }
 
   // MARK: Media cache
@@ -270,4 +315,8 @@ extension Store {
   public func deletePostizMedia(renderId: String) throws {
     try db.run("DELETE FROM postiz_media WHERE render_id=?", [renderId])
   }
+}
+
+extension PostizJob {
+  func with(_ f: (inout PostizJob) -> Void) -> PostizJob { var c = self; f(&c); return c }
 }
