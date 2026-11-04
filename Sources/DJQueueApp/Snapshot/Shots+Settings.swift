@@ -32,7 +32,7 @@ extension SnapshotShots {
       open(m, .captions)
     })
     shots.append(c.main("44d-settings-newClipDefaults-caption-groups") { m in
-      open(m, .newClipDefaults)
+      open(m, .newClipDefaults)  // after 46b, which made the groups
       SettingsUIState.shared.scrollTarget = NewClipDefaultsSettings.captionAnchor
     })
     return shots
