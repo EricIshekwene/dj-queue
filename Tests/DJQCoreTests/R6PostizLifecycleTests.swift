@@ -621,10 +621,122 @@ import Testing
     rig.f.clock.advance(3600)
     rig.tick(3)
     #expect(rig.fake.createCount == 1)
-    #expect(try rig.service.resolveUnknown(postId: j.postId) == "not in Postiz — it will be sent again")
-    rig.tick()
-    #expect(rig.fake.createCount == 2 && rig.fake.livePosts.count == 1)
+    // One more look finds nothing: it never re-sends by itself; Eric decides.
+    #expect(throws: EngineError.self) { try rig.service.resolveUnknown(postId: j.postId) }
+    #expect(try rig.service.resolveUnconfirmed(postId: j.postId, inPostiz: false) == "released to Today — post it by hand")
+    rig.tick(3)
+    let p = try #require(try rig.store.post(id: j.postId))
+    #expect(rig.fake.createCount == 1 && p.publisher == "manual" && !p.state.isTerminal)
     #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func unconfirmedInPostizIsNeverSentAgain() throws {
+    let rig = try Rig(1, platforms: [.x])
+    rig.fake.createOutcomes = ["500"]
+    rig.tick(12)
+    rig.f.clock.advance(PostizService.staleCreate + 1)
+    rig.tick()
+    let j = try #require(try rig.store.openPostizJobs().first { $0.isUnconfirmed })
+    try rig.keys.delete()  // works offline
+    _ = try rig.service.resolveUnconfirmed(postId: j.postId, inPostiz: true)
+    try rig.service.saveKey("test-key-123")
+    rig.tick(3)
+    let posted = try rig.store.post(id: j.postId)
+    #expect(rig.fake.createCount == 1 && posted?.state == .posted)
+  }
+
+  // MARK: Re-review probes (N1–N5)
+
+  /// N2 / probe A: handed to Today, key saved, then a re-render: still Manual, never sent.
+  @Test func reRenderNeverSendsAPostHandedToToday() throws {
+    let rig = try Rig(1, platforms: [.x]) { $0.enabledPlatforms = [.x] }  // X's own post does the re-render
+    try rig.keys.delete()
+    rig.settle()
+    rig.f.setTime("2026-11-02", "17:05")
+    rig.tick()
+    try rig.service.saveKey("test-key-123")
+    var e = try rig.store.edit(videoId: "clip-0")
+    e.crop = CropRect(x: 20, y: 0, w: 1215, h: 2160)
+    try rig.store.save(e, videoId: "clip-0")
+    rig.tick(3)
+    let x = try #require(try rig.f.post(.x, day: "2026-11-02"))
+    let notes = try rig.store.history(postId: x.id).compactMap(\.note)
+    #expect(notes.contains { $0.hasPrefix("rendered") } && notes.filter { $0.hasPrefix("render") }.count >= 2, "\(notes)")  // it re-rendered
+    #expect(rig.fake.createCount == 0 && x.state == .due)
+  }
+
+  /// N1 / probes B and B2: two past-slot posts on one channel in one tick, one create lost and one landed (or both
+  /// landing with garbage): each Postiz post is matched to exactly its own job; resolve never re-sends.
+  @Test(arguments: [["500", "timeout"], ["garbage", "garbage"], ["timeout", "500"]])
+  func twoPastSlotCreatesOnOneChannelNeverCrossOrDouble(outcomes: [String]) throws {
+    let rig = try Rig(2, platforms: [.x]) { $0.postsPerDay = 2; $0.pausedPlatforms = [.x] }
+    rig.settle()
+    rig.f.setTime("2026-11-02", "20:30")  // X at 17:00 and 20:00 both passed while paused
+    try rig.f.updateSettings { $0.pausedPlatforms = [] }
+    rig.fake.createOutcomes = outcomes
+    rig.tick()
+    if try rig.store.openPostizJobs().count < 2 { rig.tick() }  // a timeout stops the tick's other calls
+    let jobs = try rig.store.openPostizJobs()
+    #expect(jobs.count == 2 && Set(jobs.map(\.remoteDate)).count == 2)  // never the same minute on one channel
+    rig.f.clock.advance(PostizService.staleCreate + 1)
+    rig.tick(2)
+    #expect(try rig.invariants().isEmpty)
+    for j in try rig.store.openPostizJobs() where j.postizId != nil {
+      #expect(rig.fake.post(j.postizId!)?.content == j.content)  // adopted its own post, never the other clip's
+    }
+    for j in try rig.store.openPostizJobs() where j.isUnconfirmed {
+      #expect(throws: EngineError.self) { try rig.service.resolveUnknown(postId: j.postId) }
+      _ = try rig.service.resolveUnconfirmed(postId: j.postId, inPostiz: false)
+    }
+    let creates = rig.fake.createCount
+    rig.tick(3)
+    let bad = try rig.invariants()
+    #expect(rig.fake.createCount == creates && bad.isEmpty)
+  }
+
+  /// N4 / probe C: a cancel near the slot still DELETEs when the list doesn't show the post.
+  @Test func nearSlotCancelDeletesEvenWhenTheListLags() throws {
+    let rig = try Rig(1, platforms: [.x])
+    rig.settle()
+    let x = try #require(try rig.f.post(.x, day: "2026-11-02"))
+    let j = try #require(try rig.job(x))
+    rig.fake.hiddenFromList = [j.postizId!]
+    rig.f.setTime("2026-11-02", "16:58")
+    try PostActions(store: rig.store).markPosted(postId: x.id, url: Fixture.postURLs[.x]!)
+    rig.tick()
+    #expect(rig.fake.deleteCount == 1 && rig.fake.post(j.postizId!)?.deleted == true)
+  }
+
+  /// N3 / probe D: an unconfirmed create, then X → Manual and no key: the post reaches Today with a warning, and
+  /// Eric's decision works offline.
+  @Test func unconfirmedCreateNeverWedgesAfterGoingManual() throws {
+    let rig = try Rig(1, platforms: [.x])
+    rig.fake.createOutcomes = ["500"]
+    rig.tick(12)
+    rig.f.clock.advance(PostizService.staleCreate + 1)
+    rig.tick()
+    let j = try #require(try rig.store.openPostizJobs().first { $0.isUnconfirmed })
+    try rig.f.updateSettings { $0.publishing.publishers[.x] = .manual }
+    try rig.keys.delete()
+    rig.f.setTime("2026-11-02", "17:05")
+    rig.tick()
+    let due = try #require(rig.notifier.delivered.first { $0.key.hasPrefix("due:\(j.postId)") })
+    #expect(due.body.hasPrefix("Check the Postiz calendar first") && due.critical)
+    rig.f.setTime("2026-11-03", "09:00")
+    rig.tick()
+    #expect(rig.notifier.delivered.filter { $0.key.hasPrefix("postiz.unknown:\(j.id)") }.count >= 1)
+    _ = try rig.service.resolveUnconfirmed(postId: j.postId, inPostiz: false)
+    #expect(try rig.store.openPostizJobs().isEmpty)
+  }
+
+  /// N5 / probe F: a test-run draft past its slot says so.
+  @Test func testDraftPastItsSlotIsNotified() throws {
+    let rig = try Rig(1, platforms: [.x]) { $0.publishing.testMode = true }
+    rig.settle()
+    try rig.f.updateSettings { $0.publishing.testMode = false }
+    rig.f.setTime("2026-11-02", "18:30")
+    rig.tick()
+    #expect(rig.notifier.delivered.contains { $0.key.hasPrefix("postiz.draftPast:") })
   }
 
   @Test(arguments: ["garbage", "timeout"])
@@ -881,7 +993,8 @@ import Testing
   @Test(arguments: Array(1...16) as [UInt64])
   func randomPlannerOpsKeepTheInvariants(seed: UInt64) throws {
     var rng = SeededRNG(seed: seed)
-    let rig = try Rig(8, platforms: [.tiktok, .x, .youtube], budget: 80)
+    // Two posts a day per platform: past-slot submissions on one channel in one tick (staggered minutes, N1).
+    let rig = try Rig(8, platforms: [.tiktok, .x, .youtube], budget: 150) { $0.postsPerDay = seed % 2 == 0 ? 2 : 1 }
     rig.fake.rng = SeededRNG(seed: seed &+ 99)
     let other = PostizService(store: rig.store, transport: rig.fake, keyStore: rig.keys)
     let engine2 = Engine(store: rig.store, renderer: rig.renderer, publisher: nil, notifier: rig.notifier, postiz: other)
@@ -892,7 +1005,7 @@ import Testing
     let planner = Planner(store: rig.store), actions = PostActions(store: rig.store), bulk = BulkActions(store: rig.store)
     var trace: [String] = []
     for step in 0..<120 {
-      let op = Int.random(in: 0..<15, using: &rng)
+      let op = Int.random(in: 0..<16, using: &rng)
       let slots = try rig.store.planSlots(where: "date>=?", [rig.f.dm.key(rig.f.clock.now)])
       let live = try rig.store.posts().filter { !$0.state.isTerminal }
       func pick<T>(_ a: [T]) -> T? { a.isEmpty ? nil : a[Int.random(in: 0..<a.count, using: &rng)] }
@@ -921,6 +1034,13 @@ import Testing
           if let j = pick(try rig.store.openPostizJobs().filter { $0.postizId != nil }) {
             if Bool.random(using: &rng) { rig.fake.vanish(j.postizId!) } else { rig.fake.fail(j.postizId!, error: "boom") }
           }
+        case 15:
+          if let j = pick(try rig.store.openPostizJobs().filter(\.isUnconfirmed)) {
+            _ = try? rig.service.resolveUnknown(postId: j.postId)  // adopts only an exact single match
+            if try rig.store.postizJob(id: j.id)?.isUnconfirmed == true {
+              _ = try rig.service.resolveUnconfirmed(postId: j.postId, inPostiz: Bool.random(using: &rng))
+            }
+          }
         case 13:
           let w = rig.f.dm.addDays(rig.f.dm.weekStart(of: rig.f.clock.now), 7)
           if try rig.store.week(w)?.state != .approved { try planner.approveWeek(w) }
@@ -939,7 +1059,8 @@ import Testing
       dbFail = mode == 5
       let rep = (Bool.random(using: &rng) ? rig.engine : engine2).tick(reason: "t")
       var bad = try rig.invariants()
-      if mode == 0 || mode >= 6 {
+      // (A tick stopped by the hourly budget legitimately leaves deletes for later.)
+      if mode == 0 || mode >= 6, rep.steps["publish"]?.contains("paused:") != true {
         // A create confirmed by this tick's sync step is reconciled by the next publish step.
         if !bad.isEmpty || rep.steps["sync"]?.contains("found") == true { rig.engine.tick(reason: "t") }
         bad += try rig.settingsRespected()

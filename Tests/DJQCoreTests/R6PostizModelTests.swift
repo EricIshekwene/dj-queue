@@ -233,7 +233,7 @@ import Testing
     #expect(PostizLive.offByEnvironment(["DJQ_ROOT": "/tmp/dev/DJ Video"]))
     #expect(!PostizLive.offByEnvironment(["DJQ_HOME": "/tmp/scratch", "DJQ_POSTIZ_LIVE": "1"]))
     #expect(PostizLive.offByEnvironment(["DJQ_HOME": "/tmp/scratch", "DJQ_POSTIZ_LIVE": "1", "DJQ_POSTIZ_OFFLINE": "1"]))
-    #expect(!PostizLive.offByEnvironment(["DJQ_HOME": ""]))
+    #expect(PostizLive.offByEnvironment(["DJQ_HOME": ""]))  // set (even empty) = scratch, as Paths reads it
   }
 
   @Test func keychainReadSeparatesNotFoundFromLockedOrDenied() throws {
