@@ -47,6 +47,8 @@ final class FakePostiz: PostizTransport, @unchecked Sendable {
   /// One-shot create outcomes, used in order: "500" (refused, nothing made), "garbage" (made, then an unreadable
   /// 2xx), "timeout" (made, then the connection drops).
   var createOutcomes: [String] = []
+  /// Posts GET /posts leaves out (a list that lags), though they exist.
+  var hiddenFromList: Set<String> = []
   /// Every post ever created (also deleted ones), for the global never-double-post checks.
   var everCreated: [Post] { withLock { posts.values.sorted { $0.id < $1.id } } }
   /// Ids that were ever PUBLISHED (a later delete doesn't un-publish).
@@ -150,7 +152,7 @@ final class FakePostiz: PostizTransport, @unchecked Sendable {
         let q = URLComponents(url: r.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         guard let s = PostizClient.parseDate(q.first { $0.name == "startDate" }?.value),
               let e = PostizClient.parseDate(q.first { $0.name == "endDate" }?.value) else { return json(400, ["message": "dates"]) }
-        let list = posts.values.filter { !$0.deleted && $0.date >= s && $0.date <= e }.sorted { $0.id < $1.id }.map { p in
+        let list = posts.values.filter { !$0.deleted && $0.date >= s && $0.date <= e && !hiddenFromList.contains($0.id) }.sorted { $0.id < $1.id }.map { p in
           var o: [String: Any] = ["id": p.id, "group": p.group, "publishDate": PostizClient.isoString(p.date), "state": p.state,
                                   "integration": ["id": p.integrationId, "providerIdentifier": "x"], "content": p.content]
           o["releaseURL"] = p.releaseURL ?? NSNull()

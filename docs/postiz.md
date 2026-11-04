@@ -222,20 +222,24 @@ app doesn't trigger a Keychain prompt on every update. Agents keep using the Pos
   horizon, soonest first. The same "settings allow Postiz" check decides both (no delete/create churn).
 - **Near the slot** (from 5 min before it): Postiz's copy is never *replaced* — an edit, a new render or a re-plan
   is logged and Postiz keeps what it has. A *cancel* there first reads the post's current state (one `GET /posts`):
-  published → recorded, never deleted; gone → done; otherwise deleted.
+  published → recorded, never deleted; otherwise (including "not listed") DELETE, a 404 counting as done.
 - **Test mode is frozen per job**: switching Test run changes only posts submitted afterwards (§6).
-- **Handed to Today**: a post whose manual "due" notice went out stays Manual even when the key or channel comes back
-  (Eric may already have posted it); switching the platform back to Postiz before its slot re-routes later posts.
+- **Handed to Today**: a post whose manual "due" notice went out (or that was missed, posted now or shifted by hand)
+  stays Manual for good, across re-renders, even when the key or channel comes back (Eric may already have posted
+  it); only a reset sends it through Postiz again. Later posts follow the platform's route.
+- **Test-run drafts** an hour past their slot are notified (release, or post by hand).
   *sync* lists posts over the open jobs' window (10 min while hot, else hourly), maps §5, probes a refused key hourly,
   refreshes the channel list every 6 h and pulls analytics daily.
 - **Due / missed**: a post with an open job, or routed to Postiz with no final job, gets no manual "due" notification;
   a post with an open job is never overdue or shifted. Everything else is exactly as before (Today).
 - **A create whose outcome is unknown** (5xx, timeout, an unreadable 2xx, a database error while recording it): the
-  claim stays and blocks the lineage. The sync step adopts the one Postiz post with the same channel and date
-  (±60 s; past slots go out rounded up to a whole minute). Not found → unconfirmed (`isUnconfirmed`): a critical notice, Doctor
-  `postiz.create_unknown`, and nothing is sent again until `PostizService.resolveUnknown` (`djq postiz resolve`)
-  confirms it isn't in Postiz. Only a definite refusal (400/413 → Today, 401/429) closes a sent create. A claim whose
-  create was never sent (crash before it) is released after 10 min.
+  claim stays and blocks the lineage. The sync step adopts the one Postiz post with the same channel, the exact date
+  sent and the exact caption (two open jobs on one channel never share a minute). None or several → unconfirmed
+  (`isUnconfirmed`): a critical notice (daily), Doctor `postiz.create_unknown`, and nothing is sent again until Eric
+  checks the Postiz calendar and decides, offline: `resolveUnconfirmed(postId:inPostiz:)` (`djq postiz resolve
+  --in-postiz | --not-in-postiz`). A request that never left the Mac (`notSent`) and a claim whose create was never
+  sent are released at once / after 10 min. If the platform is switched off Postiz meanwhile, the post reaches Today
+  with "check the Postiz calendar first".
 - **Budget** (kv `postiz.budget`, `BEGIN IMMEDIATE`): creates leave 1 call/hour for sync, analytics leave 8; uploads
   count. `429` → no calls for 15 min; `401`/`403` → "key refused" (kv), no calls except an hourly probe, notified once,
   cleared by a successful call or saving the key.

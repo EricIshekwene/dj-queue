@@ -57,7 +57,8 @@ public enum PostizLive {
 
   public static func offByEnvironment(_ env: [String: String]) -> Bool {
     if env["DJQ_POSTIZ_OFFLINE"] == "1" { return true }
-    let scratch = !(env["DJQ_HOME"] ?? "").isEmpty || !(env["DJQ_ROOT"] ?? "").isEmpty
+    // Set at all (even empty) = a scratch home, exactly as `Paths.standard` reads it.
+    let scratch = env["DJQ_HOME"] != nil || env["DJQ_ROOT"] != nil
     return scratch && env["DJQ_POSTIZ_LIVE"] != "1"
   }
 }
@@ -117,7 +118,14 @@ public final class URLSessionPostizTransport: PostizTransport, @unchecked Sendab
       task.cancel()
       throw PostizError.network("timed out after \(Int(request.timeout)) s")
     }
-    if let e = box.error { throw PostizError.network((e as NSError).localizedDescription) }
+    if let e = box.error {
+      let ns = e as NSError
+      // These fail before any byte reaches Postiz: a definite "not sent".
+      let never: Set<Int> = [NSURLErrorNotConnectedToInternet, NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost,
+                             NSURLErrorDNSLookupFailed]
+      if ns.domain == NSURLErrorDomain, never.contains(ns.code) { throw PostizError.notSent(ns.localizedDescription) }
+      throw PostizError.network(ns.localizedDescription)
+    }
     guard let http = box.response as? HTTPURLResponse else { throw PostizError.network("no HTTP response") }
     return PostizHTTPResponse(status: http.statusCode, body: box.data ?? Data())
   }
@@ -169,6 +177,8 @@ public enum PostizError: Error, Equatable, Sendable, CustomStringConvertible {
   case payloadTooLarge
   case server(Int, String)
   case network(String)
+  /// The request never left the Mac (no connection, host not found): definitely not received by Postiz.
+  case notSent(String)
   /// The response didn't have the expected shape.
   case badResponse(String)
   /// No key in the Keychain.
@@ -185,6 +195,7 @@ public enum PostizError: Error, Equatable, Sendable, CustomStringConvertible {
     case .payloadTooLarge: "Too large for Postiz (413)"
     case .server(let s, let m): "Postiz server error \(s)\(m.isEmpty ? "" : ": \(m)")"
     case .network(let m): "Can't reach Postiz: \(m)"
+    case .notSent(let m): "Can't reach Postiz (nothing was sent): \(m)"
     case .badResponse(let m): "Unexpected Postiz response: \(m)"
     case .noKey: "No Postiz API key in the Keychain"
     case .overBudget: "Postiz request budget used up for now"
@@ -255,10 +266,11 @@ public struct PostizRemotePost: Codable, Sendable, Hashable {
   public var releaseURL: String?
   public var releaseId: String?
   public var integrationId: String?
+  public var content: String?
   public init(id: String, group: String? = nil, publishDate: Date? = nil, state: String, error: String? = nil,
-              releaseURL: String? = nil, releaseId: String? = nil, integrationId: String? = nil) {
+              releaseURL: String? = nil, releaseId: String? = nil, integrationId: String? = nil, content: String? = nil) {
     self.id = id; self.group = group; self.publishDate = publishDate; self.state = state; self.error = error
-    self.releaseURL = releaseURL; self.releaseId = releaseId; self.integrationId = integrationId
+    self.releaseURL = releaseURL; self.releaseId = releaseId; self.integrationId = integrationId; self.content = content
   }
 }
 
@@ -423,7 +435,7 @@ public final class PostizClient: @unchecked Sendable {
       return PostizRemotePost(id: id, group: p["group"] as? String, publishDate: Self.parseDate(p["publishDate"] as? String),
                               state: (p["state"] as? String ?? "").uppercased(), error: p["error"] as? String,
                               releaseURL: p["releaseURL"] as? String, releaseId: p["releaseId"] as? String,
-                              integrationId: integ)
+                              integrationId: integ, content: p["content"] as? String)
     }
   }
 
