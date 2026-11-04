@@ -41,6 +41,25 @@ public final class PostActions: @unchecked Sendable {
     try store.refreshState(videoId: p.videoId)
   }
 
+  /// A publisher (Postiz) reports the post live: posted with its link and platform id, through the same history and
+  /// state refresh as Mark posted, but without the "not due yet" checks (the publisher is the authority on when it
+  /// went out). A link on the wrong host is kept out of `url` (Doctor reports the post as missing its link).
+  public func recordPublished(postId: String, url: String?, externalId: String?, at: Date, note: String) throws {
+    var p = try post(postId)
+    let clean = url?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let valid = clean.flatMap { (try? Self.validate(url: $0, for: p.platform)) != nil ? $0 : nil }
+    p.state = .posted
+    p.url = valid ?? p.url
+    p.externalId = externalId ?? p.externalId
+    p.postedAt = at
+    p.errorType = nil
+    p.errorMessage = nil
+    if valid == nil, let clean, !clean.isEmpty { p.rawResponse = "release url: \(clean)" }
+    try store.save(p, note: note)
+    try store.logEvent("posted", "\(p.platform.displayName) posted: \(p.url ?? "link missing")", videoId: p.videoId, postId: p.id)
+    try store.refreshState(videoId: p.videoId)
+  }
+
   /// The URL must parse and its host must be (a subdomain of) one of the platform's hosts.
   public static func validate(url: String, for platform: Platform) throws {
     let s = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -129,6 +148,7 @@ public final class PostActions: @unchecked Sendable {
     p.rawResponse = nil
     p.resolution = nil
     try store.save(p, note: "reset")
+    try store.releasePostizJobs(postId: p.id)  // a reset post may go through Postiz again (never a published one)
     try store.refreshState(videoId: p.videoId)
   }
 

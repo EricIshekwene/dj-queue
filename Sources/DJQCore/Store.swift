@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 4
+  public static let schemaVersion = 5
 
   public init(paths: Paths, clock: Clock = SystemClock(), path: String? = nil) throws {
     self.paths = paths
@@ -85,9 +85,15 @@ public final class Store: @unchecked Sendable {
     if v < 2 { try migrateToV2(from: v) }
     if v < 3 { try migrateToV3(from: v) }
     if v < 4 { try migrateToV4(from: v) }
+    if v < 5 { try migrateToV5(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
+    let jcols = Set(try db.query("PRAGMA table_info(postiz_jobs)").compactMap { $0.string("name") })
+    if !jcols.isEmpty, !jcols.contains("lineage") {
+      try db.exec("ALTER TABLE postiz_jobs ADD COLUMN lineage TEXT NOT NULL DEFAULT ''; CREATE INDEX IF NOT EXISTS postiz_jobs_lineage ON postiz_jobs(lineage)")
+    }
+    if !jcols.isEmpty, !jcols.contains("content") { try db.exec("ALTER TABLE postiz_jobs ADD COLUMN content TEXT NOT NULL DEFAULT ''") }
   }
 
   /// Round 2: titles + suggestions, batch journal, cached source size, override-only edits.
@@ -176,6 +182,24 @@ public final class Store: @unchecked Sendable {
     }
   }
 
+  /// Postiz publisher (round 6): `postiz_jobs` (one row per Postiz post DJ Queue made) and `postiz_media` (uploaded
+  /// media per render). Additive and lossless (no existing row changes). No foreign key to platform_posts: the
+  /// planner may delete a post and its job must survive so the engine can cancel it in Postiz. A file database with
+  /// data is copied to `<app support>/backups/` first.
+  private func migrateToV5(from v: Int) throws {
+    if v >= 4, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-schema5-\(f.string(from: Date())).sqlite").path)
+    }
+    try db.transaction {
+      try db.exec(Self.postizSchema + "\nPRAGMA user_version = 5;")
+    }
+  }
+
   private func seedDefaults() throws {
     if try hashtagSets().isEmpty {
       for s in Defaults.hashtagSets { try save(s) }
@@ -200,8 +224,23 @@ public final class Store: @unchecked Sendable {
   /// logged and defaults are used in memory; the row is only replaced when Settings are saved.
   public func settings() throws -> Settings {
     guard let s = try db.one("SELECT json FROM kv WHERE key='settings'")?.string("json") else { return Settings() }
+    return Self.decodeSettings(s)
+  }
+
+  /// A stored settings row decoded exactly as `settings()` does (lenient, migrations applied in memory).
+  public static func decodeSettings(_ s: String) -> Settings {
     do {
-      var out = try JSONCoding.decodeLenient(Data(s.utf8), defaults: Settings())
+      // A top-level field of the wrong type would fail the whole decode: drop just that field (it takes its default).
+      var raw = Data(s.utf8)
+      if var o = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any] {
+        var changed = false
+        if let p = o["publishing"], !(p is [String: Any]) { o.removeValue(forKey: "publishing"); changed = true }
+        if let r = o["limitsRevision"], !(r is NSNumber) || CFGetTypeID(r as CFTypeRef) == CFBooleanGetTypeID() {
+          o.removeValue(forKey: "limitsRevision"); changed = true
+        }
+        if changed, let d = try? JSONSerialization.data(withJSONObject: o) { raw = d }
+      }
+      var out = try JSONCoding.decodeLenient(raw, defaults: Settings())
       // Round-1 rows kept the text/caption defaults at the top level: carry them into `defaults` once.
       if let obj = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any], obj["defaults"] == nil {
         if let x = (obj["defaultStyle"] as? String).flatMap(TextStyle.init) { out.defaults.textStyle = x }
@@ -209,6 +248,14 @@ public final class Store: @unchecked Sendable {
         if let x = obj["defaultPosY"] as? Double { out.defaults.textPosY = x }
         if let x = obj["defaultCaptionTemplateId"] as? String { out.defaults.captionTemplateId = x }
         if let x = obj["defaultHashtagSetIds"] as? [String] { out.defaults.hashtagSetIds = x }
+      }
+      // Round 6: limits stored against an older `PlatformLimits.defaults` move only where they still equal the old
+      // default (in memory; the next save writes them with the current revision).
+      let obj = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any]
+      let rev = (obj?["limitsRevision"] as? Int) ?? 1
+      if rev < PlatformLimits.revision {
+        out.limits = PlatformLimits.migrateStored(out.limits, from: rev)
+        out.limitsRevision = PlatformLimits.revision
       }
       return out
     } catch {

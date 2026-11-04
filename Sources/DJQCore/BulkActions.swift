@@ -570,6 +570,32 @@ public final class BulkActions: @unchecked Sendable {
   /// `force`.
   @discardableResult
   public func undo(_ id: String, force: Bool = false, dryRun: Bool = false) throws -> BulkResult {
+    try undo(id, force: force, dryRun: dryRun, confirmGoLive: false)
+  }
+
+  /// Platforms that undoing batch `id` would put back on Postiz **live** (Postiz publisher, platform on and not paused,
+  /// posting not paused, test run off) while they aren't now — and that have posts waiting to go out. Empty = the
+  /// undo doesn't go live anywhere. The app and `djq bulk undo` ask this before offering the undo.
+  public func undoWouldGoLive(_ id: String) throws -> [Platform] {
+    guard let row = try store.db.one("SELECT * FROM batches WHERE id=?", [id]), let bs = row.string("before"),
+          let before = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(bs.utf8)),
+          let json = before.settings?.json else { return [] }
+    return try goLive(from: try store.settings(), to: Store.decodeSettings(json))
+  }
+
+  func goLive(from cur: Settings, to new: Settings) throws -> [Platform] {
+    func live(_ p: Platform, _ s: Settings) -> Bool { PostizService.settingsAllow(p, s) && !s.publishing.testMode }
+    var out: [Platform] = []
+    for p in Platform.allCases.sorted() where live(p, new) && !live(p, cur) {
+      if try !store.posts(where: "platform=? AND state IN ('planned','rendering','rendered','due')", [p.rawValue]).isEmpty { out.append(p) }
+    }
+    return out
+  }
+
+  /// Undo. When restoring the batch's settings would route waiting posts through Postiz for real (see
+  /// `undoWouldGoLive`), it is refused unless `confirmGoLive` — an undo never goes live silently.
+  @discardableResult
+  public func undo(_ id: String, force: Bool = false, dryRun: Bool = false, confirmGoLive: Bool) throws -> BulkResult {
     guard let row = try store.db.one("SELECT * FROM batches WHERE id=?", [id]) else { throw EngineError("No batch \(id)") }
     let rec = Self.batch(row)
     if let u = rec.undoneAt { throw EngineError("Batch \(id.prefix(8)) was already undone (\(u))") }
@@ -577,6 +603,12 @@ public final class BulkActions: @unchecked Sendable {
           let before = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(bs.utf8)),
           let after = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(asx.utf8)) else {
       throw EngineError("Batch \(id.prefix(8)) journal is unreadable")
+    }
+    if !dryRun, !confirmGoLive, let json = before.settings?.json {
+      let live = try goLive(from: try store.settings(), to: Store.decodeSettings(json))
+      if !live.isEmpty {
+        throw EngineError("Undoing \(rec.action) would publish \(live.map(\.displayName).joined(separator: ", ")) through Postiz for real (test run off). Confirm going live to undo it, or change Settings → Publishing instead.")
+      }
     }
     var result = BulkResult(batchId: nil, action: "undo", dryRun: dryRun, videoIds: rec.videoIds, changed: [], skipped: [:],
                             remainingIssues: [:], summary: "")

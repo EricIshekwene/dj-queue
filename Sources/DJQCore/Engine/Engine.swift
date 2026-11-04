@@ -11,8 +11,8 @@ public struct TickReport: Sendable {
     self.started = started; self.steps = steps; self.errors = errors
   }
   /// Step names in the order a tick runs them (for display).
-  public static let order = ["intake", "stages", "plan", "missed", "due", "platform", "alerts", "render", "proxies", "move", "heartbeat",
-                              "backup"]
+  public static let order = ["intake", "stages", "plan", "missed", "due", "platform", "alerts", "render", "publish", "sync",
+                              "proxies", "move", "heartbeat", "backup"]
 }
 
 /// The background engine (spec §8). One `tick` does whatever is pending; it is safe to call at any time and never
@@ -27,6 +27,9 @@ public final class Engine: @unchecked Sendable {
   let renderer: RenderService?
   let publisher: Publisher?
   let notifier: Notifier
+  /// Round 6: the Postiz publisher (docs/postiz.md). Built with live defaults when not passed; with every platform on
+  /// Manual (the default) it reads no Keychain and makes no call.
+  public let postiz: PostizService?
   lazy var planner = Planner(store: store)
   lazy var queue = Queue(store: store)
   lazy var actions = PostActions(store: store)
@@ -50,16 +53,18 @@ public final class Engine: @unchecked Sendable {
   /// Gap between heartbeats that means the Mac was asleep or off.
   public static let sleepGap: TimeInterval = 180
 
-  public init(store: Store, renderer: RenderService?, publisher: Publisher?, notifier: Notifier) {
+  public init(store: Store, renderer: RenderService?, publisher: Publisher?, notifier: Notifier, postiz: PostizService? = nil) {
     self.store = store
     self.renderer = renderer
     self.publisher = publisher
     self.notifier = notifier
+    self.postiz = postiz ?? PostizService(store: store)
     if renderer is Renderer {
       let ps = ProxyService(store: store)
       proxyService = ps
       ps.shouldPause = { [weak self] in self?.isRendering ?? false }
     }
+    self.postiz?.notify = { [weak self] n in self?.notify(n) ?? false }
   }
 
   public private(set) var lastTick: TickReport? {
@@ -147,6 +152,9 @@ public final class Engine: @unchecked Sendable {
     step("platform", &r) { try platformChecks() }
     step("alerts", &r) { try alerts() }
     step("render", &r) { try renderAhead(&ctx) }
+    // Round 6: submit ahead / replace / cancel in Postiz (after render-ahead attached renders), then read back states.
+    step("publish", &r) { try postiz?.publish() ?? "off" }
+    step("sync", &r) { try postiz?.sync() ?? "off" }
     step("proxies", &r) { try proxies(ctx) }
     step("move", &r) { try moveAndCleanup() }
     step("heartbeat", &r) { try heartbeat(started: started, last: lastBeat) }
@@ -175,17 +183,21 @@ public final class Engine: @unchecked Sendable {
 
   // MARK: Steps
 
-  /// Proposes the current and next week once (when they have never been proposed and the queue has videos).
+  /// Drops past draft-week days that never got posts (round 6, F5: their clips go back to the queue; pinned ones too,
+  /// since a pin on a day that passed unapproved can't post), then proposes the current and next week once (when they
+  /// have never been proposed and the queue has videos).
   func planHousekeeping() throws -> String {
     let dm = try store.dayMath()
     let thisWeek = dm.weekStart(of: store.clock.now)
     var done: [String] = []
+    let stale = try store.dropStalePastDraftSlots(today: store.today(dm))
+    if !stale.isEmpty { done.append("dropped \(stale.count) past draft day\(stale.count == 1 ? "" : "s")") }
     for w in [thisWeek, dm.addDays(thisWeek, 7)] where try store.week(w) == nil {
       guard try !queue.ordered().isEmpty else { break }
       try planner.proposeWeek(w)
-      done.append(w)
+      done.append("proposed \(w)")
     }
-    return done.isEmpty ? "ok" : "proposed \(done.joined(separator: ", "))"
+    return done.isEmpty ? "ok" : done.joined(separator: " · ")
   }
 
   /// A render that failed is retried only after this long, unless its edit/version (hash) changed.
@@ -290,6 +302,10 @@ public final class Engine: @unchecked Sendable {
       try store.db.transaction {
         guard var p = try store.post(id: c.id), ["planned", "rendering", "rendered", "due"].contains(p.state.rawValue),
               !settings.pausedPlatforms.contains(p.platform), isOverdue(p, now: now, settings: settings, dm: dm) else { return }
+        // Postiz holds it (posts with the Mac off): never overdue, nothing shifts. Without a job it is a manual post.
+        if try postiz?.holds(p) == true { return }
+        // Test-run TikTok waiting in the TikTok inbox: Eric finishes it there — never "missed".
+        if try postiz?.isInTikTokInbox(p) == true { return }
         let again = try store.history(postId: p.id).contains { $0.toState == PostState.overdue.rawValue }
         let days = max(1, dm.days(from: dm.key(p.scheduledAt), to: today))
         p.state = .overdue
@@ -327,24 +343,32 @@ public final class Engine: @unchecked Sendable {
     let dm = DayMath(settings: settings)
     let now = store.clock.now
     var n = 0
+    let router = try postiz.map { try $0.router(settings) }
     for c in try store.posts(where: "state IN ('planned','rendering','rendered') AND scheduled_at<=?", [now]) {
       guard var p = try store.post(id: c.id), ["planned", "rendering", "rendered"].contains(p.state.rawValue),
             !settings.pausedPlatforms.contains(p.platform), !isOverdue(p, now: now, settings: settings, dm: dm) else { continue }
       guard let v = try store.video(id: p.videoId) else { continue }
       p.state = .due
+      // Postiz delivers it (open job, or routed with its render still to come — the publish step submits it as soon
+      // as the render lands): no manual "Open Today" notification and no manual publisher.
+      if let postiz, let router, try postiz.deliversThroughPostiz(p, router: router) {
+        try store.save(p, note: "due (Postiz)")
+        try store.refreshState(videoId: p.videoId)
+        continue
+      }
       try store.save(p, note: "due")
-      // TODO(phase 2, Postiz): a post that turns due before its render exists never reaches the publisher here
-      // (render-ahead attaches the render later in this tick or the next). PostizPublisher must be submitted from
-      // render-ahead too — or better, as soon as an approved post has its render — not only at due time.
       if let publisher, p.renderId != nil {
         if let prepared = try? publisher.prepare(postId: p.id) { _ = try? publisher.submit(prepared) }
       }
       try store.refreshState(videoId: p.videoId)
       let late = now.timeIntervalSince(p.scheduledAt)
       let when = late >= 30 * 60 ? Sched.lateText(late) : "due now"
+      let uncertain = try postiz?.uncertainOnToday(p) == true
       notify(AppNotification(
         key: "due:\(p.id):\(Int(p.scheduledAt.timeIntervalSince1970))", title: "\(p.platform.displayName) · \(v.tag) · \(when)",
-        body: "Open Today to copy the caption and drag the file in.", actions: [.markPosted, .open], postId: p.id, videoId: v.id))
+        body: uncertain ? "Check the Postiz calendar first — a Postiz create for it was never confirmed. Then post it from Today."
+          : "Open Today to copy the caption and drag the file in.",
+        critical: uncertain, actions: [.markPosted, .open], postId: p.id, videoId: v.id))
       n += 1
     }
     return n == 0 ? "none" : "due \(n)"
@@ -565,7 +589,7 @@ public final class Engine: @unchecked Sendable {
     do {
       let r = try renderer.ensureRender(videoId: p.videoId, versionNo: p.versionNo, platform: p.platform)
       p.renderId = r.id
-      p.state = .rendered
+      p.state = prior == .due ? .due : .rendered  // a post already due stays due (Today keeps it)
       try store.save(p, note: "rendered \(r.id.prefix(8))")
       try? store.heartbeat(.tick)
     } catch {
