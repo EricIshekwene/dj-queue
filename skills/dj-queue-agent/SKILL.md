@@ -1,6 +1,6 @@
 ---
 name: dj-queue-agent
-description: Read and change DJ Queue clips for Eric through the `djq` CLI — titles, title suggestions (song names), overlay text, captions, kind, scores, new-clip defaults and bulk edits with undo — and answer DJ Queue "Ask an agent" prompts. Use when Eric asks to look up song names for clips, fill titles, fix captions, edit many clips at once, or pastes a prompt that ends with `djq suggest --file`. Never writes SQLite directly; never touches source footage.
+description: Read and change DJ Queue clips for Eric through the `djq` CLI — titles, title suggestions (song names), overlay text, captions, kind, scores, new-clip defaults, bulk edits with undo and Postiz status, previews and drafts — and answer DJ Queue "Ask an agent" prompts. Use when Eric asks to look up song names for clips, fill titles, fix captions, edit many clips at once, or pastes a prompt that ends with `djq suggest --file`. Never writes SQLite directly; never touches source footage.
 ---
 
 # DJ Queue agent guide
@@ -17,6 +17,10 @@ problems use the `dj-queue-doctor` skill.
   `videos.json` ids.
 - Suggestions are your default write. Set a **title** (`djq title`) only when Eric asks you to choose.
 - Don't post, approve weeks or change Settings unless Eric says so.
+- **Postiz: never schedule or publish without Eric's explicit OK.** On your own you may only read
+  (`djq postiz status`, `djq postiz channels`) and preview (`--dry-run`, `djq postiz test <video> --dry-run`) or make
+  Postiz **drafts** (`djq postiz test <video> --draft`, nothing reaches a platform). Never read, print or ask for the
+  Postiz API key (Keychain only; Eric enters it in Settings → Publishing).
 
 `djq` is on PATH when the app is installed (else `swift build` in the repo → `.build/debug/djq`). Dev copies:
 `DJQ_ROOT` (the "DJ Video" folder) + `DJQ_HOME`. Ids can be shortened to a unique prefix.
@@ -146,6 +150,44 @@ file path. To answer:
 3. Run `djq suggest --file <that file>` and tell Eric how many clips got suggestions and which stayed uncertain.
 
 Low certainty → still suggest, with a low `confidence` and the reason in `source`.
+
+## Postiz (publishing, round 6)
+
+Each platform publishes **Manual** (the default: Eric posts from Today) or through **Postiz** (the engine schedules
+the render in Postiz ahead of the slot and reads the live link back; any Postiz problem sends that platform's posts
+back to Today). Contract: `docs/postiz.md`. Every live call shares a budget of 25 per hour with the app, so don't
+loop. Channel ids appear only with `--ids`; the key never appears anywhere.
+
+```sh
+djq postiz status [--json] [--offline] [--ids]   # key/connection (one live check unless --offline), budget, test run,
+                                                 # per platform: publisher, channel (name + provider), route, posts in
+                                                 # Postiz and their states, last sync. Exit 0 = connected + six mapped
+djq postiz channels [--json] [--cached] [--refresh] [--ids]   # Postiz's channels + caption limit each (vs DJ Queue's)
+djq postiz map --dry-run [--json]                # what auto-mapping by provider would set (instagram-standalone,
+                                                 # tiktok-business, threads, facebook, x, youtube); ambiguous or missing
+                                                 # providers are listed, never guessed
+djq postiz test <video> --dry-run [--json]       # the six request bodies for a clip (needs a finished render), no call
+djq postiz test <video> --draft                  # Postiz drafts only (OK without asking; tell Eric they're in Postiz)
+djq postiz link <post>                           # a post Postiz published without a link: the platform's recent posts
+djq postiz sync                                  # one sync now (asks DJ Queue's engine when it's running)
+```
+
+Only with Eric's explicit OK (they change Settings → Publishing and print exactly what changes; preview with
+`--dry-run`, undo with `djq bulk undo <batch>`):
+
+```sh
+djq postiz map [--yes] | djq postiz map <platform> "<channel name>" | djq postiz map <platform> --clear
+djq postiz publisher <platform|all> manual|postiz [--yes]
+djq postiz test-mode on|off [--yes]              # test run: TikTok → inbox, YouTube → unlisted, others → Postiz drafts
+djq postiz link <post> <url>                     # records the link (after Eric confirms which post it is)
+djq postiz release <post> --yes                  # test run: a Postiz draft goes out for real at its time
+```
+
+A change that makes approved posts go out for real (a platform to Postiz with a channel, a new channel, test run
+off) is refused without `--yes`. `--yes` is Eric's word, not yours: ask first, quoting what the dry run printed.
+`djq postiz test` never schedules real posts (not even with `--yes`); real posts go out only from an approved week.
+Switching a platform back to Manual is always safe (the engine removes its waiting posts from Postiz).
+Problems show up in `djq doctor` as `postiz.*` findings (the `dj-queue-doctor` skill has the fix for each).
 
 ## Auto-update (installs, not data)
 

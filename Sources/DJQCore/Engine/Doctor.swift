@@ -9,6 +9,13 @@ public final class Doctor: @unchecked Sendable {
   public var autoUpdateWatcherLoaded: () -> Bool = { AutoUpdateWatcher.isLoaded() }
   /// Duration check with ffprobe (planned/next-48 h videos only). Off in tests for speed.
   public var probeDurations = true
+  /// Round 6: where the Postiz checks ask "is a key saved?" (never its value). Tests inject a memory store.
+  public var postizKeyStore: PostizKeyStore = KeychainPostizKeyStore()
+  /// `djq doctor --live`: one budgeted `GET /integrations` before the Postiz checks (refreshes the cached channel
+  /// list and the key state). Off by default: Doctor reads stored state only and makes no call.
+  public var postizLive = false
+  /// Transport for `postizLive` (nil = the real one). Tests pass a fake.
+  public var postizTransport: PostizTransport?
 
   public init(store: Store) { self.store = store }
 
@@ -43,6 +50,7 @@ public final class Doctor: @unchecked Sendable {
     check("tools", tools)
     check("system.timezone", timeZone)
     check("autoupdate", autoUpdate)
+    check("postiz", postiz)
     check("capcut.markers") {
       [DoctorFinding(id: "capcut.markers", severity: .info, title: "CapCut markers not checked",
                      detail: "No CapCut project → videos.json mapping is recorded yet, so marker changes since export can't be compared.",
@@ -348,4 +356,222 @@ public final class Doctor: @unchecked Sendable {
     return [.init(id: "system.timezone", severity: .warning, title: "Mac time zone is \(mac)", detail: "Slots are planned in \(s.timeZone).",
                   where_: [], fix: "Nothing breaks (slots stay in \(s.timeZone)); change Settings → Time zone only if Eric moved.")]
   }
+}
+
+// MARK: Postiz (round 6, docs/postiz.md)
+
+extension Doctor {
+  /// Every id the Postiz checks can report (skills/dj-queue-doctor/SKILL.md has the safe fix for each).
+  public static let postizCheckIds = ["postiz.not_connected", "postiz.key_invalid", "postiz.mapping_missing",
+                                      "postiz.channel_disabled", "postiz.stuck", "postiz.link_missing", "postiz.rate_limited",
+                                      "postiz.fallback", "postiz.test_mode", "postiz.delete_pending"]
+
+  /// Doctor never reaches Postiz except in `postizLive` mode.
+  final class OfflinePostiz: PostizTransport, @unchecked Sendable {
+    func send(_ request: PostizHTTPRequest) throws -> PostizHTTPResponse { throw PostizError.network("Doctor is offline") }
+  }
+
+  /// The Postiz publisher's health from stored state: settings, the "key saved?" answer, the 401 flag, the budget,
+  /// the cached channel list and the jobs table. While every platform is Manual and nothing is open in Postiz, the
+  /// Keychain isn't asked and the only finding is the `postiz.not_connected` info.
+  func postiz() throws -> [DoctorFinding] {
+    let settings = try store.settings()
+    let pub = settings.publishing
+    let used = pub.postizPlatforms
+    let open = try store.openPostizJobs()
+    let now = store.clock.now
+    var out: [DoctorFinding] = []
+    let s = { (n: Int) in n == 1 ? "" : "s" }
+
+    let testOpen = open.filter(\.testMode)
+    if pub.testMode || !testOpen.isEmpty {
+      let detail = pub.testMode
+        ? "Test run is on: TikTok → the TikTok inbox, YouTube → unlisted, Instagram, Facebook, Threads and X → Postiz drafts (nothing public until released)."
+          + (testOpen.isEmpty ? "" : " \(testOpen.count) test post\(s(testOpen.count)) in Postiz now.")
+        : "Test run is off, but \(testOpen.count) post\(s(testOpen.count)) made during a test run \(testOpen.count == 1 ? "is" : "are") still in Postiz (they keep their Test badge)."
+      out.append(.init(id: "postiz.test_mode", severity: .info, title: pub.testMode ? "Postiz test run is on" : "Test-run posts still in Postiz",
+                       detail: detail, where_: testOpen.map(\.postId),
+                       fix: "When the test is done, Eric turns it off in Settings → Publishing (or `djq postiz test-mode off`). Posts already made keep their badge."))
+    }
+
+    guard !used.isEmpty || !open.isEmpty else {
+      out.append(.init(id: "postiz.not_connected", severity: .info, title: "Postiz not in use",
+                       detail: "Every platform is set to Manual: posts go to Today and Eric marks them posted.", where_: [],
+                       fix: "Nothing to do. To publish through Postiz, Eric adds the key and picks channels in Settings → Publishing."))
+      return out
+    }
+
+    let hasKey = postizKeyStore.hasKey()
+    var liveError: String?
+    if postizLive, hasKey {
+      let live = PostizService(store: store, transport: postizTransport, keyStore: postizKeyStore)
+      do { _ = try live.channels(refresh: true, settings: settings) } catch PostizError.unauthorized {
+        // The service set the "key refused" flag; reported below.
+      } catch {
+        liveError = "\(error)"
+      }
+    }
+    let invalid = try store.postizKeyInvalid()
+    let cache: PostizChannelCache? = try store.kv(PostizChannelCache.kvKey)
+    let router = PostizRouter(settings: settings, hasKey: hasKey, keyInvalid: invalid != nil, channels: cache?.integrations)
+    let svc = PostizService(store: store, transport: OfflinePostiz(), keyStore: postizKeyStore)
+    let names = used.map(\.displayName).joined(separator: ", ")
+    let tag = { (id: String) in (try? self.store.video(id: id))?.tag ?? String(id.prefix(8)) }
+
+    if !hasKey && !used.isEmpty {
+      out.append(.init(id: "postiz.not_connected", severity: .warning, title: "Postiz isn't connected",
+                       detail: "\(names) \(used.count == 1 ? "is" : "are") set to Postiz but no API key is saved, so their posts go to Today (posted by hand).",
+                       where_: used.map(\.rawValue),
+                       fix: "Eric adds the Postiz API key in Settings → Publishing (agents never handle the key)."))
+    } else if let liveError {
+      out.append(.init(id: "postiz.not_connected", severity: .warning, title: "Postiz didn't answer the live check",
+                       detail: liveError, where_: [pub.apiBase],
+                       fix: "Check the network and Postiz's status, then `djq doctor --live` again. Posts Postiz already holds still go out."))
+    }
+
+    if let invalid {
+      out.append(.init(id: "postiz.key_invalid", severity: .error, title: "Postiz refused the API key",
+                       detail: "Since \(Sched.shortTime(invalid.at, settings)): \(invalid.message.isEmpty ? "401" : invalid.message). Posts set to Postiz go to Today; DJ Queue re-checks the key hourly.",
+                       where_: used.map(\.rawValue),
+                       fix: "Eric saves a valid key again in Settings → Publishing (Postiz → Settings → Public API). Agents never handle the key."))
+    }
+
+    // Mapping: a Postiz platform needs a channel that is still in Postiz's list.
+    let unmapped = used.compactMap { p -> (Platform, String)? in
+      guard let id = pub.channels[p], !id.isEmpty else { return (p, "no channel picked") }
+      if let cache, !cache.integrations.contains(where: { $0.id == id }) { return (p, "the picked channel isn't in Postiz any more") }
+      return nil
+    }
+    if !unmapped.isEmpty {
+      let soon = try store.posts(where: "scheduled_at<=? AND state IN ('planned','rendering','rendered','due')", [now.addingTimeInterval(48 * 3600)])
+      let urgent = unmapped.contains { u in soon.contains { $0.platform == u.0 } }
+      out.append(.init(id: "postiz.mapping_missing", severity: urgent ? .error : .warning,
+                       title: "No Postiz channel for \(unmapped.map(\.0.displayName).joined(separator: ", "))",
+                       detail: unmapped.map { "\($0.0.displayName): \($0.1)" }.joined(separator: " · ")
+                         + (urgent ? ". Posts in the next 48 h go to Today." : ". Their posts go to Today until a channel is picked."),
+                       where_: unmapped.map(\.0.rawValue),
+                       fix: "`djq postiz map --dry-run` shows the auto-mapping by provider; Eric runs `djq postiz map` (or picks the channel in Settings → Publishing)."))
+    }
+
+    let disabled = used.compactMap { p -> (Platform, String)? in
+      guard let id = pub.channels[p], let c = cache?.integrations.first(where: { $0.id == id }), c.disabled else { return nil }
+      return (p, c.name)
+    }
+    if !disabled.isEmpty {
+      out.append(.init(id: "postiz.channel_disabled", severity: .error, title: "Postiz channel disabled or expired",
+                       detail: disabled.map { "\($0.0.displayName): \($0.1)" }.joined(separator: " · ") + ". Its posts go to Today until it's reconnected.",
+                       where_: disabled.map(\.0.rawValue),
+                       fix: "Eric reconnects the channel in Postiz (Postiz → the channel → Reconnect); then `djq postiz channels` refreshes the list."))
+    }
+
+    let stuck = try svc.stuckJobs()
+    if !stuck.isEmpty {
+      out.append(.init(id: "postiz.stuck", severity: .error, title: "\(stuck.count) Postiz post\(s(stuck.count)) still waiting an hour after the slot",
+                       detail: stuck.map { "\($0.platform.displayName) · \(tag($0.videoId ?? "")) · slot \(Sched.shortTime($0.remoteDate, settings))" }.joined(separator: " · ")
+                         + ". Postiz still reports them QUEUE.",
+                       where_: stuck.map(\.postId),
+                       fix: "`djq postiz sync` reads the states again. Then check the Postiz calendar: if Postiz can't post it, delete it there (DJ Queue then puts it on Today). Never post it by hand while Postiz still holds it (double post)."))
+    }
+
+    let missing = try svc.linkMissingPosts()
+    if !missing.isEmpty {
+      out.append(.init(id: "postiz.link_missing", severity: .warning, title: "\(missing.count) post\(s(missing.count)) published without a link",
+                       detail: "Postiz published \(missing.map { "\($0.platform.displayName) · \(tag($0.videoId))" }.joined(separator: ", ")) but the platform's post id came back missing.",
+                       where_: missing.map(\.id),
+                       fix: "`djq postiz link <post-id>` lists the platform's recent posts; `djq postiz link <post-id> <url>` records the right one."))
+    }
+
+    let budget = try store.postizBudget()
+    let usedCalls = budget.used(now: now)
+    if budget.isPaused(now: now) || usedCalls >= pub.hourlyBudget {
+      out.append(.init(id: "postiz.rate_limited", severity: .info,
+                       title: budget.isPaused(now: now) ? "Postiz calls paused after a rate limit" : "Postiz call budget used up this hour",
+                       detail: (budget.isPaused(now: now) ? "Postiz answered 429; no calls until \(Sched.shortTime(budget.pausedUntil!, settings)). " : "")
+                         + "\(usedCalls)/\(pub.hourlyBudget) calls in the last hour.",
+                       where_: [], fix: "Nothing to do: calls resume by themselves (deletes first, then the soonest creates)."))
+    }
+
+    // Posts set to Postiz that Postiz won't deliver: they go to Today.
+    let upcoming = try store.posts(where: "scheduled_at<=? AND state IN ('planned','rendering','rendered','due','overdue')",
+                                   [now.addingTimeInterval(7 * 86400)]).filter { used.contains($0.platform) }
+    let fallen = try upcoming.compactMap { p -> String? in
+      guard try !svc.deliversThroughPostiz(p, router: router) else { return nil }
+      let why: String
+      if let j = try store.finalPostizJob(postId: p.id) {
+        switch j.closeReason {
+        case .rejected?: why = PostizFallbackReason.createRejected(j.lastError ?? j.remoteError ?? "no details").message
+        case .vanished?: why = PostizFallbackReason.vanished.message
+        case .inbox?: why = "In the TikTok inbox (test run): finish it in the app, then Mark posted with the link"
+        default: why = "Postiz closed it (\(j.closeReason?.rawValue ?? "?"))"
+        }
+      } else {
+        why = router.route(p.platform).fallbackReason?.message ?? "not in Postiz"
+      }
+      return "post \(String(p.id.prefix(8))) · \(p.platform.displayName) · \(tag(p.videoId)) · \(Sched.shortTime(p.scheduledAt, settings)): \(why)"
+    }
+    if !fallen.isEmpty {
+      out.append(.init(id: "postiz.fallback", severity: .warning, title: "\(fallen.count) post\(s(fallen.count)) fell back to Manual",
+                       detail: "Set to Postiz, but these go to Today to post by hand (next 7 days).", where_: fallen,
+                       fix: "Fix the reason (key or channel: see the other postiz findings) and the next tick submits them. A refused, deleted or inbox post stays manual: post it from Today and `djq posted <post> <url>`; `djq reset <post>` lets Postiz try a refused or deleted one again (Eric's call)."))
+    }
+
+    let pending = open.filter { $0.phase == .deleting && $0.attempts >= 3 }
+    if !pending.isEmpty {
+      out.append(.init(id: "postiz.delete_pending", severity: .warning, title: "Couldn't remove \(pending.count) post\(s(pending.count)) from Postiz",
+                       detail: pending.map { "\($0.platform.displayName) · \(tag($0.videoId ?? "")): \($0.lastError ?? "error")" }.joined(separator: " · "),
+                       where_: pending.map(\.postId),
+                       fix: "DJ Queue keeps retrying and creates nothing new for these meanwhile. If one must not post, Eric deletes it in the Postiz calendar."))
+    }
+    return out
+  }
+}
+
+// MARK: Postiz helpers for `djq postiz` (CLI branch; they use the service's budgeted call path)
+
+/// Caption `maxLength` per Postiz channel (`GET /integration-settings/{id}`), kept in kv a day per channel.
+public struct PostizCaptionLimits: Codable, Sendable, Hashable {
+  public struct Entry: Codable, Sendable, Hashable {
+    public var maxLength: Int?
+    public var fetchedAt: Date
+  }
+  public var entries: [String: Entry] = [:]
+  public init() {}
+  public static let kvKey = "postiz.captionLimits"
+  public static let maxAge: TimeInterval = 86400
+}
+
+extension PostizService {
+  /// Caption limits for `channels` (one budgeted call per channel not checked in the last day, or every one with
+  /// `refresh`). Returns the limit per channel id (nil = Postiz didn't say) and, per channel, why it couldn't be
+  /// read now (budget, network, …); a stopping error (key refused, rate limit, no budget) skips the rest.
+  public func captionLimits(for channels: [PostizIntegration], refresh: Bool = false) throws
+    -> (limits: [String: Int?], errors: [String: String]) {
+    let settings = try store.settings()
+    var cache: PostizCaptionLimits = try store.kv(PostizCaptionLimits.kvKey) ?? PostizCaptionLimits()
+    var limits: [String: Int?] = [:], errors: [String: String] = [:]
+    var stop: String?
+    var fetched = false
+    for c in channels {
+      if !refresh, let e = cache.entries[c.id], now.timeIntervalSince(e.fetchedAt) < PostizCaptionLimits.maxAge {
+        limits[c.id] = e.maxLength
+        continue
+      }
+      if let stop { errors[c.id] = stop; continue }
+      do {
+        let r = try call(.sync, settings) { try client(settings).integrationSettings(c.id) }
+        cache.entries[c.id] = .init(maxLength: r.maxLength, fetchedAt: now)
+        limits[c.id] = r.maxLength
+        fetched = true
+      } catch {
+        errors[c.id] = "\(error)"
+        if Self.stops(error) { stop = "not checked: \(error)" }
+      }
+    }
+    if fetched { try store.setKV(PostizCaptionLimits.kvKey, cache) }
+    return (limits, errors)
+  }
+
+  /// Asks the engine (DJ Queue's, when it holds the engine lock) to run its sync step on the next tick, whatever the
+  /// interval. Post `ChangeSignal` after it so the app ticks now.
+  public func requestSync() throws { try store.setKV(Self.syncNowKey, true) }
 }

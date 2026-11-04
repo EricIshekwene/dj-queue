@@ -44,10 +44,19 @@ usage: djq <command> [args]
   repost <video> <platform> | longform-posted <video> <url>
   score <video> <0-100|clear> | exclude <video> | include <video>
   pause [platform] | resume [platform]
-  intake | tick [--force] | doctor [--json] | health [--days N]
+  intake | tick [--force] | doctor [--json] [--live] | health [--days N]
   render <video> [--version N] [--platform P]
   agent install [--app PATH] [--load] [--force] | agent uninstall [--unload] | agent status
   autoupdate on|off|status|run|rollback|log   install commits to main automatically (djq autoupdate help)
+
+  postiz status [--offline] [--ids] [--json]   Postiz connection, budget, test run, channel + route per platform
+                                      (exit 0 = connected with all six channels mapped, 2 = not ready)
+  postiz channels [--cached] [--refresh] [--ids] [--json]   live channel list + caption limit per channel
+  postiz map [--dry-run] [--yes] | map <platform> <channel>|--clear   auto-map the six DJ channels by provider
+  postiz publisher <platform|all> manual|postiz [--dry-run] [--yes] | postiz test-mode on|off [--dry-run] [--yes]
+  postiz test <video> --dry-run|--draft   the six payloads (no call) or Postiz drafts only; never real posts
+  postiz link <post> [<url>|<release-id>] | postiz release <post> --yes | postiz sync [--force]
+                                      (djq postiz help for details; settings changes are undoable with bulk undo)
 
 Ids can be shortened to a unique prefix. Platforms: \(Platform.allCases.map(\.rawValue).joined(separator: " "))
 Title formatting from tags lives upstream: scripts/prefill_titles.py (docs/metadata.md).
@@ -598,7 +607,10 @@ func run() throws -> Int32 {
 
   case "doctor":
     let json = flag("--json")
-    let r = Doctor(store: store).run()
+    let d = Doctor(store: store)
+    // --live: one budgeted Postiz call (refreshes the channel list and the key state) before the postiz checks.
+    d.postizLive = flag("--live")
+    let r = d.run()
     if json {
       let e = JSONEncoder()
       e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -630,6 +642,9 @@ func run() throws -> Int32 {
     let r = try renderer.ensureRender(videoId: v.id, versionNo: version, platform: p)
     wrote = true
     print("render \(short(r.id)) \(r.status.rawValue) · \(r.outputPath ?? "-")")
+
+  case "postiz":
+    return try PostizCommand.run(store, &wrote)
 
   case "agent":
     switch try arg(0, "install|uninstall|status") {
