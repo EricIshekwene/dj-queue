@@ -100,6 +100,70 @@ import Testing
     #expect(try rig.invariants().isEmpty)
   }
 
+  /// The live case (2026-11-04): Eric edits the template of a clip whose six posts are in Postiz, three times about
+  /// 60 s apart, with the real 25/h budget. Nothing is deleted or spent until the edits settle; then each post is
+  /// replaced exactly once.
+  @Test func liveCaseSixPostsThreeEditsRealBudget() throws {
+    let rig = try Rig(1, platforms: Platform.allCases, budget: 25)
+    rig.settle()
+    rig.f.setTime("2026-11-02", "09:00")  // an hour on: the budget window is fresh, before every slot of the day
+    rig.tick()
+    let before = try rig.store.openPostizJobs()
+    #expect(before.count == 6 && before.allSatisfy { $0.phase == .live })
+    let creates = rig.fake.createCount
+    let calls = rig.fake.log.count
+    let used = try rig.store.postizBudget().used(now: rig.f.clock.now)
+    // The clip's caption template ("short") is edited: every platform's caption changes, the render doesn't.
+    var t = try #require(try rig.store.captionTemplates().first { $0.id == "short" })
+    for (i, text) in ["{text} 🔥 {hashtags}", "{text} 🔥🔥 {hashtags}", "{text} — live {hashtags}"].enumerated() {
+      t.template = text
+      try rig.store.save(t)
+      rig.tick()
+      #expect(rig.fake.deleteCount == 0 && rig.fake.createCount == creates, "edit \(i + 1)")
+      rig.f.clock.advance(i < 2 ? 60 : 119)
+    }
+    rig.tick()  // 119 s after the last edit
+    #expect(rig.fake.deleteCount == 0 && rig.fake.createCount == creates)
+    #expect(rig.fake.log.count == calls)  // not one request while the edits settle…
+    #expect(try rig.store.postizBudget().used(now: rig.f.clock.now) == used)  // …and no budget spent
+    #expect(try rig.store.events(limit: 5000).contains { $0.message.contains("budget used up") } == false)
+    rig.f.clock.advance(1)
+    rig.tick()
+    rig.tick(2)
+    #expect(rig.fake.deleteCount == 6 && rig.fake.createCount == creates + 6)
+    for j in before { #expect(try rig.store.postizJob(id: j.id)?.closeReason == .replaced) }
+    #expect(rig.fake.livePosts.count == 6 && rig.fake.livePosts.allSatisfy { $0.content.contains("— live") })
+    #expect(rig.fake.uploadCount == 2)  // same render: the cached video and cover are reused
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func clockSteppingBackRestartsTheWait() throws {
+    let (rig, x, old) = try xRig()
+    try reply(rig, .following)
+    rig.tick()
+    rig.f.clock.advance(-600)  // the Mac's clock steps back 10 min
+    rig.tick()
+    rig.f.clock.advance(119)
+    rig.tick()
+    #expect(try rig.fake.deleteCount == 0 && rig.job(x)?.id == old.id)
+    rig.f.clock.advance(1)  // 120 s after the step back, not 720 s
+    rig.tick()
+    #expect(try rig.fake.deleteCount == 1 && rig.job(x)?.id != old.id)
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func pendingRowIsSweptWhenPostizIsTurnedOff() throws {
+    let (rig, _, old) = try xRig()
+    try reply(rig, .following)
+    rig.tick()
+    #expect(try rig.store.kv(PostizService.settleKey(old.id), as: PostizService.Settling.self) != nil)
+    try rig.f.updateSettings { $0.publishing.publishers[.x] = .manual }  // the last Postiz platform
+    rig.tick(2)
+    #expect(try rig.store.postizJob(id: old.id)?.closeReason == .cancelled)
+    #expect(try rig.service.publish() == "off")
+    #expect(try rig.store.kv(PostizService.settleKey(old.id), as: PostizService.Settling.self) == nil)
+  }
+
   @Test func revertingForgetsThePendingChange() throws {
     let (rig, x, old) = try xRig()
     try reply(rig, .following)

@@ -242,7 +242,8 @@ public final class PostizService: @unchecked Sendable {
   /// restarting the clock when the hash is new).
   func settleOrReplace(_ j: PostizJob, hash: String, _ why: String) throws -> Decision {
     let key = Self.settleKey(j.id)
-    if let s: Settling = try store.kv(key), s.hash == hash {
+    // A `since` in the future (the clock stepped back) restarts the clock, so the wait never exceeds `settleDelay`.
+    if let s: Settling = try store.kv(key), s.hash == hash, s.since <= now.timeIntervalSince1970 {
       return now.timeIntervalSince1970 - s.since >= Self.settleDelay ? .replace(why) : .settle(why)
     }
     try store.setKV(key, Settling(hash: hash, since: now.timeIntervalSince1970))
@@ -255,8 +256,10 @@ public final class PostizService: @unchecked Sendable {
     if try store.kv(key, as: Settling.self) != nil { try store.db.run("DELETE FROM kv WHERE key=?", [key]) }
   }
 
-  /// Drops pending-change records of jobs that are no longer open.
+  /// Drops pending-change records of jobs that are no longer open (reads first: no write on a tick with none).
   func sweepSettling() throws {
+    guard try store.db.one("SELECT 1 AS x FROM kv WHERE substr(key, 1, ?) = ? LIMIT 1",
+                           [Self.settlePrefix.count, Self.settlePrefix]) != nil else { return }
     try store.db.run("""
       DELETE FROM kv WHERE substr(key, 1, ?) = ? AND substr(key, ?) NOT IN (SELECT id FROM postiz_jobs WHERE closed_at IS NULL)
       """, [Self.settlePrefix.count, Self.settlePrefix, Self.settlePrefix.count + 1])
@@ -306,12 +309,12 @@ public final class PostizService: @unchecked Sendable {
   public func publish() throws -> String {
     let settings = try store.settings()
     let open = try store.openPostizJobs()
+    try sweepSettling()  // also while Postiz is off, so no pending-change row outlives its job
     guard !settings.publishing.postizPlatforms.isEmpty || !open.isEmpty else { return "off" }
     let router = try router(settings)
     var deleted = 0, created = 0, rejected = 0, waiting = 0, failed = 0, held = 0, blocked = 0, settling = 0
     var stopped: String?
     if let k = try keyProblem() { stopped = k.message }
-    try sweepSettling()
 
     // 1. Jobs that must go.
     for var j in open where j.phase == .live || j.phase == .deleting {

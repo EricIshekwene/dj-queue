@@ -155,7 +155,8 @@ A content-only change (caption, title, hashtags, template or Postiz settings) wa
 stayed the same for 2 minutes (`PostizService.settleDelay`, tracked per job in kv `postiz.settle.<job id>`; any further
 edit restarts the clock, an edit back to what Postiz has clears it), so an edit burst is one replace. Postiz keeps
 its copy meanwhile; one quiet "waiting for edits to settle" event per job. A new render, a move, a channel change and
-every cancel stay immediate.
+every cancel stay immediate. Together with the 5-minute safety window, a content edit made from about 7 minutes
+before the slot (2 min settle + 5 min) no longer reaches Postiz: Postiz posts the version it has.
 Unapprove, unqueue, skip, a moved day, a paused platform or switching the platform back to Manual → delete. A post
 Postiz already published is never deleted or re-sent by DJ Queue.
 
