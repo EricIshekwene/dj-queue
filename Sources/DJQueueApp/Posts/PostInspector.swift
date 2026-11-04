@@ -121,11 +121,12 @@ struct PostInspector: View {
     let channel = model.postiz.channel(job?.integrationId ?? model.settings.publishing.channels[post.platform])
     return VStack(alignment: .leading, spacing: 2) {
       row("Status") { PostizBadge(model: model, post: post, state: pz) }
-      Text(model.postizLine(post, pz))
-        .font(pz.isLoud ? DS.type.calloutMedium : DS.type.caption)
-        .foregroundStyle(pz.isLoud ? DS.color.danger : DS.color.textSecondary)
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.leading, 84 + DS.space.sm)
+      if !pz.isLoud {  // a failure's message is in Problem below
+        Text(model.postizLine(post, pz))
+          .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .padding(.leading, 84 + DS.space.sm)
+      }
       if let channel { row("Channel") { Text("\(channel.name) · \(channel.identifier)").lineLimit(1) } }
       if let job, job.isOpen { row("Goes out") { Text(Fmt.day(job.remoteDate, tz: model.tz, style: "EEE d MMM, h:mm a")) } }
       if model.isTestRun(post) { row("Test run") { Text(testRunText).fixedSize(horizontal: false, vertical: true) } }

@@ -19,6 +19,7 @@ struct PostFixes {
     if let h = heldReason, Self.canRetry(post) { return h }
     if Self.canRetry(post) { return nil }
     if post.state.isCopyright { return "Copyright can't be fixed by editing — re-upload anyway, skip the platform or accept" }
+    if model.postizState(post) == .inbox { return "In your TikTok inbox — finish it there, then Mark posted" }
     if post.state == .overdue { return "Nothing to fix — the slot was missed. Use Post now or Shift plan (⋯)" }
     return post.resolution.map { "Already handled (\($0))" } ?? "Only failed posts can be fixed"
   }
@@ -111,7 +112,11 @@ struct PostProblemCard: View {
       .onTapGesture { dsWithAnimation { model.postsSelection = model.postsSelection == post.id ? nil : post.id } }
       .dsTooltip("Click for details and attempt history")
       HStack(spacing: DS.space.xs) {
-        if post.state == .overdue {
+        if model.postizState(post) == .inbox {
+          // Already uploaded to the TikTok inbox: finishing it there is the fix; a second upload would double-post.
+          DSButton("Mark posted…", icon: "checkmark.circle", variant: .outline, size: .sm,
+                   tooltip: "Finish it in the TikTok app, then paste its link") { model.markPostedTarget = post }
+        } else if post.state == .overdue {
           // A missed slot has nothing to edit: its two real fixes take the first places.
           DSButton("Post now", icon: "bolt", variant: .outline, size: .sm, disabledReason: fixes.heldReason,
                    tooltip: "Make it due now and open Today") { model.postNow(post) }
@@ -146,6 +151,7 @@ struct PostProblemCard: View {
 
   private var message: String {
     if let m = post.errorMessage, !m.isEmpty { return m }
+    if model.postizState(post) == .inbox { return "Postiz sent it to your TikTok inbox. Finish it in the TikTok app, then Mark posted with its link." }
     if post.state == .overdue {
       return "The \(AppModel.clockText(post.scheduledAt, tz: model.tz)) slot on \(Fmt.day(post.scheduledAt, tz: model.tz)) passed without a post."
     }

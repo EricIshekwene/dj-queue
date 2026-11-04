@@ -122,8 +122,11 @@ struct PlatformsSettings: View {
             setLimit(p, "\(p.displayName) caption limit set to \(v)") { $0.captionLimit = v }
           }
           if p == .youtube || p == .tiktok {
-            field("\(p.displayName) title characters", "Set the \(p.displayName) title limit (characters)", limit(p)?.titleLimit) { v in
-              setLimit(p, "\(p.displayName) title limit set to \(v)") { $0.titleLimit = v }
+            field("\(p.displayName) title characters", "Set the \(p.displayName) title limit (at most \(titleMax(p)))", limit(p)?.titleLimit) { v in
+              // The platform's own cap is the ceiling (YouTube 100, TikTok 90): a higher value would let a title pass
+              // here that Postiz then cuts.
+              let c = min(v, titleMax(p))
+              setLimit(p, c < v ? "\(p.displayName) allows \(c) at most — title limit set to \(c)" : "\(p.displayName) title limit set to \(c)") { $0.titleLimit = c }
             }
           } else {
             Text("—").font(DS.type.callout).foregroundStyle(DS.color.textTertiary).frame(width: 76, alignment: .trailing)
@@ -140,6 +143,8 @@ struct PlatformsSettings: View {
   private func field(_ label: String, _ tooltip: String, _ value: Int?, _ set: @escaping (Int) -> Void) -> some View {
     SettingsNumberField(label: label, value: value ?? 0, tooltip: tooltip, commit: set).frame(width: 76)
   }
+
+  private func titleMax(_ p: Platform) -> Int { p == .tiktok ? PostizPayload.tiktokTitleMax : PostizPayload.youtubeTitleMax }
 
   private func limit(_ p: Platform) -> PlatformLimits? { model.settings.limits[p] ?? PlatformLimits.defaults[p] }
 

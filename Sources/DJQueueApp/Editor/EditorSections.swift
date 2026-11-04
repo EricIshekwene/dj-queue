@@ -490,12 +490,12 @@ struct EditorCoverMeaning: View {
       return ps.isEmpty ? nil : (m, ps)
     }
     if !groups.isEmpty {
-      EditorField(label: "What the cover does", help: "Through Postiz: how each platform uses this cover") {
+      EditorField(label: "What the cover does", help: "How each platform uses this cover when Postiz posts it") {
         VStack(alignment: .leading, spacing: 6) {
           ForEach(groups, id: \.0) { m, ps in
             HStack(spacing: DS.space.xs) {
               DSBadge(m.label, style: m == .platformPicks ? .outline : .soft(.neutral),
-                      icon: m == .thumbnail ? "photo" : m == .coverFrame ? "film" : "questionmark", size: .sm,
+                      icon: m == .thumbnail ? "photo" : m == .coverFrame ? "film" : "rectangle.dashed", size: .sm,
                       help: Self.meaningText(m, ps))
               Text(ps.map(\.displayName).joined(separator: ", ")).font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
                 .lineLimit(1)

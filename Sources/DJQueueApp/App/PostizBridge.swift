@@ -9,11 +9,18 @@ import Foundation
 ///   no Keychain and no network.
 @MainActor
 enum PostizEnvironment {
+  /// Fake in snapshots, with `DJQ_FAKE_POSTIZ=1`, and in every dev run (`DJQ_HOME` or `DJQ_ROOT` set) unless
+  /// `DJQ_POSTIZ_LIVE=1` asks for the real thing on purpose. A fake run also turns core's live switch off
+  /// (`PostizLive.disabled`), so nothing in the process can reach the Keychain item or Postiz.
   static var isFake: Bool {
-    AppModel.isSnapshotRun || ProcessInfo.processInfo.environment["DJQ_FAKE_POSTIZ"] == "1"
+    let env = ProcessInfo.processInfo.environment
+    if AppModel.isSnapshotRun || env["DJQ_FAKE_POSTIZ"] == "1" { return true }
+    if env["DJQ_POSTIZ_LIVE"] == "1" { return false }
+    return env["DJQ_HOME"] != nil || env["DJQ_ROOT"] != nil
   }
 
   static func keyStore() -> PostizKeyStore {
+    if isFake { PostizLive.disabled = true }
     if AppModel.isSnapshotRun { return MemoryPostizKeyStore() }  // shots set `postiz.hasKey` themselves
     if isFake { return MemoryPostizKeyStore(key: ProcessInfo.processInfo.environment["DJQ_FAKE_POSTIZ_KEY"] == "0" ? nil : "sample-key") }
     return KeychainPostizKeyStore()

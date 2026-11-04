@@ -218,10 +218,11 @@ struct MenuBarContent: View {
     let status = model.postStatus(p)
     return VStack(alignment: .leading, spacing: DS.space.sm) {
       VStack(alignment: .leading, spacing: 2) {
-        Text(due ? "Post now" : "Next post").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+        Text(model.postizState(p) == .inbox ? "Finish in the TikTok app" : due ? "Post now" : "Next post")
+          .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
         Text(countdownText(p, status: status, due: due))
           .font(DS.type.display.monospacedDigit())
-          .foregroundStyle(status.problemTone == .warning ? DS.color.warning : DS.color.text)
+          .foregroundStyle(status.problemTone == .warning && model.postizState(p) != .inbox ? DS.color.warning : DS.color.text)
           .contentTransition(.numericText())
       }
       HStack(spacing: DS.space.sm) {
@@ -258,6 +259,7 @@ struct MenuBarContent: View {
   }
 
   private func countdownText(_ p: PlatformPost, status: DSXPostStatus, due: Bool) -> String {
+    if model.postizState(p) == .inbox { return "In TikTok inbox" }
     if case .late(let t) = status { return "Late \(t)" }
     if due { return "Due now" }
     return AppModel.countdown(to: p.scheduledAt, now: model.now)

@@ -64,6 +64,17 @@ extension SnapshotShots {
         state(m, checkError: "Can't reach Postiz: The Internet connection appears to be offline.")
         open(m, replacing: true)
       },
+      // H1: the two switches that make public posts ask first.
+      c.main("r6-publishing-confirm-test-run-off", pm) { m in
+        state(m, testRun: true)
+        open(m)
+        m.setTestRun(false)
+      },
+      c.main("r6-publishing-confirm-postiz-public", pm) { m in
+        state(m)
+        open(m)
+        m.setPublisher(.facebook, .postiz)
+      },
       pane("r6-publishing-pane-connected", pm, expanded: [.tiktok, .youtube]) { state(pm) },
       pane("r6-publishing-pane-test-run", pm, expanded: [.instagram, .x, .threads]) { state(pm, testRun: true) },
       pane("r6-publishing-pane-not-set-up", c.model) { state(c.model, hasKey: false, checked: false) },

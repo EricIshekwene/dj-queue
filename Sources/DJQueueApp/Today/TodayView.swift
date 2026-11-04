@@ -111,6 +111,7 @@ struct NextUpCard: View {
   }
 
   private func headline(due: Bool) -> String {
+    if model.postizState(post) == .inbox { return "TikTok · In your TikTok inbox — finish it there, then Mark posted" }
     let time = AppModel.clockText(post.scheduledAt, tz: model.tz)
     let when: String
     switch model.postStatus(post) {

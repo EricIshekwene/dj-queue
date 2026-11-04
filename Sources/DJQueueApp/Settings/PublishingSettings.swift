@@ -18,7 +18,7 @@ struct PublishingSection: View {
     connectionRow
     SettingsRow("Test run", description: "TikTok goes to your inbox, YouTube is unlisted, Instagram, Facebook, Threads and X are saved as Postiz drafts.") {
       DSSwitch(isOn: Binding(get: { model.settings.publishing.testMode },
-                             set: { on in model.update(on ? "Test run turned on" : "Test run turned off") { $0.publishing.testMode = on } }))
+                             set: { on in model.setTestRun(on) }))
         .accessibilityLabel("Test run")
     }
 
@@ -68,7 +68,7 @@ struct PublishingSection: View {
     case .rateLimited(let until):
       DSBadge("Rate limited until \(PostizFmt.time(until, model.tz))", style: .soft(.warning), icon: "hourglass",
               help: "Postiz asked DJ Queue to slow down; calls resume by themselves")
-    case .unreachable: DSBadge("Can't reach Postiz", style: .soft(.warning), icon: "wifi.exclamationmark", help: "The last check failed; see the line on the left")
+    case .unreachable(let e): DSBadge("Can't reach Postiz", style: .soft(.warning), icon: "wifi.exclamationmark", help: e)
     }
   }
 
@@ -131,7 +131,7 @@ struct PostizKeyRow: View {
   private func description(_ has: Bool) -> String {
     if let error { return error }
     if has && !replacing { return "Saved in Keychain · never shown here" }
-    return "From Postiz → Settings → Public API. Stored in the Keychain."
+    return "Postiz → Settings → Public API · kept in the Keychain"
   }
 
   private func save() {
@@ -238,7 +238,8 @@ struct PublishingPlatformDetail: View {
       switch platform {
       case .tiktok:
         line("Posting") {
-          SettingsSelect(label: "TikTok posting", selection: bind(\.tiktok.method) { "TikTok: \($0.displayName)" },
+          SettingsSelect(label: "TikTok posting",
+                         selection: guarded(\.tiktok.method, .tiktok, morePublic: { $0 == .directPost }) { "TikTok: \($0.displayName)" },
                          options: TikTokPostingMethod.allCases.map { DSSelectOption(value: $0, title: $0.displayName) })
         }
         line("Allow") {
@@ -250,7 +251,8 @@ struct PublishingPlatformDetail: View {
         testNote("Test run sends TikTok to your inbox whatever Posting says.")
       case .youtube:
         line("Visibility") {
-          SettingsSelect(label: "YouTube visibility", selection: bind(\.youtube.visibility) { "YouTube visibility: \($0.displayName)" },
+          SettingsSelect(label: "YouTube visibility",
+                         selection: guarded(\.youtube.visibility, .youtube, morePublic: { $0 == .public }) { "YouTube visibility: \($0.displayName)" },
                          options: YouTubeVisibility.allCases.map { DSSelectOption(value: $0, title: $0.displayName) })
         }
         line("Made for kids") {
@@ -311,6 +313,14 @@ struct PublishingPlatformDetail: View {
   private func bind<T: Equatable>(_ kp: WritableKeyPath<DJQCore.PublishingSettings, T>, _ label: @escaping (T) -> String) -> Binding<T> {
     Binding(get: { model.settings.publishing[keyPath: kp] },
             set: { v in model.update(label(v)) { $0.publishing[keyPath: kp] = v } })
+  }
+
+  /// Like `bind`, but a change that makes posts more public asks first (`AppModel.setPublishingOption`).
+  private func guarded<T: Equatable>(_ kp: WritableKeyPath<DJQCore.PublishingSettings, T>, _ p: Platform,
+                                     morePublic: @escaping (T) -> Bool, _ label: @escaping (T) -> String) -> Binding<T> {
+    Binding(get: { model.settings.publishing[keyPath: kp] }, set: { v in
+      model.setPublishingOption(label(v), platform: p, morePublic: morePublic(v)) { $0.publishing[keyPath: kp] = v }
+    })
   }
 
   private var tiktokAllow: Binding<Set<String>> {

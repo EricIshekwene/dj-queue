@@ -38,6 +38,9 @@ struct PostizUI: Equatable {
   var checking = false
   var checkedAt: Date?
   var checkError: String?
+  /// A routed post with no job this long after its slot reads as missed (the engine submits slots already past at
+  /// now + 3 min, so a few minutes is the normal gap).
+  static let missedGrace: TimeInterval = 10 * 60
 
   mutating func apply(_ l: PostizLoaded) {
     keyInvalid = l.keyInvalid
@@ -83,6 +86,7 @@ extension AppModel {
     if postiz.keyInvalid != nil { return "Postiz refused the API key — save it again" }
     guard let id = settings.publishing.channels[p], !id.isEmpty else { return "Pick a Postiz channel for \(p.displayName) first" }
     if postiz.channels != nil && postiz.channel(id) == nil { return "The picked channel isn't in Postiz any more — pick it again" }
+    if let c = postiz.channel(id), c.disabled { return "The channel \(c.name) is disabled in Postiz — reconnect it there" }
     return nil
   }
 
@@ -90,6 +94,14 @@ extension AppModel {
   func postizChannels(for p: Platform) -> [PostizIntegration] { (postiz.channels ?? []).filter { $0.platform == p } }
 
   var postizTestRun: Bool { settings.publishing.testMode }
+
+  /// A confirmation shown where Eric is: inside the Settings modal when it's open (its own dialog over the pane),
+  /// else the window's confirm dialog.
+  func confirmHere(_ r: ConfirmRequest) {
+    guard showSettings else { confirm(r); return }
+    SettingsUIState.shared.confirm = SettingsConfirm(title: r.title, message: r.message, confirmTitle: r.verb,
+                                                     destructive: r.destructive, icon: r.icon, action: r.action)
+  }
 
   // MARK: Key and check (off the main thread; the key itself never comes back here)
 
@@ -124,7 +136,7 @@ extension AppModel {
   /// Asks first: posts set to Postiz then go to Today.
   func removePostizKey() {
     let n = settings.publishing.postizPlatforms.count
-    confirm(ConfirmRequest(
+    confirmHere(ConfirmRequest(
       title: "Remove the Postiz API key?",
       message: n == 0 ? "It's deleted from the Keychain. You can paste it again any time."
         : "It's deleted from the Keychain. \(n == 1 ? "The platform" : "The \(n) platforms") set to Postiz go to Today as manual posts until you add it again. Posts already in Postiz stay there.",
@@ -174,8 +186,43 @@ extension AppModel {
 
   // MARK: Settings changes (undoable through `update`)
 
+  /// Manual → Postiz with Test run off posts publicly from the next engine pass, so it asks first (with what goes
+  /// out and when). Postiz → Manual, or anything while Test run is on, applies at once (undoable).
   func setPublisher(_ p: Platform, _ kind: PublisherKind) {
-    update("\(p.displayName) now posts \(kind == .postiz ? "through Postiz" : "manually")") { $0.publishing.publishers[p] = kind }
+    let apply = { self.update("\(p.displayName) now posts \(kind == .postiz ? "through Postiz" : "manually")") { $0.publishing.publishers[p] = kind } }
+    guard kind == .postiz, !settings.publishing.testMode, settings.publishing.publisher(for: p) != .postiz else { apply(); return }
+    let upcoming = posts.filter { $0.platform == p && !$0.state.isTerminal && $0.resolution == nil && $0.state != .overdue }
+      .sorted { $0.scheduledAt < $1.scheduledAt }
+    let next = upcoming.first.map { "The next is \(Fmt.day($0.scheduledAt, tz: tz, style: "EEE d MMM")) at \(Self.clockText($0.scheduledAt, tz: tz))." }
+    let n = upcoming.count
+    confirmHere(ConfirmRequest(
+      title: "Post \(p.displayName) publicly through Postiz?",
+      message: [n == 0 ? "No \(p.displayName) posts are planned yet; approved ones will go out publicly at their slots."
+                  : "\(n) planned \(p.displayName) post\(n == 1 ? "" : "s") go out publicly at their slots, with no step from you. \(next ?? "")",
+                "A post whose time has already passed goes out within minutes. Turn on Test run first to try it without posting publicly."]
+        .joined(separator: "\n\n"),
+      verb: "Post through Postiz", icon: "paperplane", action: apply))
+  }
+
+  /// Test run on → off: from then on new Postiz posts are public (posts already in Postiz keep their test settings).
+  func setTestRun(_ on: Bool) {
+    let apply = { self.update(on ? "Test run turned on" : "Test run turned off") { $0.publishing.testMode = on } }
+    guard !on, settings.publishing.testMode else { apply(); return }
+    let ps = settings.publishing.postizPlatforms.map(\.displayName)
+    confirmHere(ConfirmRequest(
+      title: "Turn Test run off?",
+      message: "From now on, new posts go out publicly\(ps.isEmpty ? "" : " on " + (ps.count > 1 ? ps.dropLast().joined(separator: ", ") + " and " + ps.last! : ps[0])). TikTok posts directly, YouTube as \(settings.publishing.youtube.visibility.displayName), the others at their slots. Posts already in Postiz keep their test settings (drafts, Unlisted, TikTok inbox) and keep their Test run badge.",
+      verb: "Turn off Test run", icon: "testtube.2", action: apply))
+  }
+
+  /// An option that makes a platform's Postiz posts more public (TikTok inbox → Post directly, YouTube → Public)
+  /// asks first while that platform posts through Postiz and Test run is off.
+  func setPublishingOption(_ label: String, platform p: Platform, morePublic: Bool, _ change: @escaping (inout AppSettings) -> Void) {
+    let apply = { self.update(label, change) }
+    guard morePublic, !settings.publishing.testMode, settings.publishing.publisher(for: p) == .postiz else { apply(); return }
+    confirmHere(ConfirmRequest(title: "\(label)?",
+                           message: "\(p.displayName) posts Postiz makes from now on are public at their slots. Posts already in Postiz stay as they are.",
+                           verb: "Make it public", icon: "globe", action: apply))
   }
 
   func setPostizChannel(_ p: Platform, _ id: String?) {
@@ -316,10 +363,17 @@ extension AppModel {
     guard !p.state.isTerminal, p.resolution == nil else { return nil }
     switch postizRoute(p.platform) {
     case .manual: return nil
-    case .postiz: return p.state == .planned || p.state == .rendering ? .queued : .sending
+    case .postiz:
+      // Missed with no job in Postiz: nothing will send it any more — it's Eric's task again (never "held").
+      if p.state == .overdue || p.scheduledAt < now.addingTimeInterval(-PostizUI.missedGrace) {
+        return .fellBack(Self.missedByPostiz)
+      }
+      return p.state == .planned || p.state == .rendering ? .queued : .sending
     case .fallback(let r): return .fellBack(r.message)
     }
   }
+
+  static let missedByPostiz = "Postiz didn't get it before its time — post it from Today"
 
   /// A test-run post: its job was made in test mode, or it will be (Test run on, not yet sent).
   func isTestRun(_ p: PlatformPost) -> Bool {
@@ -339,7 +393,7 @@ extension AppModel {
     case .posting: return "\(via) · going out now"
     case .draft: return "\(via) · draft until released"
     case .posted: return "Posted by \(via)"
-    case .inbox: return "Finish it in the TikTok app, then Mark posted with the link"
+    case .inbox: return "In your TikTok inbox — finish it there, then Mark posted"
     case .failed(let m), .copyright(let m): return m
     case .fellBack(let why): return why
     }
@@ -347,7 +401,7 @@ extension AppModel {
 
   /// Test run: release a Postiz draft so it posts at its time (asks first: it goes public).
   func releaseDraft(_ p: PlatformPost) {
-    confirm(ConfirmRequest(
+    confirmHere(ConfirmRequest(
       title: "Release this \(p.platform.displayName) draft?",
       message: "Postiz posts it publicly at \(Self.clockText(p.scheduledAt, tz: tz)) (or within minutes if that time has passed). You can't take it back from DJ Queue once it's out.",
       verb: "Release", icon: "paperplane") { [weak self] in
