@@ -5,7 +5,7 @@ import Foundation
 
 // MARK: Transport
 
-public struct PostizHTTPRequest: Sendable {
+public struct PostizHTTPRequest: Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
   public enum Body: Sendable {
     case none
     case json(Data)
@@ -21,6 +21,11 @@ public struct PostizHTTPRequest: Sendable {
   public init(method: String, url: URL, headers: [String: String], body: Body = .none, timeout: TimeInterval) {
     self.method = method; self.url = url; self.headers = headers; self.body = body; self.timeout = timeout
   }
+
+  /// Every way of printing a request (`"\(req)"`, `debugPrint`, `dump`, the debugger) shows it redacted.
+  public var description: String { redactedDescription }
+  public var debugDescription: String { redactedDescription }
+  public var customMirror: Mirror { Mirror(self, children: ["request": redactedDescription], displayStyle: .struct) }
 
   /// For logs and errors: method, URL and headers with `Authorization` redacted.
   public var redactedDescription: String {
@@ -57,12 +62,22 @@ public final class URLSessionPostizTransport: PostizTransport, @unchecked Sendab
     c.httpCookieStorage = nil
     c.urlCache = nil
     c.requestCachePolicy = .reloadIgnoringLocalCacheData
-    session = URLSession(configuration: c)
+    session = URLSession(configuration: c, delegate: NoRedirects(), delegateQueue: nil)
     self.tempDir = tempDir
+    Multipart.sweep(tempDir)
+  }
+
+  /// Redirects are never followed: the key would travel along to wherever they point.
+  final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+      completionHandler(nil)
+    }
   }
 
   public func send(_ request: PostizHTTPRequest) throws -> PostizHTTPResponse {
     guard !PostizLive.disabled else { throw PostizError.network("Postiz calls are turned off in this process") }
+    guard request.url.scheme?.lowercased() == "https" else { throw PostizError.network("Postiz address must start with https://") }
     var r = URLRequest(url: request.url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: request.timeout)
     r.httpMethod = request.method
     for (k, v) in request.headers { r.setValue(v, forHTTPHeaderField: k) }
@@ -100,6 +115,18 @@ public final class URLSessionPostizTransport: PostizTransport, @unchecked Sendab
 
 /// Builds a multipart body in a temp file, copying the media in 1 MB chunks.
 enum Multipart {
+  /// Removes upload bodies left by a process that died mid-upload (older than an hour).
+  static func sweep(_ dir: URL) {
+    let fm = FileManager.default
+    guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return }
+    for n in names where n.hasPrefix("djq-upload-") && n.hasSuffix(".multipart") {
+      let u = dir.appendingPathComponent(n)
+      if let d = (try? fm.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date, Date().timeIntervalSince(d) > 3600 {
+        try? fm.removeItem(at: u)
+      }
+    }
+  }
+
   static func write(file: URL, fileName: String, mimeType: String, fields: [String: String], boundary: String,
                     in dir: URL) throws -> URL {
     let fm = FileManager.default

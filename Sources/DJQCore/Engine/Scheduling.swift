@@ -91,6 +91,21 @@ extension Store {
     try planSlots(where: "date<? AND week_start NOT IN (SELECT week_start FROM weeks WHERE state='approved') "
                     + "AND id NOT IN (SELECT plan_slot_id FROM platform_posts WHERE plan_slot_id IS NOT NULL)", [today])
   }
+
+  /// Deletes `stalePastDraftSlots` (only `week`'s when given), each with a "Past draft day … dropped" event.
+  @discardableResult
+  public func dropStalePastDraftSlots(today: String, week: String? = nil) throws -> [PlanSlot] {
+    try db.transaction {
+      let list = try stalePastDraftSlots(today: today).filter { week == nil || $0.weekStart == week }
+      for s in list {
+        try deletePlanSlot(s.id)
+        try refreshState(videoId: s.videoId)
+        try logEvent("plan", "Past draft day \(s.date) dropped (never approved)\(s.pinned ? ", pin removed" : "") — back in the Queue",
+                     videoId: s.videoId)
+      }
+      return list
+    }
+  }
 }
 
 

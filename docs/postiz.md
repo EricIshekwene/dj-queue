@@ -85,7 +85,7 @@ replaces the post instead, §5).
 | Instagram | `instagram-standalone` (direct IG login, **not** via the Facebook Page) | `post_type` | `post_type: "post"` (a Reel for a single video), `is_trial_reel: false`; collaborators/audio not set | 2200 |
 | TikTok | `tiktok-business` | `content_posting_method, privacy_level, duet, stitch, comment, autoAddMusic, brand_content_toggle, brand_organic_toggle` | `DIRECT_POST`, `PUBLIC_TO_EVERYONE`, duet/stitch/comment `true`, `autoAddMusic: "no"`, brand toggles `false`, `video_made_with_ai: false`, `title` = DJ Queue title ≤ 90 | 2200 |
 | Facebook | `facebook` (Page) | — | `post_type: "post"`, `title` = DJ Queue title | 63206 |
-| YouTube Shorts | `youtube` | `title` (2–100), `type` | `type: "public"`, `selfDeclaredMadeForKids: "no"`, `title` = `{text} \| DJ Lovd` (DJ Queue's template, ≤ 100), `thumbnail` = the cover, `tags` from the hashtags (no `#`) | 5000 |
+| YouTube Shorts | `youtube` | `title` (2–100), `type` | `type: "public"`, `selfDeclaredMadeForKids: "no"`, `title` = `{text} \| DJ Lovd` (DJ Queue's template, ≤ 100), `thumbnail` = the cover as `{id, path}`, `tags` from the hashtags (no `#`) as `[{value, label}]` (DTO shapes; not seen live — a 400 falls back to Today with Postiz's message) | 5000 |
 | Threads | `threads` | — | none | 500 |
 | X | `x` | — (`who_can_reply_post` documented as required by the CLI, optional in the live schema) | `who_can_reply_post: "everyone"`, `post_type: "post"` | 280 (4000 only for X Premium accounts, decided at connect time) |
 
@@ -202,7 +202,36 @@ background app, for no gain on a single-user Mac. The app reads the key only at 
 in the database, events, Doctor output or `djq` JSON. Reads go through `/usr/bin/security` so a rebuilt (ad-hoc signed)
 app doesn't trigger a Keychain prompt on every update. Agents keep using the Postiz MCP connector.
 
-## 8. Not supported / follow-ups
+## 8. How DJ Queue implements it (round 6, `Sources/DJQCore/Postiz/`)
+
+- **Settings → Publishing** (`Settings.publishing`): publisher per platform (Manual default), Postiz channel id per
+  platform, test mode, the §3 options, `apiBase` (https only; anything else falls back to the cloud base) and
+  `hourlyBudget` (25, at least 10). The stored row decodes field by field, so a bad value never resets Settings.
+- **Jobs** (schema v5, `postiz_jobs`): one row per Postiz post. At most one open job per platform post (unique partial
+  index). Phases `creating` → `live` → (`deleting`) → `closed`. Close reasons: published, inbox (test-mode TikTok),
+  error, copyright, vanished, rejected — final, the post is never submitted again by itself (`reset` releases error,
+  rejected, vanished) — and replaced, cancelled, interrupted (not final). `postiz_media` caches the media per render.
+- **Tick**: `… render → publish → sync → …`. *publish* first deletes open jobs that must go (post removed, terminal or
+  marked posted by hand, moved, edited, render changed, platform off/paused, Manual, global pause, channel changed),
+  then creates for every Postiz-routed post with its render attached within the render horizon, soonest first. A job
+  whose slot is less than 5 min away (or past) is deleted only after a sync in the last 90 s showed it unpublished.
+  *sync* lists posts over the open jobs' window (10 min while hot, else hourly), maps §5, probes a refused key hourly,
+  refreshes the channel list every 6 h and pulls analytics daily.
+- **Due / missed**: a post with an open job, or routed to Postiz with no final job, gets no manual "due" notification;
+  a post with an open job is never overdue or shifted. Everything else is exactly as before (Today).
+- **Interrupted create** (network/5xx after the create was sent): the claim stays; the sync step adopts the Postiz post
+  with the same channel and date, or releases the claim after 10 min.
+- **Budget** (kv `postiz.budget`, `BEGIN IMMEDIATE`): creates leave 1 call/hour for sync, analytics leave 8; uploads
+  count. `429` → no calls for 15 min; `401`/`403` → "key refused" (kv), no calls except an hourly probe, notified once,
+  cleared by a successful call or saving the key.
+- **Key**: `/usr/bin/security find-generic-password … -w` to read (stdout only; exit 44 = no key, other failures are
+  "locked or refused"); saving runs `security -i` with the `add-generic-password -U …` line on stdin, so the key never
+  appears in a process argument list and the item trusts `/usr/bin/security` (no prompt after rebuilds). Requests
+  print redacted, redirects are never followed, uploads stream from a temp file (stale ones are swept).
+- **Tests** never reach Postiz or the Keychain: `PostizLive.disabled` (set by the test fixture; `DJQ_POSTIZ_OFFLINE=1`
+  for any process) turns the real transport and the real `security` runner off, and every test injects fakes.
+
+## 9. Not supported / follow-ups
 
 - Webhooks exist ("fires when a post publishes", set up in the Postiz UI) but the payload isn't documented and DJ Queue
   has no public endpoint; polling is used.

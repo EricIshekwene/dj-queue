@@ -65,6 +65,9 @@ public final class Planner: @unchecked Sendable {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     let today = store.today(dm)
+    // Round 6 (F5): days of this week that already passed as a draft never get posts — drop them first, so their
+    // clips go back to the Queue instead of reading "Scheduled" in an approved week.
+    if try store.week(week)?.state != .approved { try store.dropStalePastDraftSlots(today: today, week: week) }
     if try slots(week: week).filter({ $0.date >= today }).isEmpty, try store.week(week)?.state != .approved {
       try proposeWeek(week)
     }

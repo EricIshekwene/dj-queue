@@ -52,7 +52,26 @@ import Testing
     #expect(g.postsPerDay == 2)
     #expect(g.publishing.publishers == [.x: .postiz])
     #expect(!g.publishing.testMode && g.publishing.youtube.visibility == .public && g.publishing.tiktok == TikTokOptions())
-    #expect(g.publishing.hourlyBudget == 1 && g.publishing.channels.isEmpty)
+    #expect(g.publishing.hourlyBudget == PublishingSettings.minimumBudget && g.publishing.channels.isEmpty)
+  }
+
+  @Test func wrongTypedPublishingOrRevisionKeepsEveryOtherSetting() throws {
+    let f = try Fixture()
+    for (k, v) in [("publishing", NSNull() as Any), ("publishing", "postiz" as Any), ("publishing", [1, 2] as Any),
+                   ("limitsRevision", "two" as Any), ("limitsRevision", true as Any)] {
+      var obj = try #require(try JSONSerialization.jsonObject(with: JSONCoding.encoder.encode(Settings())) as? [String: Any])
+      obj["postsPerDay"] = 3
+      obj[k] = v
+      try f.store.db.run("INSERT OR REPLACE INTO kv(key,json) VALUES('settings',?)",
+                         [String(decoding: try JSONSerialization.data(withJSONObject: obj), as: UTF8.self)])
+      let s = try f.store.settings()
+      #expect(s.postsPerDay == 3, "\(k) = \(v) reset Settings")
+      #expect(s.publishing == PublishingSettings())
+    }
+    // http:// never carries the key; a tiny budget is raised to the minimum.
+    let p = try JSONCoding.decoder.decode(PublishingSettings.self,
+                                          from: Data("{\"apiBase\":\"http://postiz.example/api/public/v1\",\"hourlyBudget\":2}".utf8))
+    #expect(p.apiBase == PublishingSettings.cloudAPIBase && p.hourlyBudget == PublishingSettings.minimumBudget)
   }
 
   // MARK: Limits
@@ -147,11 +166,16 @@ import Testing
     #expect(try f.store.finalPostizJob(postId: "post-1")?.id == b.id)
     try f.store.releasePostizJobs(postId: "post-1")
     #expect(try f.store.finalPostizJob(postId: "post-1") == nil)
+    var touched = try #require(try f.store.postizJob(id: b.id))
+    touched.syncedAt = f.clock.now
+    try f.store.save(touched)  // a later save never undoes the release
+    #expect(try f.store.finalPostizJob(postId: "post-1") == nil)
     let c = job(f, post: "post-2")
     try f.store.claimPostizJob(c)
     try f.store.closePostizJob(id: c.id, reason: .published)
     try f.store.releasePostizJobs(postId: "post-2")
     #expect(try f.store.finalPostizJob(postId: "post-2")?.closeReason == .published)  // never released
+    #expect(try f.store.setPostizKeyInvalid("401") && !f.store.setPostizKeyInvalid("401"))
     // Media cache.
     try f.store.save(PostizMediaRecord(renderId: "r1", kind: "video", mediaId: "m1", mediaPath: "/u/m1", fileSize: 6, uploadedAt: f.clock.now))
     #expect(try f.store.postizMedia(renderId: "r1", kind: "video")?.mediaId == "m1")
@@ -189,13 +213,25 @@ import Testing
     #expect(calls.last?.1 == ["delete-generic-password", "-s", "DJ Queue Postiz", "-a", "postiz"])
   }
 
-  @Test func keychainStoreDoesNothingWhileLiveCallsAreOff() throws {
-    #expect(PostizLive.disabled)  // set by Fixture; tests never run /usr/bin/security
+  @Test func keychainKillSwitchStopsEverything() throws {
     _ = try Fixture()
-    let ks = KeychainPostizKeyStore()  // the real tool — but switched off, so nothing runs
+    try #require(PostizLive.disabled)  // set by Fixture
+    // No test ever holds a store wired to the real /usr/bin/security: a recording runner stands in, and it must
+    // never run while the switch is off.
+    var ran: [[String]] = []
+    let ks = KeychainPostizKeyStore(runner: { _, args, _ in ran.append(args); return (0, Data("x".utf8)) }, obeysKillSwitch: true)
     #expect(try !ks.hasKey() && ks.read() == nil)
     #expect(throws: PostizKeyError.self) { try ks.save("abc") }
     #expect(throws: PostizKeyError.self) { try ks.delete() }
+    #expect(ran.isEmpty)
+  }
+
+  @Test func keychainReadSeparatesNotFoundFromLockedOrDenied() throws {
+    var status: Int32 = 44
+    let ks = KeychainPostizKeyStore { _, _, _ in (status, Data()) }
+    #expect(try ks.read() == nil)
+    status = 36  // locked
+    #expect(throws: PostizKeyError.self) { try ks.read() }
   }
 
   // MARK: Client
@@ -209,6 +245,11 @@ import Testing
     #expect(req.headers["Authorization"] == "test-key-123")  // no "Bearer"
     #expect(req.url.absoluteString == "https://api.postiz.com/public/v1/is-connected")
     #expect(req.redactedDescription.contains("Authorization: <redacted>") && !req.redactedDescription.contains("test-key"))
+    var dumped = ""
+    dump(req, to: &dumped)
+    for text in ["\(req)", String(describing: req), String(reflecting: req), dumped] {
+      #expect(!text.contains("test-key-123") && text.contains("<redacted>"))
+    }
     #expect(try c.integrations().map(\.platform) == Platform.allCases)
     for (code, expected) in [(401, PostizError.unauthorized("injected 401")), (429, .rateLimited), (400, .validation("injected 400")),
                              (404, .notFound), (413, .payloadTooLarge), (502, .server(502, "injected 502"))] {
@@ -380,6 +421,54 @@ import Testing
     #expect(try f.doublePosts().isEmpty)
   }
 
+  /// Guard (a): a past day of a draft week that HAS posts (rebuilt after it posted) is never dropped, and its clip
+  /// never comes back to the Queue.
+  @Test func pastDraftDayWithPostsStays() throws {
+    let f = try Fixture.engine(3)
+    let planner = Planner(store: f.store)
+    try planner.approveWeek(f.week)
+    try f.postAll(on: "2026-11-02")
+    try planner.rebuildWeek(f.week)  // back to draft; Monday keeps its posted slot
+    #expect(try f.store.week(f.week)?.state == .draft)
+    let mon = try #require(try f.store.planSlots(where: "date='2026-11-02'").first)
+    f.setTime("2026-11-04", "09:00")
+    #expect(try !f.store.stalePastDraftSlots(today: "2026-11-04").contains { $0.id == mon.id })  // Tuesday's re-proposal may go
+    Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier()).tick(reason: "t")
+    #expect(try f.store.planSlots(where: "id=?", [mon.id]).count == 1)
+    #expect(try !Queue(store: f.store).ordered().contains { $0.id == mon.videoId })
+    #expect(try f.doublePosts().isEmpty)
+  }
+
+  /// Guard (b): a past slot of an APPROVED week is never dropped, even without posts.
+  @Test func pastApprovedDayWithoutPostsStays() throws {
+    let f = try Fixture.engine(3)
+    try Planner(store: f.store).approveWeek(f.week)
+    let s = PlanSlot(id: "manual-slot", date: "2026-11-02", position: 1, videoId: "clip-2", pinned: false, weekStart: f.week)
+    try f.store.save(s)
+    f.setTime("2026-11-04", "09:00")
+    #expect(try f.store.stalePastDraftSlots(today: "2026-11-04").isEmpty)
+    Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier()).tick(reason: "t")
+    #expect(try f.store.planSlots(where: "id='manual-slot'").count == 1)
+  }
+
+  /// Approving mid-week (before a tick ran the plan step) drops the draft days that already passed first.
+  @Test func approvingMidWeekDropsThePassedDraftDays() throws {
+    let f = try Fixture.engine(4)
+    let planner = Planner(store: f.store)
+    try planner.proposeWeek(f.week)
+    let monTue = try f.store.planSlots(where: "date IN ('2026-11-02','2026-11-03')")
+    #expect(monTue.count == 2)
+    f.setTime("2026-11-04", "09:00")
+    try planner.approveWeek(f.week)
+    #expect(try f.store.planSlots(where: "date<'2026-11-04'").isEmpty)
+    let vids = Set(monTue.map(\.videoId))
+    let planned = Set(try f.store.planSlots().map(\.videoId))
+    // Their clips are back in play (re-planned on a future day or in the Queue), never stuck as "Scheduled".
+    let queued = Set(try Queue(store: f.store).ordered().map(\.id))
+    for v in vids { #expect(planned.contains(v) || queued.contains(v)) }
+    #expect(try f.doublePosts().isEmpty)
+  }
+
   @Test func pastPinnedDraftDayIsDroppedButApprovedAndPostedDaysStay() throws {
     let f = try Fixture.engine(3)
     let planner = Planner(store: f.store)
@@ -394,4 +483,70 @@ import Testing
     #expect(try !f.store.planSlots(where: "week_start='2026-11-09'").isEmpty)
     #expect(try f.store.events(videoId: "clip-2").contains { $0.message.contains("pin removed") })
   }
+}
+
+/// `DJQ_MIGRATION_BACKUP_V5=<copy of a real queue.sqlite>`: migrates a further copy to schema v5 and compares every
+/// table's rows, scores, titles, edits, versions, posts and the settings row; `DJQ_MIGRATION_EVIDENCE=<file>` gets a
+/// summary. The given file is checksummed before and after (never changed).
+@Suite struct R6MigrationProof {
+  @Test(.enabled(if: ProcessInfo.processInfo.environment["DJQ_MIGRATION_BACKUP_V5"] != nil))
+  func realBackupCopyMigratesToV5Losslessly() throws {
+    let env = ProcessInfo.processInfo.environment
+    let src = URL(fileURLWithPath: env["DJQ_MIGRATION_BACKUP_V5"]!)
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("djq-v5-real-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let paths = Paths(root: dir.appendingPathComponent("DJ Video"), appSupport: dir.appendingPathComponent("support"),
+                      logs: dir.appendingPathComponent("logs"), launchAgents: dir.appendingPathComponent("LaunchAgents"))
+    let sum = { (u: URL) in SHA256Hex.of(try Data(contentsOf: u)) }
+    let before = try sum(src)
+    try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
+    let copy = paths.appSupport.appendingPathComponent("queue.sqlite")
+    try FileManager.default.copyItem(at: src, to: copy)
+    let tables = ["sessions", "videos", "edits", "versions", "hashtag_sets", "caption_templates", "weeks", "plan_slots",
+                  "platform_posts", "post_history", "renders", "events", "kv", "title_suggestions", "text_suggestions", "batches"]
+    func dump(_ db: SQLite) throws -> [String: [String]] {
+      var out: [String: [String]] = [:]
+      let have = Set(try db.query("SELECT name FROM sqlite_master WHERE type='table'").compactMap { $0.string("name") })
+      for t in tables where have.contains(t) {
+        let cols = try db.query("PRAGMA table_info(\(t))").compactMap { $0.string("name") }.sorted()
+        out[t] = try db.query("SELECT * FROM \(t)").map { r in
+          cols.map { c in r.string(c) ?? r.double(c).map { String($0) } ?? "∅" }.joined(separator: "|")
+        }.sorted()
+      }
+      return out
+    }
+    let raw = try SQLite(path: copy.path)
+    let oldVersion = try raw.one("PRAGMA user_version")?.int("user_version") ?? 0
+    let old = try dump(raw)
+    let store = try Store(paths: paths, clock: FixedClock(Fixture.monday9am), path: copy.path)
+    #expect(try store.db.one("PRAGMA user_version")?.int("user_version") == 5)
+    let new = try dump(store.db)
+    var lines = ["schema \(oldVersion) → 5", "source sha256 \(before)"]
+    for t in tables {
+      #expect(new[t] == (old[t] ?? []), "table \(t) changed")
+      lines.append("\(t): \(old[t]?.count ?? 0) rows → \(new[t]?.count ?? 0) rows, identical: \(new[t] == (old[t] ?? []))")
+    }
+    #expect(try store.openPostizJobs().isEmpty)
+    let s = try store.settings()
+    #expect(s.publishing == PublishingSettings() && s.publishing.postizPlatforms.isEmpty)
+    lines.append("settings decode: postsPerDay \(s.postsPerDay), publishing all Manual, limits tiktok caption \(s.limits[.tiktok]?.captionLimit ?? 0) / title \(s.limits[.tiktok]?.titleLimit.map(String.init) ?? "-"), instagram \(s.limits[.instagram]?.maxBytes ?? 0) B")
+    let vids = try store.videos()
+    lines.append("videos \(vids.count) · scored \(vids.filter { $0.score != nil }.count) · titled \(vids.filter { $0.title != nil }.count)")
+    let backups = try FileManager.default.contentsOfDirectory(atPath: paths.appSupport.appendingPathComponent("backups").path)
+    // One copy before the first migration step that ran (schema 4 or 5).
+    let backedUp = backups.contains { $0.hasPrefix("queue-before-schema\(oldVersion + 1)-") }
+    #expect(backedUp)
+    _ = try Store(paths: paths, clock: FixedClock(Fixture.monday9am), path: copy.path)  // re-open is a no-op
+    #expect(try dump(store.db) == new)
+    #expect(try sum(src) == before)
+    lines.append("source unchanged: \(try sum(src) == before); pre-migration backup taken: \(backedUp); re-open no-op: true")
+    if let ev = env["DJQ_MIGRATION_EVIDENCE"] {
+      try lines.joined(separator: "\n").appending("\n").write(toFile: ev, atomically: true, encoding: .utf8)
+    }
+  }
+}
+
+import CryptoKit
+enum SHA256Hex {
+  static func of(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() }
 }
