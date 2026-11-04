@@ -6,8 +6,10 @@ description: Diagnose and safely fix DJ Queue (Eric's local Mac app that plans a
 # DJ Queue Doctor
 
 DJ Queue plans which DJ Lovd short-form videos post where and when, renders the final files and tracks every
-platform post (TikTok, Instagram, Facebook, YouTube Shorts, Threads, X). Phase 1 publishing is manual: Eric
-posts, then marks each post done with its URL. Refer to Eric as they/them.
+platform post (TikTok, Instagram, Facebook, YouTube Shorts, Threads, X). Each platform publishes either
+**Manual** (Eric posts from Today, then marks it posted with its URL; the default) or through **Postiz** (round 6:
+the engine schedules the render in Postiz ahead of the slot and reads the live link back; a Postiz problem sends that
+platform's posts back to Today). Refer to Eric as they/them.
 
 ## Never
 
@@ -18,6 +20,10 @@ posts, then marks each post done with its URL. Refer to Eric as they/them.
 - Never post to a platform, never run `launchctl` (except `djq agent status`), never install/load the
   LaunchAgent without Eric saying so.
 - Copyright problems are Eric's call (re-upload / skip / accept). Don't fight or retry them.
+- Postiz: never schedule, publish or release anything, never switch a platform to Postiz, change channels or turn
+  the test run off without Eric's explicit OK (`djq postiz … --yes` is Eric's switch, not yours). Never read, print or
+  ask for the Postiz API key; it lives in the Keychain and only Eric enters it (Settings → Publishing). Read-only:
+  `djq postiz status`, `djq postiz channels`, any `--dry-run`.
 
 For reading/changing clips (titles, suggestions, text, captions, bulk edits, undo) use the
 `dj-queue-agent` skill (`skills/dj-queue-agent/SKILL.md`).
@@ -29,7 +35,14 @@ djq doctor --json     # machine-readable; exit code 2 when there are errors
 djq doctor            # the same as Markdown (what Eric pastes)
 djq status            # runway, today's posts, problems, engine heartbeat
 djq today | djq posts --problems | djq week [YYYY-MM-DD] | djq queue | djq health
+djq postiz status     # Postiz: key/connection, budget, test run, channel + route per platform
+                      # (exit 0 = ready, 2 = not ready, 3 = --offline and not checked)
+djq doctor --live     # the same checks after one live Postiz call (refreshes channels and the key state)
 ```
+
+Doctor itself never calls Postiz: its `postiz.*` checks read stored state (settings, the jobs table, the cached
+channel list, the "key refused" flag). Use `--live` only when a fresh answer matters; it spends one of the 25
+calls per hour.
 
 If `djq` isn't on PATH, build it from the repo
 (`swift build`, then `.build/debug/djq`). Ids can be shortened to a unique prefix.
@@ -96,7 +109,18 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | `autoupdate.failed` | Two cases (`djq autoupdate status` / `log` say which). The last run failed before installing anything: `djq autoupdate run` retries. Or a build failed its checks after install and is **still installed** (its database migration couldn't safely be undone): Eric decides between `djq autoupdate rollback --restore-db` (loses changes since that backup) and waiting for a fixed commit. Never run either yourself. |
 | `autoupdate.ready` | Info: an update has waited > 24 h for the main window to close. Eric clicks Restart & update in the banner (it waits for renders) or closes the window. |
 | `autoupdate.off` | Info: Eric turned auto-update off. Leave it; `djq autoupdate on` turns it back on only if Eric asks. |
-| `manifest`, `engine`, `db`, `runway`, `tools`, `posts.problems`, `autoupdate` | Group names that appear under "Passed". |
+| `postiz.not_connected` | Info "Postiz not in use" while every platform is Manual: nothing to do. Warning when a platform is set to Postiz but no key is saved (its posts go to Today), or with `--live` when Postiz didn't answer: tell Eric; only Eric adds the key in Settings → Publishing. For "didn't answer", check the network and re-run `djq doctor --live` later; posts Postiz already holds still go out. |
+| `postiz.key_invalid` | Postiz refused the key (401/403); posts set to Postiz go to Today and DJ Queue re-checks hourly. Tell Eric to save a valid key in Settings → Publishing (Postiz → Settings → Public API). Never handle the key yourself. |
+| `postiz.mapping_missing` | A platform set to Postiz has no channel, or its channel isn't in Postiz any more (error when it has posts in the next 48 h). Show Eric `djq postiz map --dry-run` (auto-maps by provider; ambiguous or missing providers are listed for Eric, never guessed). Eric runs `djq postiz map` or `djq postiz map <platform> "<channel>"`. |
+| `postiz.channel_disabled` | The mapped channel is disabled or its login expired in Postiz; its posts go to Today. Eric reconnects it in Postiz; then `djq postiz channels` refreshes the list and the error clears. |
+| `postiz.stuck` | Postiz still says QUEUE an hour after the slot. Run `djq postiz sync` (or wait for the engine's sync). If it stays, Eric checks the Postiz calendar: if Postiz can't post it, Eric deletes it there and DJ Queue puts it on Today. Never post it by hand while Postiz still holds it (double post). |
+| `postiz.link_missing` | Postiz published but the platform's post id came back missing, so the post has no link. `djq postiz link <post>` lists the platform's recent posts; pick the right one with Eric and `djq postiz link <post> <url>`. |
+| `postiz.rate_limited` | Info: Postiz answered 429 (no calls for 15 min) or the 25-call hour is used up. Nothing to do; calls resume by themselves (deletes first, then the soonest creates). Don't loop `sync`. |
+| `postiz.fallback` | Posts set to Postiz that go to Today instead, each with its reason. Fix the reason first (key, channel: the other `postiz.*` findings). A post Postiz refused, one deleted in Postiz, or a test-run TikTok in the inbox stays manual: Eric posts it from Today and marks it posted (`djq posted <post> <url>`). `djq reset <post>` lets Postiz try a refused or deleted one again: Eric's call. |
+| `postiz.test_mode` | Info: the test run is on (TikTok → inbox, YouTube → unlisted, others → Postiz drafts), or test posts are still in Postiz. Remind Eric when the test is done; turning it off is `djq postiz test-mode off --yes` (Eric only: posts sent from then on go out for real; posts already in Postiz keep their test-run form). |
+| `postiz.create_unknown` | A create was sent but no answer came back and the sync couldn't find it, so DJ Queue doesn't know whether Postiz has the post; nothing new is sent for it meanwhile. Ask Eric to check the Postiz calendar (that channel, that time) first. `djq postiz resolve <post>` makes one live look and adopts only an exact single match; otherwise it exits 2 and Eric answers: `djq postiz resolve <post> --in-postiz` (Postiz has it: recorded posted, never sent again; add the link with `djq postiz link`) or `--not-in-postiz` (on Today to post by hand). Never guess which, and never post it by hand before Eric answered. |
+| `postiz.delete_pending` | DJ Queue couldn't remove a post from Postiz after 3 tries; it keeps retrying and creates nothing new for that post. If the post must not go out, Eric deletes it in the Postiz calendar. |
+| `manifest`, `engine`, `db`, `runway`, `tools`, `posts.problems`, `autoupdate`, `postiz` | Group names that appear under "Passed". |
 
 ## Other safe commands
 

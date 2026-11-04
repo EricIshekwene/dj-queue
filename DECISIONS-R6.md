@@ -54,3 +54,31 @@ Facebook keeps 90 s, one v0.7.0 ship) are in the session record and docs/postiz.
 46. **A test-run draft an hour past its slot is notified** (re-review N5): release it or post it by hand.
 47. **`DJQ_HOME` / `DJQ_ROOT` set at all (even empty) = scratch** (re-review N6), exactly as `Paths.standard` reads them.
 48. **Resolve never races a create** (round 3, R3-1): both `resolveUnknown` and `resolveUnconfirmed` refuse unless the job is unconfirmed ("still in flight — wait for the next check"); a create that lands after its job was closed by anyone else is deleted from Postiz at once (or tracked as a new `deleting` job that blocks the clip + platform until the DELETE succeeds) — never Postiz and Today both.
+
+## CLI (agent/r6-cli)
+
+1. **Doctor's Postiz checks live in `Doctor.swift`, not core's `PostizDoctor.findings`.** The brief fixes severities that differ from core's (stuck and channel_disabled are errors, link_missing a warning) and adds rate_limited, fallback and test_mode; one implementation in the file Doctor owns avoids two diverging lists. Core's `PostizDoctor` is unused now (see CLI-NEEDS). They pass as one group, `postiz`.
+2. **Every platform Manual → one info, "Postiz not in use", and no Keychain question.** That's Eric's installed state today, so Doctor stays clean and no `security` process runs (tests never touch the Keychain either).
+3. **`postiz.mapping_missing` is a warning, an error when that platform has posts in the next 48 h** (they'll go to Today). A mapped channel that vanished from Postiz's list counts as missing.
+4. **`postiz.delete_pending` kept** (core's id): a post DJ Queue can't remove from Postiz after 3 tries is worth a warning.
+5. **`postiz.fallback` looks 7 days ahead** and gives each post's reason: Postiz refused it, it was deleted in Postiz, a test-run TikTok in the inbox, or the route's reason (no key, no channel, disabled).
+6. **`djq doctor --live` is one `GET /integrations`, only when a key is saved.** It refreshes the channel cache and the key flag; a refused key shows as key_invalid at once, no answer as a not_connected warning. Plain `doctor` stays offline and read-only.
+7. **Settings changes go through `BulkActions.record(settings: true)`** (undo with `djq bulk undo <batch>`) and log one "Settings → Publishing changed from djq" event.
+8. **`--yes` is needed only when a change makes approved posts go out for real**: a platform to Postiz with a channel, a new channel on a Postiz platform, or test run off, for enabled platforms. Mapping while Manual, test run on and back to Manual never need it. Without it nothing changes and the exit code is 1.
+9. **`djq postiz test` never schedules real posts, even with `--yes`.** A real test post would bypass DJ Queue's tracking (no job, no link back, double-post risk with the week); real posts go out only from an approved week. No flag → refused, pick `--dry-run` or `--draft`.
+10. **`status` makes one live check when a key is saved.** Exit 0 only when connected and all six channels are mapped to current, enabled channels; otherwise 2 with the reasons listed (3 with `--offline`, see 20). Without a key no call is made (no budget slot spent).
+11. **Channel ids appear only with `--ids`**, also in `test` bodies (`<channel id>`), so output pasted into chat or Notion carries names and providers only.
+12. **Auto-map uses exact provider identifiers** and keeps a mapping that is still valid. Two channels with the same provider (a second account) or none are left for Eric with a hint; `map <platform> "<name>"` picks by name and refuses a channel of another platform (e.g. Instagram-via-Facebook for Instagram is allowed with a note, X for Instagram is refused).
+13. **A failed live channel list falls back to the cached one with a note** (map and channels), so offline work and dry runs still show what would change.
+14. **Caption limits are cached a day per channel** (kv `postiz.captionLimits`) and fetched only for channels of DJ platforms: six calls once, not every `djq postiz channels`.
+15. **`postiz sync` doesn't race the app's engine**: when DJ Queue holds the engine lock it sets the sync-now flag and posts ChangeSignal (as `djq tick` does); `--force` syncs here.
+16. **Added `djq postiz release <post> --yes`** for releasing a test-run draft (core's `releaseDraft`), guarded like the other real-post switches.
+17. **The CLI tests run the built `djq`** against a throwaway file database with `DJQ_POSTIZ_OFFLINE=1`; it is found next to the test bundle (so `--scratch-path` works).
+18. **Two small `PostizService` helpers (`captionLimits`, `requestSync`) sit in `Doctor.swift`**: the CLI module can't reach the service's internal budgeted call path, and Doctor.swift is the core file this branch owns. Core may move them.
+19. **`djq bulk undo` checks Postiz going live** (review M1): the undo runs in a savepoint, Settings → Publishing before and after are compared with the same go-live rule, and it's rolled back with exit 2 unless `--yes`. The core-level guard in `BulkActions.undo` is core's.
+20. **`status --offline` exits 3, never 0** (review L6): without a check, "ready" can't be claimed.
+21. **`DJQ_NO_SIGNAL=1` turns off the CLI's ChangeSignal** (review L5), so tests that run `djq` never make the installed app reload or tick.
+22. **`djq bulk undo` uses core's `undoWouldGoLive` + `undo(confirmGoLive:)`** (replaces the savepoint check): same `--yes` UX, exit 2 when refused; core counts only platforms with posts waiting, so an undo with nothing to send isn't blocked.
+23. **`postiz.create_unknown` (error) and `djq postiz resolve`** (see 25): a create with no answer blocks new sends for that post until Eric checks the Postiz calendar; `resolve` settles it (see 25). No `--yes`: it never creates anything itself.
+24. **Test-mode notes follow core's "test mode is frozen per job"**: switching it changes only posts sent from then on; `test-mode off` still needs `--yes` because those go out for real.
+25. **`djq postiz resolve <post>` never guesses**: plain `resolve` is one live look that adopts only core's exact single match, else exit 2 with both choices; `--in-postiz` / `--not-in-postiz` record Eric's answer offline (no key, no call). No `--yes`: Eric checked the calendar, and neither path sends anything new (in Postiz → never sent again; not in Postiz → Today).
