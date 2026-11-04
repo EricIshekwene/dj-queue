@@ -302,6 +302,8 @@ final class DSPlayerNSView: NSView {
   private var timeObs: Any?
   var onReady: ((Bool) -> Void)?
   weak var progress: DSPlaybackProgress?
+  /// A video frame is on screen (evidence runs: the tooltip probe waits for it).
+  var isShowingVideo: Bool { playerLayer.isReadyForDisplay }
 
   override init(frame: NSRect) {
     super.init(frame: frame)

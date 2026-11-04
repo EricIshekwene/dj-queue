@@ -57,6 +57,7 @@ enum DSTooltipProbe {
       w.orderFrontRegardless()
       let c = DSTooltipController.shared
       c.requireActiveApp = false
+      c.simulatedPointer = offscreen
       var records: [Record] = []
 
       func settle(_ ms: Int = 1200) async throws { try await Task.sleep(for: .milliseconds(ms)); w.displayIfNeeded() }
@@ -223,6 +224,66 @@ enum DSTooltipProbe {
       DSClipCardDebug.hoverIds = []
       w.appearance = NSAppearance(named: .aqua)
 
+      // 8b. Badges over a playing preview (v0.7.1): a Library tile plays its proxy, in its hover state, under its score
+      // and length badges. Both must open like every other case, over a drawn video frame (not the poster), with no
+      // AppKit view (the player) over them at their centre.
+      var playingMissing: [String] = []
+      if !r6Only {
+        SnapshotContext.resetUI(model)
+        model.viewModes[.library] = .grid
+        model.screen = .library
+        try await settle(1600)
+        let shorts = (model.visibleIds[.library] ?? []).filter { model.videoById[$0]?.type == .short && model.videoById[$0]?.missing == false }
+        if let id = shorts.first, let url = await makeProxy(model, id) {
+          let saved = model.playback
+          model.proxyURLs[id] = url
+          model.playback.gridHoverOnly = false  // in memory only: plays without a pointer (never saved)
+          DSClipCardDebug.hoverIds = [id]
+          model.screen = .health
+          try await Task.sleep(for: .milliseconds(50))
+          model.screen = .library
+          try await settle(1200)
+          var player: DSPlayerNSView?
+          for _ in 0..<50 where player == nil {
+            player = playerViews(in: w).first { $0.isShowingVideo && $0.visibleRect.width > 1 }
+            if player == nil { try await Task.sleep(for: .milliseconds(100)) }
+          }
+          if let player, let pr = player.window.map({ $0.convertToScreen(player.convert(player.bounds, to: nil)) }) {
+            let over = anchors(in: w).filter { a in
+              guard let r = a.visibleScreenRect, pr.contains(CGPoint(x: r.midX, y: r.midY)) else { return false }
+              return a.content.label?.hasPrefix("Score ") == true || a.content.label?.hasPrefix("Length ") == true
+            }
+            if over.count < 2 { playingMissing.append("playing tile: score and length badges not found over the video (\(over.count))") }
+            for a in over {
+              let slug = (a.content.label ?? "").lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }.prefix(28)
+              let name = String(format: "%02d-%@-%@", n, "library-playing", String(slug))
+              n += 1
+              let cover = coveringView(a, in: w)
+              let opened = try await hover(a)
+              try await record(name + "-hover", a, opened: opened,
+                               note: "library-playing: hover over a playing preview" + (cover.map { " · COVERED by \(type(of: $0))" } ?? ""))
+              if let cover { playingMissing.append("\(name): \(type(of: cover)) is over the badge") }
+              if !player.isShowingVideo { playingMissing.append("\(name): the video stopped drawing") }
+              let presented = c.debugPresented
+              await post(.mouseMoved, at: emptyPoint(in: w), in: w)
+              try await Task.sleep(for: .milliseconds(400))
+              records[records.count - 1].hiddenAfterLeave = c.debugPanelFrame == nil && c.debugPanelWindow?.isVisible != true
+                && c.debugPresented == presented
+              try capture(w, panel: c.debugPanelWindow)?.write(to: out.appendingPathComponent(name + "-left.png"))
+              try await park()
+            }
+          } else {
+            playingMissing.append("playing tile: its video never drew (proxy \(url.lastPathComponent))")
+          }
+          model.playback = saved
+          model.proxyURLs[id] = nil
+          DSClipCardDebug.hoverIds = []
+        } else {
+          playingMissing.append("playing tile: no proxy could be made for the first short clip")
+        }
+      }
+      problems += playingMissing
+
       // 9. Round 6 (Postiz): the sidebar's Test run row, then Settings → Publishing with no key — the disabled
       // "Postiz" segment (label + why), the "Channel disabled" status badge and a platform's detail chevron. Each must be
       // reached and pass like every other case.
@@ -289,7 +350,8 @@ enum DSTooltipProbe {
       problems.forEach { print("tooltip-probe: FAIL \($0)") }
 
       try JSONEncoder.pretty.encode(records).write(to: out.appendingPathComponent("probe.json"))
-      print("tooltip-probe: \(records.count) cases → \(out.path) (SwiftUI hover-ins: \(c.debugHoverEvents), forwarded moves: \(forwarded))")
+      print("tooltip-probe: \(records.count) cases → \(out.path) (SwiftUI hover-ins: \(c.debugHoverEvents), forwarded moves: \(forwarded), "
+            + "real-cursor hovers dropped: \(c.debugRealCursorHovers))")
       w.orderOut(nil)
       w.close()
       return problems.isEmpty ? 0 : 1
@@ -305,6 +367,7 @@ enum DSTooltipProbe {
   static func nested(out: URL) async throws -> [String] {
     let c = DSTooltipController.shared
     c.requireActiveApp = false
+    c.simulatedPointer = offscreen
     let fixture = DS.color.surface.frame(width: 320, height: 200)
       .overlay { DS.color.hover.frame(width: 90, height: 44).dsTooltip("Inner trigger") }
       .dsTooltip("Outer trigger")
@@ -350,13 +413,47 @@ enum DSTooltipProbe {
     try capture(w, panel: c.debugPanelWindow)?.write(to: out.appendingPathComponent("00-nested-onto-parent.png"))
     await post(.mouseMoved, at: CGPoint(x: w.frame.minX + 8, y: w.frame.minY + 8), in: w)
     c.hide(resetGroup: true)
-    c.simulatedPointer = nil
+    c.simulatedPointer = offscreen
     try await Task.sleep(for: .milliseconds(450))
     print("tooltip-probe: nested · \(problems.isEmpty ? "pass" : problems.joined(separator: "; "))")
     return problems
   }
 
   enum ProbeError: Error { case noAnchors(String) }
+
+  /// A proxy for `id` in the run's throwaway support folder (made with ffmpeg if it isn't cached; the source is
+  /// only read). nil when it can't be made.
+  static func makeProxy(_ model: AppModel, _ id: String) async -> URL? {
+    let range = model.playback.loop
+    if let u = model.proxies.cachedProxy(videoId: id, range: range) { return u }
+    return await withCheckedContinuation { cont in
+      model.proxies.request(id, priority: .visible, range: range) { r in cont.resume(returning: try? r.get()) }
+    }
+  }
+
+  static func playerViews(in w: NSWindow) -> [DSPlayerNSView] {
+    var found: [DSPlayerNSView] = []
+    func walk(_ v: NSView) {
+      if let p = v as? DSPlayerNSView { found.append(p) }
+      v.subviews.forEach(walk)
+    }
+    if let root = w.contentView { walk(root) }
+    return found
+  }
+
+  /// The AppKit view that takes the pointer at the trigger's centre when it isn't SwiftUI's own content — e.g. a
+  /// video player view over a badge, which would take its clicks and hover in the app. nil = the trigger is on top.
+  static func coveringView(_ a: DSTooltipAnchorView, in w: NSWindow) -> NSView? {
+    guard let r = a.visibleScreenRect, let root = w.contentView else { return nil }
+    let pw = w.convertPoint(fromScreen: CGPoint(x: r.midX, y: r.midY))
+    guard let hit = root.hitTest(root.superview?.convert(pw, from: nil) ?? pw) else { return nil }
+    var v: NSView? = hit
+    while let x = v {
+      if x is DSPlayerNSView { return x }
+      v = x.superview
+    }
+    return nil
+  }
 
   // MARK: Helpers
 
@@ -423,8 +520,9 @@ enum DSTooltipProbe {
   }
 
   /// Posts a real mouse-moved event to our own queue (never the user's cursor). AppKit derives tracking-area
-  /// enter/exit from the window server's pointer, not from posted events; if no enter arrives within 80 ms the
-  /// probe forwards the move to the tracking logic exactly as an enter/exit pair would (counted in probe.json).
+  /// enter/exit from the window server's pointer, not from posted events; after 80 ms the probe hands the move to the
+  /// tracking logic as the enter/exit pairs a real pointer there would produce, for whatever SwiftUI didn't deliver
+  /// (counted as forwarded moves). SwiftUI events that followed the user's real cursor instead are dropped and counted.
   static func post(_ type: NSEvent.EventType, at screenPoint: CGPoint, in w: NSWindow) async {
     let c = DSTooltipController.shared
     c.simulatedPointer = screenPoint
@@ -435,11 +533,13 @@ enum DSTooltipProbe {
       NSApp.postEvent(e, atStart: false)
     }
     try? await Task.sleep(for: .milliseconds(80))
-    if c.debugHoverEvents == before {
-      forwarded += 1
-      c.debugPointerMoved(to: screenPoint, in: w)
-    }
+    // Reconcile either way: a SwiftUI hover-in in these 80 ms may belong to another trigger (SwiftUI also follows
+    // the real cursor; `swiftUIHover` drops those), so it doesn't prove the move reached the triggers under the point.
+    if c.debugPointerMoved(to: screenPoint, in: w), c.debugHoverEvents == before { forwarded += 1 }
   }
+
+  /// Nowhere, until the probe's first move (real-cursor hovers before it are dropped too).
+  static let offscreen = CGPoint(x: -100_000, y: -100_000)
 
   static var forwarded = 0
 

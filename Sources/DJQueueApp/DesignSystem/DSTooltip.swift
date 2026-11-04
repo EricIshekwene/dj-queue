@@ -118,7 +118,7 @@ private struct DSTooltipModifier: ViewModifier {
         .background(DSTooltipAnchor(content: content, side: side, scheme: scheme, box: box).allowsHitTesting(false))
         .onHover { inside in
           guard let a = box.view else { return }
-          if inside { DSTooltipController.shared.debugHoverEvents += 1; DSTooltipController.shared.hoverBegan(a) } else { DSTooltipController.shared.hoverEnded(a) }
+          DSTooltipController.shared.swiftUIHover(a, inside: inside)
         }
         .overlay(alignment: side.overlayAlignment) {
           if forceVisible || DSTooltipController.forcedLabels.contains(content.label ?? content.disabledReason ?? "") { staticBubble }
@@ -279,6 +279,18 @@ final class DSTooltipController {
   }
 
   // MARK: Hover
+
+  /// SwiftUI's hover for a trigger. In an evidence run (`simulatedPointer` set) an event that disagrees with the probe's
+  /// pointer is dropped: SwiftUI keeps tracking the real cursor even in the click-through probe window, and re-checks
+  /// it whenever the view tree changes (a tile turning hot), so the user's resting cursor would end the probe's hover
+  /// (v0.7.1). The probe checks z-order itself (`DSTooltipProbe.coveringView`). Never set in the app.
+  func swiftUIHover(_ a: DSTooltipAnchorView, inside: Bool) {
+    if let sim = simulatedPointer, (a.visibleScreenRect?.contains(sim) ?? false) != inside {
+      debugRealCursorHovers += 1
+      return
+    }
+    if inside { debugHoverEvents += 1; hoverBegan(a) } else { hoverEnded(a) }
+  }
 
   func hoverBegan(_ a: DSTooltipAnchorView) {
     installMonitorsIfNeeded()
@@ -473,6 +485,8 @@ final class DSTooltipController {
   var simulatedPointer: CGPoint?
   /// Hover-ins seen (tells the probe whether SwiftUI delivered hover from its posted mouse events).
   var debugHoverEvents = 0
+  /// SwiftUI hover events dropped because they followed the real cursor, not the probe's pointer.
+  var debugRealCursorHovers = 0
   /// Bubbles presented (a bubble opening while the pointer leaves is a flash).
   var debugPresented = 0
   var debugShown: DSTooltipAnchorView? { shown }
@@ -483,11 +497,15 @@ final class DSTooltipController {
   /// What SwiftUI hover would do for a pointer at `p`: exit triggers it left (innermost first, as SwiftUI delivers
   /// them, which is the order that could hand a nested trigger's bubble to its parent on the way out), then enter
   /// the ones it is now over (outermost first, so the innermost wins).
-  func debugPointerMoved(to p: CGPoint, in w: NSWindow) {
+  /// Returns whether anything changed (nothing when SwiftUI already delivered the same hover).
+  @discardableResult
+  func debugPointerMoved(to p: CGPoint, in w: NSWindow) -> Bool {
     func depth(_ v: NSView) -> Int { var d = 0; var s = v.superview; while let x = s { d += 1; s = x.superview }; return d }
     let inside = DSTooltipProbe.anchors(in: w).filter { $0.visibleScreenRect?.contains(p) ?? false }.sorted { depth($0) < depth($1) }
-    for h in hovered.compactMap(\.view).reversed() where !inside.contains(where: { $0 === h }) { hoverEnded(h) }
-    for a in inside where !hovered.contains(where: { $0.view === a }) { hoverBegan(a) }
+    var changed = false
+    for h in hovered.compactMap(\.view).reversed() where !inside.contains(where: { $0 === h }) { hoverEnded(h); changed = true }
+    for a in inside where !hovered.contains(where: { $0.view === a }) { hoverBegan(a); changed = true }
+    return changed
   }
 
   func debugHandle(_ e: NSEvent) { handle(e) }
