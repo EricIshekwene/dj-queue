@@ -444,6 +444,8 @@ final class AppModel {
     weekSlots = l.weekSlots
     weekAwake = l.weekAwake
     postiz.apply(l.postiz)
+    // The key's presence decides fallbacks on every screen: look it up once a platform uses Postiz.
+    if postiz.hasKey == nil && !settings.publishing.postizPlatforms.isEmpty { loadPostizKey() }
     applyPreviewStamps(l)
     lastRefresh = Date()
     loadError = nil
@@ -976,10 +978,10 @@ final class AppModel {
 
   // MARK: Navigation
 
-  func openEditor(_ videoId: String, in ids: [String]? = nil, fixPostId: String? = nil) {
+  func openEditor(_ videoId: String, in ids: [String]? = nil, fixPostId: String? = nil, trimPlatform: Platform? = nil) {
     let all = ids ?? [videoId]
     if editorSession == nil { editorSession = try? bulk.begin("editor", ids: all.contains(videoId) ? all : [videoId] + all) }
-    editor = EditorRequest(videoId: videoId, videoIds: all, fixPostId: fixPostId)
+    editor = EditorRequest(videoId: videoId, videoIds: all, fixPostId: fixPostId, trimPlatform: trimPlatform)
   }
 
   /// A journaled action (or an undo) is about to run while the editor is open: close the session so far as its own

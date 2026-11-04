@@ -110,6 +110,14 @@ extension SnapshotShots {
         state(pm, testRun: true)
         return AnyView(MenuBarContent(model: pm, state: MenuBarState(model: pm)))
       },
+      // U3 (F6): an Edit card for a clip too long for a platform offers "Trim for X" and "Skip X".
+      c.main("r6-edit-too-long") { m in
+        m.setViewMode(.wide, for: .edit)
+        if let v = m.needsEdit.first(where: { (m.issuesByVideo[$0.id] ?? []).contains { $0.kind == .tooLong } }) {
+          ListPrefs.shared.setSearch(.edit, m.displayName(v))
+        }
+        m.screen = .edit
+      },
       c.main("r6-sidebar-test-run-compact", pm) { m in
         state(m, testRun: true)
         m.screen = .queue

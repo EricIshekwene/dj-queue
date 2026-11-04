@@ -105,6 +105,38 @@ enum EditorSnapshot {
           model.canvasMode = .zones; model.scrollTarget = .title
         }
       }
+      // Round 6 (F1, F2, F6). They change the throwaway DB, so they run last.
+      shot("r6-cover-meaning") { reset(); model.canvasMode = .zones; model.scrollTarget = .cover }
+      shot("r6-youtube-title-over") {
+        reset()
+        model.canvasMode = .preview
+        model.previewPlatform = .youtube
+        model.updateVersion { $0.youtubeTitle = String(repeating: "Afroween Jazz Piano blend, the log drum switch ", count: 3) }
+        model.scrollTarget = .caption
+      }
+      shot("r6-youtube-title-template-shortened") {
+        reset()
+        model.updateVersion { $0.youtubeTitle = "" }
+        model.updateVersion { $0.text = "Midnight Run into Afterglow into Low Tide into Paper Moon, the whole Afroween Jazz Piano closing run, part two" }
+        model.canvasMode = .preview
+        model.previewPlatform = .youtube
+        model.scrollTarget = .caption
+      }
+      // F6: a clip longer than Facebook's limit, played whole.
+      if let long = shorts.filter({ $0.id != pick.id && $0.duration > 100 && $0.duration < 135 }).first
+          ?? shorts.filter({ $0.duration > 100 }).min(by: { $0.duration < $1.duration }) {
+        let whole = {
+          model.load(long.id)
+          model.updateEdit { $0.trimIn = 0; $0.trimOut = long.duration; $0.platformTrims = [:]; $0.skippedPlatforms = [] }
+        }
+        shot("r6-long-clip") { reset(); whole(); model.canvasMode = .zones; model.scrollTarget = .platforms }
+        shot("r6-long-clip-trimmed-facebook") {
+          reset(); whole(); model.addPlatformTrim(.facebook); model.canvasMode = .zones; model.scrollTarget = .platforms
+        }
+        shot("r6-long-clip-skipped-facebook") {
+          reset(); whole(); model.setPosting(.facebook, false); model.canvasMode = .zones; model.scrollTarget = .platforms
+        }
+      }
       if let only = env["DJQ_SNAPSHOT_ONLY"] { shots = shots.filter { $0.0.contains(only) } }
 
       for (name, setup) in shots {

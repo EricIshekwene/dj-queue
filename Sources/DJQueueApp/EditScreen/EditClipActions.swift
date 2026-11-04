@@ -32,8 +32,15 @@ extension AppModel {
       case .tooLong:
         let limit = i.limit.map { " (\(Validation.fmt($0)) max)" } ?? ""
         out.append(EditFix(id: "trim-\(p.rawValue)", title: "Trim for \(name)", icon: "scissors",
-                           tooltip: "Open the editor to trim it for \(name)\(limit)", disabledReason: nil) { [self] in
-          openEditor(v.id, in: ids)
+                           tooltip: "Open the editor with a \(name) trim lane cut at its limit\(limit)", disabledReason: nil) { [self] in
+          openEditor(v.id, in: ids, trimPlatform: p)
+        })
+        let id = v.id
+        out.append(EditFix(id: "skip-\(p.rawValue)", title: "Skip \(name)", icon: "forward",
+                           tooltip: "Don't post this clip on \(name); the others keep the full length", disabledReason: nil) { [self] in
+          pipelineBulk("Skip \(name) for this clip?", verb: "Skip \(name)", ids: [id], done: "\(name) skipped for this clip") { b, dry in
+            try b.setPlatform([id], p, skipped: true, dryRun: dry)
+          }
         })
       case .captionTooLong:
         let limit = i.limit.map { Int($0) }

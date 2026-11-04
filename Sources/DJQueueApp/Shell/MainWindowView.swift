@@ -12,6 +12,7 @@ struct MainWindowView: View {
     ZStack {
       if let ed = model.editor {
         EditorView(store: model.store, videoId: ed.videoId, videoIds: ed.videoIds, onDone: { model.closeEditor() },
+                   trimPlatform: ed.trimPlatform,
                    headerAccessory: { id in AnyView(EditorStageControl(model: model, videoId: id)) })
           .transition(.opacity)
       } else {
