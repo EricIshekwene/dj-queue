@@ -694,6 +694,35 @@ import Testing
     #expect(rig.fake.createCount == creates && bad.isEmpty)
   }
 
+  /// R3-1 / probe G: resolving "not in Postiz" while the create is still in flight is refused; and a create that lands
+  /// after its job was closed by someone else is removed from Postiz — never Postiz and Today both.
+  @Test func resolveNeverRacesACreateInFlight() throws {
+    let rig = try Rig(1, platforms: [.x])
+    var raced: Error?
+    rig.service.afterCreateHook = {
+      guard raced == nil, let j = try rig.store.openPostizJobs().first else { return }
+      do { _ = try rig.service.resolveUnconfirmed(postId: j.postId, inPostiz: false) } catch { raced = error }
+    }
+    rig.settle()
+    #expect((raced as? EngineError)?.message.contains("still in flight") == true)
+    let x = try #require(try rig.f.post(.x, day: "2026-11-02"))
+    #expect(try rig.job(x)?.phase == .live && rig.fake.livePosts.count == 1)
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func aCreateLandingOnAClosedJobIsRemoved() throws {
+    let rig = try Rig(1, platforms: [.x])
+    var closed = false
+    rig.service.afterCreateHook = {
+      guard !closed, let j = try rig.store.openPostizJobs().first else { return }
+      closed = true
+      try rig.store.closePostizJob(id: j.id, reason: .rejected, note: "closed by another process")
+    }
+    rig.settle()
+    #expect(closed && rig.fake.createCount == 1 && rig.fake.deleteCount == 1 && rig.fake.livePosts.isEmpty)
+    #expect(try rig.store.openPostizJobs().isEmpty && (try rig.invariants()).isEmpty)
+  }
+
   /// N4 / probe C: a cancel near the slot still DELETEs when the list doesn't show the post.
   @Test func nearSlotCancelDeletesEvenWhenTheListLags() throws {
     let rig = try Rig(1, platforms: [.x])

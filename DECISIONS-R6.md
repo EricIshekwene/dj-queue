@@ -53,3 +53,4 @@ Facebook keeps 90 s, one v0.7.0 ship) are in the session record and docs/postiz.
 45. **A cancel near the slot always sends the DELETE** (re-review N4), even when `GET /posts` doesn't list the post (a 404 counts as done); the sync step never closes a deleting job on absence alone.
 46. **A test-run draft an hour past its slot is notified** (re-review N5): release it or post it by hand.
 47. **`DJQ_HOME` / `DJQ_ROOT` set at all (even empty) = scratch** (re-review N6), exactly as `Paths.standard` reads them.
+48. **Resolve never races a create** (round 3, R3-1): both `resolveUnknown` and `resolveUnconfirmed` refuse unless the job is unconfirmed ("still in flight — wait for the next check"); a create that lands after its job was closed by anyone else is deleted from Postiz at once (or tracked as a new `deleting` job that blocks the clip + platform until the DELETE succeeds) — never Postiz and Today both.

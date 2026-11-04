@@ -464,6 +464,12 @@ public final class PostizService: @unchecked Sendable {
       try? keepUnknown(job, "\(error)")
       throw error
     }
+    // Closed meanwhile (another process): never write onto a closed row, and never leave Postiz posting a post that
+    // DJ Queue no longer tracks — remove it, retrying through an open deleting job if the DELETE fails.
+    if try store.postizJob(id: job.id)?.isOpen != true {
+      try orphanCreated(job, created[0].postId, settings)
+      return .skipped
+    }
     // Record it. A failure here leaves the claim open (creating + submittedAt) for the sync step to adopt.
     job.postizId = created[0].postId
     job.phase = .live
@@ -476,6 +482,28 @@ public final class PostizService: @unchecked Sendable {
     try store.logEvent("postiz", "\(p.platform.displayName): \(spec.type == "draft" ? "draft saved" : "scheduled") in Postiz for \(Sched.shortTime(date, settings))\(spec.testMode ? " (test run)" : "")",
                        videoId: p.videoId, postId: p.id)
     return .created
+  }
+
+  /// A create that landed after its job was closed: DELETE it now; if that fails, track it as a fresh `deleting` job
+  /// (it blocks the clip + platform and the publish step keeps retrying).
+  func orphanCreated(_ job: PostizJob, _ postizId: String, _ settings: Settings) throws {
+    try store.logEvent("postiz", "\(job.platform.displayName): a create landed after its job was closed — removing it from Postiz",
+                       videoId: job.videoId, postId: job.postId)
+    do {
+      try call(.delete, settings) { try client(settings).deletePost(postizId) }
+      return
+    } catch PostizError.notFound {
+      return
+    } catch {
+      var d = PostizJob(postId: job.postId, videoId: job.videoId, platform: job.platform, integrationId: job.integrationId,
+                        phase: .deleting, postizId: postizId, renderId: job.renderId, contentHash: job.contentHash,
+                        scheduledAt: job.scheduledAt, remoteDate: job.remoteDate, testMode: job.testMode, postType: job.postType,
+                        remoteState: "QUEUE", submittedAt: now, deleteReason: "cancelled: landed after its job was closed",
+                        createdAt: now, updatedAt: now)
+      d.lineage = job.lineage
+      d.content = job.content
+      try store.save(d)
+    }
   }
 
   /// The create's outcome is unknown: keep the claim (it blocks the clip + platform) with the error.
@@ -524,9 +552,7 @@ public final class PostizService: @unchecked Sendable {
   /// and Eric decides with `resolveUnconfirmed(postId:inPostiz:)`.
   @discardableResult
   public func resolveUnknown(postId: String) throws -> String {
-    guard let j = try store.livePostizJob(postId: postId), j.phase == .creating else {
-      throw EngineError("No unconfirmed Postiz create for \(postId)")
-    }
+    let j = try unconfirmedJob(postId)
     let settings = try store.settings()
     let list = try call(.sync, settings) {
       try client(settings).posts(from: j.remoteDate.addingTimeInterval(-86400), to: j.remoteDate.addingTimeInterval(86400))
@@ -541,6 +567,18 @@ public final class PostizService: @unchecked Sendable {
     }
   }
 
+  /// The post's unconfirmed create, or a clear refusal (a create still in flight or already confirmed is never
+  /// resolved by hand — that would race it).
+  func unconfirmedJob(_ postId: String) throws -> PostizJob {
+    guard let j = try store.livePostizJob(postId: postId) else { throw EngineError("No open Postiz create for \(postId)") }
+    guard j.isUnconfirmed, j.postizId == nil else {
+      throw EngineError(j.phase == .creating
+        ? "This Postiz create is still in flight — wait for the next check (a few minutes) before deciding"
+        : "This post is already confirmed in Postiz (\(j.remoteState ?? j.phase.rawValue)) — nothing to resolve")
+    }
+    return j
+  }
+
   /// Eric's decision for an unconfirmed create (`djq postiz resolve --in-postiz | --not-in-postiz`). Offline: no key
   /// or call needed.
   /// - `inPostiz: true`: Postiz has it — the job closes as Postiz's (the post is recorded posted without a link;
@@ -549,9 +587,7 @@ public final class PostizService: @unchecked Sendable {
   ///   only after an explicit reset).
   @discardableResult
   public func resolveUnconfirmed(postId: String, inPostiz: Bool) throws -> String {
-    guard let j = try store.livePostizJob(postId: postId), j.phase == .creating, j.postizId == nil else {
-      throw EngineError("No unconfirmed Postiz create for \(postId)")
-    }
+    let j = try unconfirmedJob(postId)
     if inPostiz {
       try store.closePostizJob(id: j.id, reason: .published, note: "Eric: it's in Postiz")
       if let p = try store.post(id: postId), p.state != .posted {
