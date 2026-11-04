@@ -61,6 +61,7 @@ djq suggest <video> --file one.json            # one clip ({"title_suggestions":
 djq title <video> "Song One x Song Two" | --clear
 djq text <video> "Overlay text" | --none | --default [--version N]
 djq caption <video> "Caption" | --default [--platform P] [--version N]
+djq youtube-title <video> "Title" | --template <id|name|default> | --default [--version N]
 djq kind <video> "dj vid"|talking
 djq score <video> <0-100|clear>
 ```
@@ -75,6 +76,22 @@ Either list may be left out.
   alone between them (`"Song One\nx\nSong Two"`); short pairs may stay on one line. A hook ("Piano is sweet!!") is
   a separate, lower-confidence suggestion. Eric taps one in the editor's Text section; it becomes that version's text.
   Use `djq text` only when Eric asks you to set it.
+
+### Captions, hashtag groups, YouTube titles (round 7)
+
+- A written caption (`djq caption`) is posted **exactly as written** — nothing is appended. Put the hashtags in it, or
+  write `{hashtags}` where the clip's hashtags (its groups + extra tags) should go. `--default` goes back to the
+  template. `djq video <id>` prints the caption as it posts.
+- Hashtag groups are **Eric's own** (Settings → Captions & titles); none ship and new clips get none unless Eric sets
+  default groups. Don't create, edit or delete groups unless Eric asks:
+  `djq hashtag-groups [--json]` · `add "<name>" "<#a #b>"` · `edit <id|name> [--name N] [--tags "<#a #b>"]` ·
+  `delete <id|name>` (undoable: each prints `djq bulk undo <batch>`).
+- Changing a clip's groups or extra tags (`djq bulk hashtags` / `extra-hashtags`) swaps the hashtags **inside** a
+  written caption in place (no duplicates); template captions follow by themselves; per-platform captions stay as
+  written.
+- YouTube titles come from a template (`djq title-templates [--json]` · `add "<name>" "<template>"` · `edit` ·
+  `delete` · `default <id>`), default `{text} | DJ Lovd`. `djq youtube-title <video> --template <id>` picks one for a
+  clip; a typed title (`djq youtube-title <video> "…"`) wins over any template.
 
 ## Stages: move a clip back or forward
 
@@ -130,8 +147,9 @@ djq bulk undo <batch> [--force]
 
 Actions: `make-ready` (confirm the default crop; reports how many go to the Queue and what's still missing) · `apply-defaults
 [--sections frame,trim,text,cover,caption,platforms]` (clear overrides) · `score <n|clear>` · `score-adjust <±n>` ·
-`kind <k>` · `exclude` · `include` · `caption-template <id|default>` · `hashtags <set,set|default>` ·
-`extra-hashtags "<#a #b>"|default` · `drop-hashtags <platform>` · `skip-platform <p>` · `unskip-platform <p>` ·
+`kind <k>` · `exclude` · `include` · `caption-template <id|default>` (rewrites a written caption from the template) ·
+`hashtags <group,group|default>` · `extra-hashtags "<#a #b>"|default` · `youtube-title-template <id|default>` ·
+`drop-hashtags <platform>` · `skip-platform <p>` · `unskip-platform <p>` ·
 `accept-title` · `title "<t>"|--clear` · `add-to-week <date>` · `pin-consecutive <date>` · `post-today` ·
 `re-render` · `unqueue` · `requeue`.
 
@@ -203,7 +221,7 @@ they change which app is installed. `rollback` is refused when the database is n
 ## Rules the app applies (so you don't fight them)
 
 - Clips store only overrides; everything else follows Settings → New clip defaults (trim = Eric's markers, text
-  source = Title, caption template, hashtag sets, YouTube title `{text} | DJ Lovd`, …).
+  source = Title, caption template, hashtag groups (none by default), YouTube title template `{text} | DJ Lovd`, …).
 - With no title the app shows the raw tag verbatim; `{text}` in captions = overlay text, else title, else raw tag.
 - Over-limit captions are never shortened silently: `issues` has `captionTooLong` with `count`/`limit`/
   `countWithoutHashtags`; fix with `djq bulk drop-hashtags x --ids …` or a per-platform caption.

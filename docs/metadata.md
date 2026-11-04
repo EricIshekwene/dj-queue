@@ -64,8 +64,8 @@ Example entry:
 ## How DJ Queue uses them
 
 - **Title** (app-owned, Eric's choice; `djq title`) feeds: the overlay-text default (Settings → New clip
-  defaults → Text source = Title), caption `{text}`, the YouTube title template (`{text} | DJ Lovd`) and the
-  display name everywhere.
+  defaults → Text source = Title), caption `{text}`, the YouTube title templates (default `{text} | DJ Lovd`; Settings →
+  Captions & titles, round 7) and the display name everywhere.
 - With no title, every screen shows the raw marker tag **verbatim**, and captions/titles use it verbatim. Nothing
   is tidied or guessed in the app.
 - Title suggestions appear as chips in the editor's Title section and on Edit cards; *Accept top suggestion* (also
