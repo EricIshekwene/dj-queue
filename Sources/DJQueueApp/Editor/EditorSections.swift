@@ -337,6 +337,7 @@ struct EditorCoverSection: View {
                                                                set: { model.setCoverIncludesText($0) }), size: .sm)
             .dsTooltip("Draw the overlay text on the cover image too")
         }
+        EditorCoverMeaning(platforms: model.postingPlatforms)
       }
     }
     .onAppear { reload() }
@@ -402,11 +403,13 @@ struct EditorPlatformsSection: View {
           DSFlowLayout(spacing: 6) {
             ForEach(EditorPlatforms.order) { p in
               let enabled = model.settings.enabledPlatforms.contains(p)
-              DSChip(p.displayName, isSelected: model.posting(p),
-                     disabledReason: enabled ? nil : "\(p.displayName) is turned off in Settings → Platforms", size: .sm) {
+              let ownTrim = model.posting(p) && model.edit.platformTrims[p] != nil
+              DSChip(p.displayName, icon: ownTrim ? "scissors" : nil, isSelected: model.posting(p),
+                     disabledReason: enabled ? nil : "\(p.displayName) is turned off in Settings → Platforms", size: .sm,
+                     tooltip: enabled ? (model.posting(p) ? "Skip \(p.displayName) for this clip\(ownTrim ? " (it has its own trim)" : "")"
+                                                          : "Post this clip on \(p.displayName) too") : nil) {
                 model.setPosting(p, !model.posting(p))
               }
-              .dsTooltip(enabled ? (model.posting(p) ? "Skip \(p.displayName) for this clip" : "Post this clip on \(p.displayName) too") : nil)
             }
           }
         }
@@ -416,34 +419,86 @@ struct EditorPlatformsSection: View {
     }
   }
 
+  /// F6: every platform the clip is too long for (posting or skipped because of it) and every platform with its own
+  /// trim. Too long → two clear choices, "Trim for X" (adds X's trim lane cut at X's limit) and "Skip X"; the row
+  /// then says what happened ("X posts its own 1:30 trim" / "X skipped for this clip") with the way back.
   @ViewBuilder private var lengths: some View {
-    let rows = model.postingPlatforms.compactMap { p -> (Platform, Double, Double)? in
-      guard let lim = model.settings.limits[p]?.maxDuration else { return nil }
+    let rows = EditorPlatforms.order.compactMap { p -> (Platform, Double, Double)? in
+      guard model.settings.enabledPlatforms.contains(p), let lim = model.settings.limits[p]?.maxDuration else { return nil }
       let d = model.resolvedEdit.trim(platform: p).duration
-      return d > lim + 0.05 || model.edit.platformTrims[p] != nil ? (p, d, lim) : nil
+      let mainTooLong = model.trim.duration > lim + 0.05
+      if model.posting(p) { return d > lim + 0.05 || model.edit.platformTrims[p] != nil ? (p, d, lim) : nil }
+      return mainTooLong ? (p, d, lim) : nil  // skipped: shown while the main trim is still too long for it
     }
     if !rows.isEmpty {
-      VStack(alignment: .leading, spacing: DS.space.xs) {
-        ForEach(rows, id: \.0) { p, d, lim in
-          let over = d > lim + 0.05
-          VStack(alignment: .leading, spacing: 6) {
-            EditorHint(over ? "Too long for \(p.displayName) · \(Validation.fmt(d)) / \(Validation.fmt(lim))"
-                            : "\(p.displayName) has its own trim · \(Validation.fmt(d))",
-                       icon: over ? "exclamationmark.triangle.fill" : "scissors", tone: over ? .warning : nil)
-            HStack(spacing: 6) {
-              if model.edit.platformTrims[p] == nil {
-                DSButton("Trim for \(p.displayName)", variant: .outline, size: .sm,
-                         tooltip: "Add a \(p.displayName)-only trim lane on the timeline") { model.addPlatformTrim(p) }
-              } else {
-                DSButton("Remove \(p.displayName) trim", variant: .ghost, size: .sm,
-                         tooltip: "Delete the \(p.displayName)-only trim; use the main one") {
-                  model.updateEdit { $0.platformTrims[p] = nil }
-                }
-              }
-              if over {
-                DSButton("Skip \(p.displayName)", variant: .ghost, size: .sm,
-                         tooltip: "Don't post this clip on \(p.displayName)") { model.setPosting(p, false) }
-              }
+      VStack(alignment: .leading, spacing: DS.space.sm) {
+        ForEach(rows, id: \.0) { p, d, lim in lengthRow(p, d, lim) }
+      }
+    }
+  }
+
+  @ViewBuilder private func lengthRow(_ p: Platform, _ d: Double, _ lim: Double) -> some View {
+    let name = p.displayName
+    let over = d > lim + 0.05
+    VStack(alignment: .leading, spacing: 6) {
+      if !model.posting(p) {
+        EditorHint("\(name) skipped for this clip · \(Validation.fmt(model.trim.duration)) is over its \(Validation.fmt(lim))",
+                   icon: "forward", tone: nil)
+        DSButton("Post on \(name) again", variant: .ghost, size: .sm,
+                 tooltip: "Post this clip on \(name) too (it still needs a \(name) trim)") { model.setPosting(p, true) }
+          .padding(.leading, -8)
+      } else if over {
+        EditorHint("Too long for \(name) · \(Validation.fmt(d)) / \(Validation.fmt(lim)) — trim it for \(name) or skip \(name)",
+                   icon: "exclamationmark.triangle.fill", tone: .warning)
+        HStack(spacing: 6) {
+          if model.edit.platformTrims[p] == nil {
+            DSButton("Trim for \(name)", icon: "scissors", variant: .outline, size: .sm,
+                     tooltip: "Add a \(name)-only trim lane cut at \(Validation.fmt(lim))") { model.addPlatformTrim(p) }
+          }
+          DSButton("Skip \(name)", icon: "forward", variant: .ghost, size: .sm,
+                   tooltip: "Don't post this clip on \(name); the other platforms keep the full length") { model.setPosting(p, false) }
+        }
+      } else {
+        EditorHint("\(name) posts its own \(Validation.fmt(d)) trim · the timeline's \(name) lane", icon: "scissors", tone: .success)
+        DSButton("Remove \(name) trim", variant: .ghost, size: .sm, tooltip: "Delete the \(name)-only trim; use the main one") {
+          model.updateEdit { $0.platformTrims[p] = nil }
+        }
+        .padding(.leading, -8)
+      }
+    }
+  }
+}
+
+/// F2: what the cover does on each platform it posts to through Postiz (core `CoverMeaning`), one line per meaning:
+/// "Thumbnail · YouTube Shorts", "Cover frame · Instagram, TikTok", "Platform picks · Facebook, Threads, X".
+struct EditorCoverMeaning: View {
+  let platforms: [Platform]
+
+  /// Core's sentence, naming every platform in the group ("Instagram and TikTok use the frame …").
+  static func meaningText(_ m: CoverMeaning, _ ps: [Platform]) -> String {
+    let first = m.detail(ps[0])
+    guard ps.count > 1 else { return first }
+    let names = ps.dropLast().map(\.displayName).joined(separator: ", ") + " and " + ps.last!.displayName
+    return first.replacingOccurrences(of: ps[0].displayName + " uses", with: names + " use")
+      .replacingOccurrences(of: ps[0].displayName + " picks its", with: names + " pick their")
+      .replacingOccurrences(of: ps[0].displayName, with: names)
+  }
+
+  var body: some View {
+    let groups = CoverMeaning.allCases.compactMap { m -> (CoverMeaning, [Platform])? in
+      let ps = EditorPlatforms.order.filter { platforms.contains($0) && CoverMeaning.of($0) == m }
+      return ps.isEmpty ? nil : (m, ps)
+    }
+    if !groups.isEmpty {
+      EditorField(label: "What the cover does", help: "How each platform uses this cover when Postiz posts it") {
+        VStack(alignment: .leading, spacing: 6) {
+          ForEach(groups, id: \.0) { m, ps in
+            HStack(spacing: DS.space.xs) {
+              DSBadge(m.label, style: m == .platformPicks ? .outline : .soft(.neutral),
+                      icon: m == .thumbnail ? "photo" : m == .coverFrame ? "film" : "rectangle.dashed", size: .sm,
+                      help: Self.meaningText(m, ps))
+              Text(ps.map(\.displayName).joined(separator: ", ")).font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+                .lineLimit(1)
             }
           }
         }

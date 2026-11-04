@@ -574,6 +574,14 @@ struct PostContextMenu: View {
   let post: PlatformPost
 
   var body: some View {
+    if post.state == .posted, let u = post.url, let url = URL(string: u) {
+      Button("Open live post", systemImage: "arrow.up.right.square") { NSWorkspace.shared.open(url) }
+      Divider()
+    }
+    if model.postizState(post) == .draft {
+      Button("Release Postiz draft…", systemImage: "paperplane") { model.releaseDraft(post) }
+      Divider()
+    }
     if !post.state.isTerminal {
       Button("Mark posted…", systemImage: "checkmark.circle") { model.markPostedTarget = post }
       Button("Copy caption", systemImage: "text.quote") { model.copyCaption(post) }

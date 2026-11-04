@@ -178,10 +178,11 @@ struct PostPlatformChip: View {
 
   var body: some View {
     let s = PostText.pill(post)
+    let pz = post.resolution == nil ? model.postizState(post) : nil
     let label = post.platform.shortName + (showsKind && post.kind != .regular ? " · \(post.kind == .retry ? "retry" : "repost")" : "")
-    DSBadge(label, style: s.style, icon: post.platform.dsSymbol)
+    DSBadge(label, style: pz?.badgeStyle ?? s.style, icon: post.platform.dsSymbol)
       .contentShape(Capsule())
-      .dsTooltip("\(post.platform.displayName) · \(s.text) · \(PostText.date(post, model: model))"
+      .dsTooltip("\(post.platform.displayName) · \(pz?.text ?? s.text) · \(PostText.date(post, model: model))"
             + (post.kind == .regular ? "" : " · \(PostText.attempt(post))"))
   }
 }
@@ -221,7 +222,17 @@ struct PostGroupRow: View {
           .dsTooltip(post.kind == .retry ? "Tried again after a failure, same day" : "Posted again (a new version), same day")
       }
       Spacer(minLength: DS.space.xs)
-      PostStatePill(post: post)
+      if model.isTestRun(post) { TestRunBadge() }
+      if post.resolution == nil, let pz = model.postizState(post) {
+        if pz == .draft {
+          DSButton("Release", icon: "paperplane", variant: .ghost, size: .sm, tooltip: "Let Postiz post this draft at its time") {
+            model.releaseDraft(post)
+          }
+        }
+        PostizBadge(model: model, post: post, state: pz)
+      } else {
+        PostStatePill(post: post)
+      }
       Group {
         if let u = post.url, let url = URL(string: u) {
           DSIconButton("arrow.up.right.square", tooltip: "Open the live post · \(u)", size: .sm) { NSWorkspace.shared.open(url) }

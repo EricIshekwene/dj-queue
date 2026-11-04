@@ -16,7 +16,8 @@ final class EngineHost {
     store = model.store
     renderer = model.renderer
     publisher = model.publisher
-    engine = Engine(store: model.store, renderer: renderer, publisher: publisher, notifier: UserNotifier.shared)
+    engine = Engine(store: model.store, renderer: renderer, publisher: publisher, notifier: UserNotifier.shared,
+                    postiz: model.postizBridge.service)
     // One ProxyService per process: the engine's idle step and the app's visible tiles share the app's instance,
     // so a clip is never encoded twice and visible tiles jump the engine's background queue.
     if engine.proxyService != nil {

@@ -92,132 +92,185 @@ enum DSTooltipProbe {
         try await Task.sleep(for: .milliseconds(450))
       }
 
-      // 1. Queue: toolbar triggers sit 10 pt under the window's top edge → preferred top must flip below.
-      SnapshotContext.resetUI(model)
-      model.screen = .queue
-      try await settle(1800)
-      let all = anchors(in: w)
-      try JSONEncoder.pretty.encode(all.map { [$0.content.label ?? "", $0.content.shortcut ?? "", $0.content.disabledReason ?? "",
-                                               "\(Int($0.visibleScreenRect?.minX ?? 0) - Int(w.frame.minX)),\(Int(w.frame.maxY - ($0.visibleScreenRect?.maxY ?? 0)))"] })
-        .write(to: out.appendingPathComponent("anchors-queue.json"))
-      let toolbar = all.filter { ($0.visibleScreenRect?.maxY ?? 0) > w.frame.maxY - 60 }.sorted { ($0.visibleScreenRect?.minX ?? 0) < ($1.visibleScreenRect?.minX ?? 0) }
-      guard let tA = toolbar.dropLast().last, let tB = toolbar.last else { throw ProbeError.noAnchors("toolbar") }
-      var opened = try await hover(tA)
-      try await record("01-queue-toolbar-top-edge-flips-below", tA, opened: opened, note: "first hover: full delay; window top edge above")
-      // 2. Delay group: straight to the neighbour → opens at once.
-      opened = try await hover(tB)
-      try await record("02-queue-toolbar-delay-group-instant", tB, opened: opened, note: "moved from the previous trigger: delay group")
-      // 3. Escape closes and keeps it closed while the pointer stays.
-      postKey(53, in: w)
-      try await Task.sleep(for: .milliseconds(700))
-      records.append(Record(name: "03-escape-closes", label: tB.content.label ?? "", side: "-", anchor: arr(tB.visibleScreenRect ?? .zero),
-                            bubble: c.debugPanelFrame.map(arr), window: arr(w.frame), insideWindow: false, insideScreen: false,
-                            openedAfterMs: nil, note: c.debugPanelFrame == nil ? "closed after Esc, stayed closed 700 ms" : "STILL OPEN"))
-      try await park()
-
-      // 4. Sidebar engine status near the window's bottom-left edge.
-      if let s = all.filter({ ($0.visibleScreenRect?.minX ?? .infinity) < w.frame.minX + 260 })
-        .min(by: { ($0.visibleScreenRect?.minY ?? 0) < ($1.visibleScreenRect?.minY ?? 0) }) {
-        opened = try await hover(s)
-        try await record("04-sidebar-bottom-left", s, opened: opened, note: "bottom-left of the window")
-        try await park()
-      }
-
-      // 5. Collapsed sidebar: icon rows explain themselves (label + ⌘ shortcut).
-      model.sidebarCollapsed = true
-      try await settle()
-      let rail = anchors(in: w).filter { ($0.visibleScreenRect?.maxX ?? .infinity) < w.frame.minX + 90 && $0.content.shortcut != nil }
-      if let r = rail.dropFirst(2).first {
-        opened = try await hover(r)
-        try await record("05-collapsed-sidebar-row-shortcut", r, opened: opened, note: "compact sidebar row, keycaps")
-        try await park()
-      }
-      model.sidebarCollapsed = false
-
-      // 6. Dark mode, Week screen, a content trigger.
-      w.appearance = NSAppearance(named: .darkAqua)
-      model.screen = .week
-      try await settle(1600)
-      let week = anchors(in: w).filter { ($0.visibleScreenRect?.minX ?? 0) > w.frame.minX + 300 && ($0.visibleScreenRect?.maxY ?? 0) < w.frame.maxY - 80 }
-      if let d = week.first {
-        opened = try await hover(d)
-        try await record("06-dark-week-content", d, opened: opened, note: "dark: light bubble, no shadow")
-        try await park()
-      }
-
-      // 7. Window pushed into the screen's top-right corner: toolbar's last trigger must flip below and shift left.
-      w.appearance = NSAppearance(named: .aqua)
-      model.screen = .queue
-      w.setFrameTopLeftPoint(NSPoint(x: screen.maxX - w.frame.width, y: screen.maxY))
-      try await settle(1600)
-      if let last = anchors(in: w).filter({ ($0.visibleScreenRect?.maxY ?? 0) > w.frame.maxY - 60 })
-        .max(by: { ($0.visibleScreenRect?.maxX ?? 0) < ($1.visibleScreenRect?.maxX ?? 0) }) {
-        opened = try await hover(last)
-        try await record("07-window-at-screen-top-right-corner", last, opened: opened, note: "window flush with screen top + right edges")
-        try await park()
-      }
-
-      // 8. Every tooltip type on every page, through the same hover path: the hovered tile's controls (video-preview
-      // buttons, score badge, select circle), a disabled trigger (label + why), a shortcut (keycaps) and plain text.
-      // Each is captured on hover and again after the pointer leaves; the bubble must hold text and then be gone.
-      w.setFrameOrigin(NSPoint(x: screen.midX - 720, y: screen.midY - 450))
+      // `DJQ_TOOLTIP_PROBE=r6` runs only the round-6 cases (step 9).
+      let r6Only = ProcessInfo.processInfo.environment["DJQ_TOOLTIP_PROBE"] == "r6"
       var sawReason = false, sawKeys = false
       var tilePicks: [String: Int] = [:]
-      let pages: [(String, Screen, DSViewMode?, NSAppearance.Name)] = [
-        ("library-grid", .library, .grid, .aqua), ("queue-grid", .queue, .grid, .aqua), ("edit-grid", .edit, .grid, .aqua),
-        ("score-grid", .score, .grid, .aqua), ("queue-cards", .queue, .wide, .aqua), ("edit-cards", .edit, .wide, .aqua),
-        ("week", .week, nil, .aqua), ("today", .today, nil, .aqua), ("posts", .posts, nil, .aqua), ("health", .health, nil, .aqua),
-        ("library-grid-dark", .library, .grid, .darkAqua), ("queue-grid-dark", .queue, .grid, .darkAqua),
-      ]
       var n = 8
-      for (page, scr, mode, look) in pages {
+      if !r6Only {
+        // 1. Queue: toolbar triggers sit 10 pt under the window's top edge → preferred top must flip below.
         SnapshotContext.resetUI(model)
-        DSClipCardDebug.hoverIds = []
-        w.appearance = NSAppearance(named: look)
-        if let mode { model.viewModes[scr] = mode }
-        model.screen = scr
-        try await settle(1600)
-        let before = anchors(in: w)
-        var picks: [DSTooltipAnchorView] = []
-        if mode == .grid || mode == .wide, let first = model.visibleIds[scr]?.first {
-          DSClipCardDebug.hoverIds = [first]
-          model.screen = scr == .library ? .health : .library
-          try await Task.sleep(for: .milliseconds(50))
-          model.screen = scr
-          try await settle(1200)
-          // The hovered tile's own controls: one per label that only appears (or appears once more) while hovered.
-          var seen: [String: Int] = [:]
-          for a in before { seen[legend(a), default: 0] += 1 }
-          for a in anchors(in: w) {
-            let k = legend(a)
-            if (seen[k] ?? 0) > 0 { seen[k]! -= 1 } else if !picks.contains(where: { legend($0) == k }) { picks.append(a) }
-          }
-          tilePicks[page] = picks.count
+        model.screen = .queue
+        try await settle(1800)
+        let all = anchors(in: w)
+        try JSONEncoder.pretty.encode(all.map { [$0.content.label ?? "", $0.content.shortcut ?? "", $0.content.disabledReason ?? "",
+                                                 "\(Int($0.visibleScreenRect?.minX ?? 0) - Int(w.frame.minX)),\(Int(w.frame.maxY - ($0.visibleScreenRect?.maxY ?? 0)))"] })
+          .write(to: out.appendingPathComponent("anchors-queue.json"))
+        let toolbar = all.filter { ($0.visibleScreenRect?.maxY ?? 0) > w.frame.maxY - 60 }.sorted { ($0.visibleScreenRect?.minX ?? 0) < ($1.visibleScreenRect?.minX ?? 0) }
+        guard let tA = toolbar.dropLast().last, let tB = toolbar.last else { throw ProbeError.noAnchors("toolbar") }
+        var opened = try await hover(tA)
+        try await record("01-queue-toolbar-top-edge-flips-below", tA, opened: opened, note: "first hover: full delay; window top edge above")
+        // 2. Delay group: straight to the neighbour → opens at once.
+        opened = try await hover(tB)
+        try await record("02-queue-toolbar-delay-group-instant", tB, opened: opened, note: "moved from the previous trigger: delay group")
+        // 3. Escape closes and keeps it closed while the pointer stays.
+        postKey(53, in: w)
+        try await Task.sleep(for: .milliseconds(700))
+        records.append(Record(name: "03-escape-closes", label: tB.content.label ?? "", side: "-", anchor: arr(tB.visibleScreenRect ?? .zero),
+                              bubble: c.debugPanelFrame.map(arr), window: arr(w.frame), insideWindow: false, insideScreen: false,
+                              openedAfterMs: nil, note: c.debugPanelFrame == nil ? "closed after Esc, stayed closed 700 ms" : "STILL OPEN"))
+        try await park()
+
+        // 4. Sidebar engine status near the window's bottom-left edge.
+        if let s = all.filter({ ($0.visibleScreenRect?.minX ?? .infinity) < w.frame.minX + 260 })
+          .min(by: { ($0.visibleScreenRect?.minY ?? 0) < ($1.visibleScreenRect?.minY ?? 0) }) {
+          opened = try await hover(s)
+          try await record("04-sidebar-bottom-left", s, opened: opened, note: "bottom-left of the window")
+          try await park()
         }
-        let rest = anchors(in: w).filter { a in !picks.contains { $0 === a } }
-        if !sawReason, let r = rest.first(where: { !($0.content.disabledReason ?? "").isEmpty }) { picks.append(r); sawReason = true }
-        if !sawKeys, let k = rest.first(where: { !($0.content.shortcut ?? "").isEmpty }) { picks.append(k); sawKeys = true }
-        let content = rest.filter { ($0.visibleScreenRect?.minX ?? 0) > w.frame.minX + 300 && ($0.visibleScreenRect?.maxY ?? 0) < w.frame.maxY - 80 }
-        if let p = content.first(where: { a in !picks.contains { $0.content == a.content } }) { picks.append(p) }
-        for a in picks {
+
+        // 5. Collapsed sidebar: icon rows explain themselves (label + ⌘ shortcut).
+        model.sidebarCollapsed = true
+        try await settle()
+        let rail = anchors(in: w).filter { ($0.visibleScreenRect?.maxX ?? .infinity) < w.frame.minX + 90 && $0.content.shortcut != nil }
+        if let r = rail.dropFirst(2).first {
+          opened = try await hover(r)
+          try await record("05-collapsed-sidebar-row-shortcut", r, opened: opened, note: "compact sidebar row, keycaps")
+          try await park()
+        }
+        model.sidebarCollapsed = false
+
+        // 6. Dark mode, Week screen, a content trigger.
+        w.appearance = NSAppearance(named: .darkAqua)
+        model.screen = .week
+        try await settle(1600)
+        let week = anchors(in: w).filter { ($0.visibleScreenRect?.minX ?? 0) > w.frame.minX + 300 && ($0.visibleScreenRect?.maxY ?? 0) < w.frame.maxY - 80 }
+        if let d = week.first {
+          opened = try await hover(d)
+          try await record("06-dark-week-content", d, opened: opened, note: "dark: light bubble, no shadow")
+          try await park()
+        }
+
+        // 7. Window pushed into the screen's top-right corner: toolbar's last trigger must flip below and shift left.
+        w.appearance = NSAppearance(named: .aqua)
+        model.screen = .queue
+        w.setFrameTopLeftPoint(NSPoint(x: screen.maxX - w.frame.width, y: screen.maxY))
+        try await settle(1600)
+        if let last = anchors(in: w).filter({ ($0.visibleScreenRect?.maxY ?? 0) > w.frame.maxY - 60 })
+          .max(by: { ($0.visibleScreenRect?.maxX ?? 0) < ($1.visibleScreenRect?.maxX ?? 0) }) {
+          opened = try await hover(last)
+          try await record("07-window-at-screen-top-right-corner", last, opened: opened, note: "window flush with screen top + right edges")
+          try await park()
+        }
+
+        // 8. Every tooltip type on every page, through the same hover path: the hovered tile's controls (video-preview
+        // buttons, score badge, select circle), a disabled trigger (label + why), a shortcut (keycaps) and plain text.
+        // Each is captured on hover and again after the pointer leaves; the bubble must hold text and then be gone.
+        w.setFrameOrigin(NSPoint(x: screen.midX - 720, y: screen.midY - 450))
+        let pages: [(String, Screen, DSViewMode?, NSAppearance.Name)] = [
+          ("library-grid", .library, .grid, .aqua), ("queue-grid", .queue, .grid, .aqua), ("edit-grid", .edit, .grid, .aqua),
+          ("score-grid", .score, .grid, .aqua), ("queue-cards", .queue, .wide, .aqua), ("edit-cards", .edit, .wide, .aqua),
+          ("week", .week, nil, .aqua), ("today", .today, nil, .aqua), ("posts", .posts, nil, .aqua), ("health", .health, nil, .aqua),
+          ("library-grid-dark", .library, .grid, .darkAqua), ("queue-grid-dark", .queue, .grid, .darkAqua),
+        ]
+        for (page, scr, mode, look) in pages {
+          SnapshotContext.resetUI(model)
+          DSClipCardDebug.hoverIds = []
+          w.appearance = NSAppearance(named: look)
+          if let mode { model.viewModes[scr] = mode }
+          model.screen = scr
+          try await settle(1600)
+          let before = anchors(in: w)
+          var picks: [DSTooltipAnchorView] = []
+          if mode == .grid || mode == .wide, let first = model.visibleIds[scr]?.first {
+            DSClipCardDebug.hoverIds = [first]
+            model.screen = scr == .library ? .health : .library
+            try await Task.sleep(for: .milliseconds(50))
+            model.screen = scr
+            try await settle(1200)
+            // The hovered tile's own controls: one per label that only appears (or appears once more) while hovered.
+            var seen: [String: Int] = [:]
+            for a in before { seen[legend(a), default: 0] += 1 }
+            for a in anchors(in: w) {
+              let k = legend(a)
+              if (seen[k] ?? 0) > 0 { seen[k]! -= 1 } else if !picks.contains(where: { legend($0) == k }) { picks.append(a) }
+            }
+            tilePicks[page] = picks.count
+          }
+          let rest = anchors(in: w).filter { a in !picks.contains { $0 === a } }
+          if !sawReason, let r = rest.first(where: { !($0.content.disabledReason ?? "").isEmpty }) { picks.append(r); sawReason = true }
+          if !sawKeys, let k = rest.first(where: { !($0.content.shortcut ?? "").isEmpty }) { picks.append(k); sawKeys = true }
+          let content = rest.filter { ($0.visibleScreenRect?.minX ?? 0) > w.frame.minX + 300 && ($0.visibleScreenRect?.maxY ?? 0) < w.frame.maxY - 80 }
+          if let p = content.first(where: { a in !picks.contains { $0.content == a.content } }) { picks.append(p) }
+          for a in picks {
+            let slug = (a.content.label ?? a.content.disabledReason ?? "").lowercased()
+              .map { $0.isLetter || $0.isNumber ? $0 : "-" }.prefix(28)
+            let name = String(format: "%02d-%@-%@", n, page, String(slug))
+            n += 1
+            let opened = try await hover(a)
+            try await record(name + "-hover", a, opened: opened, note: "\(page): hover")
+            let presented = c.debugPresented
+            await post(.mouseMoved, at: emptyPoint(in: w), in: w)  // leave to a spot with no trigger under it
+            try await Task.sleep(for: .milliseconds(400))
+            // Gone, and nothing (a parent trigger's bubble) opened on the way out.
+            let hidden = c.debugPanelFrame == nil && c.debugPanelWindow?.isVisible != true && c.debugPresented == presented
+            records[records.count - 1].hiddenAfterLeave = hidden
+            try capture(w, panel: c.debugPanelWindow)?.write(to: out.appendingPathComponent(name + "-left.png"))
+            try await park()
+          }
+        }
+      }
+      DSClipCardDebug.hoverIds = []
+      w.appearance = NSAppearance(named: .aqua)
+
+      // 9. Round 6 (Postiz): the sidebar's Test run row, then Settings → Publishing with no key — the disabled
+      // "Postiz" segment (label + why), the "Channel disabled" status badge and a platform's detail chevron. Each must be
+      // reached and pass like every other case.
+      var r6Missing: [String] = []
+      do {
+        SnapshotContext.resetUI(model)
+        if var st = try? model.store.settings() {
+          st.publishing.testMode = true
+          try? model.store.save(st)
+        }
+        model.postiz.hasKey = false
+        model.refreshNow()
+        model.screen = .queue
+        try await settle(1600)
+        func probeOne(_ page: String, _ want: (DSTooltipAnchorView) -> Bool, _ what: String) async throws {
+          guard let a = anchors(in: w).first(where: want) else { r6Missing.append("\(page): \(what) not found"); return }
           let slug = (a.content.label ?? a.content.disabledReason ?? "").lowercased()
             .map { $0.isLetter || $0.isNumber ? $0 : "-" }.prefix(28)
           let name = String(format: "%02d-%@-%@", n, page, String(slug))
           n += 1
           let opened = try await hover(a)
-          try await record(name + "-hover", a, opened: opened, note: "\(page): hover")
+          try await record(name + "-hover", a, opened: opened, note: "\(page): \(what)")
           let presented = c.debugPresented
-          await post(.mouseMoved, at: emptyPoint(in: w), in: w)  // leave to a spot with no trigger under it
+          await post(.mouseMoved, at: emptyPoint(in: w), in: w)
           try await Task.sleep(for: .milliseconds(400))
-          // Gone, and nothing (a parent trigger's bubble) opened on the way out.
-          let hidden = c.debugPanelFrame == nil && c.debugPanelWindow?.isVisible != true && c.debugPresented == presented
-          records[records.count - 1].hiddenAfterLeave = hidden
+          records[records.count - 1].hiddenAfterLeave = c.debugPanelFrame == nil && c.debugPanelWindow?.isVisible != true
+            && c.debugPresented == presented
           try capture(w, panel: c.debugPanelWindow)?.write(to: out.appendingPathComponent(name + "-left.png"))
           try await park()
         }
+        try await probeOne("r6-sidebar", { $0.content.label == TestRunBadge.help }, "Test run row")
+        SettingsUIState.shared.reset()
+        model.settingsSection = .publishing
+        model.showSettings = true
+        try await settle(1600)
+        try await probeOne("r6-publishing", { ($0.content.disabledReason ?? "").hasPrefix("Add your Postiz API key") && $0.content.label?.hasPrefix("Postiz posts") == true },
+                           "disabled Postiz segment")
+        try await probeOne("r6-publishing", { $0.content.label?.hasSuffix("needs reconnecting in Postiz") == true }, "Channel disabled badge")
+        try await probeOne("r6-publishing", { $0.content.label?.hasPrefix("Show ") == true && $0.content.label?.hasSuffix("Postiz options") == true },
+                           "platform detail chevron")
+        model.showSettings = false
+        if var st = try? model.store.settings() {
+          st.publishing.testMode = false
+          try? model.store.save(st)
+        }
+        model.refreshNow()
       }
-      DSClipCardDebug.hoverIds = []
-      w.appearance = NSAppearance(named: .aqua)
+      problems += r6Missing
 
       // A hover that opened nothing, an empty bubble, or a bubble that stayed (or another that opened) after leaving
       // fails the run — and so does a sweep that didn't reach what it covers: each grid's hovered-tile buttons, a
@@ -225,14 +278,14 @@ enum DSTooltipProbe {
       for r in records where r.name.hasSuffix("-hover") && (r.bubble == nil || (r.textPixels ?? 0) < 12 || r.hiddenAfterLeave != true) {
         problems.append("\(r.name) · bubble \(r.bubble == nil ? "none" : "shown") · text px \(r.textPixels ?? 0) · hidden after leave \(r.hiddenAfterLeave.map { "\($0)" } ?? "-")")
       }
-      for (page, label) in [("library-grid", "Preview the clip and its status"), ("queue-grid", QueueClipActions.postTodayHelp),
+      for (page, label) in r6Only ? [] : [("library-grid", "Preview the clip and its status"), ("queue-grid", QueueClipActions.postTodayHelp),
                             ("edit-grid", EditClipActions.openHelp), ("library-grid-dark", "Preview the clip and its status"),
                             ("queue-grid-dark", QueueClipActions.postTodayHelp)]
       where !records.contains(where: { $0.note == "\(page): hover" && $0.label == label }) {
         problems.append("\(page): its hovered tile's \"\(label)\" button wasn't reached (tile picks: \(tilePicks[page] ?? 0))")
       }
-      if !sawReason { problems.append("no disabled trigger (label + why) was reached") }
-      if !sawKeys { problems.append("no keycaps trigger was reached") }
+      if !sawReason && !r6Only { problems.append("no disabled trigger (label + why) was reached") }
+      if !sawKeys && !r6Only { problems.append("no keycaps trigger was reached") }
       problems.forEach { print("tooltip-probe: FAIL \($0)") }
 
       try JSONEncoder.pretty.encode(records).write(to: out.appendingPathComponent("probe.json"))
@@ -332,6 +385,7 @@ enum DSTooltipProbe {
     let store = try Store(paths: paths, clock: clock)
     if try store.videos().isEmpty { try Intake(store: store).run() }
     try SampleData.seed(store: store, clock: clock, now: now)
+    try SampleData.seedPostiz(store: store, clock: clock, now: now)
     clock.set(now)
     let model = AppModel(store: store)
     model.frozen = true

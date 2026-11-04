@@ -32,8 +32,15 @@ extension AppModel {
       case .tooLong:
         let limit = i.limit.map { " (\(Validation.fmt($0)) max)" } ?? ""
         out.append(EditFix(id: "trim-\(p.rawValue)", title: "Trim for \(name)", icon: "scissors",
-                           tooltip: "Open the editor to trim it for \(name)\(limit)", disabledReason: nil) { [self] in
-          openEditor(v.id, in: ids)
+                           tooltip: "Open the editor with a \(name) trim lane cut at its limit\(limit)", disabledReason: nil) { [self] in
+          openEditor(v.id, in: ids, trimPlatform: p)
+        })
+        let id = v.id
+        out.append(EditFix(id: "skip-\(p.rawValue)", title: "Skip \(name)", icon: "forward",
+                           tooltip: "Don't post this clip on \(name); the others keep the full length", disabledReason: nil) { [self] in
+          pipelineBulk("Skip \(name) for this clip?", verb: "Skip \(name)", ids: [id], done: "\(name) skipped for this clip") { b, dry in
+            try b.setPlatform([id], p, skipped: true, dryRun: dry)
+          }
         })
       case .captionTooLong:
         let limit = i.limit.map { Int($0) }
@@ -100,13 +107,18 @@ struct EditClipActions: View {
           }
         }
         if !fixes.isEmpty {
-          HStack(spacing: 6) { ForEach(fixes.prefix(2)) { fixButton($0) } }
+          // Two fixes per line; a second "Trim for X · Skip X" pair (too long for two platforms) gets its own line
+          // when there's room (no title help on the card).
+          let shown = needs.addTitle || needs.askAgent ? min(2, fixes.count) : Self.visibleFixes(fixes)
+          ForEach(Array(stride(from: 0, to: shown, by: 2)), id: \.self) { i in
+            HStack(spacing: 6) { ForEach(fixes[i..<min(i + 2, shown)]) { fixButton($0) } }
+          }
         }
         HStack(spacing: 2) {
           StageControl(model: model, video: video)
           DSButton("Open editor", variant: .ghost, size: .sm, tooltip: Self.openHelp) { open() }
           PipelineMoreMenu(tooltip: Self.moreHelp) {
-            EditClipMenu(model: model, video: video, ids: ids, templates: model.captionTemplates, extraFixes: Array(fixes.dropFirst(2)))
+            EditClipMenu(model: model, video: video, ids: ids, templates: model.captionTemplates, extraFixes: Array(fixes.dropFirst(needs.addTitle || needs.askAgent ? 2 : Self.visibleFixes(fixes))))
           }
         }
       }
@@ -143,6 +155,12 @@ struct EditClipActions: View {
   }
 
   static let askAgentHelp = "Copy a title prompt for your agent"
+  /// 2, or 4 when the 3rd and 4th fixes are another platform's Trim/Skip pair.
+  static func visibleFixes(_ fixes: [EditFix]) -> Int {
+    guard fixes.count >= 4, fixes[2].id.hasPrefix("trim-"), fixes[3].id.hasPrefix("skip-") else { return min(2, fixes.count) }
+    return 4
+  }
+
   static let openHelp = "Edit crop, text, caption, cover, platforms"
   static let moreHelp = "Show kind, caption, defaults and more"
 

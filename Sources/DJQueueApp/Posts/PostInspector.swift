@@ -18,6 +18,7 @@ struct PostInspector: View {
       ScrollView {
         VStack(alignment: .leading, spacing: 0) {
           section("Details") { facts }
+          if let pz = model.postizState(post) { section("Postiz") { postizSection(pz) } }
           if post.errorType != nil || post.errorMessage != nil { section("Problem") { problem } }
           if post.state == .posted { section("Metrics") { metrics } }
           section("Attempts") { attempts }
@@ -53,7 +54,12 @@ struct PostInspector: View {
         VStack(alignment: .leading, spacing: 4) {
           Text(v.map(model.displayName) ?? post.videoId).font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).lineLimit(2)
           HStack(spacing: 6) {
-            PostStatePill(post: post)
+            if post.resolution == nil, let pz = model.postizState(post) {
+              PostizBadge(model: model, post: post, state: pz)
+            } else {
+              PostStatePill(post: post)
+            }
+            if model.isTestRun(post) { TestRunBadge() }
             Text("v\(post.versionNo) · #\(post.attemptNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
           }
         }
@@ -87,7 +93,7 @@ struct PostInspector: View {
       if let at = post.postedAt { row("Posted") { Text(Fmt.day(at, tz: model.tz, style: "EEE d MMM, h:mm a")) } }
       row("Version") { Text("v\(post.versionNo)") }
       row("Attempt") { Text(PostText.attempt(post)) }
-      row("Publisher") { Text(post.publisher.capitalized) }
+      row("Publisher") { Text(publisherText) }
       row("Link") {
         if let u = post.url, let url = URL(string: u) {
           Link(destination: url) { Text(u).lineLimit(1).truncationMode(.middle) }.foregroundStyle(DS.color.accent).dsTooltip("Open the live post")
@@ -106,6 +112,54 @@ struct PostInspector: View {
       }
       if let r = post.resolution { row("Resolution") { Text(r.capitalized) } }
       row("Post ID") { Text(post.id).font(DS.type.mono).foregroundStyle(DS.color.textSecondary).lineLimit(1).textSelection(.enabled) }
+    }
+  }
+
+  /// Who delivers it, when, and the one Postiz action that applies (release a test-run draft, open the live post).
+  private func postizSection(_ pz: PostizPostState) -> some View {
+    let job = model.postiz.jobs[post.id]
+    let channel = model.postiz.channel(job?.integrationId ?? model.settings.publishing.channels[post.platform])
+    return VStack(alignment: .leading, spacing: 2) {
+      row("Status") { PostizBadge(model: model, post: post, state: pz) }
+      if !pz.isLoud {  // a failure's message is in Problem below
+        Text(model.postizLine(post, pz))
+          .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .padding(.leading, 84 + DS.space.sm)
+      }
+      if let channel { row("Channel") { Text("\(channel.name) · \(channel.identifier)").lineLimit(1) } }
+      if let job, job.isOpen { row("Goes out") { Text(Fmt.day(job.remoteDate, tz: model.tz, style: "EEE d MMM, h:mm a")) } }
+      if model.isTestRun(post) { row("Test run") { Text(testRunText).fixedSize(horizontal: false, vertical: true) } }
+      if pz == .unconfirmed {
+        VStack(alignment: .leading, spacing: DS.space.xxs) {
+          DSButton("It's in Postiz", icon: "checkmark.circle", variant: .outline, size: .sm,
+                   tooltip: "Keep it as Postiz's; it's never sent again") { model.resolveUnconfirmed(post, inPostiz: true) }
+          DSButton("Not in Postiz — post it myself", variant: .ghost, size: .sm,
+                   tooltip: "Move it to Today as a manual post (asks first)") { model.resolveUnconfirmed(post, inPostiz: false) }
+        }
+        .padding(.top, DS.space.xs)
+      }
+      if pz == .draft {
+        DSButton("Release draft", icon: "paperplane", variant: .outline, size: .sm,
+                 tooltip: "Let Postiz post this draft at its time") { model.releaseDraft(post) }
+          .padding(.top, DS.space.xs)
+      }
+    }
+  }
+
+  /// "Postiz" while Postiz delivers it (or did), even before the post row records it.
+  private var publisherText: String {
+    switch model.postizState(post) {
+    case nil, .fellBack?, .inbox?: post.publisher.capitalized
+    default: "Postiz"
+    }
+  }
+
+  private var testRunText: String {
+    switch post.platform {
+    case .tiktok: "Sent to your TikTok inbox"
+    case .youtube: "Posted as Unlisted"
+    default: "Saved as a Postiz draft"
     }
   }
 

@@ -63,16 +63,34 @@ enum SnapshotRunner {
       empty.frozen = true
       empty.now = now
       empty.refreshNow()
+      // 3. Postiz model (round 6): a copy of the seeded sample with Postiz turned on for most platforms, sample
+      // channels and a Postiz job behind posts in every state. No key, no Keychain, no network.
+      let pPaths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("psupport"), logs: tmp.appendingPathComponent("plogs"),
+                         launchAgents: tmp.appendingPathComponent("pLA"))
+      try FileManager.default.createDirectory(at: pPaths.appSupport, withIntermediateDirectories: true)
+      try FileManager.default.createSymbolicLink(at: pPaths.thumbs, withDestinationURL: src.thumbs)
+      try store.db.backup(to: pPaths.database.path)
+      let pClock = FixedClock(now)
+      let pStore = try Store(paths: pPaths, clock: pClock)
+      try SampleData.seedPostiz(store: pStore, clock: pClock, now: now)
+      pClock.set(now)
+      let pModel = AppModel(store: pStore)
+      pModel.frozen = true
+      pModel.now = now
+      pModel.postiz.hasKey = true
+      pModel.refreshNow()
+
       // The covers belong to the main sample model (the empty one must not take over the shared cache).
       ThumbCache.shared.store = store
       model.refreshNow()
 
-      let ctx = SnapshotContext(model: model, empty: empty, store: store, now: now)
+      let ctx = SnapshotContext(model: model, empty: empty, store: store, now: now, postiz: pModel)
       var shots = SnapshotShots.shell(ctx) + SnapshotShots.pipeline(ctx) + SnapshotShots.planning(ctx)
         + SnapshotShots.browse(ctx) + SnapshotShots.settings(ctx)
         + SnapshotShots.unqueue(ctx)
         + SnapshotShots.r3posts(ctx)
         + SnapshotShots.r4previews(ctx)
+        + SnapshotShots.r6postiz(ctx)
       if let only = ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_ONLY"] {
         shots = shots.filter { $0.name.contains(only) }
       }
@@ -104,6 +122,8 @@ struct SnapshotContext {
   let empty: AppModel
   let store: Store
   let now: Date
+  /// Round 6: the sample with Postiz on (see `SampleData.seedPostiz`).
+  let postiz: AppModel
 
   /// The first clip in the upcoming plan (Queue/Week shots).
   var firstPlannedId: String? { model.upcomingSlots.first?.videoId }
@@ -127,6 +147,7 @@ struct SnapshotContext {
     m.showSettings = false
     m.showShortcuts = false
     m.pendingBulk = nil
+    m.pendingConfirm = nil
     m.previewVideo = nil
     m.toast = nil
     m.selection = [:]

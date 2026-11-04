@@ -32,6 +32,9 @@ struct ConfirmDialogHost: View {
           }
           .keyboardShortcut(.defaultAction)
         }
+        // The dialog's own card (like the Settings modal's confirm and the bulk sheet); without it the dialog drew
+        // straight onto the scrim.
+        .dsFloatingSurface(radius: DS.radius.lg, elevation: DS.elevation.e3)
       }
     }
   }

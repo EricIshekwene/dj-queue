@@ -140,11 +140,26 @@ extension AppModel {
 
   /// Undoes one batch (toast "Undone: <what>", or why not). Clips changed again since are skipped by BulkActions.
   func undo(batch id: String) {
+    // An undo that would put Postiz back on live (e.g. undoing "Test run turned on", or "TikTok now posts manually")
+    // asks first, like the switch itself did; core refuses it otherwise.
+    let live = (try? bulk.undoWouldGoLive(id)) ?? []
+    guard live.isEmpty else {
+      let names = live.map(\.displayName)
+      let list = names.count > 1 ? names.dropLast().joined(separator: ", ") + " and " + names.last! : names[0]
+      confirmHere(ConfirmRequest(
+        title: "Undo and post publicly?",
+        message: "Undoing this puts \(list) back on Postiz with Test run off: planned posts there go out publicly at their slots, and one whose time has passed within minutes.",
+        verb: "Undo and go live", icon: "paperplane") { [weak self] in self?.runUndo(id, confirmGoLive: true) })
+      return
+    }
+    runUndo(id, confirmGoLive: false)
+  }
+
+  private func runUndo(_ id: String, confirmGoLive: Bool) {
     splitEditorSession()
     let label = undoHistory.entries.first { $0.batchId == id }?.label
     undoHistory.remove(id)
-    // UndoRunner is serial: ⌘Z⌘Z restores newest-first even when pressed faster than an undo takes.
-    undoRunner.undo(id) { out in
+    let finish: @Sendable (Result<BulkResult, Error>) -> Void = { out in
       DispatchQueue.main.async {
         self.refresh()
         switch out {
@@ -159,6 +174,14 @@ extension AppModel {
           self.show("Couldn't undo: \(e.localizedDescription)", error: true)
         }
       }
+    }
+    if confirmGoLive {
+      // After every undo already submitted (the runner is serial), then this one with the go-live confirmation.
+      let (runner, b) = (undoRunner, bulk)
+      Task.detached { runner.wait(); finish(Result { try b.undo(id, confirmGoLive: true) }) }
+    } else {
+      // UndoRunner is serial: ⌘Z⌘Z restores newest-first even when pressed faster than an undo takes.
+      undoRunner.undo(id, done: finish)
     }
   }
 

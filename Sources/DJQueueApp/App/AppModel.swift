@@ -39,6 +39,10 @@ final class AppModel {
   let postActions: PostActions
   let renderer: Renderer
   let publisher: ManualPublisher
+  /// Postiz key, check and draft release (fake in snapshots and `DJQ_FAKE_POSTIZ=1` dev runs).
+  let postizBridge: PostizBridge
+  /// What the app shows about Postiz (connection, channels, the job behind each post).
+  var postiz = PostizUI()
   var engine: Engine?
   /// False when another process already holds the engine lock.
   var engineInProcess = false
@@ -221,6 +225,7 @@ final class AppModel {
     postActions = PostActions(store: store)
     renderer = Renderer(store: store)
     publisher = ManualPublisher(store: store, renderer: renderer)
+    postizBridge = PostizBridge(store: store, keyStore: PostizEnvironment.keyStore(), transport: PostizEnvironment.transport(store))
     proxies = ProxyService(store: store)
     bulk = BulkActions(store: store)
     bulk.postsChangeSignal = true
@@ -324,10 +329,12 @@ final class AppModel {
     var hashtagSets: [HashtagSet] = []
     var weekSlots: [PlanSlot] = []
     var weekAwake: [DateInterval] = []
+    var postiz = PostizLoaded()
     var error: String?
   }
 
-  nonisolated static func load(store: Store, queue: Queue, postActions: PostActions, now: Date, weekStart: String) -> Loaded {
+  nonisolated static func load(store: Store, queue: Queue, postActions: PostActions, now: Date, weekStart: String,
+                               postiz: PostizService, hasKey: Bool?) -> Loaded {
     var l = Loaded()
     l.startedAt = Date()
     do {
@@ -380,6 +387,7 @@ final class AppModel {
         l.weekSlots = try store.planSlots(where: "week_start=?", [weekStart])
         l.weekAwake = try Health.awakePeriods(store: store, since: dm.date(weekStart))
       }
+      l.postiz = try PostizLoaded.load(store: store, now: now, service: postiz, hasKey: hasKey, posts: l.posts)
     } catch {
       l.error = "\(error)"
     }
@@ -436,6 +444,12 @@ final class AppModel {
     loaded = true
     weekSlots = l.weekSlots
     weekAwake = l.weekAwake
+    postiz.apply(l.postiz)
+    // A Postiz create DJ Queue couldn't confirm (Doctor postiz.create_unknown) needs Eric: it's a problem too.
+    let unconfirmed = l.posts.filter { postiz.states[$0.id] == .unconfirmed && !problems.contains($0) }
+    if !unconfirmed.isEmpty { problems = unconfirmed + problems }
+    // The key's presence decides fallbacks on every screen: look it up once a platform uses Postiz.
+    if postiz.hasKey == nil && !settings.publishing.postizPlatforms.isEmpty { loadPostizKey() }
     applyPreviewStamps(l)
     lastRefresh = Date()
     loadError = nil
@@ -459,7 +473,8 @@ final class AppModel {
   /// Synchronous reload (launch, snapshot mode).
   func refreshNow() {
     if !frozen { now = store.clock.now }
-    apply(Self.load(store: store, queue: queue, postActions: postActions, now: now, weekStart: weekStart))
+    apply(Self.load(store: store, queue: queue, postActions: postActions, now: now, weekStart: weekStart,
+                    postiz: postizBridge.service, hasKey: postiz.hasKey))
   }
 
   /// Coalesced background reload; the result is applied on the main actor.
@@ -469,8 +484,9 @@ final class AppModel {
     refreshing = true
     now = store.clock.now
     let (s, q, pa, n, ws) = (store, queue, postActions, now, weekStart)
+    let (svc, key) = (postizBridge.service, postiz.hasKey)
     Task.detached(priority: .userInitiated) {
-      let l = AppModel.load(store: s, queue: q, postActions: pa, now: n, weekStart: ws)
+      let l = AppModel.load(store: s, queue: q, postActions: pa, now: n, weekStart: ws, postiz: svc, hasKey: key)
       await MainActor.run {
         self.apply(l)
         self.refreshing = false
@@ -536,13 +552,26 @@ final class AppModel {
   }
 
   var nextPost: PlatformPost? {
-    posts.filter { !$0.state.isTerminal && $0.scheduledAt > now }.min { $0.scheduledAt < $1.scheduledAt }
+    posts.filter { !$0.state.isTerminal && $0.scheduledAt > now && postizState($0)?.isHeld != true }.min { $0.scheduledAt < $1.scheduledAt }
+  }
+
+  /// Today's posts Postiz handles (held or done by it; the inbox and fallbacks are manual tasks), in time order.
+  var postizToday: [PlatformPost] {
+    dueToday.filter { p in
+      switch postizState(p) {
+      case nil, .fellBack?, .inbox?: false
+      default: dm.key(p.scheduledAt) == todayKey
+      }
+    }.sorted { $0.scheduledAt < $1.scheduledAt }
   }
 
   var postedTodayCount: Int { dueToday.filter { $0.state == .posted && dm.key($0.scheduledAt) == todayKey }.count }
   var todayTotal: Int { dueToday.filter { dm.key($0.scheduledAt) == todayKey && $0.state != .skipped }.count }
-  var dueNow: [PlatformPost] { dueToday.filter { $0.state == .due || $0.state == .overdue || ($0.state.isTerminal == false && $0.scheduledAt <= now) } }
-  var dueBadge: Int { dueToday.filter { !$0.state.isTerminal }.count }
+  /// Manual tasks only: a post Postiz delivers is never "due" for Eric.
+  var dueNow: [PlatformPost] {
+    dueToday.filter { ($0.state == .due || $0.state == .overdue || ($0.state.isTerminal == false && $0.scheduledAt <= now)) && postizState($0)?.isHeld != true }
+  }
+  var dueBadge: Int { dueToday.filter { !$0.state.isTerminal && postizState($0)?.isHeld != true }.count }
 
   func runwayTint(_ days: Int, threshold: Int) -> Color {
     days >= threshold * 2 ? DS.Status.posted : (days >= threshold ? .orange : .red)
@@ -551,7 +580,7 @@ final class AppModel {
   var problemSummary: (title: String, detail: String) {
     let n = problems.count
     let parts = problems.prefix(3).map { p in
-      "\(p.platform.displayName) \(p.state == .copyrightBlocked || p.state == .copyrightMuted ? "© \(p.state == .copyrightMuted ? "muted" : "blocked")" : p.state.displayName.lowercased())"
+      postizState(p) == .unconfirmed ? "\(p.platform.displayName) unconfirmed in Postiz" : "\(p.platform.displayName) \(p.state == .copyrightBlocked || p.state == .copyrightMuted ? "© \(p.state == .copyrightMuted ? "muted" : "blocked")" : p.state.displayName.lowercased())"
     }
     return ("\(n) post\(n == 1 ? "" : "s") need\(n == 1 ? "s" : "") attention", parts.joined(separator: " · ") + (n > 3 ? " · …" : ""))
   }
@@ -955,10 +984,10 @@ final class AppModel {
 
   // MARK: Navigation
 
-  func openEditor(_ videoId: String, in ids: [String]? = nil, fixPostId: String? = nil) {
+  func openEditor(_ videoId: String, in ids: [String]? = nil, fixPostId: String? = nil, trimPlatform: Platform? = nil) {
     let all = ids ?? [videoId]
     if editorSession == nil { editorSession = try? bulk.begin("editor", ids: all.contains(videoId) ? all : [videoId] + all) }
-    editor = EditorRequest(videoId: videoId, videoIds: all, fixPostId: fixPostId)
+    editor = EditorRequest(videoId: videoId, videoIds: all, fixPostId: fixPostId, trimPlatform: trimPlatform)
   }
 
   /// A journaled action (or an undo) is about to run while the editor is open: close the session so far as its own

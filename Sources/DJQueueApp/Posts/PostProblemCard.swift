@@ -19,6 +19,7 @@ struct PostFixes {
     if let h = heldReason, Self.canRetry(post) { return h }
     if Self.canRetry(post) { return nil }
     if post.state.isCopyright { return "Copyright can't be fixed by editing — re-upload anyway, skip the platform or accept" }
+    if model.postizState(post) == .inbox { return "In your TikTok inbox — finish it there, then Mark posted" }
     if post.state == .overdue { return "Nothing to fix — the slot was missed. Use Post now or Shift plan (⋯)" }
     return post.resolution.map { "Already handled (\($0))" } ?? "Only failed posts can be fixed"
   }
@@ -67,11 +68,21 @@ struct PostProblemCard: View {
               .dsTooltip(Fmt.day(post.updatedAt, tz: model.tz, style: "EEE d MMM, h:mm a"))
           }
           HStack(spacing: 6) {
-            DSBadge(PostText.problemType(post), style: .soft(tone), icon: post.state.isCopyright ? "c.circle" : nil,
+            DSBadge(model.postizState(post) == .unconfirmed ? "Unconfirmed in Postiz" : PostText.problemType(post), style: .soft(tone), icon: post.state.isCopyright ? "c.circle" : nil,
                     help: post.state.isCopyright ? "The platform flagged the audio — copyright blocks are never retried automatically" : "What went wrong — the actions on the right fix it")
             if post.versionNo != 1 || post.attemptNo != 1 || post.kind != .regular {
               Text("v\(post.versionNo) · \(PostText.attempt(post))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
             }
+            if let pz = model.postizState(post) {
+              switch pz {
+              case .failed, .copyright:
+                DSBadge("via Postiz", style: .outline, icon: "paperplane", help: "Postiz reported this; the message is Postiz's or the platform's")
+              case .inbox, .fellBack, .unconfirmed:
+                PostizBadge(model: model, post: post, state: pz)
+              default: EmptyView()
+              }
+            }
+            if model.isTestRun(post) { TestRunBadge() }
           }
           Text(message).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(3)
             .fixedSize(horizontal: false, vertical: true).padding(.top, 2)
@@ -101,7 +112,17 @@ struct PostProblemCard: View {
       .onTapGesture { dsWithAnimation { model.postsSelection = model.postsSelection == post.id ? nil : post.id } }
       .dsTooltip("Click for details and attempt history")
       HStack(spacing: DS.space.xs) {
-        if post.state == .overdue {
+        if model.postizState(post) == .unconfirmed {
+          DSButton("It's in Postiz", icon: "checkmark.circle", variant: .outline, size: .sm,
+                   tooltip: "Keep it as Postiz's; it's never sent again") { model.resolveUnconfirmed(post, inPostiz: true) }
+          DSButton("Not in Postiz — post it myself", variant: .ghost, size: .sm,
+                   tooltip: "Move it to Today as a manual post (asks first)") { model.resolveUnconfirmed(post, inPostiz: false) }
+            .fixedSize()
+        } else if model.postizState(post) == .inbox {
+          // Already uploaded to the TikTok inbox: finishing it there is the fix; a second upload would double-post.
+          DSButton("Mark posted…", icon: "checkmark.circle", variant: .outline, size: .sm,
+                   tooltip: "Finish it in the TikTok app, then paste its link") { model.markPostedTarget = post }
+        } else if post.state == .overdue {
           // A missed slot has nothing to edit: its two real fixes take the first places.
           DSButton("Post now", icon: "bolt", variant: .outline, size: .sm, disabledReason: fixes.heldReason,
                    tooltip: "Make it due now and open Today") { model.postNow(post) }
@@ -116,10 +137,12 @@ struct PostProblemCard: View {
         }
         DSButton("Skip \(post.platform.dsxCompactName)", variant: .ghost, size: .sm, disabledReason: fixes.skipReason,
                  tooltip: "Don't post this clip on \(post.platform.displayName)") { model.skip(post) }
-        DSButton("Accept claim", variant: .ghost, size: .sm, disabledReason: fixes.acceptReason,
-                 tooltip: "Leave the post as it is (e.g. muted)") { model.resolve(post, .accept) }
-        DSButton("Reset", variant: .ghost, size: .sm, disabledReason: fixes.resetReason,
-                 tooltip: "Back to Planned, error cleared") { model.reset(post) }
+        if model.postizState(post) != .unconfirmed {  // room for the two answers; neither applies to it
+          DSButton("Accept claim", variant: .ghost, size: .sm, disabledReason: fixes.acceptReason,
+                   tooltip: "Leave the post as it is (e.g. muted)") { model.resolve(post, .accept) }
+          DSButton("Reset", variant: .ghost, size: .sm, disabledReason: fixes.resetReason,
+                   tooltip: "Back to Planned, error cleared") { model.reset(post) }
+        }
         Spacer(minLength: 0)
         PostMoreMenu(model: model, post: post)
       }
@@ -136,6 +159,8 @@ struct PostProblemCard: View {
 
   private var message: String {
     if let m = post.errorMessage, !m.isEmpty { return m }
+    if model.postizState(post) == .unconfirmed { return AppModel.unconfirmedText }
+    if model.postizState(post) == .inbox { return "Postiz sent it to your TikTok inbox. Finish it in the TikTok app, then Mark posted with its link." }
     if post.state == .overdue {
       return "The \(AppModel.clockText(post.scheduledAt, tz: model.tz)) slot on \(Fmt.day(post.scheduledAt, tz: model.tz)) passed without a post."
     }

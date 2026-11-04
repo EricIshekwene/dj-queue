@@ -186,17 +186,30 @@ struct EditorCaptionSection: View {
 
   // MARK: YouTube title
 
+  /// F1: YouTube allows 100 characters. A typed title over the limit is an error (core's `.titleTooLong` keeps the
+  /// clip in Edit); a template title that had to be shortened is a notice with what goes out (core `TitleCheck`).
   private func youtube(_ r: ResolvedVersion) -> some View {
-    let lim = model.settings.limits[.youtube]?.titleLimit ?? 100
+    let lim = min(model.settings.limits[.youtube]?.titleLimit ?? PostizPayload.youtubeTitleMax, PostizPayload.youtubeTitleMax)
+    let typed = r.youtubeTitle.count
+    let checks = model.video.map { PostizPayload.titleChecks(video: $0, version: r, settings: model.settings) } ?? []
     return EditorField(label: "YouTube title", help: "The Shorts title (YouTube shows it under the handle)",
+                       value: r.youtubeTitle.isEmpty ? "\(model.youtubeTitle.count)/\(lim)" : nil,
                        isCustom: !r.isDefault("youtubeTitle"), inheritedFrom: model.source(of: "youtubeTitle"),
                        resetHelp: "Back to the template (\(model.defaults.youtubeTitleTemplate))", onReset: resetter(["youtubeTitle"])) {
       VStack(alignment: .leading, spacing: 4) {
         DSTextField(placeholder: model.youtubeTitleDefault,
                     text: Binding(get: { r.youtubeTitle }, set: { t in model.updateVersion { $0.youtubeTitle = t } }),
                     hint: r.youtubeTitle.isEmpty ? "From the template “\(model.defaults.youtubeTitleTemplate)”" : nil,
-                    limit: lim, size: .sm)
-        if !model.posting(.youtube) { EditorHint("Not posting on YouTube Shorts.") }
+                    error: typed > lim && model.posting(.youtube)
+                      ? "\(typed - lim) over YouTube's \(lim) — shorten it; the clip stays in Edit until it fits" : nil,
+                    limit: r.youtubeTitle.isEmpty ? nil : lim, size: .sm)
+        if !model.posting(.youtube) {
+          EditorHint("Not posting on YouTube Shorts.")
+        } else {
+          ForEach(checks.filter { $0.message != nil && ($0.platform != .youtube || typed <= lim) }, id: \.platform) { c in
+            EditorHint(c.message ?? "", icon: "scissors", tone: .warning)
+          }
+        }
       }
     }
   }

@@ -52,6 +52,7 @@ extension AppModel {
   /// True when Eric can act on the post right now (due, overdue, or its time has come).
   func isActionableNow(_ p: PlatformPost) -> Bool {
     guard p.resolution == nil, !p.state.isTerminal else { return false }
+    if postizState(p)?.isHeld == true { return false }  // Postiz delivers it: not a task
     return p.state == .due || p.state == .overdue || p.scheduledAt <= now
   }
 
@@ -61,7 +62,8 @@ extension AppModel {
   /// The Next-up card: the first post due now, else the next one still to come today.
   var todayNextUp: PlatformPost? {
     let list = todayPosts
-    return list.first(where: isActionableNow) ?? list.first { $0.resolution == nil && !$0.state.isTerminal }
+    return list.first(where: isActionableNow)
+      ?? list.first { $0.resolution == nil && !$0.state.isTerminal && postizState($0)?.isHeld != true }
   }
 
   /// "Tue 12:30 PM TikTok" for the next post after today (empty states).

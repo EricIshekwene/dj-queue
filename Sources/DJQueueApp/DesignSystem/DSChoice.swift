@@ -170,6 +170,8 @@ struct DSSegment<Value: Hashable>: Identifiable {
   var icon: String? = nil
   /// Required when `title` is nil (icon-only segments explain themselves).
   var tooltip: String? = nil
+  /// Dims the segment and blocks it; the reason shows on hover.
+  var disabledReason: String? = nil
   var id: Value { value }
 }
 
@@ -187,7 +189,7 @@ struct DSSegmented<Value: Hashable>: View {
     HStack(spacing: 2) {
       ForEach(segments) { seg in
         DSSegmentButton(seg: seg, selected: seg.value == selection, height: h - 6, size: size, fullWidth: fullWidth, ns: ns) {
-          if selection != seg.value { dsWithAnimation { selection = seg.value } }
+          if selection != seg.value && seg.disabledReason == nil { dsWithAnimation { selection = seg.value } }
         }
       }
     }
@@ -209,7 +211,7 @@ private struct DSSegmentButton<Value: Hashable>: View {
   @Environment(\.dsForcedState) private var forced
 
   var body: some View {
-    let s = forced ?? (hovering ? .hover : .idle)
+    let s = forced ?? (hovering && seg.disabledReason == nil ? .hover : .idle)
     Button(action: action) {
       HStack(spacing: 5) {
         if let icon = seg.icon { Image(systemName: icon).font(.system(size: size.iconSize, weight: .medium)) }
@@ -229,11 +231,12 @@ private struct DSSegmentButton<Value: Hashable>: View {
           Capsule().fill(DS.color.hover.opacity(0.6))
         }
       }
+      .opacity(seg.disabledReason == nil ? 1 : 0.45)
       .contentShape(Capsule())
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
-    .dsTooltip(seg.tooltip)
+    .dsTooltip(seg.disabledReason == nil ? seg.tooltip : (seg.tooltip ?? seg.title), disabledReason: seg.disabledReason)
     .accessibilityLabel(seg.title ?? seg.tooltip ?? "")
     .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
   }

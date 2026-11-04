@@ -19,12 +19,15 @@ struct EditorView: View {
   private let onDone: () -> Void
   /// Drawn in the header after the status chip for the clip being edited (the app's stage control).
   var headerAccessory: ((String) -> AnyView)?
+  /// Opened from "Trim for X" in the Edit list: add X's trim lane (at X's limit) once, and show Platforms.
+  private var trimPlatform: Platform?
 
-  init(store: Store, videoId: String, videoIds: [String], onDone: @escaping () -> Void,
+  init(store: Store, videoId: String, videoIds: [String], onDone: @escaping () -> Void, trimPlatform: Platform? = nil,
        headerAccessory: ((String) -> AnyView)? = nil) {
     _model = StateObject(wrappedValue: EditorModel(store: store, videoId: videoId))
     self.videoIds = videoIds
     self.onDone = onDone
+    self.trimPlatform = trimPlatform
     self.headerAccessory = headerAccessory
   }
 
@@ -71,7 +74,13 @@ struct EditorView: View {
     .dsAnimation(DS.motion.popover, value: model.toast)
     .background(EditorKeyMonitor(handle: handleKey))
     // Don't start with the cursor in the Title field (Space should play, not type).
-    .onAppear { DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) } }
+    .onAppear {
+      DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
+      if let p = trimPlatform, model.posting(p), model.edit.platformTrims[p] == nil, !model.readOnly {
+        model.addPlatformTrim(p)
+        model.scrollTarget = .platforms
+      }
+    }
     .onDisappear { model.flushAndWait(); if !model.snapshotMode { model.playback.unload() } }
   }
 

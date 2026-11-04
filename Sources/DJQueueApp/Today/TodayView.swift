@@ -111,6 +111,7 @@ struct NextUpCard: View {
   }
 
   private func headline(due: Bool) -> String {
+    if model.postizState(post) == .inbox { return "TikTok · In your TikTok inbox — finish it there, then Mark posted" }
     let time = AppModel.clockText(post.scheduledAt, tz: model.tz)
     let when: String
     switch model.postStatus(post) {
@@ -136,6 +137,7 @@ struct TodayRow: View {
 
   var body: some View {
     let status = model.postStatus(post)
+    let pz = model.postizState(post)
     HStack(spacing: DS.space.sm) {
       VStack(alignment: .leading, spacing: 0) {
         if model.dm.key(post.scheduledAt) != model.todayKey {
@@ -148,11 +150,19 @@ struct TodayRow: View {
       Text(post.platform.dsxCompactName).font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
         .frame(width: 66, alignment: .leading).lineLimit(1)
       FileDragThumb(model: model, post: post, width: 27)
-      Text(video.map(model.displayName) ?? "Missing clip").font(DS.type.bodyMedium).foregroundStyle(DS.color.text).lineLimit(1)
-        .frame(maxWidth: .infinity, alignment: .leading)
-      DSBadge(status.text, style: status.badgeStyle, icon: status.badgeIcon)
-        .dsTooltip(statusHelp(status))
-      actions(status)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(video.map(model.displayName) ?? "Missing clip").font(DS.type.bodyMedium).foregroundStyle(DS.color.text).lineLimit(1)
+        if let pz { PostizLine(model: model, post: post, state: pz) }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      if model.isTestRun(post) { TestRunBadge() }
+      if let pz {
+        PostizBadge(model: model, post: post, state: pz)
+      } else {
+        DSBadge(status.text, style: status.badgeStyle, icon: status.badgeIcon)
+          .dsTooltip(statusHelp(status))
+      }
+      if let pz, pz.isHeld { postizActions(pz) } else { actions(status) }
     }
     .padding(.horizontal, DS.space.xs)
     .frame(height: 64)
@@ -220,6 +230,17 @@ struct TodayRow: View {
         DSIconButton("checkmark.circle", tooltip: "Paste the post URL to mark it posted", size: .sm) { model.markPostedTarget = post }
         more
       }
+    }
+  }
+
+  /// Postiz holds it: no task actions, only a draft's Release and the usual menu.
+  @ViewBuilder private func postizActions(_ s: PostizPostState) -> some View {
+    HStack(spacing: 2) {
+      if s == .draft {
+        DSButton("Release", icon: "paperplane", variant: .ghost, size: .sm,
+                 tooltip: "Let Postiz post this draft at its time") { model.releaseDraft(post) }
+      }
+      more
     }
   }
 

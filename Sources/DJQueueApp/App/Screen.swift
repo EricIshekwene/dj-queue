@@ -57,5 +57,7 @@ struct EditorRequest: Equatable {
   var videoId: String
   var videoIds: [String]
   var fixPostId: String?
+  /// F6 "Trim for X" from the Edit list: open with X's trim lane added at X's limit.
+  var trimPlatform: Platform? = nil
 }
 

@@ -61,12 +61,16 @@ struct PlatformsSettings: View {
     limitsTable
 
     SettingsGroupHeader("Publishing")
-    SettingsRow("Publisher", description: "You post from the Mac browser; the app prepares the file and caption.") {
-      DSBadge("Manual", style: .outline, help: "You post each clip yourself; the app prepares the file and caption")
+    SettingsRow("Who posts", description: publishingSummary) {
+      DSButton("Open Publishing", trailingIcon: "chevron.right", variant: .ghost, size: .sm,
+               tooltip: "Set Manual or Postiz per platform") { model.settingsSection = .publishing }
     }
-    SettingsRow("Postiz API key", description: "Stored in the Keychain.", disabledReason: "Not available yet — arrives with automatic posting.") {
-      DSTextField(placeholder: "Not available yet", text: .constant(""), size: .sm).frame(width: 180)
-    }
+  }
+
+  private var publishingSummary: String {
+    let n = model.settings.publishing.postizPlatforms.count
+    let test = model.settings.publishing.testMode ? " · Test run on" : ""
+    return (n == 0 ? "Every platform is Manual: you post from Today." : "\(n) of 6 through Postiz, the rest Manual.") + test
   }
 
   private func description(_ p: Platform) -> String {
@@ -117,13 +121,16 @@ struct PlatformsSettings: View {
                 limit(p)?.captionLimit) { v in
             setLimit(p, "\(p.displayName) caption limit set to \(v)") { $0.captionLimit = v }
           }
-          if p == .youtube {
-            field("YouTube title characters", "Set the YouTube title limit (characters)", limit(p)?.titleLimit) { v in
-              setLimit(p, "YouTube title limit set to \(v)") { $0.titleLimit = v }
+          if p == .youtube || p == .tiktok {
+            field("\(p.displayName) title characters", "Set the \(p.displayName) title limit (at most \(titleMax(p)))", limit(p)?.titleLimit) { v in
+              // The platform's own cap is the ceiling (YouTube 100, TikTok 90): a higher value would let a title pass
+              // here that Postiz then cuts.
+              let c = min(v, titleMax(p))
+              setLimit(p, c < v ? "\(p.displayName) allows \(c) at most — title limit set to \(c)" : "\(p.displayName) title limit set to \(c)") { $0.titleLimit = c }
             }
           } else {
             Text("—").font(DS.type.callout).foregroundStyle(DS.color.textTertiary).frame(width: 76, alignment: .trailing)
-              .dsTooltip("Only YouTube has a title")
+              .dsTooltip("Only YouTube and TikTok have a title")
           }
         }
         .frame(height: 48)
@@ -136,6 +143,8 @@ struct PlatformsSettings: View {
   private func field(_ label: String, _ tooltip: String, _ value: Int?, _ set: @escaping (Int) -> Void) -> some View {
     SettingsNumberField(label: label, value: value ?? 0, tooltip: tooltip, commit: set).frame(width: 76)
   }
+
+  private func titleMax(_ p: Platform) -> Int { p == .tiktok ? PostizPayload.tiktokTitleMax : PostizPayload.youtubeTitleMax }
 
   private func limit(_ p: Platform) -> PlatformLimits? { model.settings.limits[p] ?? PlatformLimits.defaults[p] }
 
