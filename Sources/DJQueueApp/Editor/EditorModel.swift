@@ -349,11 +349,12 @@ final class EditorModel: ObservableObject {
   var captionWarnings: [EditorCaptionWarning] {
     guard let v = video else { return [] }
     let r = resolved
-    let tags = !hashtags.isEmpty
     return postingPlatforms.compactMap { p in
-      let n = caption(for: p).count, lim = captionLimit(p)
+      let c = caption(for: p)
+      let n = c.count, lim = captionLimit(p)
       guard EditorGeometry.lengthLevel(count: n, limit: lim) != .ok else { return nil }
-      let bare = tags && (r.platformCaptions[p] ?? "").isEmpty
+      // Round 7: "has hashtags to drop" comes from the caption text (typed tags count too).
+      let bare = Captions.hasTags(c) && (r.platformCaptions[p] ?? "").isEmpty
         ? Captions.withoutHashtags(for: p, version: r, video: v, sessionName: sessionName, templates: templates, settings: settings, sets: sets).count
         : nil
       return EditorCaptionWarning(platform: p, count: n, limit: lim, countWithoutHashtags: bare)

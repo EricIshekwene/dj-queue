@@ -104,7 +104,8 @@ public enum Validation {
       let c = Captions.caption(for: p, version: r, video: v, sessionName: session, sets: sets, templates: templates,
                                settings: settings)
       if c.count > lim {
-        let hasTags = !Captions.hashtags(r, sets: sets).isEmpty && (r.platformCaptions[p] ?? "").isEmpty
+        // Round 7: from the caption text itself (typed tags count), unless the platform has its own caption.
+        let hasTags = Captions.hasTags(c) && (r.platformCaptions[p] ?? "").isEmpty
         let bare = hasTags
           ? Captions.withoutHashtags(for: p, version: r, video: v, sessionName: session, templates: templates, settings: settings, sets: sets).count
           : nil

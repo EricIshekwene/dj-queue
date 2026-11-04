@@ -265,7 +265,9 @@ struct EditorCaptionSection: View {
           EditorHint("Not posting on YouTube Shorts.")
         } else {
           ForEach(checks.filter { $0.message != nil && ($0.platform != .youtube || typed.count <= lim) }, id: \.platform) { c in
-            EditorHint(c.message ?? "", icon: "scissors", tone: .warning)
+            // Same numbers as the header (what is sent): "template title is 120 characters — shortened to 99 to fit 100".
+            EditorHint("\(c.platform == .youtube ? "The template's" : "\(c.platform.displayName)'s") title is \(c.full.count) characters — it goes out shortened to \(c.title.count) to fit \(c.limit): “\(c.title)”",
+                       icon: "scissors", tone: .warning)
           }
         }
       }

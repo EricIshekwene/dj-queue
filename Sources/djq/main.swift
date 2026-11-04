@@ -196,6 +196,9 @@ func printWeek(_ store: Store, _ week: String) throws {
   }
 }
 
+/// Every command `run` handles (checked before the database is opened).
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
+
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
   args.removeFirst()
@@ -206,6 +209,12 @@ func run() throws -> Int32 {
   if cmd == "prefill" {
     throw CLIError("prefill moved out of the app (round 2): run scripts/prefill_titles.py --tag \"<tag>\" or on a videos.json")
   }
+  // Round 7 (C7): help, usage and unknown commands never open (or migrate) the database.
+  if args.contains("--help") || args.contains("-h") || (args.first == "help" && cmd != "bulk") {
+    print(cmd == "postiz" ? PostizCommand.usage : usage); return 0
+  }
+  if cmd == "postiz" && args.isEmpty { print(PostizCommand.usage); return 0 }
+  guard knownCommands.contains(cmd) else { throw CLIError("unknown command \(cmd)\n\n\(usage)") }
   let store = try Store(paths: paths)
   let settings = try store.settings()
   let dm = DayMath(settings: settings)

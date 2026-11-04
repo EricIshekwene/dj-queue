@@ -92,17 +92,31 @@ public enum Captions {
   }
 
   /// The same caption with no hashtags at all — what "Drop hashtags for <platform>" writes as that platform's
-  /// caption override (`Version.platformCaptions[platform]`). A written caption without `{hashtags}` (round 7: taken
-  /// literally) loses the clip's hashtags where they appear in it.
+  /// caption override (`Version.platformCaptions[platform]`). Round 7: every hashtag in the text goes — the clip's
+  /// groups and extra tags, and any Eric typed into a written caption or a template.
   public static func withoutHashtags(for platform: Platform, version v: ResolvedVersion, video: Video, sessionName: String,
                                      templates: [CaptionTemplate], settings: Settings, sets: [HashtagSet] = []) -> String {
     var r = v
     r.platformCaptions[platform] = nil
+    let base: String
     if !r.caption.isEmpty, !r.caption.contains("{hashtags}") {
-      return replaceHashtags(in: r.caption, old: hashtags(r, sets: sets), new: [])
+      base = replaceHashtags(in: r.caption, old: hashtags(r, sets: sets), new: [])
+    } else {
+      base = build(platform, r, video, sessionName, [], templates, settings)
     }
-    return build(platform, r, video, sessionName, [], templates, settings)
+    return stripTags(base)
   }
+
+  /// `text` with every hashtag token removed (tidy: no leftover blank tag line or trailing space).
+  public static func stripTags(_ text: String) -> String {
+    var out = text
+    var seen = Set<String>()
+    for t in tags(in: text) where seen.insert(t).inserted { out = removeTag(t, from: out) }
+    return out
+  }
+
+  /// True when the caption text holds a hashtag ("Drop hashtags" has something to drop).
+  public static func hasTags(_ text: String) -> Bool { !tags(in: text).isEmpty }
 
   /// A written caption is taken literally (round 7: WYSIWYG — nothing is appended). `{hashtags}` in it (older
   /// captions, and every caption the schema-6 migration found without one, which got "\n{hashtags}") is filled with
@@ -218,7 +232,12 @@ public enum Captions {
     } else if atLineStart {
       end = trailing
     }
-    return ns.replacingCharacters(in: NSRange(location: start, length: end - start), with: "")
+    let out = ns.replacingCharacters(in: NSRange(location: start, length: end - start), with: "")
+    // Removed up to the end of the text: no dangling blank line or space is left to post (review L1).
+    if end >= ns.length || (ns.substring(from: end) as String).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return out.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
+    }
+    return out
   }
 
   static func removeTag(_ tag: String, from text: String) -> String {

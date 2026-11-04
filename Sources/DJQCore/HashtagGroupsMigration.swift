@@ -6,7 +6,7 @@ import Foundation
 ///    `Captions.legacySuffix` ("\n{hashtags}") — rounds 1–6 appended the hashtags on a new line, round 7 appends
 ///    nothing — and a settings row without `defaults.hashtagSetIds` gets the old default groups written out.
 /// 2. **Journaled batch** "hashtag-groups-migration" (`djq bulk undo <id>` restores step 1's state, whose captions are
-///    the old ones): every clip with a post that is still in flight or already posted keeps byte-identical captions —
+///    the old ones): every clip with a post that is still in flight or went out keeps byte-identical captions —
 ///    its built-in group tags are frozen into each version's `extraHashtags` and its group ids cleared (and, should a
 ///    platform's caption still differ, that platform gets the old caption as its own); every other clip loses the
 ///    six built-in groups; the built-in groups are deleted; `defaults.hashtagSetIds` loses them (→ []).
@@ -19,9 +19,10 @@ enum HashtagGroupsMigration {
     var batchId: String?
   }
 
-  /// Clip ids whose captions must not change: any post not finished (planned … overdue) or posted.
+  /// Clip ids whose captions must not change: any post not finished (planned … overdue) or that went out (posted, and
+  /// copyright muted / blocked / removed — the record keeps what was posted; review L2). Only failed and skipped are left.
   static func clipsWithPosts(_ store: Store) throws -> Set<String> {
-    let gone = [PostState.failed, .copyrightBlocked, .copyrightMuted, .removed, .skipped].map { "'\($0.rawValue)'" }.joined(separator: ",")
+    let gone = [PostState.failed, .skipped].map { "'\($0.rawValue)'" }.joined(separator: ",")
     return Set(try store.db.query("SELECT DISTINCT video_id FROM platform_posts WHERE state NOT IN (\(gone))").compactMap { $0.string("video_id") })
   }
 

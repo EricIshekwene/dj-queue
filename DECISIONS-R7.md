@@ -52,6 +52,25 @@ groups" copy) are D2–D6 in the session record. Routine ones, one line each wit
 25. **`djq hashtag-groups` / `title-templates` are journaled** (`bulk undo`) so agents stay on the one data door; the skill
     says not to change groups unless Eric asks.
 
+26. **"Drop hashtags for X" drops every hashtag in the text** — groups, extra tags and tags typed by hand (review M1);
+    "has hashtags to drop" is read from the platform's caption text, so a typed-only caption can be fixed too.
+27. **Removing a tags-only last line trims what's left** (no trailing newline or space posts; review L1).
+28. **Clips whose posts went out with a copyright outcome (muted, blocked, removed) are frozen too** (review L2): the record
+    keeps what was posted. Only failed and skipped posts don't freeze.
+29. **The YouTube shortened-title notice uses the header's numbers** ("…120 characters — it goes out shortened to 99 to fit
+    100"; review L6). The header shows what is sent, or the typed length when a typed title is over.
+30. **djq help, usage and unknown commands never open the database** (review C7, from an incident: `djq postiz --help`
+    ran the schema-6 migration on the DB it found). `djq`, `djq help`, `djq <cmd> --help|-h|help` and unknown commands
+    return before `Store` is opened; test checks a fresh DJQ_HOME stays without a database.
+31. **Known, not changed (review L3):** in v2, clearing the caption field (or typing the template's text) falls back to
+    v1's written caption — a version only adds to the one before it, so v2 can't say "template" over v1's text. The
+    template picker already says so (decision 12).
+32. **Known, by design (review L4):** editing a group's tags in Settings changes template and `{hashtags}` captions, not
+    written captions that already hold the old tags — a written caption is Eric's text; delete's confirm says so too.
+33. **Known (review L5):** `djq bulk undo --force` of a batch from before schema 6 restores its written captions without
+    the "\n{hashtags}" suffix, so they post without the implicit hashtags. Without `--force` such an undo is refused
+    (the identity step changed those rows).
+
 ### C6 review — what was broken or confusing in Caption, and the fix
 
 - Cursor jumped to the end after each keystroke → field owns its text (14).

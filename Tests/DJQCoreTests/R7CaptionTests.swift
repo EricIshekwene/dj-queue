@@ -34,11 +34,11 @@ import Testing
     try s.save(d1, videoId: "clip-3")
     let now = f.clock.now.timeIntervalSince1970
     for (i, (vid, state, ver)) in [("clip-0", "planned", 1), ("clip-0", "rendered", 2), ("clip-2", "posted", 1),
-                                   ("clip-1", "skipped", 1)].enumerated() {
+                                   ("clip-1", "skipped", 1), ("clip-3", "copyright_muted", 1)].enumerated() {
       try s.db.run("""
         INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
         VALUES(?,?,?,?,1,'regular',?,?,'manual',?,?)
-        """, ["p\(i)", vid, Platform.allCases[i].rawValue, ver, now, state, now, now])
+        """, ["p\(i)", vid, Platform.allCases[i % Platform.allCases.count].rawValue, ver, now, state, now, now])
     }
     for v in try s.videos() { try s.refreshState(videoId: v.id) }
     try s.db.exec("PRAGMA user_version = 5")
@@ -74,7 +74,7 @@ import Testing
     let s = try Store(paths: f2.paths, clock: f2.clock, path: file2)
     #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 6)
     // Clips with posts in flight or posted: byte-identical captions on every platform, same YouTube tags and title.
-    for vid in ["clip-0", "clip-2"] {
+    for vid in ["clip-0", "clip-2", "clip-3"] {
       #expect(try outputs(s, vid, legacy: false) == beforeOut[vid], "\(vid)")
     }
     let a2 = try #require(try s.versions(videoId: "clip-0").first { $0.number == 2 })
@@ -83,7 +83,9 @@ import Testing
     let b1 = try #require(try s.versions(videoId: "clip-1").first)
     #expect(b1.hashtagSetIds == ["mine"] && b1.caption == "\t")
     #expect(try outputs(s, "clip-1", legacy: false).first?.tags == ["#mine"])
-    #expect(try outputs(s, "clip-3", legacy: false).first?.captions.first == "first")  // {hashtags} empty, trimmed as before
+    // clip-3 went out (copyright muted, review L2): frozen too, so its {hashtags} caption keeps the default tags.
+    #expect(try outputs(s, "clip-3", legacy: false) == beforeOut["clip-3"])
+    #expect(try outputs(s, "clip-3", legacy: false).first?.captions.first?.hasSuffix(" first") == true)
     #expect(try s.hashtagSets().map(\.id) == ["mine"])
     #expect(try s.settings().defaults.hashtagSetIds.isEmpty)
     // Counts, scores, titles, states unchanged.
@@ -197,6 +199,64 @@ import Testing
     let r = VersionResolver.resolve([ver], number: 1, settings: Settings(), video: v)
     #expect(Captions.withoutHashtags(for: .x, version: r, video: v, sessionName: "s", templates: Defaults.captionTemplates,
                                      settings: Settings()) == "Body text")
+  }
+
+  /// Review M1: "Drop hashtags" also drops hashtags typed by hand, and "has hashtags to drop" reads the caption text.
+  @Test func dropHashtagsIncludesTypedTags() throws {
+    let f = try Fixture()
+    try f.intake()
+    var e = Edit(); e.crop = CropRect(x: 0, y: 0, w: 1216, h: 2160)
+    try f.store.save(e, videoId: "clip-0")
+    let v = try #require(try f.store.video(id: "clip-0"))
+    let long = String(repeating: "That log drum switch gets me every time. ", count: 7)
+    // Typed tags only, no groups.
+    var ver = Version(number: 1); ver.text = "T"; ver.caption = long + "\n#amapiano #piano #mine"
+    try f.store.save(ver, videoId: "clip-0")
+    var r = try #require(try f.store.resolvedVersion(videoId: "clip-0", number: 1))
+    #expect(Captions.withoutHashtags(for: .x, version: r, video: v, sessionName: "s", templates: Defaults.captionTemplates,
+                                     settings: Settings()) == long.trimmingCharacters(in: .whitespaces))
+    let issue = try #require(try Validation.issues(video: v, store: f.store).first { $0.kind == .captionTooLong && $0.platform == .x })
+    #expect(issue.countWithoutHashtags == long.trimmingCharacters(in: .whitespaces).count)
+    // A group plus a typed #mine: both go.
+    try f.store.save(HashtagSet(id: "g", name: "Piano", category: "G", tags: ["#amapiano", "#piano"], sort: 0))
+    ver.hashtagSetIds = ["g"]
+    try f.store.save(ver, videoId: "clip-0")
+    r = try #require(try f.store.resolvedVersion(videoId: "clip-0", number: 1))
+    let bare = Captions.withoutHashtags(for: .x, version: r, video: v, sessionName: "s", templates: Defaults.captionTemplates,
+                                        settings: Settings(), sets: try f.store.hashtagSets())
+    #expect(!bare.contains("#") && bare == long.trimmingCharacters(in: .whitespaces))
+    try BulkActions(store: f.store).dropHashtags(["clip-0"], platform: .x)
+    #expect(try f.store.versions(videoId: "clip-0").first?.platformCaptions?[.x] == bare)
+    // A template caption with a hashtag typed into the template counts too.
+    #expect(Captions.stripTags("Hook\n\n#a #b") == "Hook")
+  }
+
+  /// Review L1: removing a tags-only last line leaves no trailing newline.
+  @Test func removingTheLastTagLineLeavesNoTrailingNewline() {
+    #expect(Captions.replaceHashtags(in: "Line one\n\n#amapiano #piano", old: ["#amapiano", "#piano"], new: []) == "Line one")
+    #expect(Captions.replaceHashtags(in: "Line one\n#a\n", old: ["#a"], new: []) == "Line one")
+    #expect(Captions.replaceHashtags(in: "A\n#a\nB", old: ["#a"], new: []) == "A\nB")
+  }
+
+  /// Review C7: help, usage and unknown commands never open (or create, or migrate) a database.
+  @Test func djqHelpNeverOpensTheDatabase() throws {
+    guard let bin = R6PostizCLITests.binary else { Issue.record("djq isn't built"); return }
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent("djq-help-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: home) }
+    for args in [[], ["--help"], ["help"], ["-h"], ["postiz", "--help"], ["postiz"], ["postiz", "help"], ["caption", "--help"],
+                 ["bulk", "--help"], ["hashtag-groups", "-h"], ["no-such-command"]] {
+      let p = Process()
+      p.executableURL = bin
+      p.arguments = args
+      var env = ProcessInfo.processInfo.environment
+      env["DJQ_HOME"] = home.path
+      env["DJQ_ROOT"] = home.appendingPathComponent("DJ Video").path
+      env["DJQ_POSTIZ_OFFLINE"] = "1"; env["DJQ_NO_SIGNAL"] = "1"
+      p.environment = env
+      p.standardOutput = Pipe(); p.standardError = Pipe()
+      try p.run(); p.waitUntilExit()
+      #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent("support/queue.sqlite").path), "djq \(args)")
+    }
   }
 
   // MARK: YouTube title templates
