@@ -10,8 +10,12 @@ struct PostizLoaded: Sendable {
   var channelsFetchedAt: Date?
   /// Platform post id → its newest Postiz job (open or closed).
   var jobs: [String: PostizJob] = [:]
+  /// Platform post id → core's display state (`PostizService.displayState(for:)`); absent = manual.
+  var states: [String: PostizDisplayState] = [:]
 
-  static func load(store: Store, now: Date) throws -> PostizLoaded {
+  /// `hasKey` is the app's cached lookup (nil = not looked up yet, counts as present): the display never asks the
+  /// Keychain itself.
+  static func load(store: Store, now: Date, service: PostizService, hasKey: Bool?, posts: [PlatformPost]) throws -> PostizLoaded {
     var l = PostizLoaded()
     l.keyInvalid = try store.postizKeyInvalid()?.message
     let b = try store.postizBudget()
@@ -21,6 +25,12 @@ struct PostizLoaded: Sendable {
       l.channelsFetchedAt = c.fetchedAt
     }
     for j in try store.postizJobs(where: "kind='post'", order: "created_at") { l.jobs[j.postId] = j }
+    let settings = try store.settings()
+    let router = PostizRouter(settings: settings, hasKey: hasKey ?? true, keyInvalid: l.keyInvalid != nil, channels: l.channels)
+    // Only posts Postiz can have touched: open ones, and finished ones with a job.
+    for p in posts where !p.state.isTerminal || l.jobs[p.id] != nil {
+      if let st = try service.displayState(for: p, router: router) { l.states[p.id] = st }
+    }
     return l
   }
 }
@@ -33,21 +43,19 @@ struct PostizUI: Equatable {
   var channels: [PostizIntegration]?
   var channelsFetchedAt: Date?
   var jobs: [String: PostizJob] = [:]
+  var states: [String: PostizDisplayState] = [:]
   /// nil = not looked up yet.
   var hasKey: Bool?
   var checking = false
   var checkedAt: Date?
   var checkError: String?
-  /// A routed post with no job this long after its slot reads as missed (the engine submits slots already past at
-  /// now + 3 min, so a few minutes is the normal gap).
-  static let missedGrace: TimeInterval = 10 * 60
-
   mutating func apply(_ l: PostizLoaded) {
     keyInvalid = l.keyInvalid
     pausedUntil = l.pausedUntil
     channels = l.channels
     channelsFetchedAt = l.channelsFetchedAt
     if jobs != l.jobs { jobs = l.jobs }
+    if states != l.states { states = l.states }
   }
 
   func channel(_ id: String?) -> PostizIntegration? { id.flatMap { id in channels?.first { $0.id == id } } }
@@ -256,43 +264,14 @@ extension AppModel {
 
 // MARK: Post status (P4)
 
-/// What Postiz is doing with one platform post. nil from `AppModel.postizState` = a manual post (shown as before).
-enum PostizPostState: Equatable {
-  /// Routed to Postiz; sent once its render exists and the week is approved.
-  case queued
-  /// The create is in flight, or a replace is waiting for its delete.
-  case sending
-  case scheduled(Date)
-  /// Postiz still holds it after its time: it's going out now.
-  case posting
-  /// Test run: a Postiz draft until released.
-  case draft
-  case posted(url: String?)
-  /// Test-run TikTok: in the TikTok app's inbox; finish it there, then Mark posted.
-  case inbox
-  case failed(String)
-  case copyright(String)
-  /// Set to Postiz but back on Today (the sentence says why).
-  case fellBack(String)
+/// What Postiz is doing with one platform post: core's display state (one source for every screen and the engine).
+typealias PostizPostState = PostizDisplayState
 
-  var text: String {
-    switch self {
-    case .queued: "To Postiz"
-    case .sending: "Sending to Postiz"
-    case .scheduled: "Scheduled in Postiz"
-    case .posting: "Posting…"
-    case .draft: "Draft in Postiz"
-    case .posted: "Posted"
-    case .inbox: "In TikTok inbox"
-    case .failed: "Failed"
-    case .copyright: "© Blocked"
-    case .fellBack: "Fell back to manual"
-    }
-  }
-
+extension PostizDisplayState {
   var badgeStyle: DSBadgeStyle {
     switch self {
     case .queued, .sending, .scheduled, .draft: .outline
+    case .unconfirmed: .soft(.warning)
     case .posting: .soft(.info)
     case .posted: .soft(.success)
     case .inbox, .fellBack: .soft(.warning)
@@ -303,6 +282,7 @@ enum PostizPostState: Equatable {
   var badgeIcon: String? {
     switch self {
     case .queued, .sending, .scheduled: "paperplane"
+    case .unconfirmed: "questionmark.circle"
     case .posting: "arrow.up.circle"
     case .draft: "doc"
     case .posted: "checkmark"
@@ -310,14 +290,6 @@ enum PostizPostState: Equatable {
     case .failed: "exclamationmark"
     case .copyright: nil  // the text carries the ©
     case .fellBack: "arrow.uturn.backward"
-    }
-  }
-
-  /// Postiz holds it: nothing for Eric to do (no task on Today, no "due" count).
-  var isHeld: Bool {
-    switch self {
-    case .queued, .sending, .scheduled, .posting, .draft: true
-    default: false
     }
   }
 
@@ -331,49 +303,8 @@ enum PostizPostState: Equatable {
 }
 
 extension AppModel {
-  /// The Postiz side of `p` (nil = manual). Read from the job behind the post and, without one, the route.
-  func postizState(_ p: PlatformPost) -> PostizPostState? {
-    if let j = postiz.jobs[p.id] {
-      if j.isOpen {
-        switch j.phase {
-        case .creating, .deleting: return .sending
-        case .closed: break
-        case .live:
-          if j.remoteState == "DRAFT" { return .draft }
-          return j.remoteDate <= now ? .posting : .scheduled(j.remoteDate)
-        }
-      } else if let r = j.closeReason {
-        switch r {
-        case .published: return .posted(url: p.url ?? j.releaseURL)
-        case .inbox: return p.state == .posted ? .posted(url: p.url) : .inbox
-        case .error where p.state == .failed:
-          return .failed(j.remoteError ?? j.lastError ?? p.errorMessage ?? "Postiz reported an error (no details)")
-        case .copyright where [.copyrightBlocked, .copyrightMuted, .removed].contains(p.state):
-          return .copyright(j.remoteError ?? j.lastError ?? p.errorMessage ?? "Copyright problem")
-        case .rejected where !p.state.isTerminal && p.publisher == "manual":
-          return .fellBack(PostizFallbackReason.createRejected(j.lastError ?? "no details").message)
-        case .vanished where !p.state.isTerminal && p.publisher == "manual":
-          return .fellBack(PostizFallbackReason.vanished.message)
-        case .error, .copyright, .rejected, .vanished: break  // reset since: decided by the route below
-        case .testDraft: return nil
-        case .replaced, .cancelled, .interrupted: break  // decided by the route below
-        }
-      }
-    }
-    guard !p.state.isTerminal, p.resolution == nil else { return nil }
-    switch postizRoute(p.platform) {
-    case .manual: return nil
-    case .postiz:
-      // Missed with no job in Postiz: nothing will send it any more — it's Eric's task again (never "held").
-      if p.state == .overdue || p.scheduledAt < now.addingTimeInterval(-PostizUI.missedGrace) {
-        return .fellBack(Self.missedByPostiz)
-      }
-      return p.state == .planned || p.state == .rendering ? .queued : .sending
-    case .fallback(let r): return .fellBack(r.message)
-    }
-  }
-
-  static let missedByPostiz = "Postiz didn't get it before its time — post it from Today"
+  /// The Postiz side of `p` (nil = manual), as core computed it in the last load.
+  func postizState(_ p: PlatformPost) -> PostizPostState? { postiz.states[p.id] }
 
   /// A test-run post: its job was made in test mode, or it will be (Test run on, not yet sent).
   func isTestRun(_ p: PlatformPost) -> Bool {
@@ -389,6 +320,7 @@ extension AppModel {
     switch s {
     case .queued: return "\(via) · sent once rendered"
     case .sending: return "\(via) · sending now"
+    case .unconfirmed: return "Sent, but Postiz never confirmed it — check the Postiz calendar"
     case .scheduled(let d): return "\(via) · goes out at \(Self.clockText(d, tz: tz))"
     case .posting: return "\(via) · going out now"
     case .draft: return "\(via) · draft until released"

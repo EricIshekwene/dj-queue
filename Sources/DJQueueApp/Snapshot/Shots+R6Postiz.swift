@@ -134,6 +134,15 @@ extension SnapshotShots {
         m.screen = .queue
         m.sidebarCollapsed = true
       },
+      // Core review: ⌘Z of "X now posts manually" would put X back on Postiz live → it asks first. Last: it leaves
+      // X on Manual in the Postiz sample.
+      c.main("r6-undo-go-live-confirm", pm) { m in
+        state(m)
+        m.screen = .today
+        m.setPublisher(.x, .manual)
+        m.toast = nil
+        m.undoLast()
+      },
     ]
   }
 }

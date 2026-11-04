@@ -333,7 +333,8 @@ final class AppModel {
     var error: String?
   }
 
-  nonisolated static func load(store: Store, queue: Queue, postActions: PostActions, now: Date, weekStart: String) -> Loaded {
+  nonisolated static func load(store: Store, queue: Queue, postActions: PostActions, now: Date, weekStart: String,
+                               postiz: PostizService, hasKey: Bool?) -> Loaded {
     var l = Loaded()
     l.startedAt = Date()
     do {
@@ -386,7 +387,7 @@ final class AppModel {
         l.weekSlots = try store.planSlots(where: "week_start=?", [weekStart])
         l.weekAwake = try Health.awakePeriods(store: store, since: dm.date(weekStart))
       }
-      l.postiz = try PostizLoaded.load(store: store, now: now)
+      l.postiz = try PostizLoaded.load(store: store, now: now, service: postiz, hasKey: hasKey, posts: l.posts)
     } catch {
       l.error = "\(error)"
     }
@@ -469,7 +470,8 @@ final class AppModel {
   /// Synchronous reload (launch, snapshot mode).
   func refreshNow() {
     if !frozen { now = store.clock.now }
-    apply(Self.load(store: store, queue: queue, postActions: postActions, now: now, weekStart: weekStart))
+    apply(Self.load(store: store, queue: queue, postActions: postActions, now: now, weekStart: weekStart,
+                    postiz: postizBridge.service, hasKey: postiz.hasKey))
   }
 
   /// Coalesced background reload; the result is applied on the main actor.
@@ -479,8 +481,9 @@ final class AppModel {
     refreshing = true
     now = store.clock.now
     let (s, q, pa, n, ws) = (store, queue, postActions, now, weekStart)
+    let (svc, key) = (postizBridge.service, postiz.hasKey)
     Task.detached(priority: .userInitiated) {
-      let l = AppModel.load(store: s, queue: q, postActions: pa, now: n, weekStart: ws)
+      let l = AppModel.load(store: s, queue: q, postActions: pa, now: n, weekStart: ws, postiz: svc, hasKey: key)
       await MainActor.run {
         self.apply(l)
         self.refreshing = false
