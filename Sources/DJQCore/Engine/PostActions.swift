@@ -330,7 +330,9 @@ public final class PostActions: @unchecked Sendable {
     return p
   }
 
-  /// New attempt for the same platform: next day (staggered), or the original time when that is still ahead.
+  /// New attempt for the same platform: next day (staggered), or the original time when that is still ahead. An
+  /// attempt at a repost stays a repost: as a `.retry` it would join the clip's main lineage, and Postiz having
+  /// published the original would record this attempt as posted with the original's link, never sending it.
   func newAttempt(from p: PlatformPost, kind: PostKind, versionNo: Int, note: String) throws -> PlatformPost {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
@@ -343,7 +345,8 @@ public final class PostActions: @unchecked Sendable {
     }
     let n = PlatformPost(
       id: newId(), videoId: p.videoId, platform: p.platform, versionNo: versionNo,
-      attemptNo: try store.nextAttemptNo(videoId: p.videoId, platform: p.platform), kind: kind, planSlotId: p.planSlotId,
+      attemptNo: try store.nextAttemptNo(videoId: p.videoId, platform: p.platform), kind: p.kind == .repost ? .repost : kind,
+      planSlotId: p.planSlotId,
       scheduledAt: at, renderId: nil, state: .planned, publisher: p.publisher, externalId: nil, url: nil, postedAt: nil,
       errorType: nil, errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now)
     try store.save(n, note: note)

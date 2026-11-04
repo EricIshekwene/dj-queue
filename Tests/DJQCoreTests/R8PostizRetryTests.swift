@@ -306,6 +306,44 @@ import Testing
     #expect(try problems(rig) == [repost.id])
   }
 
+  /// Eric's Fixed on that repost is sent: its own job, and only that job's result marks it posted.
+  @Test func aFixedRepostIsSentNeverRecordedWithTheOriginalsLink() throws {
+    let (rig, yt) = try ytRig()
+    let j = try #require(try rig.job(yt))
+    rig.fake.publish(j.postizId!)
+    rig.f.setTime(Self.monday, "23:30")
+    rig.tick()
+    let original = try #require(try rig.store.post(id: yt.id)?.url)
+    var v2 = Version(number: 2)
+    v2.caption = "second cut"
+    try rig.store.save(v2, videoId: yt.videoId)
+    let repost = try PostActions(store: rig.store).repost(videoId: yt.videoId, platform: .youtube)
+    rig.f.setTime(rig.f.dm.key(repost.scheduledAt), "00:10")
+    rig.tick(4)
+    try fail(rig, try #require(try rig.store.post(id: repost.id)), "Upload failed at the platform")
+    rig.tick()
+
+    let n = try PostActions(store: rig.store).fixed(postId: repost.id)
+    let creates = rig.fake.createCount
+    rig.tick(4)
+    let sent = try #require(try rig.store.post(id: n.id))
+    #expect(sent.state != .posted && sent.url == nil && sent.kind == .repost)
+    #expect(rig.fake.createCount == creates + 1)
+    let job = try #require(try rig.job(sent))
+    #expect(job.postId == n.id && job.lineage == PostizJob.lineage(repost) && job.lineage != j.lineage)
+
+    // Only one Postiz post for the attempt, whatever the ticks.
+    rig.tick(3)
+    #expect(rig.fake.createCount == creates + 1)
+    rig.fake.publish(job.postizId!, url: "https://youtube.com/shorts/second", releaseId: "second")
+    rig.f.setTime(rig.f.dm.key(job.remoteDate), "23:30")
+    rig.tick()
+    let posted = try #require(try rig.store.post(id: n.id))
+    #expect(posted.state == .posted && posted.url == "https://youtube.com/shorts/second" && posted.url != original)
+    #expect(try rig.store.post(id: yt.id)?.url == original)
+    #expect(rig.fake.createCount == creates + 1)
+  }
+
   // MARK: Two processes
 
   @Test func twoEnginesRetryOnceAndLogOnce() throws {
@@ -353,13 +391,22 @@ import Testing
     var list: [String] { lock.withLock { items } }
   }
 
-  @Test func ericsFixedAndTheRetryMakeOneAttempt() throws {
+  /// Today's real case: a quota failure Eric already fixed by hand, its alert long sent. The retry leaves it alone.
+  @Test func aFailureEricAlreadyFixedIsLeftAlone() throws {
     let (rig, yt) = try ytRig()
     try fail(rig, yt)
-    try PostActions(store: rig.store).fixed(postId: yt.id)
+    #expect(try rig.store.markNotified(PostActions.problemKey(yt.id)))
+    let n = try PostActions(store: rig.store).fixed(postId: yt.id)
+    #expect(n.attemptNo == 2)
+    #expect(try rig.service.retryTemporary() == "none")
     rig.tick(3)
-    #expect(try attempts(rig, yt).count == 2)
+    rig.f.setTime(rig.f.dm.key(n.scheduledAt), "08:00")
+    rig.tick(3)
+    #expect(try attempts(rig, yt).map(\.id) == [yt.id, n.id])
+    #expect(try rig.store.post(id: yt.id)?.resolution == "retried")
     #expect(try rig.service.autoRetries(yt).count == 0)
+    #expect(try events(rig, "automatic retry") == 0)
+    #expect(try rig.service.pendingAutoRetries().isEmpty)
   }
 
   // MARK: Test run

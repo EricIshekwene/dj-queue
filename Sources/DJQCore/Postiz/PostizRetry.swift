@@ -42,7 +42,7 @@ extension PostizService {
 
   static let autoRetryPrefix = "postiz.autoRetry."
 
-  /// The version is in the key, not the post kind: `fixed` turns a repost into a `.retry`, and the count must follow.
+  /// The version is in the key, so a repost counts apart from the clip's regular post.
   static func autoRetryKey(_ p: PlatformPost) -> String {
     "\(autoRetryPrefix)\(p.videoId)#\(p.platform.rawValue)#v\(p.versionNo)"
   }
@@ -57,12 +57,12 @@ extension PostizService {
 
   /// This attempt came from a test-run job, so it must not go public.
   func mustStayTestRun(_ p: PlatformPost) throws -> Bool {
-    guard p.kind == .retry else { return false }
+    guard p.kind != .regular else { return false }
     return try autoRetries(p).testRunPosts.contains(p.id)
   }
 
   /// The clip + platform can't get a new attempt: a job is open, published or was a copyright problem (any kind of
-  /// post), or another post is live, posted or has a copyright problem.
+  /// post), or another post is live, posted or has a copyright problem. The whole clip + platform, not one lineage.
   func retryBlocked(_ p: PlatformPost) throws -> Bool {
     let jobs = try store.postizJobs(where: """
       video_id=? AND platform=? AND kind='post'
