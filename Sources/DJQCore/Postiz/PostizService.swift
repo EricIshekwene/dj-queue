@@ -101,6 +101,24 @@ public final class PostizService: @unchecked Sendable {
     }
   }
 
+  /// A stable name for the kind of failure (no message, no status detail) — the "state" a retry notice is keyed on.
+  static func failureKind(_ e: Error) -> String {
+    guard let p = e as? PostizError else { return "other" }
+    switch p {
+    case .unauthorized: return "unauthorized"
+    case .rateLimited: return "rateLimited"
+    case .validation: return "validation"
+    case .notFound: return "notFound"
+    case .payloadTooLarge: return "payloadTooLarge"
+    case .server: return "server"
+    case .network: return "network"
+    case .notSent: return "notSent"
+    case .badResponse: return "badResponse"
+    case .noKey: return "noKey"
+    case .overBudget: return "overBudget"
+    }
+  }
+
   /// True for errors that mean "stop calling Postiz this tick".
   static func stops(_ e: Error) -> Bool {
     guard let p = e as? PostizError else { return false }
@@ -198,9 +216,54 @@ public final class PostizService: @unchecked Sendable {
     case replace(String)
     /// It changed, but too close to the slot to replace safely: Postiz keeps what it has.
     case hold(String)
+    /// Only the caption, title or settings changed and the new version hasn't stayed the same for `settleDelay` yet:
+    /// Postiz keeps what it has until the edits settle (C2a — an edit burst is one replace, not one per keystroke).
+    case settle(String)
+  }
+
+  /// The reason a content-only change gives (caption, title, hashtags, template or Postiz settings).
+  static let contentChanged = "caption, title or settings changed"
+
+  /// A content-only change is sent to Postiz (delete + create) once the new content hash has stayed the same this
+  /// long; any further change restarts the clock. Render, move, channel and every cancel stay immediate.
+  public static let settleDelay: TimeInterval = 120
+
+  /// Since when an open job's newest content hash has been seen (kv `postiz.settle.<job id>`; no schema change).
+  struct Settling: Codable, Equatable {
+    var hash: String
+    /// Seconds since 1970 (a Double, so the stored time is exact).
+    var since: Double
+  }
+
+  static let settlePrefix = "postiz.settle."
+  static func settleKey(_ jobId: String) -> String { settlePrefix + jobId }
+
+  /// `.replace` once `hash` has been the job's pending content for `settleDelay`, else `.settle` (recording or
+  /// restarting the clock when the hash is new).
+  func settleOrReplace(_ j: PostizJob, hash: String, _ why: String) throws -> Decision {
+    let key = Self.settleKey(j.id)
+    if let s: Settling = try store.kv(key), s.hash == hash {
+      return now.timeIntervalSince1970 - s.since >= Self.settleDelay ? .replace(why) : .settle(why)
+    }
+    try store.setKV(key, Settling(hash: hash, since: now.timeIntervalSince1970))
+    return .settle(why)
+  }
+
+  /// The job's content is back to what Postiz has: forget a pending change (a later edit starts a fresh clock).
+  func clearSettling(_ j: PostizJob) throws {
+    let key = Self.settleKey(j.id)
+    if try store.kv(key, as: Settling.self) != nil { try store.db.run("DELETE FROM kv WHERE key=?", [key]) }
+  }
+
+  /// Drops pending-change records of jobs that are no longer open.
+  func sweepSettling() throws {
+    try store.db.run("""
+      DELETE FROM kv WHERE substr(key, 1, ?) = ? AND substr(key, ?) NOT IN (SELECT id FROM postiz_jobs WHERE closed_at IS NULL)
+      """, [Self.settlePrefix.count, Self.settlePrefix, Self.settlePrefix.count + 1])
   }
 
   /// What to do with an open job, from the database alone (every planner path is covered by re-deciding each tick).
+  /// The only state it writes is the content-change clock (`Settling`).
   func decide(_ j: PostizJob, settings: Settings, router: PostizRouter) throws -> Decision {
     let near = now >= j.remoteDate.addingTimeInterval(-Self.safety)
     guard let p = try store.post(id: j.postId) else {
@@ -224,9 +287,10 @@ public final class PostizService: @unchecked Sendable {
       // Test mode is frozen per job (docs §6: switching it changes only new posts).
       var s = settings
       s.publishing.testMode = j.testMode
-      if let spec = try? PostizPayload.spec(store: store, post: p, settings: s, integrationId: id, provider: provider),
-         spec.contentHash != j.contentHash {
-        why = "caption, title or settings changed"
+      if let spec = try? PostizPayload.spec(store: store, post: p, settings: s, integrationId: id, provider: provider) {
+        guard spec.contentHash != j.contentHash else { try clearSettling(j); return .keep }
+        // Near the slot the existing hold applies unchanged; otherwise wait for the edits to settle.
+        return near ? .hold(Self.contentChanged) : try settleOrReplace(j, hash: spec.contentHash, Self.contentChanged)
       }
     }
     guard let why else { return .keep }
@@ -244,9 +308,10 @@ public final class PostizService: @unchecked Sendable {
     let open = try store.openPostizJobs()
     guard !settings.publishing.postizPlatforms.isEmpty || !open.isEmpty else { return "off" }
     let router = try router(settings)
-    var deleted = 0, created = 0, rejected = 0, waiting = 0, failed = 0, held = 0, blocked = 0
+    var deleted = 0, created = 0, rejected = 0, waiting = 0, failed = 0, held = 0, blocked = 0, settling = 0
     var stopped: String?
     if let k = try keyProblem() { stopped = k.message }
+    try sweepSettling()
 
     // 1. Jobs that must go.
     for var j in open where j.phase == .live || j.phase == .deleting {
@@ -259,6 +324,13 @@ public final class PostizService: @unchecked Sendable {
           held += 1
           if try store.markNotified("postiz.hold:\(j.id):\(w)") {
             try store.logEvent("postiz", "\(j.platform.displayName): \(w) within \(Int(Self.safety / 60)) min of its slot — Postiz keeps the version it has",
+                               videoId: j.videoId, postId: j.postId)
+          }
+          continue
+        case .settle(let w):
+          settling += 1
+          if try store.markNotified("postiz.settle:\(j.id)") {
+            try store.logEvent("postiz", "\(j.platform.displayName): \(w) — waiting for edits to settle (\(Int(Self.settleDelay / 60)) min unchanged) before Postiz gets the new version",
                                videoId: j.videoId, postId: j.postId)
           }
           continue
@@ -311,6 +383,7 @@ public final class PostizService: @unchecked Sendable {
     if deleted > 0 { parts.append("removed \(deleted)") }
     if rejected > 0 { parts.append("refused \(rejected) → Today") }
     if held > 0 { parts.append("kept \(held) near the slot") }
+    if settling > 0 { parts.append("waiting on edits for \(settling)") }
     if blocked > 0 { parts.append("waiting on \(blocked) earlier cop\(blocked == 1 ? "y" : "ies")") }
     if failed > 0 { parts.append("failed \(failed)") }
     if waiting > 0 { parts.append("waiting \(waiting)") }
@@ -361,8 +434,11 @@ public final class PostizService: @unchecked Sendable {
         j.attempts += 1
         j.lastError = "\(error)"
         try store.save(j)
-        try store.logEvent("postiz", "Couldn't remove the \(j.platform.displayName) post from Postiz (\(why)): \(error) — retrying; nothing new is sent for this clip meanwhile",
-                           videoId: j.videoId, postId: j.postId)
+        // Logged once per job and kind of failure (C2b): the retry runs every tick, the event log shouldn't.
+        if try store.markNotified("postiz.deleteRetry:\(j.id):\(Self.failureKind(error))") {
+          try store.logEvent("postiz", "Couldn't remove the \(j.platform.displayName) post from Postiz (\(why)): \(error) — retrying; nothing new is sent for this clip meanwhile",
+                             videoId: j.videoId, postId: j.postId)
+        }
         throw error
       }
     }

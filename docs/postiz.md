@@ -151,6 +151,11 @@ at post time.
 
 **Change → replace.** If the render or content hash changes (re-render, edited caption/title/settings) while the remote
 state is `QUEUE` or `DRAFT`: delete, then create again. If the delete fails, nothing is created (no double post).
+A content-only change (caption, title, hashtags, template or Postiz settings) waits until the new content hash has
+stayed the same for 2 minutes (`PostizService.settleDelay`, tracked per job in kv `postiz.settle.<job id>`; any further
+edit restarts the clock, an edit back to what Postiz has clears it), so an edit burst is one replace. Postiz keeps
+its copy meanwhile; one quiet "waiting for edits to settle" event per job. A new render, a move, a channel change and
+every cancel stay immediate.
 Unapprove, unqueue, skip, a moved day, a paused platform or switching the platform back to Manual → delete. A post
 Postiz already published is never deleted or re-sent by DJ Queue.
 
@@ -220,6 +225,8 @@ app doesn't trigger a Keychain prompt on every update. Agents keep using the Pos
   re-planned, terminal or marked posted by hand, moved, edited, render changed, platform off/paused, Manual, global
   pause, channel changed), then creates for every Postiz-routed post with its render attached within the render
   horizon, soonest first. The same "settings allow Postiz" check decides both (no delete/create churn).
+- **Delete retries** (budget used up, 5xx, …) run every tick but are logged once per job and kind of failure
+  (`postiz.deleteRetry:<job id>:<kind>` in `sent_notifications`).
 - **Near the slot** (from 5 min before it): Postiz's copy is never *replaced* — an edit, a new render or a re-plan
   is logged and Postiz keeps what it has. A *cancel* there first reads the post's current state (one `GET /posts`):
   published → recorded, never deleted; otherwise (including "not listed") DELETE, a 404 counting as done.
