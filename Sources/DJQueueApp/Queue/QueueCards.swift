@@ -6,8 +6,8 @@ import SwiftUI
 /// actions that appear only while the card is hovered. Selection, posters, proxies and ⌘A work as everywhere.
 ///
 /// Drag (core has no free reorder API — DECISIONS): drop a card on a **planned** clip → it takes that day,
-/// pinned (BulkActions.pinConsecutive, undoable; the planner moves the other clip). The ready backlog follows the
-/// sort, so dropping onto a backlog card explains that instead of pretending to reorder.
+/// pinned (BulkActions.pinConsecutive, undoable; the other clip moves). Clips waiting for a day follow the sort, so
+/// dropping onto one explains that instead of pretending to reorder.
 struct QueueCardList: View {
   @Bindable var model: AppModel
   let videos: [Video]
@@ -140,7 +140,7 @@ struct QueueClipActions: View {
   }
 
   static let postTodayHelp = "Post today; later posts move a day"
-  static let pinHelp = "Pin to a day the planner won't change"
+  static let pinHelp = "Pin to a day that won't change"
   static let moreHelp = "Show more: move later, remove, exclude"
 
   private func postToday() {
@@ -149,8 +149,8 @@ struct QueueClipActions: View {
   }
 }
 
-/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Move one slot later · Back to Edit · stage
-/// moves · Open editor · Exclude. Acts on the selection (where it makes sense) when the clip is part of it. Native
+/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Move one slot later · Back to Edit · Open editor ·
+/// Exclude. Acts on the selection (where it makes sense) when the clip is part of it. Native
 /// items show no tooltip, so a disabled item says why in its title.
 struct QueueClipMenu: View {
   @Bindable var model: AppModel
@@ -180,16 +180,9 @@ struct QueueClipMenu: View {
       model.removeFromQueue(targets)
     }
     .disabled(removeWhy != nil)
+    // Back for a Queue clip IS "Back to Edit" (above), and a Queue clip has no forward move: it schedules itself.
     if targets.count == 1 && ClipStage.of(video) != .queue {
       StageMenuItems(model: model, video: video, targets: targets)
-    } else {
-      // Back for a Queue clip IS "Back to Edit" (above); only forward is left.
-      let fwd = targets.count == 1 ? model.stageBlocker(video, .forward) : nil
-      Button((targets.count == 1 ? model.stageForwardTitle(video) : "Forward a stage (\(targets.count))") + AppModel.menuReason(fwd),
-             systemImage: "arrow.forward") {
-        model.stageForward(targets)
-      }
-      .disabled(fwd != nil)
     }
     Divider()
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id, in: ids) }

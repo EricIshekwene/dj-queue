@@ -2,7 +2,7 @@ import AppKit
 import DJQCore
 import SwiftUI
 
-/// MB.ICON (DESIGN-v2 §6.10): template glyph + approved-runway days ("5d"); a red dot (top right) when posts need
+/// MB.ICON (DESIGN-v2 §6.10): template glyph + days scheduled ("5d"); a red dot (top right) when posts need
 /// attention; a smaller update dot (bottom right: blue = an update is ready, amber = one is blocked, round 4 S5);
 /// grey when the engine is stopped; pause glyph while posting is paused. Drawn at display time so the colours
 /// follow the menu bar's appearance (template unless a coloured dot has to keep its colour).
@@ -55,7 +55,7 @@ enum MenuBarIcon {
       return true
     }
     img.isTemplate = template
-    var desc = "DJ Queue: \(days) days approved"
+    var desc = "DJ Queue: \(days) days scheduled"
     if errors > 0 { desc += ", \(errors) need attention" }
     if paused { desc += ", posting paused" }
     if !engineOn { desc += ", engine stopped" }
@@ -72,10 +72,10 @@ enum MenuBarIcon {
 struct MenuBarLabel: View {
   let host: AppHost
 
-  /// "5 days of approved posts left · Something needs attention" (what the "5d" and the dot mean).
+  /// "5 days scheduled · Something needs attention" (what the "5d" and the dot mean).
   @MainActor static func help(_ m: AppModel) -> String {
     let d = m.runway.approvedDays
-    var parts = ["\(d) day\(d == 1 ? "" : "s") of approved posts left"]
+    var parts = ["\(d) day\(d == 1 ? "" : "s") scheduled"]
     if m.settings.paused { parts.append("Posting is paused") }
     if !m.engineRunning { parts.append("The engine is stopped") }
     if !m.problems.isEmpty { parts.append("Something needs attention (\(m.problems.count))") }
@@ -253,8 +253,8 @@ struct MenuBarContent: View {
   private var nothingNext: some View {
     VStack(alignment: .leading, spacing: 2) {
       Text("Next post").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
-      Text("Nothing planned").font(DS.type.headline).foregroundStyle(DS.color.text)
-      Text("Approve a week to plan posts.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+      Text("Nothing scheduled").font(DS.type.headline).foregroundStyle(DS.color.text)
+      Text("Send clips to the Queue.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
     }
   }
 
@@ -295,7 +295,7 @@ struct MenuBarContent: View {
         }
       }
       if state.due.count > 3 {
-        Text("+ \(state.due.count - 3) more in Today").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+        Text("+ \(state.due.count - 3) more in Calendar").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
       }
     }
   }
@@ -337,7 +337,7 @@ struct MenuBarContent: View {
         .frame(height: 40)
       }
       if state.postiz.count > 4 {
-        Text("+ \(state.postiz.count - 4) more in Today").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+        Text("+ \(state.postiz.count - 4) more in Calendar").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
       }
     }
   }

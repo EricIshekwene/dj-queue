@@ -28,7 +28,7 @@ extension SnapshotShots {
       SettingsUIState.shared.reset()
       SettingsUIState.shared.publishingExpanded = expanded
       SettingsUIState.shared.publishingReplacingKey = replacing
-      m.screen = .today
+      m.openCalendarDay()
       m.settingsSection = .publishing
       m.showSettings = true
     }
@@ -88,9 +88,13 @@ extension SnapshotShots {
         m.screen = .queue
       },
       // U2: post status + links (Postiz model; Test run on so the draft and the inbox carry their badge)
-      c.main("r6-today", pm) { m in
+      c.main("calendar-problem", pm) { m in  // Day: failed posts inline, every Postiz state, test-run badges
         state(m, testRun: true)
-        m.screen = .today
+        m.openCalendarDay()
+      },
+      c.main("calendar-problem-yesterday", pm) { m in
+        state(m, testRun: true)
+        m.openCalendarDay(m.dm.addDays(m.todayKey, -1))
       },
       c.main("r6-posts-all-open", pm) { m in
         state(m, testRun: true)
@@ -128,9 +132,9 @@ extension SnapshotShots {
         m.screen = .posts
         if let p = m.posts.first(where: { m.postizState($0) == .unconfirmed }) { m.resolveUnconfirmed(p, inPostiz: false) }
       },
-      c.main("r6-week-current", pm) { m in
+      c.main("calendar-problem-week", pm) { m in
         state(m, testRun: true)
-        m.screen = .week
+        m.screen = .calendar
       },
       c.view("r6-menubar", width: 320) {
         state(pm, testRun: true)
@@ -153,7 +157,7 @@ extension SnapshotShots {
       // X on Manual in the Postiz sample.
       c.main("r6-undo-go-live-confirm", pm) { m in
         state(m)
-        m.screen = .today
+        m.openCalendarDay()
         m.setPublisher(.x, .manual)
         m.toast = nil
         m.undoLast()

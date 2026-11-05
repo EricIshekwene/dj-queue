@@ -59,7 +59,6 @@ final class AppModel {
   var excluded: [Video] = []
   var upcomingSlots: [PlanSlot] = []
   var nextSlotByVideo: [String: PlanSlot] = [:]
-  var weekStates: [String: WeekState] = [:]
   var posts: [PlatformPost] = []
   var postsByVideo: [String: [PlatformPost]] = [:]
   var postsBySlot: [String: [PlatformPost]] = [:]
@@ -94,15 +93,13 @@ final class AppModel {
   private var refreshing = false
   private var refreshAgain = false
   var lastRefresh = Date.distantPast
-  var weekSlots: [PlanSlot] = []
-  var weekAwake: [DateInterval] = []
+  /// The Calendar's loaded range, indexed by day (`CalendarData`, loaded off-main with every refresh).
+  var calendarData = CalendarData()
   var popoverVisible = false
   /// False until the first background load lands (skeleton rows).
   var loaded = false
   /// renderId → 0…1 from Renderer.onProgress (this process's engine only).
   var renderProgress: [String: Double] = [:]
-  /// Week drop that would replace a planned video (confirm first).
-  var pendingReplace: (videoId: String, day: String, replaced: String)?
   var markPostedDraftURL: String?
   var offerLaunchAgent = false
   /// ⌘K "Set score…" sheet (CommandPalette.swift).
@@ -116,7 +113,14 @@ final class AppModel {
   var screen: Screen = .score
   var postsSelection: String? = nil
   var postsFilter: PostsFilter = .all
-  var weekStart: String = "" { didSet { if oldValue != weekStart && !oldValue.isEmpty { refresh() } } }
+  /// Calendar view (remembered through `setCalendarMode`, default Week).
+  var calendarMode: CalendarViewMode = .week { didSet { if oldValue != calendarMode { calendarViewChanged() } } }
+  /// The day the Calendar is anchored on; "" = today, following the clock.
+  var calendarAnchor = "" { didSet { if oldValue != calendarAnchor { calendarViewChanged() } } }
+  /// Platform filter (remembered through `setCalendarPlatform`); read `calendarFilter`.
+  var calendarPlatform: Platform?
+  /// "Move to…" from a Calendar menu: the clips the pin dialog is open for.
+  var calendarPinTarget: [String]?
   var editor: EditorRequest? {
     didSet { if editor == nil, let old = oldValue { editorDidClose(old) } }
   }
@@ -136,7 +140,6 @@ final class AppModel {
   var sidebarCollapsed = false
   var showShortcuts = false
   var showInspector = true
-  var weekBacklogExpanded = false
   var libraryGrid = false
   /// Quick-look sheet (Shared/ClipPreviewSheet.swift).
   var previewVideo: Video?
@@ -237,7 +240,6 @@ final class AppModel {
       recentCommands = UserDefaults.standard.stringArray(forKey: "djq.recentCommands") ?? []
       loadPersistedPrefs()
     }
-    weekStart = planner.weekStart(for: store.clock.now)
     renderer.onProgress = { [weak self] id, f in
       Task { @MainActor in self?.renderProgress[id] = f < 1 ? f : nil }
     }
@@ -264,13 +266,6 @@ final class AppModel {
 
   /// Size of the current render batch (resets when the queue empties), for "rendering 2/7".
   private var renderBatchTotal = 0
-
-  /// W.S1: an approved week is Locked once its first day has started (past days fixed, future days editable).
-  func weekLabel(_ ws: String) -> (text: String, tint: Color, icon: String)? {
-    guard let st = weekStates[ws] else { return nil }
-    if st == .approved && ws <= todayKey { return ("Locked", .secondary, "lock.fill") }
-    return st == .approved ? ("Approved", .green, "checkmark.seal.fill") : ("Draft", .orange, "pencil")
-  }
 
   /// T.S4: Re-upload anyway on the same version, an existing later version, or a new one (opens the editor).
   func reupload(_ post: PlatformPost, version: Int?, newVersion: Bool = false) {
@@ -308,7 +303,6 @@ final class AppModel {
     var toScore: [Video] = []
     var needsEdit: [Video] = []
     var upcomingSlots: [PlanSlot] = []
-    var weekStates: [String: WeekState] = [:]
     var posts: [PlatformPost] = []
     var problems: [PlatformPost] = []
     var dueToday: [PlatformPost] = []
@@ -329,13 +323,12 @@ final class AppModel {
     var covers: Set<String> = []
     var captionTemplates: [CaptionTemplate] = []
     var hashtagSets: [HashtagSet] = []
-    var weekSlots: [PlanSlot] = []
-    var weekAwake: [DateInterval] = []
+    var calendar = CalendarData()
     var postiz = PostizLoaded()
     var error: String?
   }
 
-  nonisolated static func load(store: Store, queue: Queue, postActions: PostActions, now: Date, weekStart: String,
+  nonisolated static func load(store: Store, queue: Queue, postActions: PostActions, now: Date, calendar: CalendarRange,
                                postiz: PostizService, hasKey: Bool?) -> Loaded {
     var l = Loaded()
     l.startedAt = Date()
@@ -348,9 +341,6 @@ final class AppModel {
       l.toScore = try queue.toScore()
       l.needsEdit = try queue.needsEdit()
       l.upcomingSlots = try store.planSlots(where: "date>=?", [dm.key(now)])
-      l.weekStates = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT week_start, state FROM weeks").compactMap { r in
-        r.string("week_start").map { ($0, WeekState(rawValue: r.string("state") ?? "") ?? .draft) }
-      })
       l.posts = try store.posts()
       // Newest problem first (the API orders by scheduled time).
       l.problems = try postActions.problems().sorted { $0.updatedAt > $1.updatedAt }
@@ -385,10 +375,7 @@ final class AppModel {
         l.previewStamps[v.id] = l.previewTable.stamp(for: v, version: 1)
         l.previewAllStamps[v.id] = l.previewTable.stamp(for: v, version: .max)
       }
-      if !weekStart.isEmpty {
-        l.weekSlots = try store.planSlots(where: "week_start=?", [weekStart])
-        l.weekAwake = try Health.awakePeriods(store: store, since: dm.date(weekStart))
-      }
+      l.calendar = try CalendarData.load(store: store, posts: l.posts, range: calendar, dm: dm)
       l.postiz = try PostizLoaded.load(store: store, now: now, service: postiz, hasKey: hasKey, posts: l.posts)
     } catch {
       l.error = "\(error)"
@@ -422,7 +409,6 @@ final class AppModel {
     var next: [String: PlanSlot] = [:]
     for s in upcomingSlots where next[s.videoId] == nil { next[s.videoId] = s }
     nextSlotByVideo = next
-    weekStates = l.weekStates
     // Drop prepared files/captions whose post changed (new render, version, state, fix, edit).
     let byId = Dictionary(uniqueKeysWithValues: l.posts.map { ($0.id, $0) })
     for (id, stamp) in preparedStamp where byId[id].map(Self.prepStamp) != stamp {
@@ -444,8 +430,9 @@ final class AppModel {
     activeRenders = l.activeRenders
     renderProgress = renderProgress.filter { id, _ in l.activeRenders.contains { $0.id == id } }
     loaded = true
-    weekSlots = l.weekSlots
-    weekAwake = l.weekAwake
+    calendarData = l.calendar
+    // Week start or today moved under the load: fetch again rather than wait for the timer.
+    if !frozen && !(calendarData.range?.covers(calendarVisible) ?? false) { refresh() }
     postiz.apply(l.postiz)
     // A Postiz create DJ Queue couldn't confirm (Doctor postiz.create_unknown) needs Eric: it's a problem too.
     let unconfirmed = l.posts.filter { postiz.states[$0.id] == .unconfirmed && !problems.contains($0) }
@@ -475,7 +462,7 @@ final class AppModel {
   /// Synchronous reload (launch, snapshot mode).
   func refreshNow() {
     if !frozen { now = store.clock.now }
-    apply(Self.load(store: store, queue: queue, postActions: postActions, now: now, weekStart: weekStart,
+    apply(Self.load(store: store, queue: queue, postActions: postActions, now: now, calendar: calendarVisible.padded(dm: dm),
                     postiz: postizBridge.service, hasKey: postiz.hasKey))
   }
 
@@ -485,16 +472,22 @@ final class AppModel {
     if refreshing { refreshAgain = true; return }
     refreshing = true
     now = store.clock.now
-    let (s, q, pa, n, ws) = (store, queue, postActions, now, weekStart)
+    let (s, q, pa, n, r) = (store, queue, postActions, now, calendarVisible.padded(dm: dm))
     let (svc, key) = (postizBridge.service, postiz.hasKey)
     Task.detached(priority: .userInitiated) {
-      let l = AppModel.load(store: s, queue: q, postActions: pa, now: n, weekStart: ws, postiz: svc, hasKey: key)
+      let l = AppModel.load(store: s, queue: q, postActions: pa, now: n, calendar: r, postiz: svc, hasKey: key)
       await MainActor.run {
         self.apply(l)
         self.refreshing = false
         if self.refreshAgain { self.refreshAgain = false; self.refresh() }
       }
     }
+  }
+
+  /// The Calendar moved: load what it now shows. Stepping within the padded range keeps the data on screen while this
+  /// runs; a snapshot only reloads when it has to.
+  private func calendarViewChanged() {
+    if !frozen || !(calendarData.range?.covers(calendarVisible) ?? false) { refresh() }
   }
 
   /// Timer entry: every 5 s while a window or the menu-bar popover is visible, otherwise every 30 s (menu-bar badge).
@@ -590,11 +583,6 @@ final class AppModel {
   func dismissWarning(_ id: String) {
     dismissedWarnings[id] = now
     if !Self.isSnapshotRun { UserDefaults.standard.set(dismissedWarnings, forKey: "djq.dismissedWarnings") }
-  }
-
-  func goToNextWeek() {
-    weekStart = dm.addDays(planner.weekStart(for: now), 7)
-    screen = .week
   }
 
   // MARK: Action plumbing
@@ -773,39 +761,7 @@ final class AppModel {
   func skipNext(_ videoId: String) {
     undoable("Swapped with the next open slot", "skip-next", ids: [videoId], plan: true) { try planner.skipNext(videoId: videoId) }
   }
-  func removeSlot(_ slotId: String) { undoable("Removed from week", "remove-slot", plan: true) { try planner.remove(slotId: slotId) } }
   func swap(_ a: String, _ b: String) { undoable("Swapped days", "swap", plan: true) { try planner.swap(a, b) } }
-  func move(_ slotId: String, to day: String) {
-    undoable("Moved to \(Fmt.day(dm.date(day), tz: tz))", "move", plan: true) { try planner.move(slotId: slotId, to: day) }
-  }
-  func approveWeek(_ ws: String) { undoable("Week approved", "approve-week", plan: true) { try planner.approveWeek(ws) } }
-  func proposeWeek(_ ws: String) { undoable("Week proposed", "propose-week", plan: true) { _ = try planner.proposeWeek(ws) } }
-
-  /// Wipes the week's unpinned future slots and posts and drafts it again — asks first, then undoable.
-  func rebuildWeek(_ ws: String, confirmed: Bool = false) {
-    guard confirmed else {
-      confirm(ConfirmRequest(title: "Rebuild the week of \(Fmt.day(dm.date(ws), tz: tz))?",
-                             message: "Unpinned days from today on are cleared and planned again from the queue, and the week goes back to Draft (approve it again). Pinned days and anything posted stay. You can undo this.",
-                             verb: "Rebuild week", icon: "arrow.triangle.2.circlepath", destructive: true) { [weak self] in
-        self?.rebuildWeek(ws, confirmed: true)
-      })
-      return
-    }
-    undoable("Week rebuilt", "rebuild-week", plan: true) { try planner.rebuildWeek(ws) }
-  }
-
-  /// Shifts every unpinned slot from today on, across all weeks — asks first, then undoable.
-  func pushPlan(days: Int = 1, confirmed: Bool = false) {
-    guard confirmed else {
-      confirm(ConfirmRequest(title: "Push the whole plan by \(days) day\(days == 1 ? "" : "s")?",
-                             message: "Every unpinned day from today on moves \(days) day\(days == 1 ? "" : "s") later, in every week. Pinned days stay. You can undo this.",
-                             verb: "Push plan", icon: "calendar.badge.clock", destructive: false) { [weak self] in
-        self?.pushPlan(days: days, confirmed: true)
-      })
-      return
-    }
-    undoable("Plan pushed by \(days) day\(days == 1 ? "" : "s")", "push-plan", plan: true) { try planner.pushPlan(from: todayKey, days: days) }
-  }
 
   /// The upcoming planned slot before/after this video's next slot (Move up / down in ⌘K).
   func neighbourSlot(_ videoId: String, _ d: Int) -> PlanSlot? {
@@ -818,17 +774,6 @@ final class AppModel {
   func moveVideo(_ videoId: String, by d: Int) {
     guard let s = nextSlotByVideo[videoId], let n = neighbourSlot(videoId, d) else { return }
     swap(s.id, n.id)
-  }
-
-  /// Q.S5 "Add to week": each video goes to the next open day from today.
-  func addToWeek(_ ids: [String]) {
-    undoable("Added \(ids.count) to the plan", "add-to-plan", ids: ids, plan: true) {
-      var day = todayKey
-      for id in ids {
-        while try !store.planSlots(where: "date=?", [day]).isEmpty { day = dm.addDays(day, 1) }
-        try planner.pin(videoId: id, date: day)
-      }
-    }
   }
 
   func repost(_ videoId: String, _ p: Platform) {
@@ -894,7 +839,7 @@ final class AppModel {
     let ok = undoable("\(post.platform.displayName) is due now", "post-now", ids: [post.videoId], plan: true) { try postActions.postNow(postId: post.id) }
     guard ok else { return }
     highlightPostId = post.id
-    screen = .today
+    openCalendarDay()
   }
 
   func shiftPlan(_ post: PlatformPost) {
@@ -937,7 +882,7 @@ final class AppModel {
     update("\(p.displayName) \(paused ? "paused" : "resumed")") { if paused { $0.pausedPlatforms.insert(p) } else { $0.pausedPlatforms.remove(p) } }
   }
 
-  // MARK: Manual publisher (Today)
+  // MARK: Manual publisher (Calendar → Day)
 
   /// A post whose render exists: the file can be dragged out without rendering on display.
   func isRenderable(_ p: PlatformPost) -> Bool {

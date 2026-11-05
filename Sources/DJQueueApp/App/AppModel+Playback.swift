@@ -48,6 +48,7 @@ extension AppModel {
     if let d = UserDefaults.standard.data(forKey: "djq.playback"), let p = try? JSONDecoder().decode(PlaybackPrefs.self, from: d) {
       playback = p
     }
+    loadCalendarPrefs()
   }
 
   // MARK: Proxies

@@ -49,7 +49,6 @@ enum SnapshotRunner {
       model.frozen = true
       model.now = now
       model.refreshNow()
-      model.weekStart = model.planner.weekStart(for: now)
       print("snapshot: \(model.videos.count) videos, \(model.posts.count) posts, \(model.problems.count) problems")
       let vids = model.videos
       let keys = Dictionary(uniqueKeysWithValues: vids.map { ($0.id, "\(ThumbStamps.shared.key($0.id))|g0") })
@@ -133,8 +132,8 @@ struct SnapshotContext {
   /// The main window (1440×900) on `m` (default: the sample model) after `setup` ran on a reset UI state.
   /// Setup may open overlays: `m.showSettings = true`, `m.showPalette = true`, `m.requestBulk(…)` (confirmation
   /// sheet), `m.show(DSToastModel(…))` (toast), `m.previewVideo = v`, `m.openEditor(id)`.
-  func main(_ name: String, _ m: AppModel? = nil, setup: @escaping (AppModel) -> Void) -> Shot {
-    Shot(name: name, kind: .main(m ?? model, setup))
+  func main(_ name: String, _ m: AppModel? = nil, size: CGSize = Shot.standard, setup: @escaping (AppModel) -> Void) -> Shot {
+    Shot(name: name, kind: .main(m ?? model, setup), size: size)
   }
 
   /// A standalone view `width` wide; `height` nil = fitting height. Drawn on `DS.color.background`.
@@ -157,7 +156,10 @@ struct SnapshotContext {
     m.sidebarCollapsed = false
     m.loaded = true
     m.screen = .score
-    m.weekStart = m.planner.weekStart(for: m.now)
+    m.calendarMode = .week
+    m.calendarAnchor = ""
+    m.calendarPlatform = nil
+    m.calendarPinTarget = nil
     ListPrefs.shared.reset()
   }
 }
@@ -173,6 +175,11 @@ struct Shot {
 
   let name: String
   let kind: Kind
+  /// Main-window shots: the default size, or the narrowest the window goes.
+  var size = Shot.standard
+
+  nonisolated static let standard = CGSize(width: 1440, height: 900)
+  nonisolated static let narrow = CGSize(width: 1100, height: 700)
 
   func render(to dir: URL) async throws {
     let window: NSWindow
@@ -181,7 +188,7 @@ struct Shot {
       SnapshotContext.resetUI(m)
       setup(m)
       window = WindowManager.makeMainWindow(model: m, make: SnapshotWindow.make)
-      window.setContentSize(NSSize(width: 1440, height: 900))
+      window.setContentSize(size)
     case .view(let size, let make):
       let root = make().frame(width: size.width, height: size.height > 0 ? size.height : nil)
         .background(DS.color.background).modifier(SnapshotActive(on: true))

@@ -1,21 +1,21 @@
 import DJQCore
 import SwiftUI
 
-/// Quiet runway chip for Queue and Week toolbars (DESIGN-v2 §3): "Runway 5 d approved · 21 d in Queue", amber when
-/// the approved runway is under its alert threshold. Click → popover with all three numbers explained.
+/// Quiet schedule chip for Queue and Calendar (DESIGN-v2 §3): "Scheduled through Sat 7 Nov", amber when fewer days are
+/// scheduled than the Low Queue alert. Click → popover with the numbers explained.
 struct RunwayChip: View {
   @Bindable var model: AppModel
   @State private var open = false
   @State private var hovering = false
 
-  private var low: Bool { model.runway.approvedDays < model.settings.approvedRunwayAlertDays }
+  private var low: Bool { model.scheduleIsLow }
+  private var text: String { model.scheduledThroughText.map { "Scheduled through \($0)" } ?? "Nothing scheduled" }
 
   var body: some View {
     Button { open.toggle() } label: {
       HStack(spacing: 6) {
         if low { DSStatusDot(tone: .warning, size: 6) }
-        Text("Runway \(model.runway.approvedDays) d approved · \(model.runway.readyDays) d in Queue")
-          .font(DS.type.captionMedium.monospacedDigit())
+        Text(text).font(DS.type.captionMedium.monospacedDigit()).lineLimit(1)
       }
       .foregroundStyle(low ? DS.color.warning : DS.color.textSecondary)
       .padding(.horizontal, 12)
@@ -25,24 +25,30 @@ struct RunwayChip: View {
       .contentShape(Capsule())
     }
     .buttonStyle(.plain)
+    .fixedSize()
     .onHover { hovering = $0 }
-    .dsTooltip("See how many days of posts are covered")
-    .accessibilityLabel("Runway: \(model.runway.approvedDays) days approved, \(model.runway.readyDays) in the Queue, \(model.runway.totalDays) total")
+    .dsTooltip("See how many days are covered")
+    .accessibilityLabel("\(text): \(model.runway.approvedDays) days scheduled, \(model.runway.readyDays) waiting in the Queue, \(editDays) in Edit")
     .dsPopover(isPresented: $open, width: 320) { RunwayDetail(model: model) }
   }
+
+  private var editDays: Int { RunwayDetail.editDays(model.runway) }
 }
 
-/// The three runway numbers with what each means (popover content).
+/// The three numbers with what each means (popover content).
 struct RunwayDetail: View {
   @Bindable var model: AppModel
+
+  /// Days' worth of clips still in Edit.
+  static func editDays(_ r: Runway) -> Int { max(0, r.totalDays - r.approvedDays - r.readyDays) }
+
   var body: some View {
     let s = model.settings
     VStack(alignment: .leading, spacing: DS.space.md) {
-      DSEyebrow("Runway")
-      row(model.runway.approvedDays, "Approved", "Days covered by approved weeks. Alert under \(s.approvedRunwayAlertDays) d.",
-          model.runway.approvedDays < s.approvedRunwayAlertDays)
-      row(model.runway.readyDays, "Queue", "Queue clips not yet in an approved week, at \(s.postsPerDay) a day.", false)
-      row(model.runway.totalDays, "Total", "Approved + Queue + scored clips still in Edit. Record a new set under \(s.totalRunwayAlertDays) d.",
+      DSEyebrow("Schedule")
+      row(model.runway.approvedDays, "Scheduled", "Days in a row with a clip going out. Alert under \(s.approvedRunwayAlertDays) d.", model.scheduleIsLow)
+      row(model.runway.readyDays, "Queue waiting", "Queue clips with no day yet, at \(s.postsPerDay) a day.", false)
+      row(Self.editDays(model.runway), "Edit left", "Scored clips still in Edit, at \(s.postsPerDay) a day. Record a new set when the total is under \(s.totalRunwayAlertDays) d.",
           model.runway.totalDays < s.totalRunwayAlertDays)
     }
     .padding(DS.space.sm)

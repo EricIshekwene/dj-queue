@@ -170,6 +170,8 @@ struct DSSegment<Value: Hashable>: Identifiable {
   var icon: String? = nil
   /// Required when `title` is nil (icon-only segments explain themselves).
   var tooltip: String? = nil
+  /// Keycaps in the tooltip.
+  var shortcut: String? = nil
   /// Dims the segment and blocks it; the reason shows on hover.
   var disabledReason: String? = nil
   var id: Value { value }
@@ -236,7 +238,7 @@ private struct DSSegmentButton<Value: Hashable>: View {
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
-    .dsTooltip(seg.disabledReason == nil ? seg.tooltip : (seg.tooltip ?? seg.title), disabledReason: seg.disabledReason)
+    .dsTooltip(seg.disabledReason == nil ? seg.tooltip : (seg.tooltip ?? seg.title), shortcut: seg.shortcut, disabledReason: seg.disabledReason)
     .accessibilityLabel(seg.title ?? seg.tooltip ?? "")
     .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
   }

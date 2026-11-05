@@ -35,8 +35,8 @@ enum DSTooltipPass {
         Case(name: "05-queue-cards", screen: .queue, mode: .wide),
         Case(name: "06-queue-grid", screen: .queue, mode: .grid),
         Case(name: "07-queue-list", screen: .queue, mode: .list),
-        Case(name: "08-week", screen: .week),
-        Case(name: "09-today", screen: .today),
+        Case(name: "08-calendar-week", screen: .calendar) { $0.calendarMode = .week },
+        Case(name: "09-calendar-day", screen: .calendar) { $0.calendarMode = .day },
         Case(name: "10-library-grid", screen: .library, mode: .grid),
         Case(name: "11-posts", screen: .posts),
         Case(name: "12-health", screen: .health),
@@ -47,14 +47,14 @@ enum DSTooltipPass {
           m.setSelection(Array(m.editList.prefix(3).map(\.id)), screen: .edit)
         },
         Case(name: "17-compact-sidebar", screen: .library, mode: .grid) { $0.sidebarCollapsed = true },
-        Case(name: "18-confirm-rebuild-week", screen: .week) { m in m.rebuildWeek(m.weekStart) },
+        Case(name: "18-calendar-month", screen: .calendar) { $0.calendarMode = .month },
         Case(name: "19-library-cards", screen: .library, mode: .wide),
         Case(name: "20-library-list", screen: .library, mode: .list),
         Case(name: "21-library-single", screen: .library, mode: .single),
         Case(name: "22-edit-list", screen: .edit, mode: .list),
         Case(name: "23-posts-inspector", screen: .posts) { m in m.postsSelection = m.posts.first { !$0.state.isTerminal }?.id },
         Case(name: "24-sheet-pin", screen: .queue) { m in m.pinPrompt = m.queueClips.first },
-        Case(name: "25-sheet-mark-posted", screen: .today) { m in m.markPostedTarget = m.dueNow.first ?? m.nextPost },
+        Case(name: "25-sheet-mark-posted", screen: .calendar) { m in m.calendarMode = .day; m.markPostedTarget = m.dueNow.first ?? m.nextPost },
         Case(name: "26-sheet-bulk-confirm", screen: .edit, mode: .wide) { m in
           let ids = Array(m.editList.prefix(3).map(\.id))
           m.setSelection(ids, screen: .edit)

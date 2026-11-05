@@ -1,40 +1,76 @@
 import DJQCore
 import SwiftUI
 
-/// PLANNING leaf shots (prefix 2x): Week, Today, menu bar (window + icon states).
+/// PLANNING leaf shots (prefix 2x, `calendar-*`): the Calendar in every view, then the menu bar (window + icon states).
 ///
-/// The shared sample model is left as it was (other leaves render after us); states that need different data
-/// (next week approved, nothing due today) come from a sandbox copy (`SampleData.planningSandbox`).
+/// The shared sample model is left as it was (other leaves render after us); states that need different data come
+/// from sandbox copies: nothing going out today, and two clips a day for the fuller views.
 extension SnapshotShots {
   static func planning(_ c: SnapshotContext) -> [Shot] {
     let model = c.model
     let sandbox = SampleData.planningSandbox(c)
+    let dense = SampleData.denseCalendarSandbox(c)
+    func calendar(_ m: AppModel, _ mode: CalendarViewMode, anchor: String = "") {
+      m.calendarMode = mode
+      m.calendarAnchor = anchor
+      m.screen = .calendar
+    }
     var shots: [Shot] = [
-      // This week has started, so it reads "Locked": past days 50 %, today in the near-black pill, hatched Mac-off.
-      c.main("20-week-current-locked") { m in m.screen = .week },
-      c.main("21-week-next-draft-backlog") { m in
-        m.screen = .week
-        m.weekStart = m.dm.addDays(m.planner.weekStart(for: m.now), 7)
-        m.weekBacklogExpanded = true
+      c.main("calendar-day-today") { m in calendar(m, .day) },
+      c.main("calendar-day-future") { m in calendar(m, .day, anchor: m.dm.addDays(m.todayKey, 2)) },
+      c.main("calendar-day-past") { m in calendar(m, .day, anchor: m.dm.addDays(m.todayKey, -2)) },
+      c.main("calendar-3day") { m in calendar(m, .threeDay) },
+      c.main("calendar-week") { m in calendar(m, .week) },
+      c.main("calendar-week-narrow", size: Shot.narrow) { m in calendar(m, .week) },
+      c.main("calendar-3day-narrow", size: Shot.narrow) { m in calendar(m, .threeDay) },
+      c.main("calendar-month") { m in calendar(m, .month) },
+      c.main("calendar-month-narrow", size: Shot.narrow) { m in calendar(m, .month) },
+      c.main("calendar-day-narrow", size: Shot.narrow) { m in calendar(m, .day) },
+      c.main("calendar-filtered") { m in
+        calendar(m, .week)
+        m.calendarPlatform = .youtube
       },
-      c.main("23-week-empty") { m in
-        m.screen = .week
-        m.weekStart = m.dm.addDays(m.planner.weekStart(for: m.now), 14)
-        m.weekBacklogExpanded = false
+      c.main("calendar-filtered-empty") { m in
+        calendar(m, .week)
+        m.calendarPlatform = m.settings.activePlatforms.last
+        m.calendarAnchor = m.dm.addDays(m.todayKey, 70)
       },
-      c.main("24-week-no-clips", c.empty) { m in m.screen = .week },
-      c.main("25-today") { m in
-        m.weekBacklogExpanded = false
-        m.screen = .today
+      c.main("calendar-empty", c.empty) { m in calendar(m, .week) },
+      c.main("calendar-open-days") { m in calendar(m, .week, anchor: m.dm.addDays(m.todayKey, 70)) },
+      c.main("calendar-paused") { m in
+        m.update { $0.paused = true }; m.toast = nil  // setup, not an action shown in the shot
+        calendar(m, .week)
       },
-      c.main("26-today-mark-posted") { m in
-        m.screen = .today
+      c.main("calendar-mark-posted") { m in
+        m.update { $0.paused = false }; m.toast = nil  // setup, not an action shown in the shot
+        calendar(m, .day)
         m.markPostedTarget = m.todayNextUp
       },
-      c.main("28-today-loading") { m in
+      c.main("calendar-loading") { m in
         m.markPostedTarget = nil
-        m.screen = .today
+        calendar(m, .day)
         m.loaded = false
+      },
+      c.main("calendar-move-dialog") { m in
+        calendar(m, .week)
+        m.calendarPinTarget = m.calendarClips(m.dm.addDays(m.todayKey, 1)).first.map { [$0.video.id] }
+      },
+      c.main("calendar-unschedule-confirm") { m in
+        m.calendarPinTarget = nil
+        calendar(m, .week)
+        if let id = m.calendarClips(m.dm.addDays(m.todayKey, 1)).first?.video.id {
+          m.calendarUnschedule(id)
+          m.pendingBulk?.preview = try? m.bulk.back([id], dryRun: true)
+        }
+      },
+      c.main("calendar-hover-card") { m in
+        m.cancelPendingBulk()
+        calendar(m, .week)
+        SnapshotHover.id = m.calendarClips(m.dm.addDays(m.todayKey, 1)).first?.video.id
+      },
+      c.main("calendar-after-hover") { m in  // leaves the shared sample as other shots expect it
+        SnapshotHover.id = nil
+        calendar(m, .month)
       },
       c.view("29-menubar-normal", width: 320) { AnyView(MenuBarContent(model: model, state: menuState(model, .normal))) },
       c.view("29-menubar-due-now", width: 320) { AnyView(MenuBarContent(model: model, state: menuState(model, .due))) },
@@ -43,11 +79,18 @@ extension SnapshotShots {
       c.view("29-menubar-icons", width: 420) { AnyView(MenuBarIconSheet()) },
     ]
     if let sandbox {
-      shots.append(c.main("22-week-approved", sandbox) { m in
-        m.screen = .week
-        m.weekStart = m.dm.addDays(m.planner.weekStart(for: m.now), 7)
+      shots.append(c.main("calendar-day-empty", sandbox) { m in calendar(m, .day) })
+      shots.append(c.main("calendar-queue-low", sandbox) { m in
+        calendar(m, .week)
+        m.dismissedWarnings = [:]
       })
-      shots.append(c.main("27-today-empty", sandbox) { m in m.screen = .today })
+    }
+    if let dense {
+      shots.append(c.main("calendar-week-dense", dense) { m in calendar(m, .week) })
+      shots.append(c.main("calendar-3day-dense", dense) { m in calendar(m, .threeDay) })
+      shots.append(c.main("calendar-month-dense", dense) { m in calendar(m, .month) })
+      shots.append(c.main("calendar-month-dense-narrow", dense, size: Shot.narrow) { m in calendar(m, .month) })
+      shots.append(c.main("calendar-day-dense", dense) { m in calendar(m, .day, anchor: m.dm.addDays(m.todayKey, 1)) })
     }
     return shots
   }

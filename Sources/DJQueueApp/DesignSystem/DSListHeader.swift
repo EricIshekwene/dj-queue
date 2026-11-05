@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - List header (round 4 S3 + S4)
 
-/// The one header every clip list uses (Score, Edit, Queue, Library, Posts, Week's backlog drawer), in a fixed
+/// The one header every clip list uses (Score, Edit, Queue, Library, Posts), in a fixed
 /// order: **title + count · search · view modes · page status chips · Filters · sort**, then the applied filters as
 /// removable chips with **Clear all**.
 ///
@@ -11,7 +11,7 @@ import SwiftUI
 ///           (All 63) (Posted 4) (Missing 1)                         [≡ Filters 2] [⇅ Session order ▾]
 ///           [Session: Nov 1 ✕] [Kind: Talking ✕]  Clear all
 ///
-/// compact:  Next up 6  [⌕ Search]  (chips)                             [≡ Filters] [⇅ Queue order ▾]
+/// compact:  Clips 6  [⌕ Search]  (chips)                             [≡ Filters] [⇅ Queue order ▾]
 /// ```
 /// - Page layout: row 1 is the 52 pt toolbar (title + count left; search, view modes, extras, the screen's one
 ///   primary right). Row 2 holds the status chips, then Filters and sort at its trailing edge. Row 3 appears only

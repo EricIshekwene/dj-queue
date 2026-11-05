@@ -141,9 +141,9 @@ enum DSTooltipProbe {
         }
         model.sidebarCollapsed = false
 
-        // 6. Dark mode, Week screen, a content trigger.
+        // 6. Dark mode, Calendar, a content trigger.
         w.appearance = NSAppearance(named: .darkAqua)
-        model.screen = .week
+        model.screen = .calendar
         try await settle(1600)
         let week = anchors(in: w).filter { ($0.visibleScreenRect?.minX ?? 0) > w.frame.minX + 300 && ($0.visibleScreenRect?.maxY ?? 0) < w.frame.maxY - 80 }
         if let d = week.first {
@@ -171,7 +171,8 @@ enum DSTooltipProbe {
         let pages: [(String, Screen, DSViewMode?, NSAppearance.Name)] = [
           ("library-grid", .library, .grid, .aqua), ("queue-grid", .queue, .grid, .aqua), ("edit-grid", .edit, .grid, .aqua),
           ("score-grid", .score, .grid, .aqua), ("queue-cards", .queue, .wide, .aqua), ("edit-cards", .edit, .wide, .aqua),
-          ("week", .week, nil, .aqua), ("today", .today, nil, .aqua), ("posts", .posts, nil, .aqua), ("health", .health, nil, .aqua),
+          ("calendar", .calendar, nil, .aqua), ("calendar-3day", .calendar, nil, .aqua), ("calendar-month", .calendar, nil, .aqua),
+          ("calendar-day", .calendar, nil, .aqua), ("posts", .posts, nil, .aqua), ("health", .health, nil, .aqua),
           ("library-grid-dark", .library, .grid, .darkAqua), ("queue-grid-dark", .queue, .grid, .darkAqua),
         ]
         for (page, scr, mode, look) in pages {
@@ -179,6 +180,7 @@ enum DSTooltipProbe {
           DSClipCardDebug.hoverIds = []
           w.appearance = NSAppearance(named: look)
           if let mode { model.viewModes[scr] = mode }
+          model.calendarMode = ["calendar-3day": .threeDay, "calendar-month": .month, "calendar-day": .day][page] ?? .week
           model.screen = scr
           try await settle(1600)
           let before = anchors(in: w)
@@ -488,7 +490,6 @@ enum DSTooltipProbe {
     model.frozen = true
     model.now = now
     model.refreshNow()
-    model.weekStart = model.planner.weekStart(for: now)
     model.loaded = true
     return model
   }

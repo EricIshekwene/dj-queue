@@ -1,27 +1,26 @@
 import DJQCore
 import SwiftUI
 
-// Planning leaf DS extensions (Week, Today, menu bar). Built only from DS tokens/components; the design system
+// Planning leaf DS extensions (Calendar, menu bar). Built only from DS tokens/components; the design system
 // itself stays untouched.
 
 extension Platform {
-  /// Platform name for tight places (Week slot chips, menu bar rows): "YouTube" instead of "YouTube Shorts".
+  /// Platform name for tight places (Calendar slot chips, menu bar rows): "YouTube" instead of "YouTube Shorts".
   /// Still a name, never a code.
   var dsxCompactName: String { self == .youtube ? "YouTube" : displayName }
 }
 
 extension DSTypeTokens {
-  /// 10.5 medium tabular — dense chips in 7-column grids (same size as DSBadge `.sm`).
+  /// 10.5 medium tabular — dense chips in Calendar columns (same size as DSBadge `.sm`).
   var microCompact: Font { .system(size: 10.5, weight: .medium).monospacedDigit() }
 }
 
-/// Where a post stands, as one status chip/dot (Week slot chips, Today rows, menu bar).
+/// Where a post stands, as one status chip/dot (Calendar chips and rows, menu bar).
 enum DSXPostStatus: Equatable {
-  case draft, planned, rendering(Double?), ready, dueNow, late(String), posted, failed, copyright, skipped, resolved(String)
+  case planned, rendering(Double?), ready, dueNow, late(String), posted, failed, copyright, skipped, resolved(String)
 
   var text: String {
     switch self {
-    case .draft: "Draft"
     case .planned: "Planned"
     case .rendering(let f): f.map { "Rendering \(Int($0 * 100))%" } ?? "Rendering"
     case .ready: "Rendered"
@@ -35,10 +34,10 @@ enum DSXPostStatus: Equatable {
     }
   }
 
-  /// Badge style (Today rows): due now is the near-black solid pill; problems danger; late warning.
+  /// Badge style (Day rows): due now is the near-black solid pill; problems danger; late warning.
   var badgeStyle: DSBadgeStyle {
     switch self {
-    case .draft, .planned, .ready: .outline
+    case .planned, .ready: .outline
     case .rendering: .soft(.info)
     case .dueNow: .solid
     case .late: .soft(.warning)
@@ -57,10 +56,10 @@ enum DSXPostStatus: Equatable {
     }
   }
 
-  /// Dot colour (Week slot chips, menu bar). nil = hollow (draft / skipped).
+  /// Dot colour (Calendar chips, menu bar). nil = hollow (skipped).
   var dot: Color? {
     switch self {
-    case .draft, .skipped, .resolved: nil
+    case .skipped, .resolved: nil
     case .planned, .rendering, .ready: DS.color.info
     case .dueNow: DS.color.primary
     case .late: DS.color.warning
@@ -81,7 +80,7 @@ enum DSXPostStatus: Equatable {
   }
 }
 
-/// Week slot chip (DESIGN-v2 §6.4): generic glyph · "TikTok 7:00 PM" · state dot. Skipped / paused = struck through.
+/// Slot chip (DESIGN-v2 §6.4): generic glyph · "TikTok 7:00 PM" · state dot. Skipped / paused = struck through.
 struct DSXSlotChip: View {
   let platform: Platform
   let time: String
@@ -238,7 +237,7 @@ struct AwakeStrip: View {
   }
 }
 
-/// Small 9:16 poster with a rounded corner (Today rows, backlog, menu bar): the edited cover (round 4 S6) — a post's
+/// Small 9:16 poster with a rounded corner (Day rows, month chips, menu bar): the edited cover (round 4 S6) — a post's
 /// own version (and its render's cover when current) when `post` is given, else version 1.
 struct DSXThumb: View {
   @Bindable var model: AppModel

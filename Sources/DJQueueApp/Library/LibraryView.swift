@@ -392,7 +392,7 @@ extension AppModel {
     case .edit:
       DSClipTag(text: "Edit", style: .soft(.warning), tooltip: editWhy(v).map { "In Edit — \($0)" } ?? "In Edit — open it to finish it")
     case .queue: DSClipTag(text: "Queue", style: .soft(.neutral), tooltip: "In the Queue — waiting for a day")
-    case .scheduled: DSClipTag(text: "Scheduled", style: .soft(.info), tooltip: "Scheduled — has days in the plan")
+    case .scheduled: DSClipTag(text: "Scheduled", style: .soft(.info), tooltip: "Scheduled: has days on the Calendar")
     case .posted: DSClipTag(text: "Posted", style: .soft(.success), tooltip: "Posted on every planned platform")
     }
   }

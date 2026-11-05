@@ -1,16 +1,15 @@
 import DJQCore
 import Foundation
 
-/// Planning-leaf snapshot data: a SECOND throwaway model ("sandbox"), copied from the seeded snapshot DB, for
-/// states the shared sample model must not be changed into (other leaves' shots render from it afterwards):
-/// next week approved, and a day with nothing due. Lives inside the snapshot runner's temp folder, so it is
-/// deleted with it. Never touches a real database.
+/// Planning-leaf snapshot data: throwaway models copied from the seeded snapshot DB, for states the shared sample
+/// model must not be changed into (other leaves' shots render from it afterwards). They live inside the snapshot
+/// runner's temp folder, so they are deleted with it. Never touches a real database.
 extension SampleData {
   @MainActor
-  static func planningSandbox(_ c: SnapshotContext) -> AppModel? {
+  private static func sandbox(_ c: SnapshotContext, name: String, _ change: (Store, DayMath, String) throws -> Void) -> AppModel? {
     do {
       let src = c.store.paths
-      let tmp = src.appSupport.deletingLastPathComponent().appendingPathComponent("planning-\(UUID().uuidString.prefix(8))")
+      let tmp = src.appSupport.deletingLastPathComponent().appendingPathComponent("\(name)-\(UUID().uuidString.prefix(8))")
       let paths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("support"), logs: tmp.appendingPathComponent("logs"),
                         launchAgents: tmp.appendingPathComponent("LaunchAgents"))
       try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
@@ -18,30 +17,53 @@ extension SampleData {
       try c.store.db.backup(to: paths.database.path)
       let store = try Store(paths: paths, clock: FixedClock(c.now))
       let dm = DayMath(settings: try store.settings())
-      let today = dm.key(c.now)
-
-      // Next week approved (posts created by the real planner).
-      let nextWeek = dm.addDays(dm.weekStart(of: c.now), 7)
-      try Planner(store: store).approveWeek(nextWeek)
-
-      // Nothing due today: drop today's posts and settle earlier leftovers.
-      try store.db.run("DELETE FROM platform_posts WHERE scheduled_at>=? AND scheduled_at<?",
-                       [dm.date(today), dm.date(dm.addDays(today, 1))])
-      try store.db.run("UPDATE platform_posts SET state='skipped' WHERE scheduled_at<? AND state IN ('due','overdue')", [dm.date(today)])
+      try change(store, dm, dm.key(c.now))
       for v in try store.videos() { try store.refreshState(videoId: v.id) }
-
       let m = AppModel(store: store)
       m.frozen = true
       m.now = c.now
       m.refreshNow()
-      m.weekStart = nextWeek
       // AppModel.init points the shared cover cache at its store; covers belong to the main sample store.
       ThumbCache.shared.store = c.store
       return m
     } catch {
-      FileHandle.standardError.write(Data("planning sandbox failed: \(error)\n".utf8))
+      FileHandle.standardError.write(Data("\(name) sandbox failed: \(error)\n".utf8))
       ThumbCache.shared.store = c.store
       return nil
+    }
+  }
+
+  /// Nothing going out today, and only three days scheduled with an empty Queue ("Queue running low").
+  @MainActor
+  static func planningSandbox(_ c: SnapshotContext) -> AppModel? {
+    sandbox(c, name: "planning") { store, dm, today in
+      try store.db.run("DELETE FROM platform_posts WHERE scheduled_at>=? AND scheduled_at<?", [dm.date(today), dm.date(dm.addDays(today, 1))])
+      try store.db.run("DELETE FROM plan_slots WHERE date=?", [today])
+      try store.db.run("UPDATE platform_posts SET state='skipped' WHERE scheduled_at<? AND state IN ('due','overdue')", [dm.date(today)])
+      try store.db.run("DELETE FROM platform_posts WHERE scheduled_at>=?", [dm.date(dm.addDays(today, 3))])
+      try store.db.run("DELETE FROM plan_slots WHERE date>=?", [dm.addDays(today, 3)])
+      for v in try Queue(store: store).ordered() { try store.setExcluded(v.id, true) }
+    }
+  }
+
+  /// Two clips a day from today on, so cards stack and month cells overflow.
+  @MainActor
+  static func denseCalendarSandbox(_ c: SnapshotContext) -> AppModel? {
+    sandbox(c, name: "dense") { store, dm, today in
+      var st = try store.settings()
+      st.postsPerDay = 3
+      try store.save(st)
+      var pool = try Queue(store: store).ordered()
+      for d in 0..<21 {
+        let day = dm.addDays(today, d)
+        let used = Set(try store.planSlots(where: "date=?", [day]).map(\.position))
+        for pos in 0..<(d % 3 == 0 ? 3 : 2) where !used.contains(pos) && !pool.isEmpty {
+          let v = pool.removeFirst()
+          let week = dm.weekStart(of: dm.date(day))
+          if try store.week(week) == nil { try store.save(Week(weekStart: week, state: .draft, approvedAt: nil)) }
+          try store.save(PlanSlot(id: newId(), date: day, position: pos, videoId: v.id, pinned: false, weekStart: week))
+        }
+      }
     }
   }
 }

@@ -181,6 +181,8 @@ struct DSPlatformIcon: View {
   var state: DSPlatformState? = nil
   var size: CGFloat = 22
   var showsLabel = false
+  /// Hover text instead of "TikTok · Posted" (the Calendar adds the time).
+  var tooltip: String? = nil
 
   var body: some View {
     HStack(spacing: 6) {
@@ -212,7 +214,7 @@ struct DSPlatformIcon: View {
       }
     }
     .opacity(state == .skipped || state == .off ? 0.55 : 1)
-    .dsTooltip(showsLabel ? nil : "\(platform.displayName)\(state.map { " · \($0.label)" } ?? "")")
+    .dsTooltip(tooltip ?? (showsLabel ? nil : "\(platform.displayName)\(state.map { " · \($0.label)" } ?? "")"))
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("\(platform.displayName)\(state.map { ", \($0.label)" } ?? "")")
   }
