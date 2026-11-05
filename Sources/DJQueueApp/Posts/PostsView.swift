@@ -339,22 +339,16 @@ extension PostsTab {
 /// Shared wording for posts.
 enum PostText {
   static func pill(_ p: PlatformPost) -> (text: String, style: DSBadgeStyle, icon: String?) {
+    let text = p.stateLabel
     switch p.state {
-    case .posted: return ("Posted", .soft(.success), nil)
-    case .failed:
-      return p.resolution == nil ? (p.errorType?.displayName ?? "Failed", .soft(.danger), nil) : ("Retried", .outline, nil)
+    case .posted: return (text, .soft(.success), nil)
+    case .failed: return (text, p.resolution == nil ? .soft(.danger) : .outline, nil)
     case .copyrightBlocked, .copyrightMuted, .removed:
-      switch p.resolution {
-      case "accepted": return ("Accepted", .outline, "c.circle")
-      case "reuploaded": return ("Re-uploaded", .outline, "c.circle")
-      default: return (p.state == .removed ? "Removed" : p.state == .copyrightMuted ? "Muted" : "Blocked", .soft(.danger), "c.circle")
-      }
-    case .overdue: return ("Missed", .soft(.warning), nil)
-    case .due: return ("Due now", .solid, nil)
-    case .planned: return ("Planned", .soft(.info), nil)
-    case .rendering: return ("Rendering", .soft(.info), nil)
-    case .rendered: return ("Rendered", .soft(.info), nil)
-    case .skipped: return ("Skipped", .outline, nil)
+      return (text, p.resolution == "accepted" || p.resolution == "reuploaded" ? .outline : .soft(.danger), "c.circle")
+    case .overdue: return (text, .soft(.warning), nil)
+    case .due: return (text, .solid, nil)
+    case .planned, .rendering, .rendered: return (text, .soft(.info), nil)
+    case .skipped: return (text, .outline, nil)
     }
   }
 

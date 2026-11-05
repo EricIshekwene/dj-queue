@@ -139,7 +139,10 @@ final class AppModel {
   @ObservationIgnored lazy var undoRunner = UndoRunner(bulk: bulk)
   var showPalette = false
   /// In-window Settings modal (DESIGN-v2 §6.9), opened by the sidebar row, ⌘, and `WindowManager.showSettings`.
-  var showSettings = false
+  var showSettings = false {
+    // ⌘, while the palette is open: Settings opens under it and takes keyboard focus, so the palette goes.
+    didSet { if showSettings, !oldValue, showPalette { closePalette() } }
+  }
   /// Section the Settings modal shows (the Settings leaf owns the `SettingsSection` enum).
   var settingsSection: SettingsSection = .general
   /// Sidebar collapsed to icons by the user (it also collapses automatically under 1200 pt).

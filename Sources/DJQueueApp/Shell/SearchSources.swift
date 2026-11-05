@@ -22,6 +22,8 @@ struct PaletteContent {
   var flat: [PaletteCommand] = []
   /// Hits per chip; empty when not searching.
   var counts: [SearchScope: Int] = [:]
+  /// The chip this list really shows: one with no hits falls back to All.
+  var scope = SearchScope.all
   /// Set when a chip's list is cut short.
   var note: String?
 
@@ -48,13 +50,26 @@ extension AppModel {
   // MARK: Opening
 
   /// What a result that leaves the current view does first: the editor closes through its usual path (`editor = nil`,
-  /// the same as ⌘-number), then Settings and any quick look or cheat sheet that was open under the palette.
+  /// the same as ⌘-number), then Settings and anything else that was open under the palette.
   func leaveForScreen(_ s: Screen) {
     editor = nil
     showSettings = false
+    closeModals()
+    screen = s
+  }
+
+  /// Dialogs ⌘K can sit above. They'd cover where a result lands, or come back with the screen they belong to.
+  func closeModals() {
     showShortcuts = false
     previewVideo = nil
-    screen = s
+    markPostedTarget = nil
+    reportTarget = nil
+    longformTarget = nil
+    cancelPendingBulk()
+    BrowseUI.shared.quickLook = nil
+    BrowseUI.shared.longformTargets = []
+    BrowseUI.shared.scoreTargets = []
+    BrowseUI.shared.pendingPostBulk = nil
   }
 
   /// ⌘K: however the palette closes, the next one starts empty.
@@ -105,6 +120,7 @@ extension AppModel {
   /// A Settings pane, scrolled to `anchor`. Settings opens over the current view, like ⌘, does.
   func openSettings(_ pane: SettingsPane, anchor: String? = nil) {
     guard let s = SettingsSection(rawValue: pane.rawValue) else { return }
+    closeModals()
     SettingsUIState.shared.scrollTarget = anchor
     settingsSection = s
     showSettings = true
@@ -159,7 +175,7 @@ extension AppModel {
   func paletteSettingRow(_ entryId: String) -> PaletteCommand? {
     let id = SearchId.setting(entryId)
     if let e = SettingsSearchRegistry.entry(id: entryId) {
-      return paletteSettingRow(id: id, title: e.title, pane: e.pane, group: e.group, anchor: e.anchor)
+      return e.isDrawn(settings) ? paletteSettingRow(id: id, title: e.title, pane: e.pane, group: e.group, anchor: e.anchor) : nil
     }
     let prefix = "\(SettingsPane.captions.rawValue)."
     guard entryId.hasPrefix(prefix) else { return nil }
@@ -217,7 +233,10 @@ extension AppModel {
       let prefix = s.label.isEmpty ? "" : "\(s.label): "
       row.subtitle = prefix + s.text
       row.subtitleMatches = s.ranges.map { ($0.lowerBound + prefix.count)..<($0.upperBound + prefix.count) }
-    case .setting, .health:
+    case .health:
+      // The row's second line is its own text: bold the match there, never repeat it.
+      row.subtitleMatches = row.subtitle.map { SearchText.ranges(in: $0, q) } ?? []
+    case .setting:
       // The path stays; the matched text follows it.
       if ["Section", "Group", "Hashtag group", "Caption template", "YouTube title template"].contains(s.label) { break }
       let prefix = (row.subtitle.map { "\($0) · " } ?? "") + (s.label.isEmpty ? "" : "\(s.label): ")
@@ -253,37 +272,41 @@ extension AppModel {
       SearchItem(id: c.id, kind: .goTo, title: c.title, fields: [SearchField("", c.title.replacingOccurrences(of: "Go to ", with: ""), role: .primary)], rank: n)
     }
     let local = SearchIndex(items: items)
-    let hits = searchIndex.search(q) + local.search(q)
+    let commands = Dictionary((actions + goTo).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    // Counted once here, so chips and "Show all" only ever promise rows that exist: a row can't repeat (its id is how
+    // Recents and the keyboard find it), and a clip or post that just went away is dropped.
+    var seen = Set<String>()
+    let hits = (searchIndex.search(q) + local.search(q)).filter { h in
+      switch h.kind {
+      case .clip: guard videoById[String(h.id.dropFirst(5))] != nil else { return false }
+      case .post: guard postById[String(h.id.dropFirst(SearchId.post("").count))] != nil else { return false }
+      default: break
+      }
+      return seen.insert(h.id).inserted
+    }
     var out = PaletteContent()
     var counts = AppSearch.counts(hits)
     if hits.isEmpty { counts[.all] = 0 }
     out.counts = counts
-    let commands = Dictionary((actions + goTo).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     // A chip that lost its hits as the text changed falls back to All.
     let scope = counts[scope] == nil ? .all : scope
+    out.scope = scope
     let cap = scope == .all ? Self.paletteGroupCap : Self.paletteListCap
     var shown = 0, total = 0
     for section in AppSearch.sections(hits.filter { scope.contains($0.kind) }) {
       total += section.hits.count
       let index = section.kind == .action || section.kind == .goTo ? local : searchIndex
-      var rows: [PaletteCommand] = []
-      var seen = Set(out.flat.map(\.id))
-      for hit in section.hits {
-        if rows.count >= min(cap, Self.paletteListCap - shown) { break }
-        // A row can't repeat: its id is how Recents and the keyboard find it.
-        guard !seen.contains(hit.id), let row = command(hit, in: index, q, local: commands) else { continue }
-        seen.insert(row.id)
-        rows.append(row)
-      }
+      let limit = min(cap, Self.paletteListCap - shown)
+      var rows = section.hits.prefix(limit).compactMap { command($0, in: index, q, local: commands) }
       shown += rows.count
-      if scope == .all, section.hits.count > rows.count, let row = showAllRow(section) { rows.append(row) }
+      if scope == .all, section.hits.count > rows.count { rows.append(showAllRow(section)) }
       out.add(section.kind.title, rows)
     }
     if scope != .all, total > shown { out.note = "First \(shown) of \(total). Keep typing to narrow it down." }
     return out
   }
 
-  private func showAllRow(_ s: SearchSection) -> PaletteCommand? {
+  private func showAllRow(_ s: SearchSection) -> PaletteCommand {
     let scope = SearchScope.allCases.first { $0 != .all && $0.contains(s.kind) } ?? .all
     let noun: String
     switch s.kind {
@@ -292,7 +315,9 @@ extension AppModel {
     case .week: noun = "weeks"
     case .session: noun = "sessions"
     case .setting: noun = "settings"
-    case .health, .action, .goTo: noun = "actions"
+    case .health: noun = "Health places"
+    case .action: noun = "actions"
+    case .goTo: noun = "destinations"
     }
     return PaletteCommand(id: "show.\(s.kind.rawValue)", title: "Show all \(s.hits.count) \(noun)", symbol: "chevron.down", group: s.kind.title, keepsOpen: true,
                           isRecent: false) {

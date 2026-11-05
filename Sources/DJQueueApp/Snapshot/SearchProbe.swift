@@ -16,8 +16,14 @@ import SwiftUI
 /// would take the keyboard from whoever is using the Mac, so the probe doesn't. "Search everywhere" is clicked the same
 /// way: real mouse events into `NSWindow.sendEvent`.
 ///
-/// Direct model calls are setup only (opening the editor or Settings before ⌘K, seeding a filter that must get cleared);
-/// every asserted behaviour comes from the keys. `SETUP` lines in `steps.json` list them.
+/// What isn't a key. `start` resets the UI and picks the screen before each flow. Inside a flow, direct model calls set
+/// the scene (the editor or Settings open before ⌘K, a filter that must get cleared, stale recents, a new caption); each
+/// one has a `SETUP` line in `steps.txt`. Two steps can't come from keys, and say so: ⌘, is a menu command, which a snapshot
+/// run doesn't have, so "Settings opens while the palette is up" sets `showSettings` directly. And `results` reads
+/// `paletteContent`, the list the palette renders, to say what's expected: chip counts, bold and subtitles on screen are
+/// checked by eye in the captures, while ↩ running the rendered list is what proves a row is really there.
+///
+/// Run it with the lid open and the display awake: macOS doesn't draw otherwise, so flows wait for the display.
 ///
 /// `DJQ_SEARCH_PROBE=sabotage` makes one assertion expect the wrong week, to show the run can fail.
 @MainActor
@@ -48,6 +54,8 @@ final class SearchProbe {
   private let caption = "Sunrise rooftop encore, see you in Lagos"
   private let externalId = "probe-ext-4471"
   private let groupName = "Probe harbour tags"
+  private let templateName = "Probe tide template"
+  private let titleTemplateName = "Probe tide title"
   private var captionClip = ""
   private var post = ""
 
@@ -73,17 +81,15 @@ final class SearchProbe {
         p.shotNo = 0
         w.appearance = NSAppearance(named: look)
         try FileManager.default.createDirectory(at: out.appendingPathComponent(name), withIntermediateDirectories: true)
-        await p.captionFlow()
-        await p.postFlow()
-        await p.weekFlow()
-        await p.sessionFlow()
-        await p.settingsFlow()
-        await p.showAllFlow()
-        await p.editorFlow()
-        await p.fromSettingsFlow()
-        await p.handOffFlow()
-        await p.recentsFlow()
-        await p.freshFlow()
+        let flows: [(String, () async -> Void)] = [
+          ("caption", p.captionFlow), ("post", p.postFlow), ("week", p.weekFlow), ("session", p.sessionFlow), ("setting", p.settingsFlow),
+          ("auto-update", p.autoUpdateFlow), ("health", p.healthFlow), ("action", p.actionFlow), ("show-all", p.showAllFlow),
+          ("chip-fallback", p.chipFallbackFlow), ("no-empty-show-all", p.duplicateActionFlow), ("editor", p.editorFlow),
+          ("settings", p.fromSettingsFlow), ("modals", p.modalsFlow), ("hand-off", p.handOffFlow), ("recents", p.recentsFlow), ("fresh", p.freshFlow),
+        ]
+        // `DJQ_SEARCH_PROBE_ONLY=health,action` runs those flows while working on them. A full run leaves it unset.
+        let only = ProcessInfo.processInfo.environment["DJQ_SEARCH_PROBE_ONLY"]?.split(separator: ",").map(String.init)
+        for (name, flow) in flows where only?.contains(name) ?? true { await flow() }
       }
       p.problems.forEach { print("search-probe: FAIL \($0)") }
       try p.report()
@@ -116,6 +122,10 @@ final class SearchProbe {
     try store.save(p)
     post = p.id
     try store.save(HashtagSet(id: "probe-group", name: groupName, category: "My groups", tags: ["#probeharbour"], sort: 99))
+    try store.save(CaptionTemplate(id: "probe-template", name: templateName, template: "{text}\n\n{hashtags}", sort: 99))
+    var settings = try store.settings()
+    settings.youtubeTitleTemplates.append(TitleTemplate(id: "probe-title", name: titleTemplateName, template: "{text} | Probe"))
+    try store.save(settings)
     model.refreshNow()
   }
 
@@ -132,6 +142,17 @@ final class SearchProbe {
     model.postsSelection = nil
     model.screen = screen
     await settle(500)
+    await waitForDisplay()
+  }
+
+  /// macOS draws nothing with the lid closed or the display asleep, and keys into an undrawn window prove nothing. So
+  /// flows wait for it to come back (up to 20 minutes) instead of failing for a reason that isn't the app's.
+  private func waitForDisplay() async {
+    for n in 0..<240 {
+      guard let img = DSTooltipProbe.captureImage(window, panel: nil), Self.isBlank(img) else { return }
+      if n == 0 { print("search-probe: the display isn't drawing, waiting") }
+      try? await Task.sleep(for: .seconds(5))
+    }
   }
 
   private func settle(_ ms: Int = 320) async {
@@ -166,6 +187,14 @@ final class SearchProbe {
   private func shiftTab() async { await press("\u{19}", code: 48, flags: .shift, ignoring: "\t") }
   private func enter() async { await press("\r", code: 36) }
   private func esc() async { await press("\u{1b}", code: 53) }
+  private func backspace() async { await press("\u{7f}", code: 51) }
+
+  /// Tab until `scope`'s chip is on.
+  private func tabTo(_ scope: SearchScope, _ text: String) async {
+    let on = SearchScope.allCases.filter { results(text).counts[$0] != nil }
+    for _ in 0..<(on.firstIndex(of: scope) ?? 0) { await tab() }
+    check(ui.paletteScope == scope, "Tab reaches the \(scope.title) chip")
+  }
 
   private func type(_ text: String) async {
     for c in text { await keystroke(c) }
@@ -207,6 +236,7 @@ final class SearchProbe {
   @discardableResult
   private func shot(_ name: String) async -> CGImage? {
     await settle(160)
+    await waitForDisplay()
     shotNo += 1
     let file = String(format: "%@/%02d-%@-%@.png", theme, shotNo, flow, name)
     guard let img = DSTooltipProbe.captureImage(window, panel: nil) else {
@@ -295,9 +325,11 @@ final class SearchProbe {
   /// Post by external id: opens Posts with the hiding search and chip cleared, row in view, inspector open.
   private func postFlow() async {
     await start("post")
-    setupNote("a Posts search and status chip that hide the post")
+    setupNote("a Posts search, status chip and Platform filter that hide the post")
     prefs.setSearch(.posts, "nothing-matches-this")
     prefs.setStatus(.posts, PostsTab.scheduled.rawValue)
+    let other = Platform.allCases.first { $0 != model.postById[post]?.platform } ?? .x
+    prefs.setFilter(.posts, ListFilterKey.platform, other.rawValue)
     model.screen = .posts
     await settle(500)
     await shot("hidden-by-filters")
@@ -309,7 +341,7 @@ final class SearchProbe {
     await settle(900)
     check(model.screen == .posts, "opens Posts")
     check(!model.showPalette, "the palette closes")
-    check(prefs[.posts].search.isEmpty && prefs[.posts].status == nil, "the filters that hid it are cleared")
+    check(prefs[.posts].search.isEmpty && prefs[.posts].status == nil && prefs[.posts].filters.isEmpty, "the filters that hid it are cleared")
     check(model.postsSelection == post, "the inspector shows the post")
     let f = ProbeFrames.frames["post:\(post)"]
     check(f.map { $0.minY > 60 && $0.maxY < window.frame.height - 10 } == true, "its row is in view (\(f.map { "\(Int($0.minY))…\(Int($0.maxY))" } ?? "not on screen"))")
@@ -348,18 +380,24 @@ final class SearchProbe {
     await start("session")
     guard let s = model.sessions.first(where: { x in model.videos.contains { $0.sessionId == x.id } }) else { return check(false, "a session with clips") }
     let text = Captions.setName(s.name)
+    setupNote("a Library search, status chip and Kind filter that would hide the session's clips")
+    prefs.setSearch(.library, "nothing-matches-this")
+    prefs.setStatus(.library, LibraryFilter.excluded.rawValue)
+    prefs.setFilter(.library, ListFilterKey.kind, Kind.talking.rawValue)
+    model.screen = .library
+    await settle(500)
+    await shot("hidden-by-filters")
     await openPalette()
     await type(text)
     await shot("typed")
-    let on = SearchScope.allCases.filter { results(text).counts[$0] != nil }
-    check(on.contains(.sessions), "the Sessions chip is offered")
-    for _ in 0..<(on.firstIndex(of: .sessions) ?? 0) { await tab() }
-    check(ui.paletteScope == .sessions, "Tab reaches the Sessions chip")
+    check(results(text).counts[.sessions] != nil, "the Sessions chip is offered")
+    await tabTo(.sessions, text)
     await shot("sessions-chip")
     await enter()
     await settle(800)
     check(model.screen == .library, "opens Library")
-    check(prefs[.library].filters[ListFilterKey.session] == s.id, "filtered to the session")
+    check(prefs[.library].filters == [ListFilterKey.session: s.id], "filtered to the session and nothing else")
+    check(prefs[.library].search.isEmpty && prefs[.library].status == nil, "the search and status chip are cleared")
     let shown = model.visibleIds[.library] ?? []
     check(!shown.isEmpty && shown.allSatisfy { model.video($0)?.sessionId == s.id }, "Library shows only that session's clips")
     await shot("library-filtered")
@@ -373,6 +411,8 @@ final class SearchProbe {
       ("youtube title template", .newClipDefaults, SettingsAnchor.row("YouTube title template"), "defaults-own-scroll"),
       ("update log", .engine, SettingsAnchor.row("Update log"), "engine-far-down"),
       (groupName.lowercased(), .captions, SettingsAnchor.hashtagGroup("probe-group"), "hashtag-group"),
+      (templateName.lowercased(), .captions, SettingsAnchor.captionTemplate("probe-template"), "caption-template"),
+      (titleTemplateName.lowercased(), .captions, SettingsAnchor.titleTemplate("probe-title"), "title-template"),
     ]
     for (text, section, anchor, name) in cases {
       await start("setting-\(name)")
@@ -395,6 +435,132 @@ final class SearchProbe {
       check(SettingsUIState.shared.flashAnchor == nil, "the flash ends")
       await shot("after-flash")
     }
+  }
+
+  /// The "Auto-update" header sits inside `.id(AutoUpdateSettings.anchor)`. Coming from the bottom of Engine, where it's out
+  /// of view, proves the scroll finds the header's own anchor.
+  private func autoUpdateFlow() async {
+    await start("auto-update-header")
+    await openPalette()
+    await type("daily backup")
+    await enter()
+    await settle(650)
+    check(ProbeFrames.frames["setting:\(SettingsAnchor.row("Daily backup"))"] != nil, "lands at the bottom of Engine first")
+    await shot("daily-backup")
+    await settle(1700)
+    await openPalette()
+    await type("auto-update")
+    check(results("auto-update").flat.first?.id == SearchId.setting("engine.\(SettingsAnchor.group("Auto-update"))"), "the header is the first hit")
+    await enter()
+    await settle(650)
+    let f = ProbeFrames.frames["setting:\(SettingsAnchor.group("Auto-update"))"]
+    let top = (window.frame.height - 560) / 2
+    check(f.map { $0.minY >= top + 40 && $0.maxY <= top + 560 } == true, "the header is flashing and in view (\(f.map { "\(Int($0.minY))…\(Int($0.maxY))" } ?? "no highlight"))")
+    await shot("header-flash")
+  }
+
+  /// Health places open Health, the runway opens the Queue, and neither row repeats its second line.
+  private func healthFlow() async {
+    await start("health-backups", screen: .score)
+    await openPalette()
+    await type("backups")
+    await tabTo(.actions, "backups")
+    check(results("backups", .actions).flat.first?.id == SearchId.health("backups"), "Backups is the first row under Actions")
+    await shot("hit")
+    await enter()
+    await settle(600)
+    check(model.screen == .health && !model.showPalette, "Backups opens Health")
+    await shot("health")
+    await start("health-runway", screen: .score)
+    await openPalette()
+    await type("runway")
+    await tabTo(.actions, "runway")
+    let row = results("runway", .actions).flat.first
+    check(row?.id == SearchId.health("runway"), "Runway is the first row under Actions")
+    check(row?.subtitle?.contains("approved") == true, "its second line has the numbers")
+    await shot("hit")
+    await enter()
+    await settle(600)
+    check(model.screen == .queue, "Runway opens the Queue, where it shows")
+    await shot("queue")
+    await start("health-subtitle", screen: .score)
+    await openPalette()
+    await type("database")
+    let backups = results("database").flat.first { $0.id == SearchId.health("backups") }
+    check(backups?.subtitle == HealthPlace.all.first { $0.id == "backups" }?.subtitle, "a subtitle hit isn't repeated (\(backups?.subtitle ?? "no row"))")
+    check(backups?.subtitleMatches.isEmpty == false, "the match is marked in the subtitle")
+    await shot("subtitle-match")
+    await closePalette()
+    await openPalette()
+    await type("settings")
+    let pane = results("settings").flat.first { $0.id.hasPrefix("search.pane.") }
+    check(pane?.subtitle == "Settings", "a section row reads Settings once (\(pane?.subtitle ?? "no row"))")
+    await shot("section-rows")
+    await closePalette()
+  }
+
+  /// An action by its title and by its subtitle, and one that changes screen from the editor.
+  private func actionFlow() async {
+    await start("action", screen: .score)
+    await openPalette()
+    await type("keyboard shortcuts")
+    await shot("hit")
+    await enter()
+    await settle(400)
+    check(model.showShortcuts, "the action runs")
+    await shot("ran")
+    setupNote("the cheat sheet closed")
+    model.showShortcuts = false
+    await openPalette()
+    await type("check the app")
+    check(results("check the app").flat.first?.id == "health.doctor", "an action is found by its subtitle")
+    await shot("by-subtitle")
+    await closePalette()
+    await start("action-from-editor")
+    setupNote("the editor opened on a clip before ⌘K")
+    model.openEditor(captionClip, in: [captionClip])
+    await settle(1200)
+    await openPalette()
+    await type("open doctor")
+    await enter()
+    await settle(900)
+    check(model.screen == .health && model.editor == nil, "an action that changes screen closes the editor")
+    await shot("health")
+  }
+
+  /// A chip that lost its hits goes back to All and stays there when the hits return.
+  private func chipFallbackFlow() async {
+    await start("chip-fallback")
+    await openPalette()
+    await type("blend")
+    await tabTo(.clips, "blend")
+    await shot("clips-chip")
+    await type("zz")
+    check(ui.paletteScope == .all, "no hits: back to All")
+    await shot("no-hits")
+    await backspace()
+    await backspace()
+    check(ui.paletteQuery == "blend", "backspace reaches the field")
+    check(ui.paletteScope == .all, "the chip doesn't come back by itself")
+    await shot("all-again")
+    await closePalette()
+  }
+
+  /// The selected clip's "Actions for…" row and its own hit are one row: no "Show all" for a section that's gone.
+  private func duplicateActionFlow() async {
+    await start("no-empty-show-all")
+    guard let v = model.video(captionClip) else { return check(false, "the clip") }
+    setupNote("one clip selected before ⌘K")
+    model.visibleIds[.queue] = [captionClip]
+    model.setSelection([captionClip], screen: .queue)
+    let text = model.displayName(v)
+    await openPalette()
+    await type(text)
+    let c = results(text)
+    check(c.flat.filter { $0.id == "clip.\(captionClip)" }.count == 1, "the clip is listed once")
+    check(!c.sections.contains { s in s.rows.allSatisfy { $0.command.id.hasPrefix("show.") } }, "no section holds only a Show all row")
+    await shot("once")
+    await closePalette()
   }
 
   /// A broad word: groups are capped at five, the Show all row opens the chip, Tab and ⇧Tab walk the chips, ↑ ↓ move.
@@ -440,6 +606,7 @@ final class SearchProbe {
     check(model.screen == .posts && model.postsSelection == post, "Posts shows the post")
     await shot("post-open")
     await start("editor-go-to")
+    setupNote("the editor opened on a clip before ⌘K")
     model.openEditor(captionClip, in: [captionClip])
     await settle(1200)
     await openPalette()
@@ -479,6 +646,7 @@ final class SearchProbe {
     check(model.screen == .posts && model.postsSelection == post, "and opens in Posts")
     await shot("post-from-settings")
     await start("settings-open-clip")
+    setupNote("Settings opened before ⌘K")
     model.showSettings = true
     await settle(500)
     await openPalette()
@@ -490,6 +658,39 @@ final class SearchProbe {
     await settle(1200)
     check(model.editor?.videoId == captionClip && !model.showSettings, "Open in editor closes Settings")
     await shot("editor")
+  }
+
+  /// ⌘K over a dialog: a setting never lands under it, and a result that leaves takes it along.
+  private func modalsFlow() async {
+    await start("over-cheat-sheet")
+    setupNote("the cheat sheet opened before ⌘K")
+    model.showShortcuts = true
+    await settle(400)
+    await openPalette()
+    await shot("palette-over-sheet")
+    await type("late grace")
+    await enter()
+    await settle(650)
+    check(model.showSettings && !model.showShortcuts, "a setting closes the cheat sheet")
+    check(ProbeFrames.frames["setting:\(SettingsAnchor.row("Late grace"))"] != nil, "and the row shows")
+    await shot("setting")
+    await start("over-dialog")
+    setupNote("the Mark posted dialog opened before ⌘K")
+    model.markPostedTarget = model.postById[post]
+    await settle(400)
+    await openPalette()
+    await type(externalId)
+    await enter()
+    await settle(900)
+    check(model.markPostedTarget == nil && model.postsSelection == post, "a result that leaves closes the dialog")
+    await shot("post")
+    await start("settings-under-palette")
+    await openPalette()
+    setupNote("Settings opened directly while the palette is up: ⌘, is a menu command, and snapshot runs have no menu")
+    model.showSettings = true
+    await settle(400)
+    check(!model.showPalette, "Settings opening closes the palette, so nothing strands the caret")
+    await shot("settings")
   }
 
   /// ⌘F filters the page; nothing fits, so "Search everywhere" carries the text into ⌘K, which finds the clip's caption.
@@ -515,6 +716,7 @@ final class SearchProbe {
       await shot("search-everywhere")
       await closePalette()
       check(prefs[page].search == captionWord, "the page's filter stays")
+      setupNote("the page's filter cleared for the next flow")
       prefs.clearFilters(page)
     }
   }
@@ -522,6 +724,7 @@ final class SearchProbe {
   /// A search result shows up in Recents and runs again; a stale recent is dropped without a crash.
   private func recentsFlow() async {
     await start("recents")
+    setupNote("Recents emptied")
     model.recentCommands = []
     await openPalette()
     await type("next week")
@@ -541,7 +744,8 @@ final class SearchProbe {
     await shot("recent-ran")
   }
 
-  /// New text is searchable after the next refresh, without reopening anything.
+  /// New text is searchable after the next refresh, through the same off-main load the running app uses (this probe's
+  /// model is frozen, which otherwise loads on the main actor).
   private func freshFlow() async {
     await start("fresh")
     let word = theme == "light" ? "brandnewlight" : "brandnewdark"
@@ -549,20 +753,25 @@ final class SearchProbe {
     await type(word)
     check(results(word).flat.first?.id != "clip.\(captionClip)", "not findable yet")
     await shot("before")
-    var v = (try? model.store.versions(videoId: captionClip).last) ?? Version(number: 1)
-    v.caption = "\(caption) \(word)"
-    try? model.store.save(v, videoId: captionClip)
-    model.refreshNow()
-    await settle(400)
-    check(results(word).flat.first?.id == "clip.\(captionClip)", "found after the refresh")
+    setupNote("a caption saved through the store, as an edit elsewhere would")
+    await save(caption: "\(caption) \(word)")
+    check(results(word).flat.first?.id == "clip.\(captionClip)", "found after the background refresh")
     await shot("after")
     await closePalette()
-    if let c = try? model.store.versions(videoId: captionClip).last {
-      var c = c
-      c.caption = caption
-      try? model.store.save(c, videoId: captionClip)
-      model.refreshNow()
-    }
+    setupNote("the caption put back")
+    await save(caption: caption)
+  }
+
+  private func save(caption text: String) async {
+    guard var v = try? model.store.versions(videoId: captionClip).last else { return check(false, "the clip's version") }
+    v.caption = text
+    try? model.store.save(v, videoId: captionClip)
+    let generation = model.searchGeneration
+    model.frozen = false
+    model.refresh()
+    for _ in 0..<60 where model.searchGeneration == generation { await settle(50) }
+    model.frozen = true
+    check(model.searchGeneration != generation, "the background load landed")
   }
 
   private func report() throws {

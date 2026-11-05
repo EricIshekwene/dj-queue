@@ -136,7 +136,7 @@ public enum SearchCorpus {
     var f = [SearchField("Platform", p.platform.displayName, role: .primary)]
     func add(_ label: String, _ t: String?) { if let t, !t.isEmpty { f.append(SearchField(label, t)) } }
     add("State", p.state.displayName)
-    if p.state == .overdue { add("State", "Missed") }
+    if p.stateLabel != p.state.displayName { add("State", p.stateLabel) }
     add("Problem", p.errorType?.displayName)
     add("Error", p.errorMessage)
     add("Link", p.url)
@@ -179,10 +179,10 @@ public enum SearchCorpus {
 
   static func settingsItems(_ i: SearchInput) -> [SearchItem] {
     var out = SettingsPane.allCases.enumerated().map { n, p in
-      SearchItem(id: SearchId.pane(p), kind: .setting, title: p.title, fields: [SearchField("", "settings")], rank: n)
+      SearchItem(id: SearchId.pane(p), kind: .setting, title: p.title, fields: [SearchField("Section", "settings")], rank: n)
     }
     let start = out.count
-    out += SettingsSearchRegistry.all.enumerated().map { n, e in
+    out += SettingsSearchRegistry.all.filter { $0.isDrawn(i.settings) }.enumerated().map { n, e in
       var f = [SearchField("Section", e.pane.title)]
       if let g = e.group { f.append(SearchField("Group", g)) }
       if let d = e.description { f.append(SearchField("", d)) }
@@ -257,5 +257,27 @@ extension Store {
       out[video.id] = t
     }
     return out
+  }
+}
+
+extension PlatformPost {
+  /// The word every post row shows for its state, so what you read is what you can type.
+  public var stateLabel: String {
+    switch state {
+    case .posted: "Posted"
+    case .failed: resolution == nil ? (errorType?.displayName ?? "Failed") : "Retried"
+    case .copyrightBlocked, .copyrightMuted, .removed:
+      switch resolution {
+      case "accepted": "Accepted"
+      case "reuploaded": "Re-uploaded"
+      default: state == .removed ? "Removed" : state == .copyrightMuted ? "Muted" : "Blocked"
+      }
+    case .overdue: "Missed"
+    case .due: "Due now"
+    case .planned: "Planned"
+    case .rendering: "Rendering"
+    case .rendered: "Rendered"
+    case .skipped: "Skipped"
+    }
   }
 }

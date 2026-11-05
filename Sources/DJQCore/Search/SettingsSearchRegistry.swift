@@ -40,11 +40,17 @@ public struct SettingsSearchEntry: Sendable, Hashable {
   public var anchor: String
   /// Tells apart entries that land on the same anchor ("TikTok limits", "X limits").
   public var variant: String? = nil
+  /// The row is only drawn while this platform is on (Schedule, Queue).
+  public var activeOnly: Platform? = nil
+
+  /// Is the row in the pane right now? A result must land on something.
+  public func isDrawn(_ settings: Settings) -> Bool { activeOnly.map(settings.activePlatforms.contains) ?? true }
 
   public var id: String { "\(pane.rawValue).\(anchor)" + (variant.map { "#\($0)" } ?? "") }
 
-  static func row(_ p: SettingsPane, _ label: String, group: String? = nil, description: String? = nil, title: String? = nil) -> Self {
-    Self(pane: p, group: group, title: title ?? label, description: description, anchor: SettingsAnchor.row(label))
+  static func row(_ p: SettingsPane, _ label: String, group: String? = nil, description: String? = nil, title: String? = nil,
+                  activeOnly: Platform? = nil) -> Self {
+    Self(pane: p, group: group, title: title ?? label, description: description, anchor: SettingsAnchor.row(label), activeOnly: activeOnly)
   }
 
   static func group(_ p: SettingsPane, _ title: String, description: String? = nil) -> Self {
@@ -185,8 +191,8 @@ public enum SettingsSearchRegistry {
       SettingsSearchEntry(pane: .platforms, group: "Limits", title: "\(n) limits", description: "Longest clip, largest file, caption and title length.",
                           anchor: SettingsAnchor.group("Limits"), variant: p.rawValue),
       .row(.publishing, n, group: "Platforms", description: "Manual or Postiz, its channel and its options.", title: "\(n) publishing"),
-      .row(.schedule, n, group: "Slot times", description: "When its post is due every day.", title: "\(n) slot time"),
-      .row(.queue, n, group: "Order per platform", description: "Give it its own order.", title: "\(n) order"),
+      .row(.schedule, n, group: "Slot times", description: "When its post is due every day.", title: "\(n) slot time", activeOnly: p),
+      .row(.queue, n, group: "Order per platform", description: "Give it its own order.", title: "\(n) order", activeOnly: p),
       .row(.newClipDefaults, n, group: "Caption template per platform", description: "Default template when the clip didn't choose one.",
            title: "\(n) caption template"),
     ]

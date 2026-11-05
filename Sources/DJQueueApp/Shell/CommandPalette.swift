@@ -336,7 +336,7 @@ struct CommandPalette: View {
     ZStack(alignment: .top) {
       DS.color.scrim.ignoresSafeArea().contentShape(Rectangle()).onTapGesture { close() }
       VStack(spacing: 0) {
-        searchRow(c)
+        searchRow
           .padding(DS.space.sm)
         if clip == nil, chips(c).count > 1 { chipRow(c) }
         DSSeparator()
@@ -365,14 +365,18 @@ struct CommandPalette: View {
       // A chip belongs to one search; text handed over by "Search everywhere" stays.
       ui.paletteScope = .all
     }
-    .onChange(of: ui.paletteQuery) { index = 0 }
+    .onChange(of: ui.paletteQuery) {
+      index = 0
+      // A chip that lost its hits really goes back to All: deleting a letter doesn't jump to it again.
+      if clip == nil, ui.paletteScope != content.scope { ui.paletteScope = content.scope }
+    }
     .onChange(of: ui.paletteClipId) { index = 0 }
     .onChange(of: ui.paletteScope) { index = 0 }
   }
 
   // MARK: Pieces
 
-  private func searchRow(_ c: PaletteContent) -> some View {
+  private var searchRow: some View {
     HStack(spacing: 8) {
       Image(systemName: "magnifyingglass").font(.system(size: 14, weight: .medium)).foregroundStyle(DS.color.textTertiary)
       if let v = clip {
@@ -399,9 +403,11 @@ struct CommandPalette: View {
         .font(Font.system(size: 15))
         .foregroundStyle(DS.color.text)
         .focused($focused)
-        .onSubmit { run(at: index, in: c.flat) }
+        // These read `content`, not a list from the render: AppKit's field can keep an older closure after a chip
+        // change, and ↩ would run a row that's no longer listed.
+        .onSubmit { run(at: index, in: content.flat) }
         .onKeyPress(.upArrow) { index = max(0, index - 1); return .handled }
-        .onKeyPress(.downArrow) { index = min(max(0, c.flat.count - 1), index + 1); return .handled }
+        .onKeyPress(.downArrow) { index = min(max(0, content.flat.count - 1), index + 1); return .handled }
         .onKeyPress(.delete) {
           guard ui.paletteQuery.isEmpty, clip != nil else { return .ignored }
           back()
@@ -409,9 +415,10 @@ struct CommandPalette: View {
         }
         .onKeyPress(keys: [.tab, KeyEquivalent("\u{19}")]) { press in
           // Handled either way: Tab never moves focus out of the field.
-          let on = chips(c)
+          let now = content
+          let on = chips(now)
           guard clip == nil, on.count > 1 else { return .handled }
-          let at = on.firstIndex(of: ui.paletteScope) ?? 0
+          let at = on.firstIndex(of: now.scope) ?? 0
           let backward = press.modifiers.contains(.shift) || press.key == KeyEquivalent("\u{19}")
           ui.paletteScope = on[(at + (backward ? on.count - 1 : 1)) % on.count]
           return .handled
@@ -432,7 +439,7 @@ struct CommandPalette: View {
     }
     return HStack(spacing: 6) {
       DSStatusChips(options: options, selection: Binding(
-        get: { ui.paletteScope == .all ? nil : ui.paletteScope.rawValue },
+        get: { c.scope == .all ? nil : c.scope.rawValue },
         set: { ui.paletteScope = $0.flatMap(SearchScope.init(rawValue:)) ?? .all
           focused = true }),
                     allCount: c.counts[.all], allTooltip: "Show every kind of result", size: .sm)
@@ -538,11 +545,11 @@ private struct PaletteRow: View {
         .frame(width: 26, height: 26)
         .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
       VStack(alignment: .leading, spacing: 1) {
-        PaletteMatchText(text: command.title, matches: command.titleMatches, font: DS.type.callout, strong: Font.system(size: 13, weight: .semibold))
+        PaletteMatchText(text: command.title, matches: command.titleMatches, font: DS.type.callout, strong: DS.type.calloutSemibold)
           .foregroundStyle(enabled ? DS.color.text : DS.color.textTertiary).lineLimit(1)
         if let s = command.disabled ?? command.subtitle {
           PaletteMatchText(text: s, matches: command.disabled == nil ? command.subtitleMatches : [], font: DS.type.caption,
-                           strong: Font.system(size: 12, weight: .semibold))
+                           strong: DS.type.captionSemibold)
             .foregroundStyle(DS.color.textTertiary).lineLimit(1)
         }
       }

@@ -78,8 +78,8 @@ public struct SearchField: Sendable, Hashable {
     case primary
     /// Matches, but shows where it matched ("Caption: …").
     case body
-    /// Whole-query prefix only ("12 nov" for a week): "nov 12" never comes from the "12" of one date and the "nov"
-    /// of another.
+    /// Words next to each other in the query must match it as a prefix ("12 nov" for a week), so "nov 12" never comes
+    /// from the "12" of one date and the "nov" of another. Any other words go through the normal AND.
     case phrase
   }
 
@@ -199,18 +199,48 @@ public struct SearchIndex: Sendable {
     let needles = q.words.map { Array($0.utf8) }
     let exact = [0] + Array(q.phrase.utf8) + [0]
     let phrasePrefix = [0] + Array(q.phrase.utf8)
+    let runs = PhraseRun.all(q.words)
     var hits: [SearchHit] = []
+    guard !blob.isEmpty else { return [] }
     blob.withUnsafeBytes { raw in
       let base = raw.bindMemory(to: UInt8.self).baseAddress!
       for (i, e) in entries.enumerated() {
-        guard let tier = Self.tier(e, base: base, needles: needles, exact: exact, phrasePrefix: phrasePrefix) else { continue }
+        guard let tier = Self.tier(e, base: base, needles: needles, exact: exact, phrasePrefix: phrasePrefix, runs: runs) else { continue }
         hits.append(SearchHit(id: items[i].id, kind: items[i].kind, tier: tier, rank: items[i].rank, position: i))
       }
     }
     return hits.sorted { ($0.tier, $0.rank, $0.position) < ($1.tier, $1.rank, $1.position) }
   }
 
-  private static func tier(_ e: Entry, base: UnsafePointer<UInt8>, needles: [[UInt8]], exact: [UInt8], phrasePrefix: [UInt8]) -> SearchTier? {
+  /// A run of neighbouring query words that may stand for a date while the rest match as usual ("tiktok 12 nov"). It
+  /// must be more than a number, and no plain number may sit right beside it: "26 nov" must not read "26" from a title
+  /// and "nov" from another date of that week. A run before the end of the query has to be whole words of the phrase.
+  private struct PhraseRun {
+    var prefix: [UInt8]
+    var isLast: Bool
+    var others: [Int]
+
+    private static func isNumber(_ w: String) -> Bool { w.allSatisfy(\.isNumber) }
+
+    static func all(_ words: [String]) -> [PhraseRun] {
+      guard words.count > 1 else { return [] }
+      var out: [PhraseRun] = []
+      for i in words.indices {
+        for j in i..<min(words.count, i + 4) where !(i == 0 && j == words.count - 1) {
+          let run = words[i...j]
+          guard !run.allSatisfy(isNumber) else { continue }
+          if i > 0, isNumber(words[i - 1]) { continue }
+          if j + 1 < words.count, isNumber(words[j + 1]) { continue }
+          out.append(PhraseRun(prefix: [0] + Array(run.joined(separator: " ").utf8), isLast: j == words.count - 1,
+                               others: words.indices.filter { $0 < i || $0 > j }))
+        }
+      }
+      return out
+    }
+  }
+
+  private static func tier(_ e: Entry, base: UnsafePointer<UInt8>, needles: [[UInt8]], exact: [UInt8], phrasePrefix: [UInt8],
+                           runs: [PhraseRun]) -> SearchTier? {
     let primary = UnsafeBufferPointer(start: base + e.primaryStart, count: e.bodyStart - e.primaryStart)
     let everything = UnsafeBufferPointer(start: base + e.primaryStart, count: e.phraseStart - e.primaryStart)
     var phraseTier: SearchTier?
@@ -223,27 +253,39 @@ public struct SearchIndex: Sendable {
         phraseTier = .wordPrefix
       }
     }
-    guard needles.allSatisfy({ find($0, in: everything, from: 0) != nil }) else { return phraseTier }
+    guard needles.allSatisfy({ find($0, in: everything, from: 0) != nil }) else {
+      if phraseTier != nil || e.end == e.phraseStart { return phraseTier }
+      let phrases = UnsafeBufferPointer(start: base + e.phraseStart - 1, count: e.end - e.phraseStart + 1)
+      for run in runs where run.others.allSatisfy({ find(needles[$0], in: everything, from: 0) != nil }) {
+        guard hasPhrase(run, in: phrases) else { continue }
+        return run.others.allSatisfy { startsWord(needles[$0], in: primary) } ? .wordPrefix : .otherField
+      }
+      return nil
+    }
     if find(exact, in: primary, from: 0) != nil { return .exact }
     if phraseTier == .exact { return .exact }
-    var inPrimary = true, atWordStart = true
-    for n in needles {
-      guard var at = find(n, in: primary, from: 0) else {
-        inPrimary = false
-        atWordStart = false
-        break
-      }
-      var starts = false
-      while true {
-        if at == 0 || !isWordByte(primary[at - 1]) { starts = true; break }
-        guard let next = find(n, in: primary, from: at + 1) else { break }
-        at = next
-      }
-      if !starts { atWordStart = false }
-    }
-    if atWordStart { return .wordPrefix }
+    if needles.allSatisfy({ startsWord($0, in: primary) }) { return .wordPrefix }
     if let phraseTier { return phraseTier }
-    return inPrimary ? .titleContains : .otherField
+    return needles.allSatisfy { find($0, in: primary, from: 0) != nil } ? .titleContains : .otherField
+  }
+
+  private static func startsWord(_ n: [UInt8], in primary: UnsafeBufferPointer<UInt8>) -> Bool {
+    var from = 0
+    while let at = find(n, in: primary, from: from) {
+      if at == 0 || !isWordByte(primary[at - 1]) { return true }
+      from = at + 1
+    }
+    return false
+  }
+
+  private static func hasPhrase(_ run: PhraseRun, in phrases: UnsafeBufferPointer<UInt8>) -> Bool {
+    var from = 0
+    while let at = find(run.prefix, in: phrases, from: from) {
+      let next = at + run.prefix.count
+      if run.isLast || next >= phrases.count || phrases[next] == 0x20 || phrases[next] == 0 { return true }
+      from = at + 1
+    }
+    return false
   }
 
   private static func isWordByte(_ b: UInt8) -> Bool {
@@ -296,12 +338,15 @@ public enum AppSearch {
 /// Folding and text pieces. Everything case- and diacritic-insensitive goes through here.
 public enum SearchText {
   private static let locale = Locale(identifier: "en_US_POSIX")
+  /// Letters Foundation leaves alone (they're letters of their own, not marks), and typographic apostrophes.
+  private static let extraFolds = [("ø", "o"), ("ł", "l"), ("đ", "d"), ("ð", "d"), ("æ", "ae"), ("œ", "oe"), ("’", "'"), ("‘", "'")]
 
   /// Lowercased, diacritics removed, whitespace runs reduced to one space, NULs dropped: the form every field is kept in.
   public static func foldedBytes(_ s: String) -> [UInt8] {
     var src = Array(s.utf8)
     if src.contains(where: { $0 >= 0x80 }) {
-      src = Array(s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: locale).lowercased().utf8)
+      let folded = s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: locale).lowercased()
+      src = Array(extraFolds.reduce(into: folded) { $0 = $0.replacingOccurrences(of: $1.0, with: $1.1) }.utf8)
     }
     var out = [UInt8]()
     out.reserveCapacity(src.count)

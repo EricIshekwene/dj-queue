@@ -71,6 +71,34 @@ private func ids(_ index: SearchIndex, _ q: String) -> [String] { index.search(S
     #expect(ids(i, "dec 1").isEmpty)
   }
 
+  @Test func foldsLettersFoundationLeavesAlone() {
+    let i = SearchIndex(items: [item("a", title: "Łódź Nights"), item("b", title: "Ænima"), item("c", title: "Røyksopp Œuvre"),
+                                item("d", title: "Don’t Stop"), item("e", title: "Đorđe"), item("f", title: "Ðenny")])
+    #expect(ids(i, "lodz") == ["a"])
+    #expect(ids(i, "aenima") == ["b"])
+    #expect(ids(i, "royksopp") == ["c"])
+    #expect(ids(i, "oeuvre") == ["c"])
+    #expect(ids(i, "don't") == ["d"])
+    #expect(ids(i, "don’t") == ["d"])
+    #expect(ids(i, "dorde") == ["e"])
+    #expect(ids(i, "denny") == ["f"])
+    #expect(SearchText.ranges(in: "Ænima", SearchQuery("aenima")) == [0..<5])
+    #expect(SearchText.ranges(in: "Røyksopp", SearchQuery("royk")) == [0..<4])
+  }
+
+  @Test func phraseRunsCombineWithOtherWords() throws {
+    let i = SearchIndex(items: [
+      item("p", .post, title: "TikTok · Golden Hour", [SearchField("State", "Failed"), SearchField("", "12 nov", role: .phrase),
+                                                       SearchField("", "nov 12", role: .phrase), SearchField("", "november 12", role: .phrase)]),
+    ])
+    for q in ["tiktok 12 nov", "12 nov tiktok", "failed nov", "golden nov 12", "golden november 12", "nov golden", "tiktok 12 n", "failed no"] {
+      #expect(ids(i, q) == ["p"], "\(q)")
+    }
+    #expect(i.search(SearchQuery("tiktok 12 nov")).first?.tier == .wordPrefix)
+    #expect(i.search(SearchQuery("failed nov")).first?.tier == .otherField)
+    for q in ["tiktok 13 nov", "tiktok 12 dec", "failed 12", "no tiktok", "tiktok 12 nov 2026"] { #expect(ids(i, q).isEmpty, "\(q)") }
+  }
+
   @Test func sectionsSortByBestTierThenFixedOrder() {
     let i = SearchIndex(items: [
       item("clip", .clip, title: "Sunset", [SearchField("Caption", "captions rock")]),
@@ -250,6 +278,61 @@ private func ids(_ index: SearchIndex, _ q: String) -> [String] { index.search(S
     #expect(index.search(SearchQuery("\(month) \(Int(p[2])!)")).contains { $0.id == SearchId.week(far) })
     #expect(index.search(SearchQuery("november")).contains { $0.kind == .week })
     #expect(index.search(SearchQuery("draft")).contains { $0.id == SearchId.week(far) })
+  }
+
+  /// A date can't be stitched from two dates, or from a title's day and another date of the week.
+  @Test func datesCombineWithWordsButNotWithEachOther() throws {
+    let dm = DayMath(settings: settings())
+    let at = dm.at("2026-11-12", minutes: 600)
+    let p = post("p1", video: "v1", at: at, state: .failed, platform: .tiktok)
+    let index = SearchCorpus.index(input(videos: [try video("v1", title: "Golden Hour")], posts: [p],
+                                         weeks: ["2026-11-09": .draft, "2026-10-26": .draft, "2026-11-30": .draft], now: at))
+    let id = SearchId.post("p1"), week = SearchId.week("2026-11-09")
+    for q in ["tiktok 12 nov", "12 nov tiktok", "failed nov", "golden nov 12"] {
+      #expect(index.search(SearchQuery(q)).contains { $0.id == id }, "\(q)")
+    }
+    for q in ["draft 12 nov", "week 12 nov"] { #expect(index.search(SearchQuery(q)).contains { $0.id == week }, "\(q)") }
+    #expect(!index.search(SearchQuery("tiktok 13 nov")).contains { $0.id == id })
+    func weeks(_ q: String) -> Set<String> { Set(index.search(SearchQuery(q)).filter { $0.kind == .week }.map(\.id)) }
+    #expect(!weeks("26 nov").contains(SearchId.week("2026-10-26")))  // 26 Oct to 1 Nov
+    #expect(!weeks("1 nov").contains(SearchId.week("2026-11-30")))  // 30 Nov to 6 Dec
+    #expect(!weeks("dec 30").contains(SearchId.week("2026-11-30")))
+    #expect(weeks("dec 1").contains(SearchId.week("2026-11-30")))
+    #expect(weeks("1 dec").contains(SearchId.week("2026-11-30")))
+  }
+
+  @Test func postsMatchWhatTheirRowReads() {
+    let at = Date(timeIntervalSince1970: 1_793_000_000)
+    var accepted = post("a", video: "v1", at: at, state: .copyrightBlocked)
+    accepted.resolution = "accepted"
+    var uploaded = post("u", video: "v1", at: at, state: .copyrightMuted)
+    uploaded.resolution = "reuploaded"
+    var retried = post("r", video: "v1", at: at, state: .failed)
+    retried.resolution = "retried"
+    let missed = post("m", video: "v1", at: at, state: .overdue)
+    let index = SearchCorpus.index(input(posts: [accepted, uploaded, retried, missed]))
+    for (q, id) in [("accepted", "a"), ("re-uploaded", "u"), ("retried", "r"), ("missed", "m")] {
+      #expect(index.search(SearchQuery(q)).contains { $0.id == SearchId.post(id) }, "\(q)")
+    }
+    #expect(accepted.stateLabel == "Accepted")
+    #expect(post("x", video: "v1", at: at, state: .copyrightBlocked).stateLabel == "Blocked")
+  }
+
+  /// Schedule and Queue draw a row per platform that's on: an off platform's row isn't there to land on.
+  @Test func rowsOfAnOffPlatformAreNotOffered() {
+    var s = settings()
+    s.enabledPlatforms.remove(.x)
+    var i = input()
+    i.settings = s
+    let index = SearchCorpus.index(i)
+    let ids = Set(index.items.map(\.id))
+    #expect(!ids.contains(SearchId.setting("schedule.row:X")))
+    #expect(!ids.contains(SearchId.setting("queue.row:X")))
+    #expect(ids.contains(SearchId.setting("schedule.row:TikTok")))
+    #expect(ids.contains(SearchId.setting("platforms.row:X")))  // the switch that turns it back on stays
+    #expect(ids.contains(SearchId.setting("publishing.row:X")))
+    #expect(SettingsSearchRegistry.entry(id: "schedule.row:X")?.isDrawn(s) == false)
+    #expect(SettingsSearchRegistry.entry(id: "schedule.row:X")?.isDrawn(settings()) == true)
   }
 
   @Test func sessionsFindByNameAndDate() throws {

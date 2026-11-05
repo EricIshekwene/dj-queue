@@ -4,10 +4,12 @@ Routine decisions made while building whole-app search, one line each with the w
 
 ## Engine
 
-1. **Fields have three roles: primary, body, phrase.** Primary ranks like the title (the bare screen name on Go to rows). Body matches but says where. Phrase must match the whole query as a prefix: without it "12 nov" could take "12" from one date and "nov" from another.
+1. **Fields have three roles: primary, body, phrase.** Primary ranks like the title (the bare screen name on Go to rows). Body matches but says where. Phrase needs neighbouring query words to match it as a prefix: without it "12 nov" could take "12" from one date and "nov" from another.
 2. **Every item's folded text sits in one flat byte buffer, scanned with `memmem`.** Folding happens once at index time; 5,000 items search well under the 10 ms budget.
 3. **Highlight and snippet ranges are worked out per character, only for rendered rows.** Folding can change a character's length (ß), so byte offsets can't map back. Doing it per row keeps the keystroke path byte-only.
-4. **Snippets come from the body field with the most query words.** A tie goes to the field listed first, and clip fields are listed most telling first (Tag, Text, Caption…).
+4. **A date combines with other words, never with a second date.** "tiktok 12 nov" and "failed nov" work: a run of neighbouring words matches one phrase and the rest go through the normal AND. A run must be more than a number, and no plain number may sit right beside it, so "26 nov" can't read "26" from "Week of 26 Oct" and "nov" from 1 Nov. Before the end of the query a run must be whole words ("no tiktok" isn't November).
+4b. **Ø, Ł, Đ, Ð, Æ, Œ and curly apostrophes fold through a small explicit map.** Foundation only removes combining marks, and artist names are this app's main text. The map stays literal, not fuzzy.
+4c. **Snippets come from the body field with the most query words.** A tie goes to the field listed first, and clip fields are listed most telling first (Tag, Text, Caption…).
 
 ## What's indexed
 
@@ -18,6 +20,7 @@ Routine decisions made while building whole-app search, one line each with the w
 9. **A session with no clips isn't listed.** It would open an empty Library.
 10. **Dates and month names are English, whatever the Mac's language.** The rest of the app formats days in English, so what you read is what you can type.
 11. **Post dates carry short phrases only; weeks and sessions also carry the year.** Posts are the most numerous items, and a post is rarely looked up by year.
+11b. **Post rows' state words live in DJQCore (`PlatformPost.stateLabel`), and the pill reads them.** Search indexes the same word the row shows ("Accepted", "Retried"), with one copy of the wording.
 12. **Health places cover more than the five named: disk space and the render queue too.** They're on the same screen at the same cost.
 13. **Runway opens Queue, not Health.** Health doesn't show it; the Queue toolbar's runway chip does. The row's subtitle has the numbers.
 14. **The index rebuilds on every refresh, off the main actor.** It takes about 28 ms for 5,759 items in a release build, small next to the rest of the load, and a query on it about 1 ms. Tracking what changed would be more code than the work it saves.
@@ -25,7 +28,8 @@ Routine decisions made while building whole-app search, one line each with the w
 ## Palette
 
 15. **Health, Actions and Go to share the Actions chip but keep their section headings.** Seven chips is what the spec lists.
-16. **"Show all N" switches to that kind's chip.** One way to see everything, and Tab, the counts and the chips stay coherent.
+16. **"Show all N" switches to that kind's chip.** One way to see everything, and Tab, the counts and the chips stay coherent. Hits are de-duplicated before anything is counted, so chips and Show all only promise rows that exist.
+16b. **A chip that loses its hits really returns to All.** It doesn't jump back when a letter is deleted: the list would change under your hands.
 17. **A chip's list stops at 100 rows, with a note in the footer.** Each row is a SwiftUI view; past 100 you'd type more anyway.
 18. **Rows carry their position, so hover and ↑↓ never search by id.** The old `ids.firstIndex` inside `ForEach` was quadratic and picked the first of two rows with one id. Results are also de-duplicated by id: "Actions for …" and a clip hit are the same row.
 19. **The list is remembered per text, chip and data generation.** Arrow keys and hover redraw the palette without searching again.
@@ -33,7 +37,8 @@ Routine decisions made while building whole-app search, one line each with the w
 21. **⌘K while open clears the field too, through one `closePalette`.** Before, the toggle left stale text for the next open.
 22. **A setting opens over the editor; it doesn't close it.** Same as ⌘, and the Open Settings row today. Results that go to a screen, or open a clip in the editor, close what covered them, whichever action got there (a comparison of screen and editor around the run).
 23. **The palette sits above every modal, under the confirmation dialog.** A confirmation it asks for still has to show.
-24. **Leaving for a screen also closes a quick look or the cheat sheet.** Either could be open under the palette now that it's on top.
+24. **Leaving for a screen closes every dialog the palette can sit above, and a setting does too.** Otherwise a dialog would cover the row, or come back with the screen it belongs to. An action that changes screen by itself keeps what it opened (Mark long-form posted opens its dialog on the way).
+24b. **Settings opening closes the palette, in `showSettings`' `didSet`.** ⌘, is a menu command that works over the palette; Settings would open under it and take the caret. A result has already closed the palette by then.
 25. **Opening a post clears its page's search, filters and status chip, not just what hid it.** All holds every post, and working out which chip would keep it adds a second definition of the tabs for little gain.
 26. **Results don't touch the sort.** It can't hide a post.
 
@@ -42,6 +47,7 @@ Routine decisions made while building whole-app search, one line each with the w
 27. **The registry lives in DJQCore; `SettingsPane` holds the section titles and the app's `SettingsSection` reads them.** The test target can only see DJQCore, and the titles now have one home.
 28. **Per-platform rows read "TikTok slot time", "TikTok order"…, not "TikTok".** Six rows called TikTok don't say what they are in a result list. They land on the row labelled TikTok.
 29. **The registry test also checks the pane and the description, and fails on ghost rows.** A row moved or deleted is as wrong as a row missing.
+29b. **An off platform's slot time and order aren't offered.** Those rows aren't drawn while it's off, so there's nothing to land on; the switch in Platforms stays findable. A recent pointing at one drops out the same way.
 30. **"Installed build" gets a fixed anchor.** Its label is computed from the version.
 31. **`PublishingSettings` and `EngineSettings` got one line each** (an anchor), outside the owned file list but needed for those rows to land, and clear of the Postiz core and retry code.
 
@@ -52,5 +58,5 @@ Routine decisions made while building whole-app search, one line each with the w
 
 ## Proof
 
-34. **Keys reach the window through `performKeyEquivalent` and `sendEvent`, not `NSApp.postEvent`.** Posted key events are dropped while the app isn't active (`NSApp.keyWindow` is nil), and activating it would take the keyboard from whoever is at the Mac. They're still real `NSEvent`s through the same window entry points; every step that reaches the app works this way. Nothing in the proof falls back to calling the palette directly.
+34. **Keys reach the window through `performKeyEquivalent` and `sendEvent`, not `NSApp.postEvent`.** Posted key events are dropped while the app isn't active (`NSApp.keyWindow` is nil), and activating it would take the keyboard from whoever is at the Mac. They're still real `NSEvent`s through the same window entry points; every step that reaches the app works this way. Nothing in the proof falls back to calling the palette directly. The one step keys can't reach is ⌘, (snapshot runs have no menu): "Settings opens while the palette is up" sets `showSettings` directly and says so.
 35. **`probeFrame` records where a row is, in snapshot runs only.** A row scrolled out of a lazy list has no frame, which is what proves it was scrolled to.

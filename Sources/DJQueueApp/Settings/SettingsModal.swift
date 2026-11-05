@@ -260,7 +260,9 @@ struct SettingsScroll<Content: View>: View {
   }
 }
 
-/// Marks a row as a place search can land on: `scrollTo` finds it and it flashes `DS.color.selected` when it does.
+/// Marks a row as a place search can land on: `scrollTo` finds it and it flashes `DS.color.selected` when it does. The
+/// id sits on an empty view of the row's size, not the row: `scrollTo` does nothing for a row that holds a text area, whose
+/// own scroll view gets in the way.
 struct SettingsAnchorModifier: ViewModifier {
   let anchor: String
   private var ui: SettingsUIState { .shared }
@@ -269,15 +271,17 @@ struct SettingsAnchorModifier: ViewModifier {
     let on = ui.flashAnchor == anchor
     content
       .background {
-        if on {
-          RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous).fill(DS.color.selected)
-            .padding(.horizontal, -DS.space.xs)
-            .transition(.opacity)
-            .probeFrame("setting:\(anchor)")
+        ZStack {
+          Color.clear.id(anchor)
+          if on {
+            RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous).fill(DS.color.selected)
+              .padding(.horizontal, -DS.space.xs)
+              .transition(.opacity)
+              .probeFrame("setting:\(anchor)")
+          }
         }
       }
       .dsAnimation(DS.motion.hover, value: on)
-      .id(anchor)
   }
 }
 
