@@ -893,6 +893,22 @@ final class EditorModel: ObservableObject {
     return templates.first { $0.id == id }
   }
 
+  /// What the part chips read for this clip.
+  var partValues: CaptionParts.Values? {
+    video.map { CaptionParts.Values(version: resolved, video: $0, sessionName: sessionName, link: settings.captionLink) }
+  }
+
+  /// Adds or removes a part in the caption text, which makes a template caption a written one (↺ goes back).
+  func togglePart(_ part: CaptionPart) {
+    guard !readOnly, let values = partValues else { return }
+    commitCaptionDraft()
+    let next = CaptionParts.toggled(part, in: mainCaption, values)
+    guard next != mainCaption else { return }
+    typeCaption(next)
+    commitCaptionDraft()
+    fieldRevision &+= 1
+  }
+
   /// The form opens empty for a new template, or filled in for `template`.
   func openTemplateForm(_ template: CaptionTemplate? = nil) {
     guard groupsOffReason == nil else { return }

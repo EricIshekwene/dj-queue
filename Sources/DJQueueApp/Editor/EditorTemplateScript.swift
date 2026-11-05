@@ -241,6 +241,51 @@ enum EditorTemplateScript {
     await shot("template-save-as")
     model.templateForm = nil
 
+    // Part chips, on the caption from Eric's screenshot.
+    model.resetCaptionToTemplate()
+    model.typeCaption("#djlovd #afrobeats #amapiano")
+    model.commitCaptionDraft()
+    model.setText("Amarider blend")
+    await wait(800)
+    func field() -> String { captionView()?.string ?? "?" }
+    func values() -> CaptionParts.Values { model.partValues ?? .init(text: "", set: "", link: "", title: nil) }
+    func on(_ p: CaptionPart) -> Bool { CaptionParts.isOn(p, in: field(), values()) }
+    /// The chips sit in their own row just above the Hashtag groups label.
+    func chip(_ p: CaptionPart) async {
+      guard let a = EditorGroupScript.anchor(in: host) else { note("no anchor"); return }
+      let f = a.convert(a.bounds, to: nil)
+      let x: CGFloat = [.text: 24, .set: 76, .link: 128, .title: 184][p] ?? 24
+      await click(NSPoint(x: f.minX + x, y: f.maxY + 54))
+      await wait(500)
+    }
+    await shot("parts-eric-caption")
+    let start = field()
+    await chip(.text)
+    check("Text goes above the hashtags", field() == "Amarider blend\n\n#djlovd #afrobeats #amapiano")
+    await chip(.link)
+    check("Link follows it", field() == "Amarider blend\n\(Defaults.captionLink)\n\n#djlovd #afrobeats #amapiano")
+    await chip(.set)
+    check("Set lands between them", field().components(separatedBy: "\n")[1] == values().set && on(.link) && on(.text))
+    await shot("parts-three-on")
+    await chip(.set)
+    await chip(.link)
+    await chip(.text)
+    check("off again restores the exact text", field() == start)
+    await shot("parts-all-off")
+    await chip(.title)
+    check("no title yet: the chip does nothing", field() == start)
+    await type("Typed by hand Amarider blend #djlovd #afrobeats #amapiano", into: captionView())
+    await wait(600)
+    check("a chip follows a hand edit", on(.text))
+    check("hand typing stays written", model.captionIsWritten)
+    await shot("parts-hand-edit")
+    model.resetCaptionToTemplate()
+    await wait(500)
+    check("↺ goes back to the template", !model.captionIsWritten)
+    await shot("parts-on-template")
+    await chip(.link)
+    check("a chip makes a template caption written", model.captionIsWritten)
+
     note(failed == 0 ? "all passed" : "\(failed) failed")
     try? log.joined(separator: "\n").write(to: out.appendingPathComponent("tpl-checks-\(appearance).txt"), atomically: true, encoding: .utf8)
     model.flushAndWait()

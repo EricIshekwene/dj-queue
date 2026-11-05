@@ -255,3 +255,20 @@ Eric: "allow me to create hashtags groups from within the editor".
 25. **Schema 7, `CaptionRulesMigration`:** those two rules could change a caption at install, so any clip with posts that would read differently
     keeps its old caption as that platform's own, in a journaled batch. No clip's data changes otherwise, and no batch is written when
     nothing applies. The newest backup has no template with these tokens or with typed tags, so no clip is expected to change.
+
+### Part chips
+
+26. **`CaptionParts` is pure text in Core:** `toggled(part, in: caption, values)` and `isOn`, so a bulk caller can run it over any caption. The
+    editor reads the caption in the field and writes it back, which makes a template caption a written one (Custom, ↺ returns).
+27. **Order is Text, Set, Link, Title, the chips' order, above the block of hashtag lines,** with a blank line over the hashtags when nothing
+    else is above them. The parts go on one line each. Toggling removes only that line, so on then off gives back the exact text.
+28. **On means the text is there, in any case, as whole words.** A chip can't drift from a hand edit. The longest value matches first, so
+    a title inside the overlay text doesn't count as the title; a Text equal to the Title is one line and both chips show it.
+29. **Text reads what `{text}` reads:** the overlay text, else the title, else the raw tag. Overlay text alone would leave the chip off on
+    a clip whose caption plainly shows that text, as the default template does.
+30. **A part inside a longer line comes out with its separators,** and a line left with no words goes ("🎧 Set — link" loses the link to "🎧
+    Set", then the set to nothing). Toggling it back adds its own line, since the old position isn't known.
+31. **Known limit:** on a one-line caption such as the Short template's "{text} {hashtags}" there's no separate hashtag line, so a new part goes
+    below that line. Splitting it would mean rewriting the hashtags, and the brief says they're left alone.
+32. **The link line is editable in Settings → Captions & titles (small enough),** saved after a typing pause through `CaptionTemplates.setLink`,
+    journaled and held like the others. A blank link turns the chip off with a reason.

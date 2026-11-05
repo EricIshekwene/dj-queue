@@ -9,9 +9,10 @@ public enum CaptionTemplates {
   public static let addAction = "caption-template-add"
   public static let editAction = "caption-template-edit"
   public static let deleteAction = "caption-template-delete"
+  public static let linkAction = "caption-link"
 
   /// Journaled changes that write clips on their own: an open editor session moves past them (`rebasedOntoGroupChanges`).
-  static let batchActions = [setDefaultAction, editAction, deleteAction]
+  static let batchActions = [setDefaultAction, editAction, deleteAction, linkAction]
 
   /// What the editor's form and Settings say beside a template.
   public static let hashtagHint = "You can type hashtags here too; {hashtags} adds the clip's groups"
@@ -173,6 +174,21 @@ public enum CaptionTemplates {
         }
       }
       try store.deleteCaptionTemplate(t.id)
+      for (v, outputs) in saved { try CaptionHold.keep(v, as: outputs, store: store) }
+    }
+    return HashtagGroups.Change(result: r, kept: kept.map(\.id))
+  }
+
+  /// Sets what `{link}` fills in and the Link chip adds. A clip with scheduled or posted posts that shows it keeps its captions.
+  @discardableResult
+  public static func setLink(_ link: String, store: Store, bulk: BulkActions) throws -> HashtagGroups.Change {
+    let before = try CaptionHold.Sources(store)
+    var after = before
+    after.settings.captionLink = link
+    let kept = try CaptionHold.affected(from: before, to: after, store: store)
+    let r = try bulk.record(linkAction, ids: kept.map(\.id), settings: true) {
+      let saved = try kept.map { ($0, try CaptionHold.outputs($0, before, store: store)) }
+      try store.save(after.settings)
       for (v, outputs) in saved { try CaptionHold.keep(v, as: outputs, store: store) }
     }
     return HashtagGroups.Change(result: r, kept: kept.map(\.id))

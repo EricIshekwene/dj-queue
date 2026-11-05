@@ -15,6 +15,8 @@ struct CaptionsSettings: View {
   @State private var titles: [TitleTemplate] = []
   /// Each template's save waiting for typing to pause.
   @State private var templateSaves: [String: Task<Void, Never>] = [:]
+  @State private var link = ""
+  @State private var linkSave: Task<Void, Never>?
 
   private var defaults: NewClipDefaults { model.settings.defaults }
 
@@ -42,6 +44,18 @@ struct CaptionsSettings: View {
       }
       DSButton("Add template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add an empty caption template") { addTemplate() }
         .padding(.top, DS.space.xs)
+      SettingsRow("Link line", description: "What {link} fills in and the editor's Link chip adds. Clips with scheduled or posted posts keep their captions.", stacked: true) {
+        DSTextField(placeholder: Defaults.captionLink, text: $link, size: .sm)
+          .accessibilityLabel("Link line")
+          .onChange(of: link) { _, l in
+            linkSave?.cancel()
+            linkSave = Task { @MainActor in
+              try? await Task.sleep(for: .milliseconds(600))
+              guard !Task.isCancelled else { return }
+              model.saveCaptionLink(l)
+            }
+          }
+      }
 
       SettingsGroupHeader("Titles")
       SettingsRow("Where titles come from", description: "videos.json (title, title_suggestions) or an agent running djq title / djq suggest. The app never makes titles up.") {
@@ -195,6 +209,7 @@ struct CaptionsSettings: View {
     drafts = []
     measureReach()
     titles = (try? model.store.settings().youtubeTitleTemplates) ?? []
+    link = (try? model.store.settings().captionLink) ?? Defaults.captionLink
   }
 }
 
