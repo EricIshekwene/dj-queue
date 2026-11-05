@@ -1,8 +1,8 @@
 import Foundation
 
-/// The write path for caption templates and the default one, shared by the editor and Settings. No `djq` command manages
-/// them, so there is nothing to keep in step there. Every write is one journaled batch; `CaptionHold` keeps the captions of
-/// clips with scheduled or posted posts byte-identical.
+/// The write path for caption templates and the default one, shared by the editor, Settings, the Caption dialog and
+/// `djq caption-templates`. Every write is one journaled batch; `CaptionHold` keeps the captions of clips with scheduled or
+/// posted posts byte-identical.
 public enum CaptionTemplates {
   public static let setDefaultAction = "default-caption-template"
 

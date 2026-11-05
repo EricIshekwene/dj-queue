@@ -59,6 +59,14 @@ extension SnapshotShots {
         // Snapshot: show the dry-run line without waiting for the background check.
         if let r = try? bulk.makeReadyWithDefaults(ids, dryRun: true) { m.pendingBulk?.preview = r }
       },
+      c.main("16c-edit-bulk-caption") { m in
+        SampleData.pipelineEditExtras(m)
+        mode(m, .edit, .wide)
+        let ids = Array(m.editList.prefix(3).map(\.id))
+        m.visibleIds[.edit] = m.editList.map(\.id)
+        m.setSelection(ids, screen: .edit)
+        m.captionDialogIds = ids
+      },
       // The toast stacks above the bulk bar (here a selection is still showing) and states make-ready's real result.
       c.main("16b-edit-toast-sent-to-queue") { m in
         SampleData.pipelineEditExtras(m)

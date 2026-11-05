@@ -10,6 +10,7 @@ import SwiftUI
 ///   `DJQ_SNAPSHOT_ONLY=<substring>` filters shots.
 /// - `DJQ_EDITOR_LIVE=<seconds>` instead opens the real editor (live player) in a window for that long and prints
 ///   `editor-live: window <number>` so it can be captured with `screencapture -l <number>`.
+/// - `DJQ_BULK_CAPTION_SCRIPT=<dir>` drives the main window's Caption dialog (`BulkCaptionScript`).
 /// - `DJQ_EDITOR_GROUP_SCRIPT=<dir>` makes a hashtag group in the real editor (`EditorGroupScript`);
 ///   `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption field (`EditorCaptionScript`);
 ///   `DJQ_SETTINGS_GROUP_SCRIPT=<dir>` drives the real Settings group rows (`SettingsGroupScript`);
@@ -48,6 +49,9 @@ enum EditorSnapshot {
 
       if env["DJQ_EDITOR_SELFTEST"] != nil { return selfTest(store: store, ids: ids, start: pick.id) }
       if let secs = env["DJQ_EDITOR_LIVE"].flatMap(Double.init) { return await live(store: store, video: pick.id, ids: ids, seconds: secs) }
+      if let dir = env["DJQ_BULK_CAPTION_SCRIPT"] {
+        return await BulkCaptionScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
+      }
       if let dir = env["DJQ_EDITOR_GROUP_SCRIPT"] {
         return await EditorGroupScript.run(store: store, video: pick.id, ids: ids, dir: dir,
                                            appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")

@@ -218,6 +218,14 @@ final class AppModel {
   let bulk: BulkActions
   /// Bulk confirmation sheet currently shown (AppModel+Bulk.swift).
   var pendingBulk: PendingBulk?
+  /// The clips the Caption dialog is open for (nil = closed).
+  var captionDialogIds: [String]?
+  /// Its Save as template form is open: Esc and a click outside go back to the dialog, so the picks survive.
+  var captionDialogFormOpen = false
+
+  func dismissCaptionDialog() {
+    if captionDialogFormOpen { captionDialogFormOpen = false } else { captionDialogIds = nil }
+  }
   /// ⌘Z order: every undoable action's journal batch, most recent last (UndoHistory, round 3 F8).
   var undoHistory = UndoHistory() {
     didSet {
@@ -681,7 +689,7 @@ final class AppModel {
 
   /// An in-window overlay is over the editor: ⌘Z is the app's, not the hidden clip's.
   var overlayCoversEditor: Bool {
-    editor != nil && (showSettings || showPalette || showShortcuts || pendingConfirm != nil || pendingBulk != nil || previewVideo != nil)
+    editor != nil && (showSettings || showPalette || showShortcuts || pendingConfirm != nil || pendingBulk != nil || captionDialogIds != nil || previewVideo != nil)
   }
 
   /// Deletes a hashtag group after asking (Settings and the editor), through the core path: clips with scheduled or posted

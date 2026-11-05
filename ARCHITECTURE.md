@@ -179,6 +179,7 @@ Decisions: `DECISIONS-R7.md`, "v0.8.3".
 - **`CaptionTemplates`** is the write path for templates, the default, New clip defaults, the link line and caps; the editor and Settings both call it.
   `batchActions` lists what writes clips on its own, so an open editor session moves past it and undo checks for conflicts.
 - **`CaptionParts`** is pure text (`toggled`, `isOn`); `BulkActions.togglePart` applies it by clip id.
+- **Bulk captions (v0.10.2):** `CaptionChange` (template, groups added, groups removed) is one `caption` batch through `BulkActions.setCaption`, from the Caption dialog (`BulkCaptionDialog`) and `djq bulk caption`. `previewCaption` runs the same `apply` and `retag` without writing. Clips with scheduled or posted posts are skipped. `djq caption-templates` manages templates through `CaptionTemplates`. See `DECISIONS-R12.md`.
 - **`Captions.caption(for:)`** now also writes each tag once where a clip's tags are filled in and applies the platform's cap, so the preview,
   validation and Postiz all read one result. `sharedCaption`, the editor's field, stays uncapped.
 - **Schema 7 (`CaptionRulesMigration`)** holds clips with posts against those rules at install, journaled. Undoing it needs `--force`.
