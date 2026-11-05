@@ -105,12 +105,12 @@ struct CalendarDayColumn: View {
         case .threeDay: CalendarThreeDayCard(model: model, clip: c, isPast: isPast)
         }
       }
-      ForEach(extras) { p in ExtraPostChip(model: model, post: p) }
+      ForEach(extras) { p in ExtraPostChip(model: model, post: p).opacity(isPast ? 0.5 : 1) }
       if clips.isEmpty {
         CalendarOpenDay(model: model, day: day, targeted: targeted, height: style == .week ? width * 16 / 9 : CalendarCover.smallHeight + 2 * DS.space.xs)
+          .opacity(isPast ? 0.5 : 1)
       }
     }
-    .opacity(isPast ? 0.5 : 1)
     .frame(maxWidth: .infinity, alignment: .top)
     .background {
       if targeted { RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous).fill(DS.color.hover).padding(-DS.space.xxs) }
@@ -276,6 +276,7 @@ struct CalendarWeekCard: View {
     VStack(alignment: .leading, spacing: 0) {
       CalendarCover(model: model, clip: clip, isPast: isPast, hovering: hovering, width: width)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: DS.radius.md, topTrailingRadius: DS.radius.md, style: .continuous))
+        .opacity(isPast ? 0.5 : 1)  // the card dims, its "1 failed" doesn't
         .modifier(CoverBadges(model: model, clip: clip, isPast: isPast, hovering: hovering))
       VStack(alignment: .leading, spacing: DS.space.xxs) {
         Text(model.displayName(clip.video))
@@ -288,6 +289,7 @@ struct CalendarWeekCard: View {
         }
         .padding(.top, 2)
       }
+      .opacity(isPast ? 0.5 : 1)
       .padding(.horizontal, 6)
       .padding(.vertical, DS.space.xs)
     }
@@ -320,6 +322,7 @@ struct CalendarThreeDayCard: View {
     HStack(alignment: .top, spacing: DS.space.sm) {
       CalendarCover(model: model, clip: clip, isPast: isPast, hovering: hovering, width: CalendarCover.smallWidth)
         .clipShape(RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+        .opacity(isPast ? 0.5 : 1)
         .modifier(CoverBadges(model: model, clip: clip, isPast: isPast, hovering: hovering))
       VStack(alignment: .leading, spacing: DS.space.xs) {
         Text(model.displayName(clip.video))
@@ -330,6 +333,7 @@ struct CalendarThreeDayCard: View {
           ForEach(clip.platforms, id: \.self) { p in chip(p) }
         }
       }
+      .opacity(isPast ? 0.5 : 1)
     }
     .padding(DS.space.xs)
     .modifier(CardBehaviour(model: model, clip: clip, hovering: $hovering))

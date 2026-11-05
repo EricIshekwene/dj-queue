@@ -52,3 +52,49 @@ left open, or where it needed a safer reading.
 27. **`djq bulk add-to-week` is gone from the CLI as well as its help;** `BulkActions.addToWeek` stays until the app stops calling it.
 28. **`djq week --json` keeps `state` and `approved_at`:** they're internal fields agents read, not words aimed at Eric.
 29. **`remove-slot` stays and its help says the clip gets a day again;** `djq stage <video> back` is what holds a clip. A Queue clip is approved, so taking only its slot can't stick.
+
+## Part B: the Calendar page
+
+Reviewed and corrected once; these are the final calls.
+
+- **Deep links set the view for the session only (`openCalendarDay`); only Eric's own switch is remembered.** A notification must not change the view he chose.
+- **Clicking a Week or 3 Day day header opens Day.** The same gesture as a month cell; found no reason to make headers dead.
+- **Removed the backlog drawer, drop-from-backlog and `ListPage.backlog`.** The engine fills open days from the Queue, so pinning from a drawer duplicates Queue's Pin to date.
+- **Calendar loads the visible range plus one span each side and shows a skeleton only when a jump lands outside it.** ‹ › never flash empty, and no DB work in `body`.
+- **Keys use a local NSEvent monitor (the editor's `EditorKeyMonitor`), not `.keyboardShortcut` with no modifier.** A plain-key shortcut can swallow letters typed into a field; the monitor checks text focus and overlays first.
+- **`noOverlayOpen` now backs both ⌘F and the Calendar keys.** One definition of "something is on top".
+- **Today button is always enabled and its group is fixed-size.** The toolbar's trailing group squeezed it to no width at every size; T and the click must always be there.
+- **Removed the draft status from `DSXPostStatus`.** A slot with no post yet reads "Planned"; drafts are gone from Eric's world.
+- **Score capsule dropped from Calendar covers; StageControl dropped from the card's hover row.** Scores aren't this page's job, and Unschedule is in ⋯.
+- **Past days stay at 50 % in columns, 60 % on month chips.** Columns inherit the Week rule; month chips are too small to survive 50 %.
+- **Day clip rows are 52 pt and keep a 20 pt thumb.** The thumb is the per-platform file drag handle, so removing it would lose a Today action.
+- **`alert.queuelow` opens Edit, the old `alert.approve` and `alert.weekly` open Calendar.** Its body says "Send more clips from Edit"; old keys may still sit in Notification Center.
+- **Chip, card and Health use Core's `Runway.isLow`, so the chip goes amber only when the Queue is out too.** One rule everywhere; a short schedule with clips waiting fills itself on the next tick.
+- **"Total runway" card kept as it was.** The spec keeps "Record a new set" and this is not an approval word.
+- **Settings "Runway" group renamed "Queue"; approval reminder row removed; the struct fields stay.** B11, no migration.
+- **Chip tap on Month opens Day.** The spec only sets number and empty area; a chip inside the cell should not be the one dead spot.
+- **Move and Post today are disabled together for posted or past clips.** Both need an unposted slot from today on.
+- **Added `tooltip:` to DSPlatformIcon and `shortcut:` to DSSegment.** The two smallest design-system changes that give each platform its time and each view its key.
+- **Filter chip "Nothing to fix" appears only when such clips exist.** Status chips hide at zero everywhere else.
+- **`Shot.size` added to snapshots, with narrow = 1100 × 700.** Narrow width has to be looked at, and that's the window minimum.
+- **README screenshots moved to docs/screenshots/calendar-*.jpg, and week.jpg and today.jpg removed.** They showed Approve week. This is outside the owned paths, flagged in the report.
+- **Queue card hover uses the icon Back button, and the card's text column minimum is 176.** The labelled button pushed the row past 880 pt and rows slid off-centre by the width of their date chip.
+- **"Nothing to fix" comes first among Edit's status chips.** It's the actionable one, and the last chip scrolls under Filters at 880 pt.
+- **Move to… reuses the pin dialog with `moving: true`.** It's the same action; the words match the menu item and the drag toast.
+- **DSToolbar title never wraps; the Day progress reads "2 / 6" under 1100 pt.** At the narrowest window the title broke into "Calend / ar".
+- **Sample data sends every finished clip to the Queue except one, kept in Edit with nothing to fix.** It gives a real B16 state in the snapshots.
+- **A drop or Move to… landing on today inside `Planner.autoScheduleLead` asks through the Post today sheet and names the platforms going out at once.** Eric must always have time to say no. A swap that would put the other clip there is refused by Core (`StageWording.todayTooSoon`) and shows as the error toast.
+- **Post today from a Calendar menu always asks, with the same line.** One rule for "this goes out now".
+- **A day's cards are built from the posts going out that day; a post shifted off shows on its real day as an extra chip.** Day, Week, 3 Day and Month must agree on what goes out when.
+- **A clip whose posts have all shifted away leaves its day's card.** Nothing goes out from that card; the chips on the real days carry it.
+- **Unschedule is off for past slots and for clips outside Queue and Scheduled, and `stageBack(unschedule:)` refuses them.** On an Edit clip back means Back to Score, which clears the score.
+- **A day the filter emptied reads "Nothing on TikTok", not Open.** The day is full. Today reads "Nothing going out" once no position has time left (same rule as `Planner.isOpen`).
+- **"N in Queue waiting" shows only when not paused and the schedule reaches the horizon, and counts `Planner.schedulable`.** Otherwise it describes clips about to get a day, or that never will.
+- **Move to… goes through `calendarMove`.** The drag's checks, swap toast and pinned-day wording in one place.
+- **"Pin to this day" joins the card menu; "Swap with" stays removed.** Pinning in place had no other home, and drag swaps while the list of every slot in a week doesn't scale to a month.
+- **Columns tint while a drag is over them.** Most days have cards now, so the old placeholder highlight rarely showed.
+- **Awake data loads from the visible range, at most two weeks back, and never for Month; older days show no strip.** It was read on every refresh for a strip nobody could see.
+- **The toolbar uses short words under 1100 pt of content ("2 / 6", "Through Sun 29 Nov", compact platform name).** At a 1200 pt window the sidebar is still open and Day on today didn't fit.
+- **Send to Queue with defaults says it releases held clips.** It does, and the old tooltip only spoke of the crop.
+- **`DJQ_SEND_TO_QUEUE_SCRIPT` proves B16 in the real window with the real editor.** The promise is about what Eric sees, not only about Core's states.
+- **The Postiz sample gets a failed slot post yesterday, not the main sample.** "1 failed" needs a shot, and a problem in the main sample would put a card on every other shot.

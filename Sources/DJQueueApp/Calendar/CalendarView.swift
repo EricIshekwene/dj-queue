@@ -20,6 +20,8 @@ struct CalendarView: View {
 
   /// Under this the toolbar is full: the progress and the chip use their short words.
   private static let tightWidth: CGFloat = 1100
+  /// Under this the sidebar is still open at a 1200 pt window: the progress is the ring alone.
+  private static let fullWidth: CGFloat = 1000
 
   var body: some View {
     let mode = model.calendarMode
@@ -69,10 +71,14 @@ struct CalendarView: View {
     let done = model.postedTodayCount, total = model.todayTotal
     return HStack(spacing: DS.space.xs) {
       DSProgressRing(value: Double(done) / Double(max(total, 1)), size: 22, lineWidth: 3, tone: .success)
-      // The toolbar is full at the narrowest window: the numbers stay, the words go.
-      Text(width < Self.tightWidth ? "\(done) / \(total)" : "\(done) of \(total) posted").font(DS.type.calloutMedium.monospacedDigit()).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+      // The toolbar fills up as the window narrows: the words go first, then the numbers (the tooltip keeps them).
+      if width >= Self.fullWidth {
+        Text(width < Self.tightWidth ? "\(done) / \(total)" : "\(done) of \(total) posted")
+          .font(DS.type.calloutMedium.monospacedDigit()).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+      }
     }
     .fixedSize()
+    .dsTooltip("\(done) of \(total) posted today")
     .accessibilityElement(children: .combine)
     .accessibilityLabel("\(done) of \(total) posted today")
   }
