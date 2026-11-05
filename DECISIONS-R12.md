@@ -1,4 +1,4 @@
-# Round 12: bulk captions
+# Round 12: bulk captions (v0.10.2)
 
 Eric: give many clips a text and several hashtag groups at once, either by using a template or by picking a template plus several
 groups. The old Caption menu took one pick at a time and a group pick replaced the rest.
