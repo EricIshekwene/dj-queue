@@ -170,40 +170,74 @@ while a job is within six hours of its slot or waiting for a result, otherwise h
 | `DRAFT` | test mode: "Draft in Postiz" (release from DJ Queue or the Postiz calendar) |
 | `PUBLISHED` + `releaseURL` | `posted`, `url` = `releaseURL`, `externalId` = `releaseId`, `postedAt` = `publishDate` |
 | `PUBLISHED`, `releaseId` = `missing` | `posted` without a link; Doctor `postiz.link_missing` (fix: `djq postiz link`) |
-| `ERROR` + `error` | `failed` with the error; text mentioning copyright / rights / music / audio claims → `copyright_blocked` (loud, never auto-retried); a clearly temporary error retries by itself (below); otherwise the existing "fixed → re-queue next day" rules apply |
+| `ERROR` + `error` | `failed` with the error; text mentioning copyright / rights / music / audio claims → `copyright_blocked` (loud, never auto-retried); anything else retries by itself unless a retry can't help (below); then the existing "fixed → re-queue next day" rules apply |
 | missing from the list (deleted in Postiz) | the job is closed and the post falls back to Manual (Today) with a loud note |
 
 `error` is curated by Postiz (the platform's message when it is a known "bad body" error, otherwise null); null on
 `ERROR` reads "Postiz reported an error (no details)".
 
-**Temporary failures retry by themselves** (`PostizRetry.swift`, DECISIONS-R8.md). An `ERROR` is temporary only on an
-explicit quota or rate limit: quota, rate limit / too many requests, "reschedule this post for a later time". A generic
-"try again later" or "temporarily unavailable" doesn't count. Copyright wins over temporary, always, and so does any word that means more than "not now": a policy or
-rights word (violates, DMCA, Content ID, trademark, licensed, song, sound, Community Standards, flagged, …), an account
-word (ban, suspension, blocks, restricted, disabled, unauthorized, …) or a paid limit (upgrade, plan, subscription, storage). One of them anywhere makes it a normal
-failure, or `copyright_blocked` when the copyright words above match. Everything else stays a normal failure too. On
-YouTube only the upload quota ("daily upload quota" / `defaultVideoInsertPerDayPerProject`) counts, because no video was
-created, and a message that mentions a thumbnail or an uploaded video doesn't count; any other error may come after the
-video exists, so it stays a normal failure and a retry can't double-post. A temporary failure still reads Failed and still gets its alert, with the message plus "retries tomorrow automatically",
-or the Fixed wording when no retry can come (retries used up, or ruled out below). A tick step `retry` (right
-after `alerts`, and only once the post's alert went out) re-queues it through `PostActions.fixed`: next day, the usual
-stagger, a new attempt the publish step submits. At most 2 automatic retries per clip + platform + version (kv
-`postiz.autoRetry.<clip>#<platform>#v<N>`); after that it stays Failed for Eric, and the message says so. No retry for
-copyright (on this post or any job of the clip + platform), a skipped or removed post, or a platform skipped in the
-editor. It waits, and stays Failed, while the clip is held in Edit or the platform isn't routed to Postiz (Manual, paused,
-off, no usable channel or key). It also waits while another job of the clip + platform is open or another post is live,
-and it never happens once one was published (so a repost of a clip Postiz published stays Failed for Eric). The retry
-uses the Test run switch like any new post, except that a retry of a test-run post stays a test run (the attempt's id is
-kept in that kv row and `submit` forces test mode for it), even after Test run is turned off. Doctor (`postiz.auto_retry`)
-and `djq postiz status` show pending retries. A failure already sitting Failed when this shipped qualifies too. Reset
-clears a post's alert, so a later failure of the same post is loud again before it retries.
+**Failed posts retry by themselves** (`PostizRetry.swift`, DECISIONS-R9.md). Eric never audits a failure a retry can fix.
+An `ERROR` retries unless it's on the veto list. Unknown and empty errors retry. The veto list:
+
+- copyright, always, on this post or any job of the clip + platform (`copyright_blocked`, never retried);
+- policy, rights, account and paid-limit words (violates, DMCA, Content ID, trademark, licensed, song, sound, Community
+  Standards, flagged, ban, suspended, restricted, disabled, spam, upgrade, plan, subscription, storage, …);
+- what the same post would hit again: too long, too large, format, codec, aspect ratio, validation (invalid, missing,
+  required, bad request), sign-in (auth, token, expired, permission, reconnect) and a platform that says it has the post
+  already (duplicate, already posted). Platform codes count: `duration_check_failed` reads as "duration check failed".
+
+YouTube keeps its guard: only the upload quota retries ("daily upload quota" / `defaultVideoInsertPerDayPerProject`, and
+not with a thumbnail or an uploaded video in the message), because any other YouTube error may come after the video
+exists and a retry would double-post. Those say so in the message and stay with Eric.
+
+**When.** A retryable failure stores its next-retry time at once (kv `postiz.autoRetry.<clip>#<platform>#v<N>`), counted
+from when it happened (the job's `remoteDate`), not from when the Mac noticed:
+
+| Retry | Time after the failure |
+|---|---|
+| 1st | +1 h |
+| 2nd | +6 h |
+| 3rd | next morning, 8:00 am in Settings' time zone, at least an hour away |
+| 4th | +1 day (a calendar day: same clock time across a DST change) |
+| 5th | +1 day |
+
+The YouTube quota skips those: every try goes to the first reset after the failure (midnight Pacific), at 8:00 am New
+York that day, whatever Settings' time zone says. A failure at 7:00 am New York is after that day's reset, so it goes
+the next day. A retry never lands within `retryStaggerHours` of another post on the platform that went out or still
+will (a failed or skipped post doesn't count, so +1 h isn't pushed away from its own failure). A quota retry moves
+earlier if it must, down to the reset; any other moves later.
+
+**Ahead of time.** The sync step that reads the `ERROR` makes the new attempt in the same transaction, through
+`PostActions.fixed`, with `scheduledAt` = that time. The publish step submits it, so Postiz sends it with the Mac off. If
+the Mac slept through the time, the attempt is made on wake and goes out at now + 3 min. An attempt the Mac couldn't
+submit in time never goes overdue and never lands on Today: the publish step moves it to now + 3 min (past the gap). A
+400 on create or a copy deleted in Postiz still hands it to Today, as for any post.
+
+**No audit.** A post with a retry coming isn't in `problems()`: no alert, no red badge, no Doctor error. Today, Posts,
+Week, the inspector and the menu bar read "Retrying Thu 8:00 am (try 2 of 5)" (`PostizDisplayState.retrying`). The
+tries are retries: 1 of 5 is the first one after the failure. Five failed retries, a vetoed failure, or a retry ruled
+out later (published, copyright, platform skipped in the editor) are loud: Failed, alert, Fixed.
+
+**Waiting.** Paused (all or the platform), the platform off Postiz (Manual, off, no usable channel or key), the clip sent
+back to Edit, or another job of the clip + platform open: no retry. It reads "Retry waits (try 2 of 5)" with the reason,
+and runs once when that ends, at now + 3 min if its time passed. An attempt already in Postiz is deleted there by the usual
+pause rules and comes back the same way. Remove from queue takes the attempt out of the plan: its failure waits again,
+and Send to queue brings it back without using a try. Doctor warns (`postiz.auto_retry`) when a retry waits on a setting,
+because a platform left on Manual never brings it back. Scheduled → Queue is Eric taking the clip out, so no retry.
+
+Eric's Fixed works on a failure whose retry waits, and that attempt replaces the retry. Once the retry's attempt exists,
+the failure is handled and Fixed refuses, so there's never a second attempt. At most 5 retries per clip + platform +
+version, for life: Fixed doesn't reset them. It never happens once a job of the clip + platform was published or closed
+in the TikTok inbox. A retry of a test-run post stays a test run (the attempt's id is kept in the kv row and `submit`
+forces test mode for it), even after Test run is turned off. Doctor (`postiz.auto_retry`) and `djq postiz status` list
+every retry with its time or what it waits for. Manual posts never retry by themselves.
 
 The quota error that started this is Postiz's shared Google project (`defaultVideoInsertPerDayPerProject`), not Eric's
 channel. It resets at midnight Pacific.
 
 **Missed slots.** A Postiz post isn't "missed" while Postiz still holds it: the overdue/shift logic applies only to
-manual posts and to Postiz posts that never got a job (they fall back to the Today screen). Retries follow the existing
-rules: `fixed`, by hand or from the `retry` step, makes a new attempt the next day, which the publish step submits again.
+manual posts and to Postiz posts that never got a job (they fall back to the Today screen). Eric's `fixed` makes a new
+attempt the next day, which the publish step submits again. An automatic retry has its own time (above) and is never missed.
 
 **Fallback.** Per platform: no key, an invalid key, no mapped channel, a disabled channel or a create that fails
 validation → that platform's post goes to Today exactly as today, with the reason. Manual never goes away.

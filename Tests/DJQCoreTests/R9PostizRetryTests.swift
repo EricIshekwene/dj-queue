@@ -378,7 +378,9 @@ import Testing
     #expect(rig.fake.createCount == creates)
     var cur = try #require(try rig.store.post(id: a.id))
     #expect(cur.state != .overdue && cur.state != .due)
-    if case .retrying(let s)? = try rig.service.displayState(for: cur) { #expect(s.contains("Retrying when")) } else { Issue.record("not retrying") }
+    if case .retrying(let s, let line?)? = try rig.service.displayState(for: cur) {
+      #expect(s == "Retry waits (try 1 of 5)" && line.hasPrefix("Retrying when"))
+    } else { Issue.record("not retrying") }
     #expect(!rig.notifier.delivered.contains { $0.postId == a.id })
     try rig.f.updateSettings { $0 = before }
     rig.tick(3)
@@ -391,6 +393,23 @@ import Testing
     #expect(try rig.invariants().isEmpty)
   }
 
+  /// On resume the time has passed, but another post went out meanwhile: the gap still holds.
+  @Test func aRetryResumedKeepsTheGap() throws {
+    let (rig, x) = try xRig()
+    try fail(rig, x)
+    rig.tick(2)
+    let a = try #require(try attempts(rig, x).last)
+    try rig.f.updateSettings { $0.pausedPlatforms.insert(.x) }
+    rig.tick()
+    rig.f.clock.set(a.scheduledAt.addingTimeInterval(86400))
+    try another(rig, x, at: rig.f.clock.now.addingTimeInterval(3600), state: .posted)
+    try rig.f.updateSettings { $0.pausedPlatforms.remove(.x) }
+    rig.tick(2)
+    let job = try #require(try rig.job(a))
+    #expect(job.remoteDate == rig.f.clock.now.addingTimeInterval(4 * 3600))
+    #expect(try rig.store.post(id: a.id)?.scheduledAt == job.remoteDate)
+  }
+
   @Test func aFailureReadDuringAPauseWaitsThenRunsOnce() throws {
     let (rig, x) = try xRig()
     let j = try #require(try rig.job(x))
@@ -400,7 +419,7 @@ import Testing
     rig.tick(3)
     #expect(try attempts(rig, x).count == 1 && r8.problems(rig).isEmpty)
     let f = try #require(try rig.store.post(id: x.id))
-    #expect(try rig.service.displayState(for: f) == .retrying("Retrying when posting resumes (try 1 of 5)"))
+    #expect(try rig.service.displayState(for: f) == .retrying("Retry waits (try 1 of 5)", line: "Retrying when posting resumes (try 1 of 5)"))
     rig.f.clock.advance(86400)
     rig.tick()
     try rig.f.updateSettings { $0.paused = false }
@@ -427,7 +446,7 @@ import Testing
     #expect(try r8.problems(rig).isEmpty)
     let f = try #require(try rig.store.post(id: x.id))
     #expect(f.resolution == nil)
-    #expect(try rig.service.displayState(for: f) == .retrying("Retrying when it's back in the Queue (try 1 of 5)"))
+    #expect(try rig.service.displayState(for: f) == .retrying("Retry waits (try 1 of 5)", line: "Retrying when it's back in the Queue (try 1 of 5)"))
 
     rig.f.clock.advance(2 * 86400)
     rig.tick()
@@ -592,7 +611,7 @@ import Testing
 
   /// Whatever happens to it, a clip + platform never has two live jobs or two live posts, and Postiz never holds or
   /// publishes two copies.
-  @Test(arguments: 1...12)
+  @Test(arguments: 1...16)
   func fuzz(_ seed: UInt64) throws {
     var rng = Seeded(seed)
     let (rig, x) = try xRig()
@@ -603,7 +622,9 @@ import Testing
     for step in 0..<70 {
       switch rng.next() % 12 {
       case 0...3:
-        if let j = try rig.store.postizJobs(where: "video_id=? AND platform='x' AND closed_at IS NULL AND phase='live' AND kind='post'", [x.videoId]).first {
+        // Only what Postiz still holds: a post it published can't fail afterwards.
+        if let j = try rig.store.postizJobs(where: "video_id=? AND platform='x' AND closed_at IS NULL AND phase='live' AND kind='post'", [x.videoId]).first,
+           rig.fake.post(j.postizId!)?.state == "QUEUE" {
           rig.fake.fail(j.postizId!, error: errors[Int(rng.next() % UInt64(errors.count))])
         }
       case 4: rig.f.clock.advance(Double(rng.next() % 12) * 3600 + 600)
@@ -618,7 +639,7 @@ import Testing
         held = try rig.store.video(id: x.videoId)?.heldInEdit == true
       case 10:
         if let f = try attempts(rig, x).last(where: { $0.state == .failed && $0.resolution == nil }) { _ = try? actions.fixed(postId: f.id) }
-      default: break
+      default: rig.fake.publishDue(now: rig.f.clock.now)
       }
       rig.tick(1 + Int(rng.next() % 2))
       let bad = try rig.invariants()

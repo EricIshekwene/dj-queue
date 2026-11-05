@@ -1291,9 +1291,9 @@ public enum PostizDisplayState: Equatable, Sendable {
   /// Test-run TikTok: in the TikTok app's inbox; finish it there, then Mark posted.
   case inbox
   case failed(String)
-  /// A failure with an automatic retry coming, or that attempt on its way: nothing for Eric to do. The sentence is whole
-  /// ("Retrying Thu 8:00 am (try 2 of 5)").
-  case retrying(String)
+  /// A failure with an automatic retry coming, or that attempt on its way: nothing for Eric to do. The chip is whole
+  /// ("Retrying Thu 8:00 am (try 2 of 5)"); one that waits says why in `line`.
+  case retrying(String, line: String? = nil)
   case copyright(String)
   /// Set to Postiz but back on Today (the sentence says why).
   case fellBack(String)
@@ -1309,7 +1309,7 @@ public enum PostizDisplayState: Equatable, Sendable {
     case .posted: "Posted"
     case .inbox: "In TikTok inbox"
     case .failed: "Failed"
-    case .retrying(let s): s
+    case .retrying(let s, _): s
     case .copyright: "© Blocked"
     case .fellBack: "Fell back to manual"
     }

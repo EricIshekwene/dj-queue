@@ -4,10 +4,12 @@ import Foundation
 /// Round 6 sample (throwaway snapshot DB only): Postiz connected with six sample channels (Threads' disabled), every
 /// platform but Facebook set to Postiz, and a Postiz job behind posts in every state — independent of the weekday:
 /// - today: Facebook posted by hand · Threads fell back to manual (channel disabled) · YouTube posting… · X scheduled ·
-///   Instagram a test-run draft · TikTok still rendering (goes to Postiz once rendered);
+///   Instagram a test-run draft;
 /// - yesterday (extra posts of the first planned clip): YouTube posted by Postiz with a link, X failed with Postiz's
 ///   message, Instagram © blocked, TikTok in the TikTok inbox (test run, overdue → back on Today);
 /// - tomorrow: X scheduled, the rest queued for Postiz.
+/// Round 9: today's TikTok failed and its automatic retry waits in Postiz for tomorrow 8:00 am; yesterday's Threads
+/// failed and its retry waits for the channel to come back.
 extension SampleData {
   static func seedPostiz(store: Store, clock: FixedClock, now: Date) throws {
     clock.set(now)
@@ -93,6 +95,49 @@ extension SampleData {
     tt.publisher = "manual"
     try store.save(tt)
     try job(tt, phase: .closed, remote: "PUBLISHED", close: .inbox, test: true)
+    try seedRetries(store: store, now: now, today: today, tomorrow: tomorrow, dm: dm, renderId: renderId) {
+      try job($0, phase: $1, remote: $2, close: $3, test: false, at: nil, error: $4, url: nil)
+    }
+    let thMsg = "Something went wrong at the platform"
+    let th = try extra(.threads, .failed, error: (.uploadFailed, thMsg + " — \(PostizService.retryingNote)"))
+    try job(th, phase: .closed, remote: "ERROR", close: .error, error: thMsg)
+    var waiting = PostizAutoRetries()
+    waiting.failedPostId = th.id
+    waiting.failedAt = th.scheduledAt
+    waiting.nextRetryAt = th.scheduledAt.addingTimeInterval(3600)
+    try store.setKV("postiz.autoRetry.\(th.videoId)#threads#v\(th.versionNo)", waiting)
+    try store.db.run("UPDATE platform_posts SET raw_response='postiz:sample' WHERE id=?", [th.id])
     try store.refreshState(videoId: videoId)
+  }
+
+  /// Today's TikTok: failed, with its retry already in Postiz for tomorrow 8:00 am (the state a post is in for most of
+  /// a retry's life: nothing for Eric to do).
+  private static func seedRetries(store: Store, now: Date, today: String, tomorrow: String, dm: DayMath, renderId: String,
+                                  job: (PlatformPost, PostizJobPhase, String?, PostizCloseReason?, String?) throws -> Void) throws {
+    guard var failed = try store.posts().first(where: { dm.key($0.scheduledAt) == today && $0.platform == .tiktok }) else { return }
+    let msg = "Postiz reported an error (no details)"
+    let at = dm.at(tomorrow, minutes: 8 * 60)
+    failed.state = .failed
+    failed.renderId = failed.renderId ?? renderId
+    failed.publisher = "postiz"
+    failed.errorType = .uploadFailed
+    failed.errorMessage = msg + " — \(PostizService.retryingNote)"
+    failed.rawResponse = "postiz:sample"
+    failed.resolution = "retried"
+    failed.scheduledAt = now.addingTimeInterval(-3 * 3600)
+    try store.save(failed, note: "auto-retry → attempt 2")
+    try job(failed, .closed, "ERROR", .error, msg)
+    let attempt = PlatformPost(id: newId(), videoId: failed.videoId, platform: .tiktok, versionNo: failed.versionNo, attemptNo: 2, kind: .retry,
+                               planSlotId: failed.planSlotId, scheduledAt: at, renderId: failed.renderId, state: .rendered, publisher: "postiz",
+                               externalId: nil, url: nil, postedAt: nil, errorType: nil, errorMessage: nil, rawResponse: nil, resolution: nil,
+                               metrics: nil, createdAt: now, updatedAt: now)
+    try store.save(attempt, note: "auto-retry: upload_failed")
+    try job(attempt, .live, "QUEUE", nil, nil)
+    var r = PostizAutoRetries()
+    r.count = 1
+    r.lastPostId = attempt.id
+    r.failedAt = failed.scheduledAt
+    r.nextRetryAt = at
+    try store.setKV("postiz.autoRetry.\(failed.videoId)#tiktok#v\(failed.versionNo)", r)
   }
 }

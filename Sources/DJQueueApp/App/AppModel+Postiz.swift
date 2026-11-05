@@ -340,7 +340,7 @@ extension AppModel {
     case .posted: return "Posted by \(via)"
     case .inbox: return "In your TikTok inbox — finish it there, then Mark posted"
     case .failed(let m), .copyright(let m): return m
-    case .retrying: return "\(via) · goes out by itself, nothing to do"
+    case .retrying(_, let line): return line ?? "\(via) · nothing to do"
     case .fellBack(let why): return why
     }
   }

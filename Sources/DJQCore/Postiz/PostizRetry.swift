@@ -34,8 +34,14 @@ public struct PostizPendingRetry: Sendable, Hashable {
   public var waiting: String?
   /// It waits for a setting Eric may not change back soon (the platform is on Manual or off, no usable channel or key).
   public var offPostiz = false
-  /// "Retrying Thu 8:00 am (try 2 of 5)".
+  /// "Retrying Thu 8:00 am (try 2 of 5)", or "Retrying when posting resumes (try 2 of 5)".
   public var text: String
+  /// What the badge says: the same with a time, "Retry waits (try 2 of 5)" when it waits (`text` is then the line under it).
+  public var badge: String
+}
+
+extension PostizPendingRetry {
+  var display: PostizDisplayState { .retrying(badge, line: waiting == nil ? nil : text) }
 }
 
 /// When a failed post goes out again (DECISIONS-R9.md). Pure, so every time can be tested with a clock.
@@ -237,7 +243,7 @@ extension PostizService {
     if try store.video(id: p.videoId)?.heldInEdit == true { return ("when it's back in the Queue", false) }
     if !settings.enabledPlatforms.contains(p.platform) { return ("when \(name) is back on", true) }
     if settings.publishing.publisher(for: p.platform) != .postiz { return ("when \(name) is back on Postiz", true) }
-    return router.route(p.platform).isPostiz ? nil : ("when Postiz can take \(name) again", true)
+    return router.route(p.platform).isPostiz ? nil : ("when \(name) is back on Postiz", true)
   }
 
   enum RetryDecision: Equatable {
@@ -365,7 +371,7 @@ extension PostizService {
     else if let at, at > now { text = "Retrying \(Sched.retryDay(at, settings)) \(tries)" }
     else { text = "Retrying now \(tries)" }
     return PostizPendingRetry(post: p, number: number, queued: queued, at: wait == nil ? at : nil, waiting: wait?.text,
-                              offPostiz: wait?.offPostiz ?? false, text: text)
+                              offPostiz: wait?.offPostiz ?? false, text: text, badge: wait == nil ? text : "Retry waits \(tries)")
   }
 
   /// `.retrying` when a retry is coming for `p`. `base` is what Postiz is doing with it otherwise: a retry Postiz is
@@ -376,12 +382,12 @@ extension PostizService {
     case nil, .queued?, .sending?, .scheduled?, .failed?, .fellBack?: break
     default: return nil
     }
-    if let r = try pendingRetry(p, settings: router.settings, router: router) { return .retrying(r.text) }
+    if let r = try pendingRetry(p, settings: router.settings, router: router) { return r.display }
     // A failure whose attempt is out: it says what the attempt says, or Today would still read Failed.
     guard p.state == .failed, p.resolution == "retried", let id = try autoRetries(p).lastPostId, id != p.id,
           let a = try store.post(id: id), a.attemptNo > p.attemptNo,
           let r = try pendingRetry(a, settings: router.settings, router: router) else { return nil }
-    return .retrying(r.text)
+    return r.display
   }
 
   /// Retries still to come, soonest first, for Doctor and `djq postiz status`.
