@@ -56,6 +56,29 @@ public enum HashtagGroups {
     HashtagSet(id: newId(), name: cleanName(name), category: category, tags: tags, sort: (existing.map(\.sort).max() ?? -1) + 1)
   }
 
+  // MARK: Blank groups
+
+  /// What a group with hashtags but no name is called on screen. Never stored.
+  public static let untitled = "Untitled group"
+
+  /// What to call a group on screen. Display only: the stored name stays as it is until Eric gives it one.
+  public static func label(_ group: HashtagSet) -> String { cleanName(group.name).isEmpty ? untitled : group.name }
+
+  /// The groups a chip row or menu offers, in order: a group with no name and no real hashtag has nothing to show or add, so
+  /// it's left out and doesn't count towards "No hashtag groups yet". Only for pickers: captions, Postiz and Settings read
+  /// every stored group.
+  public static func pickable(_ groups: [HashtagSet]) -> [HashtagSet] {
+    groups.filter { !cleanName($0.name).isEmpty || $0.tags.contains { !Captions.normalizeTag($0).isEmpty } }
+  }
+
+  /// `edited`, with `old`'s name if its own was cleared: Settings saves as you type, so a blank name never overwrites a
+  /// real one. A group that was already blank stays blank until it gets a name.
+  public static func keepingName(_ edited: HashtagSet, old: HashtagSet) -> HashtagSet {
+    var group = edited
+    if cleanName(group.name).isEmpty { group.name = old.name }
+    return group
+  }
+
   // MARK: What a change reaches
 
   /// How many clips use a group: `kept` have scheduled or posted posts and won't change, `others` follow the change.
@@ -148,7 +171,7 @@ public enum HashtagGroups {
     let kept = retagged ? try usage(of: group.id, store: store).kept : []
     let r = try bulk.record("hashtag-group-edit", ids: kept, hashtagGroups: true, revalidate: retagged) {
       try freeze(kept, store: store)
-      try store.save(group)
+      try store.save(keepingName(group, old: old))
     }
     return Change(result: r, kept: kept)
   }

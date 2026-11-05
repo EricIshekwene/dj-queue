@@ -144,7 +144,10 @@ private struct EditBulkBar: View {
         }
         Section("Hashtag group") {
           Button("Default groups") { setHashtags(nil, "the default") }
-          ForEach(hashtagSets) { s in Button(s.name) { setHashtags([s.id], s.name) } }
+          ForEach(HashtagGroups.pickable(hashtagSets)) { s in
+            let name = HashtagGroups.label(s)
+            Button(name) { setHashtags([s.id], name) }
+          }
         }
       }
       PipelineBulkMenu("Kind", tooltip: "Set DJ vid or Talking") {

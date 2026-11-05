@@ -148,14 +148,15 @@ struct NewClipDefaultsSettings: View {
         SettingsSelect(label: "Default caption template", selection: b(\.captionTemplateId), options: templateOptions(current: d.captionTemplateId))
       }
       SettingsRow("Hashtag groups", description: "Groups every new clip starts with (none = no hashtags). Filled into {hashtags}.", stacked: true) {
-        if sets.isEmpty {
+        let groups = HashtagGroups.pickable(sets)
+        if groups.isEmpty {
           Text("No hashtag groups yet — make your own in Captions & titles.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
         } else {
           // One chip per set (DSChip, not DSChipGroup) so each says which tags it adds.
           DSFlowLayout(spacing: 6) {
-            ForEach(sets) { s in
+            ForEach(groups) { s in
               let on = d.hashtagSetIds.contains(s.id)
-              DSChip(s.name, icon: "number", isSelected: on, size: .sm) {
+              DSChip(HashtagGroups.label(s), icon: "number", isSelected: on, size: .sm) {
                 var ids = Set(d.hashtagSetIds)
                 if on { ids.remove(s.id) } else { ids.insert(s.id) }
                 hashtagBinding.wrappedValue = ids

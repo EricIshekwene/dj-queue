@@ -10,6 +10,8 @@ struct CaptionsSettings: View {
   @State private var sets: [HashtagSet] = []
   /// What changing each group's tags reaches, shown under its row.
   @State private var reach: [String: HashtagGroups.Impact] = [:]
+  /// Groups added here and not changed yet. They aren't saved, so one Eric never fills in goes away with the screen.
+  @State private var drafts: Set<String> = []
   @State private var titles: [TitleTemplate] = []
 
   private var defaults: NewClipDefaults { model.settings.defaults }
@@ -111,7 +113,12 @@ struct CaptionsSettings: View {
   // MARK: Hashtag groups
 
   private func save(_ s: HashtagSet) {
-    model.saveGroupEdit(s)
+    if drafts.contains(s.id) {
+      guard !HashtagGroups.cleanName(s.name).isEmpty, model.saveNewGroup(s) else { return }
+      drafts.remove(s.id)
+    } else {
+      model.saveGroupEdit(s)
+    }
     measureReach()
   }
 
@@ -122,13 +129,16 @@ struct CaptionsSettings: View {
   }
 
   private func addSet() {
-    let s = HashtagSet(id: newId(), name: "New group", category: "My groups", tags: [],
-                       sort: (sets.map(\.sort).max() ?? -1) + 1)
-    try? model.store.save(s)
+    let s = HashtagGroups.make(name: "New group", tags: [], existing: sets)
+    drafts.insert(s.id)
     sets.append(s)
   }
 
   private func deleteSet(_ s: HashtagSet) {
+    if drafts.remove(s.id) != nil {
+      sets.removeAll { $0.id == s.id }
+      return
+    }
     model.confirmDeleteGroup(s, undoHint: "Undo (⌘Z) brings it back.") { sets.removeAll { $0.id == s.id } }
   }
 
@@ -187,6 +197,7 @@ struct CaptionsSettings: View {
   private func load() {
     templates = (try? model.store.captionTemplates()) ?? []
     sets = (try? model.store.hashtagSets()) ?? []
+    drafts = []
     measureReach()
     titles = (try? model.store.settings().youtubeTitleTemplates) ?? []
   }
@@ -205,6 +216,9 @@ private struct HashtagSetRow: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       fields
+      if HashtagGroups.cleanName(set.name).isEmpty {
+        EditorHint("Needs a name", icon: "exclamationmark.circle", tone: .warning)
+      }
       if let reach, reach.kept + reach.others > 0 {
         Text(reach.editSummary).font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
           .fixedSize(horizontal: false, vertical: true)

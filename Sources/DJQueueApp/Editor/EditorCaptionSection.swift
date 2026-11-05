@@ -160,9 +160,11 @@ struct EditorCaptionSection: View {
 
   // MARK: Hashtag groups + extra hashtags
 
+  private var groups: [HashtagSet] { HashtagGroups.pickable(model.sets) }
+
   private var categories: [String] {
     var seen = Set<String>()
-    return model.sets.map(\.category).filter { seen.insert($0).inserted }
+    return groups.map(\.category).filter { seen.insert($0).inserted }
   }
 
   private func hashtags(_ r: ResolvedVersion) -> some View {
@@ -172,14 +174,14 @@ struct EditorCaptionSection: View {
                   resetHelp: "Back to the default groups (New clip defaults)",
                   onReset: model.ownsField(["hashtagSetIds"]) ? { model.setHashtagSets(model.fallback(\.hashtagSetIds, \.hashtagSetIds)) } : nil) {
         VStack(alignment: .leading, spacing: DS.space.xs) {
-          if model.sets.isEmpty {
+          if groups.isEmpty {
             Text("No hashtag groups yet").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
           } else {
             ForEach(categories, id: \.self) { cat in
               VStack(alignment: .leading, spacing: 4) {
                 if categories.count > 1 { Text(cat).font(DS.type.micro).foregroundStyle(DS.color.textTertiary) }
                 DSFlowLayout(spacing: 5) {
-                  ForEach(model.sets.filter { $0.category == cat }) { s in groupChip(s, r) }
+                  ForEach(groups.filter { $0.category == cat }) { s in groupChip(s, r) }
                 }
               }
             }
@@ -220,7 +222,7 @@ struct EditorCaptionSection: View {
 
   private func groupChip(_ s: HashtagSet, _ r: ResolvedVersion) -> some View {
     let on = r.hashtagSetIds.contains(s.id)
-    return DSChip(s.name, isSelected: on, size: .sm) { model.setGroup(s.id, on: !on) }
+    return DSChip(HashtagGroups.label(s), isSelected: on, size: .sm) { model.setGroup(s.id, on: !on) }
       .dsTooltip(s.tags.isEmpty ? "This group has no hashtags yet — right-click it to add some"
                  : on ? "Take \(s.tags.joined(separator: " ")) out of the caption"
                  : "Add \(s.tags.joined(separator: " ")) to the caption")

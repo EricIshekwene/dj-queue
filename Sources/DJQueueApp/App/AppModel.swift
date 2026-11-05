@@ -669,20 +669,30 @@ final class AppModel {
   /// posts keep their tags. Undoable: the group, its place in the default groups and those clips come back.
   func confirmDeleteGroup(_ s: HashtagSet, undoHint: String, then done: @escaping () -> Void = {}) {
     let reach = (try? HashtagGroups.impact(of: s.id, store: store))?.deleteSummary ?? "Clips with scheduled or posted posts keep these tags."
-    let holds = s.tags.isEmpty ? "“\(s.name)” has no hashtags." : "“\(s.name)” holds \(s.tags.joined(separator: " "))."
+    let name = HashtagGroups.label(s)
+    let holds = s.tags.isEmpty ? "“\(name)” has no hashtags." : "“\(name)” holds \(s.tags.joined(separator: " "))."
     confirm(ConfirmRequest(
-      title: "Delete “\(s.name)”?",
+      title: "Delete “\(name)”?",
       message: "\(holds) \(reach) \(undoHint)",
       verb: "Delete group", icon: "trash", destructive: true) { [self] in
-        if journaled("Hashtag group “\(s.name)” deleted", { try HashtagGroups.delete(s, store: store, bulk: bulk).result }) {
+        if journaled("Hashtag group “\(name)” deleted", { try HashtagGroups.delete(s, store: store, bulk: bulk).result }) {
           done()
         }
       })
   }
 
-  /// Saves a group edited in Settings through the core path.
+  /// Saves a group edited in Settings through the core path. A cleared name keeps the stored one, so clearing it and
+  /// changing nothing else saves nothing; a group deleted while the save waited stays deleted.
   func saveGroupEdit(_ s: HashtagSet) {
-    journaled("Hashtag group “\(s.name)” saved") { try HashtagGroups.update(s, store: store, bulk: bulk).result }
+    guard let old = (try? store.hashtagSets())?.first(where: { $0.id == s.id }) else { return }
+    let group = HashtagGroups.keepingName(s, old: old)
+    guard group != old else { return }
+    journaled("Hashtag group “\(HashtagGroups.label(group))” saved") { try HashtagGroups.update(group, store: store, bulk: bulk).result }
+  }
+
+  /// Saves a group added in Settings, the first time Eric changes it.
+  func saveNewGroup(_ s: HashtagSet) -> Bool {
+    journaled("Hashtag group “\(s.name)” saved") { try HashtagGroups.create(s, store: store, bulk: bulk).result }
   }
 
   /// One-line toast. Errors use the danger tone and stay 6 s (others 3 s); snapshot mode keeps it on screen.

@@ -186,3 +186,20 @@ Eric: "allow me to create hashtags groups from within the editor".
     which step undoes it). Fixing it would tie one clip's text to a shared group's undo.
 30. **Copy (R6):** "No active clip uses this group" (excluded and long-form clips without posts aren't counted); if the count can't be read the
     dialog gives the rule without a number.
+
+## v0.8.3
+
+### Blank hashtag groups
+
+1. **`HashtagGroups.pickable` and `label` are the one rule.** A group with a blank name and no real tag (whitespace and a bare `#` count as
+   nothing) is left out of every chip row and menu, and doesn't count towards "No hashtag groups yet". A blank name with tags shows as
+   "Untitled group". The stored row isn't changed, so captions and Postiz content read exactly what they did.
+2. **A cleared name keeps the previous one (`keepingName`, inside `HashtagGroups.update`), and the row says "Needs a name".** Both, because
+   Settings saves as you type: restoring the old name in the field would snap it back mid-typing, so the field stays empty and only the
+   store keeps the old name. Tag edits made meanwhile still save. Clearing a name and nothing else saves nothing (no toast, no journal entry).
+3. **Add hashtag group is a draft until Eric changes it.** It stays out of the database until the first edit with a name, then saves
+   through `HashtagGroups.create` (journaled, so it has Undo). A row left untouched goes when Settings reloads, and a draft deletes
+   without asking. A name with no tags still saves, as a named group always could.
+4. **Settings shows every stored row, blank ones included,** so they can be fixed or deleted. The same goes for `djq hashtag-groups`.
+5. **New clip defaults filters only what it shows,** so a hidden group already in the default list isn't dropped by an unrelated edit.
+6. **The Edit screen's bulk menu follows the same rule,** so it can't offer an empty item. Not in the brief, same bug.
