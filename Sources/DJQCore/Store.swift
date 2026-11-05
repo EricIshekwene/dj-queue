@@ -168,8 +168,8 @@ public final class Store: @unchecked Sendable {
 
   /// Round 13 (A11): the only way into the Queue is Eric's Send to Queue, so a clip now carries that as a fact. Additive
   /// and lossless: no state changes here. A clip with a day or posts counts as sent. A `ready` clip counts only with proof:
-  /// a score, and a "Sent to Queue" event no "Sent back" follows; round 4 also put clips in the Queue by themselves, and the
-  /// scheduler would post those. Without proof it waits in Edit, which fails safe. A file database with data is copied to
+  /// a score, and a "Sent to Queue" event that no "Sent back" or "Moved to Edit" follows; round 4 also put clips in the Queue
+  /// by themselves, and the scheduler would post those. Without proof it waits in Edit, which fails safe. A file database with data is copied to
   /// `<app support>/backups/` first. `migrate` writes the version.
   private func migrateSentToQueue(from v: Int) throws {
     if v >= 1, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
@@ -189,8 +189,9 @@ public final class Store: @unchecked Sendable {
         UPDATE videos SET sent_to_queue=1 WHERE type='short-form'
           AND (state IN ('planned','posting','posted','partial') OR (state='ready' AND score IS NOT NULL AND EXISTS(
             SELECT 1 FROM events sent WHERE sent.video_id=videos.id AND sent.kind='queue' AND sent.message='Sent to Queue'
-              AND NOT EXISTS(SELECT 1 FROM events back WHERE back.video_id=videos.id AND back.kind='queue'
-                             AND back.message='Sent back to Edit from Queue' AND back.id>sent.id))))
+              AND NOT EXISTS(SELECT 1 FROM events out WHERE out.video_id=videos.id AND out.id>sent.id
+                             AND ((out.kind='queue' AND out.message='Sent back to Edit from Queue')
+                                  OR (out.kind='stage' AND out.message LIKE 'Moved to Edit%'))))))
         """)
     }
   }
@@ -739,7 +740,8 @@ public final class Store: @unchecked Sendable {
     after.state = s
     if Self.wasInQueue(v), ClipStage.of(after) == .edit {
       let issues = try Validation.issues(video: after, store: self, context: context)
-      if !issues.contains(where: { $0.kind == .heldInEdit }) {  // "Back to Edit" logs its own event
+      // "Back to Edit" logs its own event, and a clip with no issues just wasn't sent: no reason to give.
+      if !issues.isEmpty, !issues.contains(where: { $0.kind == .heldInEdit }) {
         // A clip pinned to a (draft) day stays on that day: say it can't post there, not that it moved.
         let dm = try dayMath()
         if let pin = try planSlots(where: "video_id=? AND pinned=1 AND date>=?", [v.id, today(dm)]).first {

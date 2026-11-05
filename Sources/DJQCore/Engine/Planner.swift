@@ -177,6 +177,7 @@ public final class Planner: @unchecked Sendable {
         try regenerateMany([(s, false)], settings: settings, dm: dm)
       } else if var s = here.first(where: { !$0.pinned }) {
         try ensureNothingPosted(s)
+        try ensureNothingFinal(s)
         let was = try isApproved(s)
         let old = s.videoId
         s.videoId = v.id
@@ -289,6 +290,8 @@ public final class Planner: @unchecked Sendable {
     guard var sa = try store.planSlot(id: a), var sb = try store.planSlot(id: b) else { throw EngineError("No such plan slot") }
     try ensureNothingPosted(sa)
     try ensureNothingPosted(sb)
+    try ensureNothingFinal(sa)
+    try ensureNothingFinal(sb)
     try refuseTooSoon(sa, settings: settings, dm: dm)
     try refuseTooSoon(sb, settings: settings, dm: dm)
     try store.db.transaction {
@@ -316,7 +319,12 @@ public final class Planner: @unchecked Sendable {
     let today = store.today(dm)
     let perDay = max(1, settings.postsPerDay)
     let existing = try store.planSlots(where: "video_id=? AND date>=?", [videoId, today]).first
-    if let e = existing { try ensureNothingPosted(e) } else { _ = try readyVideo(videoId) }
+    if let e = existing {
+      try ensureNothingPosted(e)
+      try ensureNothingFinal(e)
+    } else {
+      _ = try readyVideo(videoId)
+    }
     try store.db.transaction {
       var until: String?
       if let e = existing {
@@ -522,6 +530,7 @@ public final class Planner: @unchecked Sendable {
 
   func moveSlot(_ s: inout PlanSlot, to date: String, settings: Settings, dm: DayMath) throws {
     try ensureNothingPosted(s)
+    try ensureNothingFinal(s)
     let wasApproved = try isApproved(s)
     let used = try store.planSlots(where: "date=? AND id<>?", [date, s.id])
     if let pos = (0..<max(1, settings.postsPerDay)).first(where: { p in !used.contains { $0.position == p } }) {
@@ -534,6 +543,7 @@ public final class Planner: @unchecked Sendable {
       var other = used.first { $0.position == s.position } ?? used[0]
       if other.pinned { throw EngineError("\(date) is pinned — unpin it first") }
       try ensureNothingPosted(other)
+      try ensureNothingFinal(other)
       try refuseTooSoon(s, settings: settings, dm: dm)  // `other` takes this slot's day and position
       let otherApproved = try isApproved(other)
       let (d, p, w) = (s.date, s.position, s.weekStart)
@@ -555,6 +565,15 @@ public final class Planner: @unchecked Sendable {
     let now = store.clock.now
     guard isOpen(day: s.date, position: s.position, today: dm.key(now), now: now, settings: settings, dm: dm) else {
       throw EngineError(StageWording.todayTooSoon)
+    }
+  }
+
+  /// Regenerating a slot gives its posts new ids, and a new id forgets a final Postiz job: a post Eric deleted in Postiz would
+  /// go back. So a slot with one stays put. Back to Edit and Send to Queue is the explicit way to send it again.
+  func ensureNothingFinal(_ s: PlanSlot) throws {
+    for p in try store.slotPosts(s.id) where !p.state.isTerminal {
+      guard try store.finalPostizJob(postId: p.id) != nil else { continue }
+      throw EngineError("\(try store.video(id: p.videoId)?.displayName ?? p.videoId) has a post you removed from Postiz")
     }
   }
 

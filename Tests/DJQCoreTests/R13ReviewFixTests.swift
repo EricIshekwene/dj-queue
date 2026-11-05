@@ -361,3 +361,156 @@ import Testing
     #expect(main.contains("make-ready (Send to Queue with defaults"))
   }
 }
+
+/// Regression tests for the second review (N1–N6, and held clips in the platform step).
+@Suite struct R13ReReviewTests {
+  typealias Rig = R6PostizLifecycleTests.Rig
+
+  /// Thursday's Threads post, deleted in Postiz: its job is closed for good.
+  func deletedInPostiz() throws -> (Rig, PlatformPost) {
+    let rig = try Rig(4, approve: false)
+    rig.engine.autoSchedules = true
+    rig.settle()
+    let th = try #require(try rig.f.post(.threads, day: "2026-11-05"))
+    rig.fake.vanish(try #require(try rig.job(th)).postizId!)
+    rig.f.clock.advance(600)
+    rig.tick(3)
+    #expect(try rig.store.post(id: th.id)?.publisher == "manual")
+    return (rig, th)
+  }
+
+  @Test func aSwapNeverSendsBackAPostEricDeletedInPostiz() throws {
+    let (rig, th) = try deletedInPostiz()
+    let planner = Planner(store: rig.store)
+    let thu = try #require(try rig.store.planSlots(where: "date='2026-11-05'").first)
+    let wed = try #require(try rig.store.planSlots(where: "date='2026-11-04'").first)
+    let name = try #require(try rig.store.video(id: th.videoId)).displayName
+    let refusal = EngineError("\(name) has a post you removed from Postiz")
+    #expect(throws: refusal) { try planner.move(slotId: wed.id, to: "2026-11-05") }  // another clip dragged onto Thursday
+    #expect(throws: refusal) { try planner.swap(wed.id, thu.id) }
+    #expect(throws: refusal) { try planner.move(slotId: thu.id, to: "2026-11-20") }  // or the clip itself
+    #expect(throws: refusal) { try planner.postToday(videoId: th.videoId) }
+    #expect(throws: refusal) { try planner.pin(videoId: th.videoId, date: "2026-11-20") }
+    rig.settle()
+    #expect(try rig.store.post(id: th.id) != nil && rig.job(th) == nil)
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func backToEditThenSendStaysTheExplicitWayToSendItAgain() throws {
+    let (rig, th) = try deletedInPostiz()
+    let b = BulkActions(store: rig.store)
+    #expect(try b.back([th.videoId]).changed == [th.videoId])
+    rig.settle()
+    #expect(try b.sendToQueue([th.videoId]).changed == [th.videoId])
+    rig.settle()
+    #expect(try rig.store.posts(where: "video_id=? AND platform='threads'", [th.videoId]).contains { !$0.state.isTerminal })
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func undoWontRestoreAPostInsideTheLead() throws {
+    let f = try Fixture.engine(4)
+    let planner = Planner(store: f.store), b = BulkActions(store: f.store)
+    try planner.autoSchedule()
+    let mon = try #require(try f.store.planSlots(where: "date='2026-11-02'").first)
+    let back = try b.back([mon.videoId])
+    try planner.autoSchedule()
+    f.setTime("2026-11-02", "13:00")
+    #expect(throws: EngineError.self) { try b.undo(try #require(back.batchId)) }
+    do {
+      try b.undo(try #require(back.batchId))
+    } catch {
+      #expect("\(error)".contains("its slot has passed"))
+    }
+    #expect(try f.store.posts(where: "video_id=?", [mon.videoId]).isEmpty)  // nothing half done
+    #expect(try f.store.video(id: mon.videoId)?.heldInEdit == true)
+    try b.undo(try #require(back.batchId), force: true)  // Eric's force still can
+    #expect(try f.store.posts(where: "video_id=?", [mon.videoId]).count == 6)
+  }
+
+  @Test func undoOfASwapHoursLaterIsRefusedAndTheEarlyOneStillWorks() throws {
+    let f = try Fixture.engine(4)
+    let planner = Planner(store: f.store), b = BulkActions(store: f.store)
+    try planner.autoSchedule()
+    let mon = try #require(try f.store.planSlots(where: "date='2026-11-02'").first)
+    let r = try b.record("move", ids: [mon.videoId], plan: true) { try planner.move(slotId: mon.id, to: "2026-11-04") }
+    f.setTime("2026-11-02", "11:59")  // Facebook at 12:30 is 31 min away
+    let u = try b.undo(try #require(r.batchId), dryRun: true)
+    #expect(u.skipped.isEmpty)
+    f.setTime("2026-11-02", "12:01")
+    #expect(throws: EngineError.self) { try b.undo(try #require(r.batchId)) }
+  }
+
+  @Test func aLaterMoveToEditVoidsAnOlderSendInTheMigration() throws {
+    let f = try Fixture.engine(3)
+    let s = try R13ReviewFixTests().migrate(f) { db in
+      try db.run("DELETE FROM events WHERE kind='queue'")
+      func event(_ kind: String, _ message: String, _ id: String) throws {
+        try db.run("INSERT INTO events(at,kind,message,video_id) VALUES(1,?,?,?)", [kind, message, id])
+      }
+      try event("queue", "Sent to Queue", "clip-0")
+      try event("stage", "Moved to Edit: No crop", "clip-0")  // then round 4 promoted it by itself
+      try event("queue", "Sent to Queue", "clip-1")
+      try event("stage", "Moved to Edit: No crop", "clip-1")
+      try event("queue", "Sent to Queue", "clip-1")  // sent again by hand
+    }
+    #expect(try s.video(id: "clip-0")?.sentToQueue == false)
+    #expect(try s.video(id: "clip-1")?.sentToQueue == true)
+    #expect(try s.video(id: "clip-2")?.sentToQueue == false)
+  }
+
+  @Test func aPartialUndoOfAPinStillTakesThePinOff() throws {
+    let f = try Fixture.engine(4)
+    let planner = Planner(store: f.store), b = BulkActions(store: f.store)
+    try planner.autoSchedule()
+    let tue = try #require(try f.store.planSlots(where: "date='2026-11-03'").first)
+    let r = try b.record("pin", ids: [tue.videoId], plan: true) { try planner.pin(videoId: tue.videoId, date: "2026-11-09") }
+    try b.setTitle([tue.videoId], "Later title")
+    let u = try b.undo(try #require(r.batchId))
+    #expect(u.skipped[tue.videoId] != nil && !u.summary.contains("plan left as it is"))
+    #expect(try f.store.planSlots(where: "video_id=?", [tue.videoId]).first == tue)
+    #expect(try f.store.video(id: tue.videoId)?.titleText == "Later title")
+  }
+
+  @Test func postNowBeforeDawnHoldsItsDay() throws {
+    let f = try Fixture.engine(9)
+    try f.updateSettings { $0.postsPerDay = 3; $0.secondPostOffsetMinutes = 180 }
+    let planner = Planner(store: f.store)
+    try planner.autoSchedule()
+    f.setTime("2026-11-05", "04:04")  // Thursday, before dawn
+    let slot = try #require(try f.store.planSlots(where: "date='2026-11-03' AND position=2").first)
+    let x = try #require(try f.store.slotPosts(slot.id).first { $0.platform == .x })
+    try PostActions(store: f.store).postNow(postId: x.id)
+    let dm = DayMath(settings: try f.store.settings())
+    let now = try #require(try f.store.post(id: x.id))
+    #expect(try f.store.planDay(of: now, dm: dm) == "2026-11-05")
+    let placer = try Placer(store: f.store, dm: dm)
+    #expect(placer.isTaken(.x, day: "2026-11-05", position: 2))
+    // Shifted back onto a slot, it's a plan day like any other.
+    try PostActions(store: f.store).shiftPlan(postId: x.id)
+    let shifted = try #require(try f.store.post(id: x.id))
+    #expect(shifted.state != .due || shifted.scheduledAt != now.scheduledAt)
+  }
+
+  @Test func aClipThatJustWasntSentMovesToEditWithoutABlankReason() throws {
+    let f = try Fixture.engine(2)
+    try f.store.db.run("UPDATE videos SET sent_to_queue=0 WHERE id='clip-0'")  // as a migrated, unproven clip
+    let r = try Revalidation(store: f.store).run()
+    #expect(try f.store.video(id: "clip-0")?.state == .needsEdit)
+    #expect(r.movedToEdit["clip-0"] == [])
+    #expect(try !f.store.events(videoId: "clip-0").contains { $0.message.hasPrefix("Moved to Edit") })
+  }
+
+  @Test func aHeldClipWithAFixedTooLongFailureDoesntStopThePlatformStep() throws {
+    let f = try Fixture.engine(3)
+    let planner = Planner(store: f.store)
+    try planner.autoSchedule()
+    let mon = try #require(try f.store.planSlots(where: "date='2026-11-02'").first)
+    var q = try #require(try f.store.slotPosts(mon.id).first { $0.platform == .x })
+    q.state = .failed; q.errorType = .tooLong; q.rawResponse = Engine.platformCheckMarker; q.errorMessage = "too long"
+    try f.store.save(q, note: "t")
+    try BulkActions(store: f.store).back([mon.videoId])
+    let r = Engine(store: f.store, renderer: FakeRenderer(store: f.store), publisher: nil, notifier: LogNotifier()).planFrozen.tick(reason: "t")
+    #expect(r.errors.isEmpty, "\(r.errors)")
+    #expect(try f.store.post(id: q.id)?.state == .failed)
+  }
+}

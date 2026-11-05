@@ -692,10 +692,14 @@ public final class BulkActions: @unchecked Sendable {
         // A partial undo (clips skipped as changed again) leaves the batch open; `restored` remembers what's done
         // so a later undo (e.g. with force) handles only the rest.
         var restored = Set(rec.restored)
+        var planTied = false
         for b in before.clips where !restored.contains(b.id) {
           let cur = try clipSnapshot(b.id, renders: b.renders != nil)
           if let a = afterById[b.id], !Self.same(cur, a), !force {
             result.skipped[b.id] = "changed again since the batch (use force to overwrite)"
+            // The clip stays as it is, so its plan must too if the batch took it out of the Queue or sent it: plan alone
+            // would put live posts on a held clip. Anything else about the clip doesn't tie it to the plan.
+            planTied = planTied || cur.held != b.held || (b.sent != nil && cur.sent != b.sent)
             continue
           }
           restored.insert(b.id)
@@ -708,8 +712,7 @@ public final class BulkActions: @unchecked Sendable {
           result.changed.append(b.id)
         }
         var touched = Set(result.changed)
-        // A clip left as it is keeps its plan too: restoring only the plan would put live posts on a held clip.
-        let planWaits = !force && !result.skipped.isEmpty && before.plan != nil && !restored.contains(Self.planMarker)
+        let planWaits = planTied && before.plan != nil && !restored.contains(Self.planMarker)
         if !planWaits, let bp = before.plan, let ap = after.plan, !restored.contains(Self.planMarker) {
           let cp = try planSnapshot()
           if !force, let why = try planConflict(before: bp, after: ap, current: cp) {
@@ -1012,7 +1015,8 @@ public final class BulkActions: @unchecked Sendable {
   /// Round 13 (A6): the scheduler runs within seconds of any write, so what it derived doesn't count: unpinned slots that
   /// are new since the batch, new regular posts nobody touched (planned, rendering, rendered, no open Postiz job), and
   /// weeks that only flipped to approved. `restorePlan` drops them and the engine derives them again. A slot of the
-  /// batch that moved or vanished, a pin, and any acted post still conflict.
+  /// batch that moved or vanished, a pin, and any acted post still conflict. So does a post that would come back inside
+  /// the lead: an undo counts as no explicit "post it now", and a past slot goes out minutes after upload.
   private func planConflict(before b: PlanSnap, after a: PlanSnap, current c: PlanSnap) throws -> String? {
     let slotsNow = Dictionary(uniqueKeysWithValues: c.slots.map { ($0.id, $0) })
     if a.slots.contains(where: { slotsNow[$0.id] != $0 }) { return "the plan's slots changed after the batch" }
@@ -1025,6 +1029,11 @@ public final class BulkActions: @unchecked Sendable {
       return w == was || (was.state == .draft && w.state == .approved)
     }
     if !weekKept || a.weeks.contains(where: { !weeksNow.contains($0.weekStart) }) { return "a week changed after the batch" }
+    let lead = store.clock.now.addingTimeInterval(Planner.autoScheduleLead)
+    let postsNow = Dictionary(uniqueKeysWithValues: c.posts.map { ($0.id, $0) })
+    for p in b.posts where !p.state.isTerminal && p.scheduledAt < lead {
+      guard let cur = postsNow[p.id], !cur.state.isTerminal, cur.scheduledAt == p.scheduledAt else { return "its slot has passed" }
+    }
     let known = Set(b.posts.map(\.id) + a.posts.map(\.id))
     let untouched: Set<PostState> = [.planned, .rendering, .rendered]
     for p in c.posts where !known.contains(p.id) {
