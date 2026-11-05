@@ -32,8 +32,8 @@ The app follows a clip's life — **Score → Edit → Queue → Calendar** — 
 | ![Editor previews](docs/screenshots/editor-preview.jpg) | ![Editor zones](docs/screenshots/editor-zones.jpg) |
 | **Calendar: Week** | **Calendar: Month** |
 | ![Calendar, Week view](docs/screenshots/calendar-week.jpg) | ![Calendar, Month view](docs/screenshots/calendar-month.jpg) |
-| **Queue — stage moves** | **Posts — one card per clip and day** |
-| ![Queue stage menu](docs/screenshots/queue-stage-menu.jpg) | ![Posts](docs/screenshots/posts.jpg) |
+| **Calendar: Day** | **Posts — one card per clip and day** |
+| ![Calendar, Day view](docs/screenshots/calendar-day.jpg) | ![Posts](docs/screenshots/posts.jpg) |
 | **Library** | **Settings — new clip defaults** |
 | ![Library](docs/screenshots/library.jpg) | ![Settings](docs/screenshots/settings-defaults.jpg) |
 
