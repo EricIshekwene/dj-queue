@@ -140,10 +140,11 @@ import Testing
   }
 
   /// Every row of the tables that existed before v4 (videos, edits, versions, title suggestions, posts), as text.
+  /// Every column but round 13's flag, which a later step of the chain sets on purpose.
   func dump(_ db: SQLite) throws -> [String] {
     try ["videos", "edits", "versions", "title_suggestions", "platform_posts", "plan_slots"].flatMap { t in
       try db.query("SELECT * FROM \(t) ORDER BY rowid").map { r in
-        "\(t): " + r.values.keys.sorted().map { "\($0)=\(r.string($0) ?? "null")" }.joined(separator: "|")
+        "\(t): " + r.values.keys.filter { $0 != "sent_to_queue" }.sorted().map { "\($0)=\(r.string($0) ?? "null")" }.joined(separator: "|")
       }
     }
   }
