@@ -130,13 +130,7 @@ private struct QueueBulkBar: View {
   var body: some View {
     let n = AppModel.pipelineClips(ids.count)
     ScreenBulkBar(model: model, screen: .queue) {
-      Button("Post today", systemImage: "bolt") {
-        let ids = ids
-        model.pipelineBulk("Post \(n) today?", verb: "Post today", ids: ids,
-                           changes: [.init(field: "Day", value: "Today · the rest of the Calendar moves a day later")]) { b, dry in
-          try b.postToday(ids, dryRun: dry)
-        }
-      }
+      Button("Post today", systemImage: "bolt") { model.postTodayAsking(ids) }
       .dsTooltip("Post these today; extras are skipped")
     } more: {
       // Native items show no tooltip: titles carry the consequence (or why not); each asks first and can be undone.
@@ -234,9 +228,12 @@ struct QueuePinDialog: View {
     let first = Fmt.day(d, tz: model.tz)
     let last = Fmt.day(model.dm.date(model.dm.addDays(day, ids.count - 1)), tz: model.tz)
     onClose()
+    if ids.count == 1 {
+      model.pin(ids[0], dayKey: day)
+      return
+    }
     model.pipelineBulk("Pin \(AppModel.pipelineClips(ids.count)) to \(first) – \(last)?", verb: "Pin", ids: ids,
-                       changes: [.init(field: "Days", value: ids.count == 1 ? first : "\(first) – \(last), one a day")],
-                       done: ids.count == 1 ? "Pinned to \(first)" : nil) { b, dry in
+                       changes: [.init(field: "Days", value: "\(first) – \(last), one a day")] + model.goesOutRow(model.platformsTooSoon(ids[0], day: day))) { b, dry in
       try b.pinConsecutive(ids, from: day, dryRun: dry)
     }
   }

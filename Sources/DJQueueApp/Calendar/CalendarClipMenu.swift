@@ -15,18 +15,20 @@ struct CalendarClipMenu: View {
   /// nil: a retry or repost with no day of its own.
   let slot: PlanSlot?
   let posts: [Platform: PlatformPost]
+  /// The day showing, when it can differ from the slot's (a shifted post in Day view).
+  var day: String? = nil
 
   var body: some View {
     let moveWhy = model.calendarMoveBlocker(slot, posts: posts)
     Button("Move to…" + AppModel.menuReason(moveWhy), systemImage: "calendar") { model.calendarPinTarget = [video.id] }
       .disabled(moveWhy != nil)
-    if let slot {
+    if let slot, slot.date == day ?? slot.date {
       Button(slot.pinned ? "Pinned to this day" : "Pin to this day" + AppModel.menuReason(moveWhy), systemImage: "pin") {
         model.pin(video.id, dayKey: slot.date)
       }
       .disabled(slot.pinned || moveWhy != nil)
     }
-    Button("Post today" + AppModel.menuReason(moveWhy), systemImage: "bolt") { model.calendarPostToday(video.id) }
+    Button("Post today" + AppModel.menuReason(moveWhy), systemImage: "bolt") { model.postTodayAsking([video.id]) }
       .disabled(moveWhy != nil)
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }
     Divider()
@@ -69,8 +71,10 @@ struct ExtraPostChip: View {
   var body: some View {
     let status = model.postStatus(post)
     HStack(spacing: 5) {
-      Image(systemName: post.kind == .repost ? "arrow.uturn.forward" : "arrow.clockwise")
-        .font(.system(size: 9, weight: .semibold)).foregroundStyle(DS.color.textSecondary)
+      if post.kind != .regular {
+        Image(systemName: post.kind == .repost ? "arrow.uturn.forward" : "arrow.clockwise")
+          .font(.system(size: 9, weight: .semibold)).foregroundStyle(DS.color.textSecondary)
+      }
       Image(systemName: post.platform.dsSymbol).font(.system(size: 9.5, weight: .medium)).foregroundStyle(DS.color.textSecondary)
       Text("\(post.platform.dsxCompactName) \(AppModel.shortClock(post.scheduledAt, tz: model.tz))")
         .font(DS.type.microCompact).foregroundStyle(DS.color.text).lineLimit(1).minimumScaleFactor(0.9)
@@ -89,7 +93,8 @@ struct ExtraPostChip: View {
     switch post.kind {
     case .repost: return "Repost of \(name) (new version)"
     case .retry: return "Re-queued attempt #\(post.attemptNo) of \(name)"
-    default: return "\(post.platform.displayName) post of \(name), moved to this day"
+    default:
+      return "\(post.platform.displayName) post of \(name)" + (model.calendarWasMoved(post) ? ", moved to this day" : ", just after midnight")
     }
   }
 }

@@ -91,7 +91,7 @@ Reviewed and corrected once; these are the final calls.
 - **DSToolbar title never wraps; the Day progress reads "2 / 6" under 1100 pt.** At the narrowest window the title broke into "Calend / ar".
 - **Sample data sends every finished clip to the Queue except one, kept in Edit with nothing to fix.** It gives a real B16 state in the snapshots.
 - **A drop or Move to… landing on today inside `Planner.autoScheduleLead` asks through the Post today sheet and names the platforms going out at once.** Eric must always have time to say no. A swap that would put the other clip there is refused by Core (`StageWording.todayTooSoon`) and shows as the error toast.
-- **Post today from a Calendar menu always asks, with the same line.** One rule for "this goes out now".
+- **Post today always asks, everywhere, with the same line.** One rule for "this goes out now".
 - **A day's cards are built from the posts going out that day; a post shifted off shows on its real day as an extra chip.** Day, Week, 3 Day and Month must agree on what goes out when.
 - **A clip whose posts have all shifted away leaves its day's card.** Nothing goes out from that card; the chips on the real days carry it.
 - **Unschedule is off for past slots and for clips outside Queue and Scheduled, and `stageBack(unschedule:)` refuses them.** On an Edit clip back means Back to Score, which clears the score.
@@ -105,3 +105,9 @@ Reviewed and corrected once; these are the final calls.
 - **Send to Queue with defaults says it releases held clips.** It does, and the old tooltip only spoke of the crop.
 - **`DJQ_SEND_TO_QUEUE_SCRIPT` proves B16 in the real window with the real editor.** The promise is about what Eric sees, not only about Core's states.
 - **The Postiz sample gets a failed slot post yesterday, not the main sample.** "1 failed" needs a shot, and a problem in the main sample would put a card on every other shot.
+- **Every pin goes through one check (`pinAsking`, `platformsTooSoon`): Queue, the palette, a drop on a Queue row and the Calendar.** The lead protects Eric wherever the pin starts.
+- **The confirmation names the clip a swap moves ("Swaps with") or a pin replaces ("Replaces").** He should see every clip the yes touches.
+- **A move never pulls another clip onto a slot (`regenerateMany`, `pullForHistory: false`).** A platform the clip has history on gets no post, as in auto paths. This one Core line was made on the Calendar branch at the re-review's request.
+- **Undo of a swap inside the lead stays refused and says so in plain words.** The other clip's posts were regenerated and their times have passed; Core's message named an action and a force the app doesn't offer.
+- **A post just past midnight sits on the day it goes out with no "moved" wording; a shifted post has no retry arrow.** Neither is a retry or a repost.
+- **"Pin to this day" hides when the day shown isn't the slot's.** Otherwise it would pin a different day from the one on screen.

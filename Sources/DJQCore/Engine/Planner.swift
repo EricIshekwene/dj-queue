@@ -464,8 +464,9 @@ public final class Planner: @unchecked Sendable {
     }
     var picker = PlatformPicker(queue: queue, settings: settings)
     var placer = try Placer(store: store, dm: dm)
+    // A move never pulls another clip onto this slot: a platform the clip has history on gets no post (re-review N3).
     for s in todo.sorted(by: { ($0.date, $0.position) < ($1.date, $1.position) }) {
-      try createPosts(s, settings: settings, dm: dm, picker: &picker, placer: &placer)
+      try createPosts(s, settings: settings, dm: dm, picker: &picker, placer: &placer, pullForHistory: false)
     }
     for (s, _) in list { try store.refreshState(videoId: s.videoId) }
   }

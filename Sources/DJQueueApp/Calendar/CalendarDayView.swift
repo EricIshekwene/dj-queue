@@ -106,7 +106,7 @@ struct CalendarDayClip: View {
       Spacer(minLength: DS.space.xs)
       if let v = group.video {
         DSXMenuButton(tooltip: CalendarWords.moreHelp, size: .sm) {
-          CalendarClipMenu(model: model, video: v, slot: group.slot, posts: Self.latest(group.posts))
+          CalendarClipMenu(model: model, video: v, slot: group.slot, posts: Self.latest(group.posts), day: day)
         }
       }
     }
@@ -114,7 +114,7 @@ struct CalendarDayClip: View {
     .padding(.bottom, DS.space.xs)
     .contentShape(Rectangle())
     .contextMenu {
-      if let v = group.video { CalendarClipMenu(model: model, video: v, slot: group.slot, posts: Self.latest(group.posts)) }
+      if let v = group.video { CalendarClipMenu(model: model, video: v, slot: group.slot, posts: Self.latest(group.posts), day: day) }
     }
   }
 

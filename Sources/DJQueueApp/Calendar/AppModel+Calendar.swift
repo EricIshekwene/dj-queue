@@ -259,7 +259,7 @@ extension AppModel {
   /// Past days and posted slots refuse here, in words, before anything is written. A landing on today inside the lead
   /// asks first; a swap that would put the other clip there is refused by the planner (`StageWording.todayTooSoon`).
   @discardableResult
-  func calendarMove(slotId: String, to day: String) -> Bool {
+  func calendarMove(slotId: String, to day: String, done: String = "Moved") -> Bool {
     guard day >= todayKey else { show("Past days can't be changed", error: true); return false }
     guard let s = calendarData.slotById[slotId] ?? upcomingSlots.first(where: { $0.id == slotId }), s.date != day else { return false }
     let label = Fmt.day(dm.date(day), tz: tz)
@@ -280,13 +280,14 @@ extension AppModel {
         return false
       }
     }
-    let swapped = other.flatMap { video($0.videoId) }.map { "Moved to \(label) · swapped with “\(displayName($0))”" }
-    let toast = swapped ?? "Moved to \(label)"
+    let otherName = other.flatMap { video($0.videoId) }.map(displayName)
+    let toast = "\(done) to \(label)" + (otherName.map { " · swapped with “\($0)”" } ?? "")
     let position = other?.position ?? (0..<perDay).first { p in !here.contains { $0.position == p } } ?? 0
     let videoId = s.videoId
-    let soon = calendarTooSoon(s, day: day, position: position)
+    let soon = platformsTooSoon(videoId, day: day, position: position)
     if !soon.isEmpty {
-      askPostToday(videoId, platforms: soon, done: toast) { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
+      let swap = otherName.map { DSChangeList.Change(field: "Swaps with", value: "“\($0)”, which moves to \(Fmt.day(dm.date(s.date), tz: tz))") }
+      askPostToday(videoId, platforms: soon, extra: swap, done: toast) { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
       return true
     }
     return undoable(toast, "move", ids: [videoId] + (other.map { [$0.videoId] } ?? []), plan: true) {
@@ -301,30 +302,76 @@ extension AppModel {
     calendarMove(slotId: s.id, to: day)
   }
 
-  /// Platforms that would go out inside the lead if this clip landed on `day` at `position`: only ever today.
-  private func calendarTooSoon(_ s: PlanSlot, day: String, position: Int) -> [Platform] {
+  // MARK: Going out right away
+
+  /// Every pin from anywhere (Queue, ⌘K, a clip's menu, a drop on a Queue row): moves go through `calendarMove`, and a
+  /// clip with no day asks first when it would land inside the lead.
+  func pinAsking(_ videoId: String, to day: String, done: String) {
+    let label = Fmt.day(dm.date(day), tz: tz)
+    if let s = nextSlotByVideo[videoId], s.date != day {
+      calendarMove(slotId: s.id, to: day, done: done)
+      return
+    }
+    let soon = nextSlotByVideo[videoId] == nil ? platformsTooSoon(videoId, day: day) : []
+    if soon.isEmpty {
+      undoable("\(done) to \(label)", "pin", ids: [videoId], plan: true) { try planner.pin(videoId: videoId, date: day) }
+      return
+    }
+    let here = upcomingSlots.filter { $0.date == day }
+    let replaced = here.count >= max(1, settings.postsPerDay) ? here.first { !$0.pinned }.flatMap { video($0.videoId) } : nil
+    let row = replaced.map { DSChangeList.Change(field: "Replaces", value: "“\(displayName($0))”, which goes back to waiting") }
+    askPostToday(videoId, platforms: soon, extra: row, done: "\(done) to \(label)") { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
+  }
+
+  /// Post today, from anywhere: always asks, and names what goes out at once.
+  func postTodayAsking(_ ids: [String]) {
+    guard let first = ids.first else { return }
+    let b = bulk
+    let n = AppModel.pipelineClips(ids.count)
+    let changes = [DSChangeList.Change(field: "Day", value: "Today · the rest of the Calendar moves a day later")]
+      + goesOutRow(platformsTooSoon(first, day: todayKey))
+    requestBulk(BulkRequest(title: ids.count == 1 ? "Post today?" : "Post \(n) today?", verb: "Post today", ids: ids, changes: changes,
+                            doneMessage: ids.count == 1 ? "Posting today" : nil, alwaysConfirm: true) { dry in try b.postToday(ids, dryRun: dry) })
+  }
+
+  /// Platforms that would go out inside the lead if this clip landed on `day`: only ever today. Its own platforms when
+  /// it has posts (minus the finished ones, which get no new post), else every active one.
+  func platformsTooSoon(_ videoId: String, day: String, position: Int? = nil) -> [Platform] {
     guard day == todayKey else { return [] }
-    let live = slotPosts(s.id).filter { $0.value.state != .skipped }
+    let posts = nextSlotByVideo[videoId].map { slotPosts($0.id) } ?? [:]
+    let live = posts.filter { !$0.value.state.isTerminal }
     let limit = now.addingTimeInterval(Planner.autoScheduleLead)
+    let pos = position ?? openPosition(on: day, for: videoId)
+    let dm = self.dm
     return settings.activePlatforms.filter { p in
-      (live.isEmpty || live[p] != nil) && dm.at(day, minutes: settings.slot(for: p) + position * settings.secondPostOffsetMinutes) < limit
+      (posts.isEmpty || live[p] != nil) && dm.at(day, minutes: settings.slot(for: p) + pos * settings.secondPostOffsetMinutes) < limit
     }
   }
 
-  /// The Post today confirmation, naming what goes out at once so Eric can still say no.
-  private func askPostToday(_ videoId: String, platforms: [Platform], done: String,
+  /// The position a clip lands on: the first free one, else the first clip that isn't pinned.
+  private func openPosition(on day: String, for videoId: String) -> Int {
+    let here = upcomingSlots.filter { $0.date == day && $0.videoId != videoId }
+    return (0..<max(1, settings.postsPerDay)).first { p in !here.contains { $0.position == p } } ?? here.first { !$0.pinned }?.position ?? 0
+  }
+
+  /// The confirmation's "Goes out right away: Facebook, Threads" row; nothing when nothing does.
+  func goesOutRow(_ platforms: [Platform]) -> [DSChangeList.Change] {
+    platforms.isEmpty ? [] : [.init(field: "Goes out right away", value: platforms.map(\.displayName).joined(separator: ", "))]
+  }
+
+  /// The Post today confirmation, so Eric can still say no.
+  private func askPostToday(_ videoId: String, platforms: [Platform], extra: DSChangeList.Change? = nil, done: String,
                             _ body: @escaping @Sendable (BulkActions, Bool) throws -> BulkResult) {
     let b = bulk
     requestBulk(BulkRequest(title: "Post today?", verb: "Post today", ids: [videoId],
-                            changes: platforms.isEmpty ? [] : [.init(field: "Goes out right away", value: platforms.map(\.displayName).joined(separator: ", "))],
+                            changes: goesOutRow(platforms) + (extra.map { [$0] } ?? []),
                             doneMessage: done, alwaysConfirm: true) { dry in try body(b, dry) })
   }
 
-  /// "Post today" for one clip from a card or a menu: asks first, like a drop on today.
-  func calendarPostToday(_ videoId: String) {
-    let soon = nextSlotByVideo[videoId].map { calendarTooSoon($0, day: todayKey, position: 0) }
-      ?? calendarTooSoon(PlanSlot(id: "", date: todayKey, position: 0, videoId: videoId, pinned: false, weekStart: ""), day: todayKey, position: 0)
-    askPostToday(videoId, platforms: soon, done: "Posting today") { b, dry in try b.postToday([videoId], dryRun: dry) }
+  /// False for a post just past midnight: its time runs over from the slot's own day, and nothing moved it.
+  func calendarWasMoved(_ p: PlatformPost) -> Bool {
+    guard let s = p.planSlotId.flatMap({ calendarData.slotById[$0] }) else { return true }
+    return dm.key(p.scheduledAt.addingTimeInterval(-Double(s.position * settings.secondPostOffsetMinutes) * 60)) != s.date
   }
 
   /// Why Unschedule isn't offered (nil = it is): past days are fixed, and only Queue and Scheduled clips have a day to

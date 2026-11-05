@@ -85,10 +85,7 @@ struct QueueCardList: View {
       model.show("Clips waiting for a day follow the sort (\(model.settings.sort.displayName)). Drop on a planned clip, or pin a clip to a date.")
       return false
     }
-    let day = Fmt.day(model.dm.date(slot.date), tz: model.tz)
-    model.pipelineBulk("Move to \(day)?", verb: "Move", ids: [id], done: "Moved to \(day)") { b, dry in
-      try b.pinConsecutive([id], from: slot.date, dryRun: dry)
-    }
+    model.pinAsking(id, to: slot.date, done: "Moved")
     return true
   }
 }
@@ -144,10 +141,7 @@ struct QueueClipActions: View {
   static let pinHelp = "Pin to a day that won't change"
   static let moreHelp = "Show more: move later, remove, exclude"
 
-  private func postToday() {
-    let id = video.id
-    model.pipelineBulk("Post today?", verb: "Post today", ids: [id], done: "Posting today") { b, dry in try b.postToday([id], dryRun: dry) }
-  }
+  private func postToday() { model.postTodayAsking([video.id]) }
 }
 
 /// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Move one slot later · Back to Edit · Open editor ·
@@ -163,11 +157,7 @@ struct QueueClipMenu: View {
     let sel = model.selectedIds(.queue)
     let targets = sel.count > 1 && sel.contains(video.id) ? sel : [video.id]
     let n = AppModel.pipelineClips(targets.count)
-    Button(targets.count == 1 ? "Post today" : "Post \(n) today", systemImage: "bolt") {
-      model.pipelineBulk("Post \(n) today?", verb: "Post today", ids: targets, done: targets.count == 1 ? "Posting today" : nil) { b, dry in
-        try b.postToday(targets, dryRun: dry)
-      }
-    }
+    Button(targets.count == 1 ? "Post today" : "Post \(n) today", systemImage: "bolt") { model.postTodayAsking(targets) }
     Button(targets.count == 1 ? "Pin to date…" : "Pin \(n) to days…", systemImage: "pin") { onPin(targets) }
     if targets.count == 1 {
       Button(model.nextSlotByVideo[video.id] == nil ? "Move one place later" : "Move one slot later", systemImage: "forward.end") {

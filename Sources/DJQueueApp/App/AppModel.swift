@@ -831,15 +831,8 @@ final class AppModel {
     }
   }
 
-  func pin(_ videoId: String, date: Date) {
-    let key = dm.key(date)
-    undoable("Pinned to \(Fmt.day(dm.date(key), tz: tz))", "pin", ids: [videoId], plan: true) { try planner.pin(videoId: videoId, date: key) }
-  }
-
-  func pin(_ videoId: String, dayKey: String) {
-    undoable("Pinned to \(Fmt.day(dm.date(dayKey), tz: tz))", "pin", ids: [videoId], plan: true) { try planner.pin(videoId: videoId, date: dayKey) }
-  }
-  func postToday(_ videoId: String) { undoable("Posting today", "post-today", ids: [videoId], plan: true) { try planner.postToday(videoId: videoId) } }
+  func pin(_ videoId: String, date: Date) { pin(videoId, dayKey: dm.key(date)) }
+  func pin(_ videoId: String, dayKey: String) { pinAsking(videoId, to: dayKey, done: "Pinned") }
   func skipNext(_ videoId: String) {
     undoable("Swapped with the next open slot", "skip-next", ids: [videoId], plan: true) { try planner.skipNext(videoId: videoId) }
   }

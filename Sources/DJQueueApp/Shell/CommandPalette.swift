@@ -183,7 +183,7 @@ extension AppModel {
     })
     c.append(.init(id: "clip.\(v.id).postToday", title: "Post today", symbol: "bolt", subtitle: "The rest of the Calendar moves a day later",
                    disabled: longWhy ?? (v.excluded ? "Excluded" : nil)) {
-      [weak self] in self?.postToday(v.id)
+      [weak self] in self?.postTodayAsking([v.id])
     })
     let notPlanned = nextSlotByVideo[v.id] == nil ? "Not planned — order follows score; change the score to move it" : nil
     c.append(.init(id: "clip.\(v.id).moveUp", title: "Move up", symbol: "arrow.up", subtitle: "Swap days with the clip before it",
@@ -527,7 +527,7 @@ struct VideoContextMenu: View {
       Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id, in: model.selectedVideoIds) }
       Button("Preview", systemImage: "play.rectangle") { model.previewVideo = video }
       Divider()
-      Button("Post today", systemImage: "bolt") { model.postToday(video.id) }
+      Button("Post today", systemImage: "bolt") { model.postTodayAsking([video.id]) }
       Button("Pin to tomorrow", systemImage: "pin") { model.pin(video.id, dayKey: model.dm.addDays(model.todayKey, 1)) }
       Button("Move one slot later", systemImage: "forward.end") { model.skipNext(video.id) }
       RepostMenu(model: model, videoId: video.id)
