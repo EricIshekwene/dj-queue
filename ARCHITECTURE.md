@@ -78,9 +78,10 @@ public final class Planner {
   public init(store: Store)
   public func weekStart(for date: Date) -> String
   public func slots(week: String) throws -> [PlanSlot]
-  public func proposeWeek(_ week: String) throws -> [PlanSlot]   // fills open days of a draft week from Queue.ordered()
-  public func approveWeek(_ week: String) throws                // creates PlatformPosts for every slot × active platform
-  public func rebuildWeek(_ week: String) throws                // drops unpinned, un-posted slots and re-proposes (back to draft)
+  public func autoSchedule(now:dryRun:revalidate:) throws -> AutoScheduleReport   // keeps every Queue clip on the calendar (round 13)
+  public func proposeWeek(_ week: String) throws -> [PlanSlot]   // internal seam: fills open days of a draft week
+  public func approveWeek(_ week: String) throws                // internal seam: creates PlatformPosts for every slot × active platform
+  public func rebuildWeek(_ week: String) throws                // internal seam: drops unpinned, un-posted slots, back to draft
   public func pushPlan(from date: String, days: Int) throws
   public func pin(videoId: String, date: String) throws
   public func remove(slotId: String) throws
@@ -100,7 +101,7 @@ public final class PostActions {
   public func repost(videoId: String, platform: Platform) throws                  // next version, cooldown, staggered
   public func setMetrics(postId: String, _ m: PostMetrics) throws
   public func markLongformPosted(videoId: String, url: String) throws             // moves file Ready to Post/Longform → Posted/Longform
-  public func dueToday(now: Date) throws -> [PlatformPost]                        // Today screen rows
+  public func dueToday(now: Date) throws -> [PlatformPost]                        // the Calendar's rows for today
   public func problems() throws -> [PlatformPost]                                 // failed / copyright / overdue, unresolved
 }
 public final class ManualPublisher: Publisher { public init(store: Store, renderer: RenderService) }
@@ -126,7 +127,7 @@ public enum Backup { public static func runIfDue(store: Store) throws -> URL? } 
 public enum LaunchAgent { public static func install(appPath: String, paths: Paths) throws; public static func isLoaded() -> Bool; public static func uninstall(paths: Paths) throws }
 ```
 
-CLI `djq`: `doctor [--json]`, `intake`, `status`, `queue`, `week [--propose|--approve] [YYYY-MM-DD]`, `today`, `prefill "<tag>" [--kind talking]`, `render <video-id> [--version N] [--platform P]`, `tick`, `posted <post-id> <url>`, `problem <post-id> <type> <message>`, `fixed <post-id>`, `reset <post-id>`, `agent install|uninstall|status`.
+CLI `djq`: `doctor [--json]`, `intake`, `status`, `queue`, `week [YYYY-MM-DD]`, `schedule [--dry-run]`, `today`, `prefill "<tag>" [--kind talking]`, `render <video-id> [--version N] [--platform P]`, `tick`, `posted <post-id> <url>`, `problem <post-id> <type> <message>`, `fixed <post-id>`, `reset <post-id>`, `agent install|uninstall|status`.
 
 ### UI agents (`Sources/DJQueueApp/`)
 
@@ -134,7 +135,7 @@ SwiftUI app per `design/DESIGN.md`. Talks only to the APIs above and `Store`. Ru
 
 ## Round 4 additions (v0.5.0)
 
-- **Stages are readiness** (`DJQCore/StageWording.swift`): one source for stage names, the stage control's neighbour labels ("Back to Edit", "Send to Queue", "Back to Queue"), blockers and the Edit reason chips (`ValidationIssue.chipText` / `chipOrder` / `isBlock`). Stored states (`needs_edit`, `ready`, …) are unchanged; only display names changed.
+- **Stages are readiness** (reversed in round 13: only Send to Queue moves a clip Edit → Queue) (`DJQCore/StageWording.swift`): one source for stage names, the stage control's neighbour labels ("Back to Edit", "Send to Queue"), blockers and the Edit reason chips (`ValidationIssue.chipText` / `chipOrder` / `isBlock`). Stored states (`needs_edit`, `ready`, …) are unchanged; only display names changed.
 - **Revalidation** (`DJQCore/Engine/Revalidation.swift`): re-derives every short, included clip in Edit / Queue / missing-file state. Runs as the tick step `stages`, after every djq write (`Revalidation.afterWrite`), inside Settings batches (states only) and after New clip defaults saves. An invalid Queue clip lands in Edit with a "Moved to Edit: <reasons>" event; Scheduled and pinned clips stay put and show the problem. Unpinned draft-week days whose clip left the Queue are refilled; `approveWeek` re-checks first, in one transaction.
 - **Edited previews** (`DJQCore/Render/PreviewStamp.swift`, `App/AppModel+Previews.swift`): one preview stamp per clip (+ version) from edits, versions, the defaults generation and the clip-row fields. `previewChanged(_:)` is the single invalidation entry (editor exit, refresh, undo). Lists play the 540-px proxy (crop/aspect/trim) with the `TextOverlay` image drawn as a layer during `PreviewKeys.textWindow`; covers composite the text via `Media.coverComposite` (shared with the renderer). Overlays live in a 64 MB cost-capped LRU (`CostCappedCache`). A proxy request for a running encode queues a follow-up job, so a stale crop never lands.
 - **List header** (`DesignSystem/DSListHeader.swift`, `Shared/ClipListFilters.swift`, `Shared/ListPrefs.swift`): one header on Score, Edit, Queue, Library, Posts and Week's Next up drawer, with page chips, one Filters popover, applied chips + Clear all and sort, persisted per page in UserDefaults (`djq.list.<page>`). ⌘F focuses the page's search.
@@ -167,3 +168,15 @@ SwiftUI app per `design/DESIGN.md`. Talks only to the APIs above and `Store`. Ru
   250 ms; `fieldRevision` re-syncs it after any other change). `DSTextArea` grows to `maxHeight`, then scrolls.
   `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption NSTextView (typing cost, mid-text edits, chips in place).
 - **djq:** `hashtag-groups`, `title-templates`, `youtube-title`, `bulk youtube-title-template`.
+
+## Round 13 additions (schema v7) — the Queue is the last step
+
+Eric's pipeline is Score → Edit → Queue → Posted. Decisions: `DECISIONS-R13.md`.
+
+- **Send to Queue is the only way in.** `videos.sent_to_queue` (`Video.sentToQueue`): a short clip that isn't sent is `needs_edit` even with nothing to fix. `BulkActions.send` is the one door (the stage control, `sendToQueue`/`requeue`, `makeReadyWithDefaults`, which Edit's bulk button labels Send to Queue). `Store.refreshState` clears the flag whenever a sent clip lands in Edit, so a later fix never promotes it. This reverses round 4's "stage = readiness".
+- **A clip in the Queue is approved.** `Planner.autoSchedule` (`DJQCore/Engine/AutoSchedule.swift`) runs in the tick's plan step, one `BEGIN IMMEDIATE` transaction: adopt draft-week slots, relay when due, fill open (day, position) slots from today to today + 30 in Queue order, creating real posts at once. `weeks`, `plan_slots` and every Placer/Postiz/lineage guard stay: it marks the week approved itself, so `isApproved`, `regenerateMany`, the runway and undo snapshots work unchanged. "Approved" survives only as an internal word. `Engine.autoSchedules` is a test seam.
+- **Lead time:** a position on today is open only when its earliest platform time is 30 min away or more; no post is ever created in the past or inside the lead.
+- **Relay:** only when posts/day or the Queue sort changes (kv `plan.layoutSig`), once; the first run just records it. Pinned, posted, sooner than 60 min, handed-to-the-Calendar and Postiz-published slots stay. Everything else about a gap is filled from the backlog; other clips keep their days.
+- **Undo survives the scheduler:** `BulkActions.planConflict` treats unpinned new slots, untouched new regular posts and weeks that only flipped to approved as derived; `restorePlan` drops them and the next tick derives them again.
+- **Stages:** `.scheduled` stays as a case and a status word; back from it is "Back to Edit" (held). The Queue has no forward move.
+- **Runway:** `approvedDays` keeps its name and means days with slots; `scheduledThrough` and `Runway.isLow` feed the words `StageWording.scheduledThrough` and "Queue running low". `djq schedule [--dry-run]` runs the pass once; it is the only safe way to exercise scheduling on a DB copy.
