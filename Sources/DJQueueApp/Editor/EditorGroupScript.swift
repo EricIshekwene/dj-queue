@@ -315,14 +315,14 @@ enum EditorGroupScript {
     }
   }
 
-  private static func fields(in v: NSView) -> [NSTextField] {
+  static func fields(in v: NSView) -> [NSTextField] {
     var out: [NSTextField] = []
     if let t = v as? NSTextField { out.append(t) }
     for s in v.subviews { out += fields(in: s) }
     return out
   }
 
-  private static func anchor(in v: NSView) -> EditorGroupsAnchorView? {
+  static func anchor(in v: NSView) -> EditorGroupsAnchorView? {
     if let a = v as? EditorGroupsAnchorView { return a }
     for s in v.subviews { if let a = anchor(in: s) { return a } }
     return nil

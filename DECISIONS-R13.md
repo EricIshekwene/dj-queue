@@ -7,6 +7,8 @@ left open, or where it needed a safer reading.
 
 ### Review corrections
 
+- **The Send to Queue migration is schema 8.** v0.8.3 took 7. The column still goes in before the v6 step, because the v6 and v7 journals snapshot clips.
+
 - **A swap, move, pin or Post today on a slot with a final Postiz job is refused.** Regenerating gives its posts new ids, which forget the job, so a post Eric deleted in Postiz would go back. Back to Edit and Send to Queue stays the explicit way.
 - **An undo that would restore a post inside the lead is a conflict ("its slot has passed") unless forced.** Eric's undo doesn't count as an explicit "post it now"; a past slot goes out about 3 minutes after upload.
 - **The migration's proof also fails on a later `Moved to Edit` event:** that's a clip round 4 promoted by itself after the send.

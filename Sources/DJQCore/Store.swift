@@ -9,7 +9,7 @@ public final class Store: @unchecked Sendable {
 
   /// Schema step that adds `videos.sent_to_queue` (`migrateSentToQueue`). Its own constant, so merging another round's
   /// schema step only means changing this number and `schemaVersion`.
-  static let sentToQueueVersion = 7
+  static let sentToQueueVersion = 8
   public static let schemaVersion = sentToQueueVersion
 
   public init(paths: Paths, clock: Clock = SystemClock(), path: String? = nil) throws {
@@ -92,6 +92,7 @@ public final class Store: @unchecked Sendable {
     // Before the v6 step: its journal entry snapshots clips, and those snapshots read the flag.
     if v < Self.sentToQueueVersion { try migrateSentToQueue(from: v) }
     if v < 6 { try migrateToV6(from: v) }
+    if v < 7 { try migrateToV7(from: v) }
     if v < Self.sentToQueueVersion { try db.exec("PRAGMA user_version = \(Self.sentToQueueVersion)") }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
@@ -253,6 +254,13 @@ public final class Store: @unchecked Sendable {
     }
     let r = try HashtagGroupsMigration.run(self)
     Log.shared.info("schema 6: hashtag groups — \(r.frozen.count) clip(s) with posts frozen, \(r.dropped.count) dropped built-in groups, \(r.suffixed) written caption(s) kept their hashtags, batch \(r.batchId ?? "none")")
+  }
+
+  /// v0.8.3 changes how captions are built (`CaptionRulesMigration`): clips with posts keep byte-identical captions.
+  private func migrateToV7(from v: Int) throws {
+    guard v >= 1 else { try db.exec("PRAGMA user_version = 7"); return }
+    let held = try CaptionRulesMigration.run(self)
+    Log.shared.info("schema 7: caption rules — \(held.count) clip(s) with posts kept their captions")
   }
 
   private func seedDefaults() throws {

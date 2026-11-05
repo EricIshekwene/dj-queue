@@ -186,3 +186,162 @@ Eric: "allow me to create hashtags groups from within the editor".
     which step undoes it). Fixing it would tie one clip's text to a shared group's undo.
 30. **Copy (R6):** "No active clip uses this group" (excluded and long-form clips without posts aren't counted); if the count can't be read the
     dialog gives the rule without a number.
+
+## v0.8.3
+
+### Blank hashtag groups
+
+1. **`HashtagGroups.pickable` and `label` are the one rule.** A group with a blank name and no real tag (whitespace and a bare `#` count as
+   nothing) is left out of every chip row and menu, and doesn't count towards "No hashtag groups yet". A blank name with tags shows as
+   "Untitled group". The stored row isn't changed, so captions and Postiz content read exactly what they did.
+2. **A cleared name keeps the previous one (`keepingName`, inside `HashtagGroups.update`), and the row says "Needs a name".** Both, because
+   Settings saves as you type: restoring the old name in the field would snap it back mid-typing, so the field stays empty and only the
+   store keeps the old name. Tag edits made meanwhile still save. Clearing a name and nothing else saves nothing (no toast, no journal entry).
+3. **Add hashtag group is a draft until Eric changes it.** It stays out of the database until the first edit with a name, then saves
+   through `HashtagGroups.create` (journaled, so it has Undo). A row left untouched goes when Settings reloads, and a draft deletes
+   without asking. A name with no tags still saves, as a named group always could.
+4. **Settings shows every stored row, blank ones included,** so they can be fixed or deleted. The same goes for `djq hashtag-groups`.
+5. **New clip defaults filters only what it shows,** so a hidden group already in the default list isn't dropped by an unrelated edit.
+6. **The Edit screen's bulk menu follows the same rule,** so it can't offer an empty item. Not in the brief, same bug.
+
+### Set as default (editor)
+
+7. **`CaptionTemplates.setDefault` is one journaled batch ("default-caption-template").** Versions with no chosen template and no written
+   caption, on clips with scheduled or posted posts (`clipsWithPosts`), are pinned to the old default; every other clip follows the new
+   one. Failed and skipped posts don't count, the same as the freeze for groups.
+8. **Pinning alone isn't byte-identical when a platform has its own default template.** A pin wins over that platform's template, so
+   `CaptionHold.keep` writes that platform's old caption as its own and then proves every platform and version unchanged. If it can't, the
+   whole batch rolls back. The per-platform defaults themselves aren't touched. `CaptionHold` is the one guarantee behind all the caption
+   changes in this release.
+9. **An editor session never claims the pin:** the action is in `CaptionTemplates.batchActions`, which `rebasedOntoGroupChanges` reads, the
+   same fix as decision 24.
+10. **Undo is refused when a clip scheduled after the change would move** (like decision 27); `--force` still overrides. Undo restores the
+    settings row and each pinned version exactly.
+11. **Editor label follows at once, Undo included:** `reloadGroups` now also re-reads settings and templates. So a change made in Settings
+    over the editor also reaches it, which it didn't before.
+12. **No `djq` change:** `djq defaults` only reads and no command sets the default caption template, so this is Core only.
+13. *Superseded by decision 47:* Settings → New clip defaults now holds clips with posts too.
+14. **A template's text is not part of a clip's render:** the real `Renderer` hash covers what's in the file, so a pin starts no new render
+    (`renderHashIgnoresTheCaption`). The tests' `FakeRenderer` hashes the whole version, so they reuse one render.
+
+### Own caption templates
+
+15. **One write path, `CaptionTemplates` in Core, for the editor and Settings.** Settings used to write templates straight to the store on
+    every keystroke and delete them unjournaled, which could move a scheduled caption. It now saves after a 600 ms typing pause, like
+    group rows, and delete has Undo. A blank name or text waits for more typing. No `djq` command manages caption templates, so this is
+    Core only; a bulk caller can use the same functions.
+16. **Editing or deleting a template freezes clips with posts first:** each version built from it gets that caption as its written
+    caption with `{hashtags}` kept. A template's other readers go through `CaptionHold.keep`, so a platform on another template (or one the
+    written form can't match exactly, such as a template with a tag mid-line and no tags on the clip) keeps its old caption as its own. A
+    rename reaches nothing.
+17. **Delete sends other clips that chose the template to the default, and refuses a default in use, here or for a platform** (the same
+    reason Settings gives). Undo restores the template table, the chosen ids and every frozen version. The journal gained a
+    `captionTemplates` snapshot, and an undo is refused when templates changed since or a clip scheduled later would move (decision 10).
+18. **After a freeze the scheduled clip no longer counts as using the template.** The delete dialog's count is of clips still built from it.
+19. **The Template field keeps one main action:** New template and, when offered, Set as default are buttons; Save caption as template,
+    Edit, Delete and Manage in Settings are in the ⋯ menu. Delete of a default stays visible there, disabled, and says why.
+20. **A new template goes on for this clip unless it has posts (decision 50),** and like a new group it has a toast but no app-level Undo;
+    `djq bulk undo` can still reach it.
+21. **Save as template matches tokens exactly and whole words only;** tags match in any case. Matching the link in any case turned "full set"
+    into `{link}`, which fills back with a capital F. The longest value goes first, so a title inside a set name isn't taken. A caption
+    with none of the clip's tags gets `{hashtags}` at the end, or the template would silently drop every clip's groups. Tags typed by hand stay
+    literal; the clip's extra hashtags count as its own tags, since `{hashtags}` fills them too.
+22. **Templates can hold typed tags, `{hashtags}`, or both, and the hint says so** in the editor's form and Settings.
+23. **A tag appears once, at its first position, wherever the clip's tags are filled in** (templates and written captions with `{hashtags}`).
+    A written caption without the token stays literal, typed repeats included: adding tags to it already skips any it has, and nothing is
+    filled in, so there's nothing to collapse. Literal tags aren't the group's, so removing a group leaves them; Drop hashtags strips all.
+24. **`{title}` and `{link}` are new template tokens,** and `Settings.captionLink` holds the link line (default "Full set on YouTube (link in
+    bio)").
+25. **Schema 7, `CaptionRulesMigration`:** those two rules could change a caption at install, so any clip with posts that would read differently
+    keeps its old caption as that platform's own, in a journaled batch. No clip's data changes otherwise, and no batch is written when
+    nothing applies. Undoing that batch would move those captions, so it needs `--force`. The newest backup has no template with these tokens or with typed tags, so no clip is expected to change.
+
+### Part chips
+
+26. **`CaptionParts` is pure text in Core:** `toggled(part, in: caption, values)` and `isOn`, so a bulk caller can run it over any caption. The
+    editor reads the caption in the field and writes it back, which makes a template caption a written one (Custom, ↺ returns).
+27. **Order is Text, Set, Link, Title, the chips' order, above the block of hashtag lines,** with a blank line over the hashtags when nothing
+    else is above them. The parts go on one line each. Toggling removes only that line, so on then off gives back the exact text.
+28. **On means the text is there, in any case, as whole words.** A chip can't drift from a hand edit. The longest value matches first, so
+    a title inside the overlay text doesn't count as the title; a Text equal to the Title is one line and both chips show it.
+29. **Text reads what `{text}` reads:** the overlay text, else the title, else the raw tag. Overlay text alone would leave the chip off on
+    a clip whose caption plainly shows that text, as the default template does.
+30. **A part inside a longer line comes out with its separators,** and a line left with no words goes ("🎧 Set — link" loses the link to "🎧
+    Set", then the set to nothing). Toggling it back adds its own line, since the old position isn't known.
+31. **Known limit:** on a one-line caption such as the Short template's "{text} {hashtags}" there's no separate hashtag line, so a new part goes
+    below that line. Splitting it would mean rewriting the hashtags, and the brief says they're left alone.
+32. **The link line is editable in Settings → Captions & titles (small enough),** saved after a typing pause through `CaptionTemplates.setLink`,
+    journaled and held like the others. A blank link turns the chip off with a reason.
+
+### Hashtag priority and caps
+
+33. **Order in the caption is the priority.** Each platform has a cap in Settings → Platforms (`PlatformLimits.maxHashtags`, blank = none, 0 is
+    a real cap). Over it, that platform's caption keeps the first tags in caption order, tags in the text body and typed in a template
+    included. The field stays whole, so a hand edit changes the order. `Captions.caption(for:)` applies it, which covers the preview, the
+    length breakdown, validation and Postiz with one change. It never blocks.
+34. **Nothing is dropped silently:** the Caption section shows a line per affected platform ("Threads keeps 1 of 4: drops #a #b #c").
+    A platform's own caption is left as written, with a warning line.
+35. **Default caps, only where a limit is confirmed** (read 2026-11-05):
+    - **Threads 1.** Meta's Threads API: "Only one topic tag is allowed per post."
+      https://developers.facebook.com/docs/threads/posts/
+    - **YouTube 60.** YouTube Help: over 60, every hashtag on the video is ignored. https://support.google.com/youtube/answer/6390658
+    - **Instagram 30.** Meta's IG User Media reference: "Maximum 2200 characters, 30 hashtags, and 20 @ tags."
+      https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media/
+    - **TikTok, X, Facebook blank.** TikTok and Facebook publish no limit in anything found, only third-party pages saying so. X's help
+      page recommends two but allows more, so that's advice, not a limit. https://help.x.com/en/using-x/how-to-use-hashtags
+36. **Eric's call on Instagram:** press reports that Instagram announced a limit of 5 in December 2025, quoting its creators account. No primary
+    page could be opened to confirm it, and Meta's API reference, which is what Postiz posts through, still says 30. Under "don't guess" it
+    stays 30. If Eric wants 5, it's that one field; scheduled clips are held either way.
+37. **A cap change holds clips with posts:** `CaptionTemplates.setHashtagCap` writes the old text as that platform's own caption, journaled,
+    with an open editor session rebased past it and an undo refused if a clip scheduled later would move. Raising or clearing a cap holds them too.
+38. **Install:** the default caps arrive with limits revision 3, which never replaces a cap Eric set. Schema 7 holds scheduled clips against them
+    with the rules in decision 25. On a copy of the newest backup: 63 videos, 27 versions, 7 posts, unchanged scores, titles and states, doctor 0
+    errors, and 1 clip held (it has 4 tags, so Threads would have cut it), its Threads caption now its own.
+39. **Group order:** move arrows in Settings, journaled (`HashtagGroups.move`). A clip keeps its own groups' order until they're toggled, and
+    then they follow Eric's order; default groups follow at once (decision 52). A group's tags keep the order typed; a test covers it.
+
+### Caption section layout (Mobbin references)
+
+40. **Field as the hero, count quiet at its bottom right:** [Buffer composer](https://mobbin.com/screens/63299fa6-69cd-429e-9ad8-6295d05f888b). One
+    field holds the caption and hashtags, with its tools directly under it. Parts now sits closer to the field than the rest of the section.
+    The length line reads "From the template … 67 characters" in the quietest text color, and cap notes match it.
+41. **Template actions in one ⋯ beside the dropdown:** Buffer again, where Templates is a secondary action and not a large control. This replaces the
+    button row from decision 19. Set as default, New template, Save caption as template, Edit, Delete and Manage in Settings are its items; Set as
+    default still shows only when decision 7's rule says so, and on a read-only clip the ⋯ tooltip gives the reason.
+42. **Parts as on/off chips with the result beside them:** [incident.io template builder](https://mobbin.com/screens/d69ed5ce-178e-402c-b529-5f7b060cbcd4).
+    The caption field is the live result.
+43. **Chips with one label per value:** [Klaviyo audience picker](https://mobbin.com/screens/26156f96-376b-4882-93a3-b264514aa968). Parts and Hashtag groups stay the same chip.
+44. **Template form is Name, body, the hashtags hint and one Save:** [Quo create snippet](https://mobbin.com/screens/a3fe5ebd-73a0-415f-9fdb-6cbcaf8e35dd).
+    The "Saved for every clip" line moved to Save's tooltip.
+45. **A small `{}` token menu in the form:** [Calendly email template](https://mobbin.com/screens/c736ec25-6a4c-4e2d-93ca-c105da8cb14a). It replaces the printed
+    token list. A token goes on the end of the text: SwiftUI's text area doesn't give the cursor position. Save stays the only strong action.
+46. **Warnings stay as they were:** captions near a limit still warn at 90%, because the pass was layout only. The references suggest warning only when
+    over, which would be a behavior change.
+
+### Review fixes
+
+47. **New clip defaults holds clips with posts (H1).** `CaptionTemplates.saveDefaults` is the one write for Save and Reset, covering per-platform
+    templates and default groups. Followers stay on the old template, and tags and YouTube title are written out because both are in the Postiz hash, so a
+    caption-only hold wasn't enough. It's in `batchActions`, so sessions rebase and undo checks conflicts, now against tags and titles too. The toast
+    gives the count.
+48. **Known, not changed:** defaults for text style, crop and cover aren't captions and still reach clips with posts as they always have. They can
+    change the render, and with it the Postiz hash; a hold for them would be a separate job.
+49. **A hold landing under unsaved work (H2).** The editor's merge is three-way, with `base` the versions as the store last had them: a field the store
+    changed comes across unless Eric changed it too, because his edit counts as typing. Without a base the store wins. Two-way can't tell a hold
+    from Eric's own unsaved text.
+50. **Decided for H3:** a clicked chip on a clip with unposted scheduled posts is an edit, the same as typing; Postiz replaces the post after the settle.
+    On posted and copyright states the chips are off with a reason, a rule in Core (`CaptionParts.lockReason`). New template and Save as template don't
+    switch a clip with any posts, and the form and toast say it keeps its caption.
+51. **`BulkActions.togglePart(ids, part)` (M3)** runs the same text change and rule for a bulk caller, journaled, skipping locked clips with the reason.
+52. **A move reorders the default groups in the same held batch (M1),** so new clips list tags in Eric's order. Moving past the end of a category takes
+    that category, since the list sorts by category first, so an arrow always moves the row (L1).
+53. **Words (M2):** a held clip's line reads "Threads keeps this clip's scheduled caption", quietly: Eric didn't write that caption. "Left as you wrote it"
+    stays for a clip with no posts. Cap, link, template and defaults toasts give the held count.
+54. **Settings follows changes made underneath it (L2),** such as Undo, except a row still waiting to save what Eric typed.
+55. **Add template is journaled and names itself** "New template 2" and so on; a name another template has isn't saved, and says so (L3).
+56. **A token needs a letter to be a hashtag (L4),** so `#1` isn't one, in `Captions.tagPattern`, shared by the cap, the once-each rule, Drop hashtags and the parts.
+57. **A one-word part must stand alone (L5):** written exactly, with nothing but marks before it or after a separator, and the line's end, a separator or a
+    hashtag after it. "pure fire" isn't the Title "Fire".
+58. **Instagram stays 30** from Meta's API reference. The 5 is press-only (decision 36).
+59. **Worth saying when this ships:** Threads now keeps one tag on clips without posts, the first in the caption, which is often the brand tag. On the
+    backup, 8 clips go from 4-5 tags to 1 and 7 of them keep `#djlovd`. Moving a group up, or reordering the text, changes which one stays.

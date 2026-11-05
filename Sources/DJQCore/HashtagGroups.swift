@@ -56,6 +56,29 @@ public enum HashtagGroups {
     HashtagSet(id: newId(), name: cleanName(name), category: category, tags: tags, sort: (existing.map(\.sort).max() ?? -1) + 1)
   }
 
+  // MARK: Blank groups
+
+  /// What a group with hashtags but no name is called on screen. Never stored.
+  public static let untitled = "Untitled group"
+
+  /// What to call a group on screen. Display only: the stored name stays as it is until Eric gives it one.
+  public static func label(_ group: HashtagSet) -> String { cleanName(group.name).isEmpty ? untitled : group.name }
+
+  /// The groups a chip row or menu offers, in order: a group with no name and no real hashtag has nothing to show or add, so
+  /// it's left out and doesn't count towards "No hashtag groups yet". Only for pickers: captions, Postiz and Settings read
+  /// every stored group.
+  public static func pickable(_ groups: [HashtagSet]) -> [HashtagSet] {
+    groups.filter { !cleanName($0.name).isEmpty || $0.tags.contains { !Captions.normalizeTag($0).isEmpty } }
+  }
+
+  /// `edited`, with `old`'s name if its own was cleared: Settings saves as you type, so a blank name never overwrites a
+  /// real one. A group that was already blank stays blank until it gets a name.
+  public static func keepingName(_ edited: HashtagSet, old: HashtagSet) -> HashtagSet {
+    var group = edited
+    if cleanName(group.name).isEmpty { group.name = old.name }
+    return group
+  }
+
   // MARK: What a change reaches
 
   /// How many clips use a group: `kept` have scheduled or posted posts and won't change, `others` follow the change.
@@ -79,6 +102,21 @@ public enum HashtagGroups {
       return parts.isEmpty ? "No active clip uses this group." : parts.joined(separator: " ")
     }
 
+    /// The same counts for a caption template. The edit form and Settings say the first, the delete confirm the second.
+    public var templateEditSummary: String {
+      var parts: [String] = []
+      if kept > 0 { parts.append("\(withPosts("keep")) the current caption.") }
+      if others > 0 { parts.append("\(clips(others, "other clip", "follow")) the change.") }
+      return parts.isEmpty ? "No active clip uses this template." : parts.joined(separator: " ")
+    }
+
+    public var templateDeleteSummary: String {
+      var parts: [String] = []
+      if kept > 0 { parts.append("\(withPosts("keep")) the current caption.") }
+      if others > 0 { parts.append("\(others == 1 ? "1 other clip goes" : "\(others) other clips go") back to the default template.") }
+      return parts.isEmpty ? "No active clip uses this template." : parts.joined(separator: " ")
+    }
+
     /// The edit form and Settings say this.
     public var editSummary: String {
       var parts: [String] = []
@@ -92,6 +130,12 @@ public enum HashtagGroups {
   public struct Change: Sendable {
     public var result: BulkResult
     public var kept: [String]
+
+    /// What a toast adds when clips with posts were held.
+    public var keptNote: String {
+      kept.isEmpty ? "" : kept.count == 1 ? ". 1 clip with scheduled or posted posts keeps its caption"
+        : ". \(kept.count) clips with scheduled or posted posts keep their captions"
+    }
   }
 
   private static func usage(of id: String, store: Store) throws -> (kept: [String], others: [String]) {
@@ -113,7 +157,7 @@ public enum HashtagGroups {
 
   /// As the schema-6 migration: every version's resolved hashtags go into its extra hashtags and ALL its group ids are
   /// cleared (moving only this group's tags would reorder them, and the order is part of the caption and the hash).
-  private static func freeze(_ ids: [String], store: Store) throws {
+  static func freeze(_ ids: [String], store: Store) throws {
     let settings = try store.settings(), sets = try store.hashtagSets()
     for id in ids {
       guard let v = try store.video(id: id) else { continue }
@@ -148,9 +192,40 @@ public enum HashtagGroups {
     let kept = retagged ? try usage(of: group.id, store: store).kept : []
     let r = try bulk.record("hashtag-group-edit", ids: kept, hashtagGroups: true, revalidate: retagged) {
       try freeze(kept, store: store)
-      try store.save(group)
+      try store.save(keepingName(group, old: old))
     }
     return Change(result: r, kept: kept)
+  }
+
+  public static let moveAction = "hashtag-group-move"
+
+  /// Moves a group one place up (`by` -1) or down (+1) in the order chips show and `setGroup` writes tags in. Crossing into the next
+  /// category takes that category, since the list sorts by category first. The default groups follow, so new clips list
+  /// tags in the new order; a clip with posts that follows them keeps what it has. A clip's own groups keep their order
+  /// until they're toggled. One journaled batch.
+  @discardableResult
+  public static func move(_ id: String, by: Int, store: Store, bulk: BulkActions) throws -> Change {
+    let before = try CaptionHold.Sources(store)
+    var all = before.sets
+    guard let i = all.firstIndex(where: { $0.id == id }), all.indices.contains(i + by) else {
+      return Change(result: BulkResult(batchId: nil, action: moveAction, dryRun: false, videoIds: [], changed: [], skipped: [:], remainingIssues: [:],
+                                       summary: "\(moveAction): nothing changed"), kept: [])
+    }
+    all[i].category = all[i + by].category
+    all.swapAt(i, i + by)
+    var after = before
+    after.settings.defaults.hashtagSetIds = all.map(\.id).filter { before.settings.defaults.hashtagSetIds.contains($0) }
+      + before.settings.defaults.hashtagSetIds.filter { id in !all.contains { $0.id == id } }
+    let kept = try CaptionHold.affected(from: before, to: after, store: store)
+    let r = try bulk.record(moveAction, ids: kept.map(\.id), settings: true, hashtagGroups: true, revalidate: false) {
+      try freeze(kept.map(\.id), store: store)
+      for (n, var g) in all.enumerated() where g != before.sets.first(where: { $0.id == g.id }) || g.sort != n {
+        g.sort = n
+        try store.save(g)
+      }
+      if after.settings != before.settings { try store.save(after.settings) }
+    }
+    return Change(result: r, kept: kept.map(\.id))
   }
 
   /// Why going back from `current` to `saved` groups would change a clip with scheduled or posted posts that isn't being
@@ -172,11 +247,33 @@ public enum HashtagGroups {
   /// What the editor's unsaved `memory` should hold after a freeze landed underneath it (`saved`): each frozen version
   /// takes its groups and extra tags from the store and keeps everything else Eric has in progress. Nil = nothing was
   /// frozen, so unsaved changes stand. Saving `memory` as it was would write the group back and change a scheduled clip.
-  public static func keepingFreeze(memory: [Version], saved: [Version]) -> [Version]? {
+  ///
+  /// v0.8.3: the same goes for what a hold writes (`caption`, `captionTemplateId`, `platformCaptions`). `base` is what the store
+  /// held when the memory last matched it, which tells a hold from Eric's own unsaved edit: a field the store changed comes
+  /// across unless Eric changed it too, since his edit counts like any other typing. Without `base` the store wins.
+  public static func keepingFreeze(memory: [Version], saved: [Version], base: [Version]? = nil) -> [Version]? {
     let byNumber = Dictionary(saved.map { ($0.number, $0) }, uniquingKeysWith: { a, _ in a })
+    let baseByNumber = base.map { Dictionary($0.map { ($0.number, $0) }, uniquingKeysWith: { a, _ in a }) }
     var out = memory, changed = false
+    func take<T: Equatable>(_ path: WritableKeyPath<Version, T>, _ i: Int, from s: Version, base b: Version?) {
+      guard s[keyPath: path] != out[i][keyPath: path] else { return }
+      if let b, s[keyPath: path] == b[keyPath: path] || out[i][keyPath: path] != b[keyPath: path] { return }
+      out[i][keyPath: path] = s[keyPath: path]
+      changed = true
+    }
     for i in out.indices {
-      guard let s = byNumber[out[i].number], s.hashtagSetIds == [], s.extraHashtags != nil, out[i].hashtagSetIds != [],
+      guard let s = byNumber[out[i].number] else { continue }
+      let b = baseByNumber?[out[i].number]
+      take(\.caption, i, from: s, base: b)
+      take(\.captionTemplateId, i, from: s, base: b)
+      take(\.platformCaptions, i, from: s, base: b)
+      take(\.youtubeTitle, i, from: s, base: b)
+      if let b {
+        take(\.hashtagSetIds, i, from: s, base: b)
+        take(\.extraHashtags, i, from: s, base: b)
+        continue
+      }
+      guard s.hashtagSetIds == [], s.extraHashtags != nil, out[i].hashtagSetIds != [],
             s.extraHashtags != out[i].extraHashtags || out[i].hashtagSetIds != nil else { continue }
       out[i].hashtagSetIds = []
       out[i].extraHashtags = s.extraHashtags

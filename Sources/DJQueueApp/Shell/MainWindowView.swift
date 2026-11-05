@@ -14,6 +14,7 @@ struct MainWindowView: View {
         EditorView(store: model.store, videoId: ed.videoId, videoIds: ed.videoIds, onDone: { model.closeEditor() },
                    trimPlatform: ed.trimPlatform,
                    appHooks: EditorAppHooks(
+                     deleteTemplate: { model.confirmDeleteTemplate($0, undoHint: "Undo on the message that follows brings it back.") },
                      deleteGroup: { model.confirmDeleteGroup($0, undoHint: "Undo on the message that follows brings it back.") },
                      beforeGroupWrite: { model.splitEditorSession() },
                      afterGroupEdit: { model.groupEdited($0, message: $1) },
