@@ -807,7 +807,8 @@ public final class Store: @unchecked Sendable {
       let active = Set(st.activePlatforms)
       let latest = Dictionary(grouping: posts, by: \.platform).compactMapValues { $0.max { $0.attemptNo < $1.attemptNo } }
       let relevant = latest.filter { active.contains($0.key) }.map(\.value)
-      if !relevant.isEmpty, relevant.allSatisfy({ $0.state.isTerminal }) {
+      // A failure with a retry coming isn't finished, whatever its row says.
+      if !relevant.isEmpty, try relevant.allSatisfy({ try $0.state.isTerminal && !retryIsComing($0) }) {
         return relevant.allSatisfy { $0.state == .posted || $0.state == .skipped } ? .posted : .partial
       }
       if relevant.contains(where: { $0.state == .posted || $0.state == .due || $0.state == .overdue }) { return .posting }

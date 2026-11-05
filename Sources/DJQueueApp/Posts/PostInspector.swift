@@ -19,7 +19,9 @@ struct PostInspector: View {
         VStack(alignment: .leading, spacing: 0) {
           section("Details") { facts }
           if let pz = model.postizState(post) { section("Postiz") { postizSection(pz) } }
-          if post.errorType != nil || post.errorMessage != nil { section("Problem") { problem } }
+          if post.errorType != nil || post.errorMessage != nil {
+            section(model.postizState(post)?.isRetrying == true ? "Last failure" : "Problem") { problem }
+          }
           if post.state == .posted { section("Metrics") { metrics } }
           section("Attempts") { attempts }
           section("Repost") { repost }
@@ -41,7 +43,7 @@ struct PostInspector: View {
   private func header(_ v: Video?) -> some View {
     VStack(alignment: .leading, spacing: DS.space.sm) {
       HStack(spacing: DS.space.xs) {
-        DSPlatformIcon(platform: post.platform, state: AppModel.platformState(post.state), size: 26)
+        DSPlatformIcon(platform: post.platform, state: model.platformState(post), size: 26)
         Text(post.platform.displayName).font(DS.type.headline).foregroundStyle(DS.color.text)
         Spacer(minLength: 0)
         // No esc here: the inspector never holds focus, and esc already clears the bulk selection / closes dialogs.
@@ -54,7 +56,7 @@ struct PostInspector: View {
         VStack(alignment: .leading, spacing: 4) {
           Text(v.map(model.displayName) ?? post.videoId).font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).lineLimit(2)
           HStack(spacing: 6) {
-            if post.resolution == nil, let pz = model.postizState(post) {
+            if let pz = model.postizRowState(post) {
               PostizBadge(model: model, post: post, state: pz)
             } else {
               PostStatePill(post: post)
@@ -165,7 +167,8 @@ struct PostInspector: View {
 
   private var problem: some View {
     VStack(alignment: .leading, spacing: 6) {
-      DSBadge(PostText.problemType(post), style: .soft(.danger), help: "What went wrong with this post")
+      DSBadge(PostText.problemType(post), style: model.postizState(post)?.isRetrying == true ? .soft(.neutral) : .soft(.danger),
+              help: "What went wrong with this post")
       if let m = post.errorMessage, !m.isEmpty {
         Text(m).font(DS.type.callout).foregroundStyle(DS.color.text).fixedSize(horizontal: false, vertical: true)
       }

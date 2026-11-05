@@ -284,6 +284,9 @@ struct CalendarWeekCard: View {
           .lineLimit(2).fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)
         Text(model.calendarTimeRange(clip)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+        if let retry = model.calendarRetryNote(clip) {
+          Text(retry).font(DS.type.caption).foregroundStyle(DS.color.info).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+        }
         DSFlowLayout(spacing: 3, lineSpacing: 3) {
           ForEach(clip.platforms, id: \.self) { p in CalendarPlatformGlyph(model: model, clip: clip, platform: p) }
         }
@@ -304,10 +307,10 @@ struct CalendarPlatformGlyph: View {
   let platform: Platform
 
   var body: some View {
-    DSPlatformIcon(platform: platform, state: model.calendarIconState(model.calendarStatus(clip, platform)), size: 20,
+    DSPlatformIcon(platform: platform, state: model.calendarIconState(clip, platform), size: 20,
                    tooltip: model.calendarPlatformHelp(clip, platform))
       .contentShape(Circle())
-      .contextMenu { if let post = clip.posts[platform] { PostContextMenu(model: model, post: post) } }
+      .contextMenu { if let post = clip.dayPosts[platform] { PostContextMenu(model: model, post: post) } }
   }
 }
 
@@ -340,10 +343,13 @@ struct CalendarThreeDayCard: View {
   }
 
   private func chip(_ p: Platform) -> some View {
-    let post = clip.posts[p]
-    return DSXSlotChip(platform: p, time: AppModel.clockText(model.calendarTime(clip, p), tz: model.tz), status: model.calendarStatus(clip, p),
+    let post = clip.dayPosts[p]
+    let pz = post.flatMap { model.postizRowState($0) }
+    // A failed post with a retry coming says when, not when it failed.
+    let time = pz?.isRetrying == true ? pz?.text ?? "" : AppModel.clockText(model.calendarTime(clip, p), tz: model.tz)
+    return DSXSlotChip(platform: p, time: time, status: model.calendarStatus(clip, p),
                        paused: model.settings.pausedPlatforms.contains(p), hasActions: post != nil,
-                       postiz: post.flatMap { $0.resolution == nil ? model.postizState($0) : nil },
+                       postiz: pz,
                        testRun: post.map(model.isTestRun) ?? false)
       .contextMenu { if let post { PostContextMenu(model: model, post: post) } }
   }

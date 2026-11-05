@@ -199,7 +199,7 @@ struct TodayRow: View {
 
   var body: some View {
     let status = model.postStatus(post)
-    let pz = model.postizState(post)
+    let pz = model.postizRowState(post)
     HStack(spacing: DS.space.sm) {
       VStack(alignment: .leading, spacing: 0) {
         if model.dm.key(post.scheduledAt) != day {

@@ -132,8 +132,10 @@ struct CalendarData {
 struct CalendarClip: Identifiable {
   let slot: PlanSlot
   let video: Video
-  /// Latest attempt per platform (all platforms: moves and blockers read these, whatever the filter shows).
+  /// Latest attempt per platform, on any day (moves and blockers read these, whatever the filter shows).
   let posts: [Platform: PlatformPost]
+  /// The attempt per platform that belongs to this day: a failed post stays here while its retry waits on a later day.
+  let dayPosts: [Platform: PlatformPost]
   /// Platforms going out on this day, in Settings order. A post shifted to another day shows there instead; a slot
   /// with no posts yet shows the platforms it will post to.
   let platforms: [Platform]

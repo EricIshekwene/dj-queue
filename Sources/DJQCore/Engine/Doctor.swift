@@ -414,7 +414,7 @@ extension Doctor {
       out.append(.init(id: "postiz.not_connected", severity: .info, title: "Postiz not in use",
                        detail: "Every platform is set to Manual: posts go to the Calendar and Eric marks them posted.", where_: [],
                        fix: "Nothing to do. To publish through Postiz, Eric adds the key and picks channels in Settings → Publishing."))
-      return out
+      return out + (try autoRetryFinding())
     }
 
     let hasKey = postizKeyStore.hasKey()
@@ -557,17 +557,25 @@ extension Doctor {
                        fix: "DJ Queue keeps retrying and creates nothing new for these meanwhile. If one must not post, Eric deletes it in the Postiz calendar."))
     }
 
-    let retries = try svc.pendingAutoRetries()
-    if !retries.isEmpty {
-      out.append(.init(id: "postiz.auto_retry", severity: .info, title: "\(retries.count) automatic retr\(retries.count == 1 ? "y" : "ies") pending",
-                       detail: retries.map { r in
-                         "\(r.post.platform.displayName) · \(tag(r.post.videoId)) · retry \(r.number) of \(PostizService.maxAutoRetries) · "
-                           + (r.queued ? Sched.shortTime(r.post.scheduledAt, settings) : "re-queued on the next tick")
-                       }.joined(separator: " · ") + ". A temporary platform limit: nothing to fix.",
-                       where_: retries.map(\.post.id),
-                       fix: "Nothing to do: the post goes out again by itself. After \(PostizService.maxAutoRetries) automatic retries it stays Failed for Eric."))
-    }
+    out += try autoRetryFinding()
     return out
+  }
+
+  /// Checked even with every platform on Manual: that's when a retry waits for its platform to come back.
+  func autoRetryFinding() throws -> [DoctorFinding] {
+    let svc = PostizService(store: store, transport: OfflinePostiz(), keyStore: postizKeyStore)
+    let retries = try svc.pendingAutoRetries()
+    guard !retries.isEmpty else { return [] }
+    let tag = { (id: String) in (try? self.store.video(id: id))?.tag ?? String(id.prefix(8)) }
+    let waitingOnSettings = retries.contains(where: \.offPostiz)
+    return [.init(id: "postiz.auto_retry", severity: waitingOnSettings ? .warning : .info,
+                  title: "\(retries.count) automatic retr\(retries.count == 1 ? "y" : "ies") pending",
+                  detail: retries.map { "\($0.post.platform.displayName) · \(tag($0.post.videoId)) · \($0.text)" }.joined(separator: " · ")
+                    + ". It stays Failed for Eric only after \(PostizService.maxAutoRetries) tries.",
+                  where_: retries.map(\.post.id),
+                  fix: waitingOnSettings
+                    ? "A retry waits for its platform to be back on Postiz: Eric sets that in Settings → Publishing, or posts it by hand and marks it posted. Don't change it for Eric."
+                    : "Nothing to do: the post goes out again by itself, at the time shown.")]
   }
 }
 

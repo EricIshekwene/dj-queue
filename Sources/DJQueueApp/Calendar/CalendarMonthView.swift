@@ -168,6 +168,6 @@ struct CalendarMonthChip: View {
     }
     .contentShape(Rectangle())
     .dsTooltip(model.calendarPlatformHelp(clip, p))
-    .contextMenu { if let post = clip.posts[p] { PostContextMenu(model: model, post: post) } }
+    .contextMenu { if let post = clip.dayPosts[p] { PostContextMenu(model: model, post: post) } }
   }
 }

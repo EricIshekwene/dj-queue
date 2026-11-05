@@ -51,6 +51,7 @@ usage: djq <command> [args]
   copyright <post> reupload [N]|skip|accept
   repost <video> <platform> | longform-posted <video> <url>
   score <video> <0-100|clear> | exclude <video> | include <video>
+  posts-per-day [1-5] [--dry-run]      show or set posts per day (Settings → General); undo with bulk undo
   pause [platform] | resume [platform]
   intake | tick [--force] | doctor [--json] [--live] | health [--days N]
   render <video> [--version N] [--platform P]
@@ -193,7 +194,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "posts-per-day", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -719,6 +720,27 @@ func run() throws -> Int32 {
     try store.setExcluded(v.id, cmd == "exclude")
     wrote = true
     print("\(v.tag) \(cmd)d")
+  case "posts-per-day":
+    guard let raw = args.first(where: { !$0.hasPrefix("--") }) else {
+      print(settings.postsPerDay)
+      break
+    }
+    guard let n = Int(raw), (1...5).contains(n) else { throw CLIError("posts-per-day takes a number from 1 to 5") }
+    guard n != settings.postsPerDay else {
+      print("posts per day is already \(n)")
+      break
+    }
+    var s = settings
+    let before = s.postsPerDay
+    s.postsPerDay = n
+    if args.contains("--dry-run") {
+      print("[dry run] posts per day \(before) → \(n)")
+      break
+    }
+    let r = try BulkActions(store: store).record("posts-per-day", settings: true) { try store.save(s) }
+    wrote = true
+    print("posts per day \(before) → \(n) · undo: djq bulk undo \((r.batchId ?? "").prefix(8))")
+
   case "pause", "resume":
     var s = settings
     if let a = args.first {

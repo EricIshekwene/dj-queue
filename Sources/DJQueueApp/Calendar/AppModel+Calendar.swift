@@ -105,14 +105,15 @@ extension AppModel {
   /// out that day: a post shifted off this day shows on its own day (`calendarExtras`), not on this card.
   func calendarClips(_ day: String) -> [CalendarClip] {
     let filter = calendarFilter
-    let here = Set((calendarData.posts[day] ?? []).map(\.id))
+    let todays = calendarData.posts[day] ?? []
     return (calendarData.slots[day] ?? []).compactMap { s -> CalendarClip? in
       guard let v = video(s.videoId) else { return nil }
       let posts = slotPosts(s.id)
-      let onDay = posts.filter { here.contains($0.value.id) }
+      let onDay = Dictionary(todays.filter { $0.planSlotId == s.id }.map { ($0.platform, $0) },
+                             uniquingKeysWith: { a, b in a.attemptNo > b.attemptNo ? a : b })
       if !posts.isEmpty && onDay.isEmpty { return nil }
       let platforms = shownPlatforms(onDay, filter: filter)
-      return platforms.isEmpty ? nil : CalendarClip(slot: s, video: v, posts: posts, platforms: platforms)
+      return platforms.isEmpty ? nil : CalendarClip(slot: s, video: v, posts: posts, dayPosts: onDay, platforms: platforms)
     }
   }
 
@@ -139,7 +140,7 @@ extension AppModel {
   /// days. A slot with no posts yet still gets its group.
   func calendarDayGroups(_ day: String) -> [CalendarDayGroup] {
     let filter = calendarFilter
-    let source = day == todayKey ? todayPosts : (calendarData.posts[day] ?? [])
+    let source = day == todayKey ? todayPosts : withoutRetriedFailures(calendarData.posts[day] ?? [])
     let posts = source.filter { filter == nil || $0.platform == filter }
     var order: [String] = []
     var byVideo: [String: [PlatformPost]] = [:]
@@ -181,7 +182,7 @@ extension AppModel {
 
   /// When a clip's post goes out on `p`: the post's time, or the slot's time while it has no post yet.
   func calendarTime(_ c: CalendarClip, _ p: Platform) -> Date {
-    c.posts[p]?.scheduledAt
+    c.dayPosts[p]?.scheduledAt
       ?? dm.at(c.slot.date, minutes: settings.slot(for: p) + c.slot.position * settings.secondPostOffsetMinutes)
   }
 
@@ -198,24 +199,32 @@ extension AppModel {
   }
 
   func calendarStatus(_ c: CalendarClip, _ p: Platform) -> DSXPostStatus {
-    c.posts[p].map(postStatus) ?? .planned
+    c.dayPosts[p].map(postStatus) ?? .planned
   }
 
   /// "TikTok · 7:00 PM · Rendered" (hover on any platform, in every view).
   func calendarPlatformHelp(_ c: CalendarClip, _ p: Platform) -> String {
-    let post = c.posts[p]
-    let state = post.flatMap { $0.resolution == nil ? postizState($0)?.text : nil } ?? calendarStatus(c, p).text
+    let state = c.dayPosts[p].flatMap { postizRowState($0)?.text } ?? calendarStatus(c, p).text
     return "\(p.displayName) · \(Self.clockText(calendarTime(c, p), tz: tz)) · \(state)"
   }
 
-  /// The icon state for a platform on a card or a month chip.
-  func calendarIconState(_ s: DSXPostStatus) -> DSPlatformState {
-    switch s {
-    case .posted: .posted
-    case .failed, .copyright: .failed
-    case .dueNow, .late: .due
-    case .skipped, .resolved: .skipped
-    default: .planned
+  /// "TikTok: Retrying Fri 8:00 AM": the next try of the first post on this card that failed and has one coming.
+  func calendarRetryNote(_ c: CalendarClip) -> String? {
+    for p in c.platforms {
+      if let s = c.dayPosts[p].flatMap({ postizRowState($0) }), s.isRetrying { return "\(p.dsxCompactName): \(s.text)" }
+    }
+    return nil
+  }
+
+  /// The icon state for a platform on a card. A retry coming isn't a problem, so it reads as planned.
+  func calendarIconState(_ c: CalendarClip, _ p: Platform) -> DSPlatformState {
+    if c.dayPosts[p].flatMap({ postizRowState($0) })?.isRetrying == true { return .planned }
+    switch calendarStatus(c, p) {
+    case .posted: return .posted
+    case .failed, .copyright: return .failed
+    case .dueNow, .late: return .due
+    case .skipped, .resolved: return .skipped
+    default: return .planned
     }
   }
 

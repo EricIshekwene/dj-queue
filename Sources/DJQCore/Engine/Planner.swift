@@ -196,6 +196,7 @@ public final class Planner: @unchecked Sendable {
     guard let s = try store.planSlot(id: slotId) else { throw EngineError("No plan slot \(slotId)") }
     try ensureNothingPosted(s)
     try store.db.transaction {
+      try store.dropAutoRetries(slot: s)
       try clearSlot(s)
       try store.deletePlanSlot(s.id)
       try store.refreshState(videoId: s.videoId)

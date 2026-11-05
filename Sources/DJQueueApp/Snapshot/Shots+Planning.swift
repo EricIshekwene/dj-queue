@@ -92,6 +92,34 @@ extension SnapshotShots {
         m.dismissedWarnings = [:]
       })
     }
+    let tomorrow = c.model.dm.addDays(c.model.todayKey, 1)
+    // A confirmation, a toast and a refusal, from the real calls: nothing here is drawn by hand.
+    if let ask = SampleData.askFirstSandbox(c) {
+      shots.append(c.main("calendar-ask-first-swap", ask) { m in
+        calendar(m, .week)
+        guard let s = m.calendarClips(tomorrow).first?.slot else { return }
+        m.calendarMove(slotId: s.id, to: m.todayKey)
+        m.pendingBulk?.preview = try? m.bulk.pinConsecutive([s.videoId], from: m.todayKey, dryRun: true)
+      })
+    }
+    if let scratch = SampleData.scratchSandbox(c) {
+      shots.append(c.main("calendar-partial-undo", scratch) { m in
+        calendar(m, .week)
+        let ids = [tomorrow, m.dm.addDays(tomorrow, 1)].compactMap { m.calendarClips($0).first?.video.id }
+        guard ids.count == 2, let batch = (try? m.bulk.removeFromQueue(ids))?.batchId else { return }
+        try? m.store.setScore(ids[0], 12)  // changed since, so the batch can only partly go back
+        m.refreshNow()
+        m.undoHistory.push(batch, label: "Back in Edit")
+        m.undo(batch: batch)
+      })
+    }
+    if let removed = SampleData.removedInPostizSandbox(c) {
+      shots.append(c.main("calendar-removed-in-postiz", removed) { m in
+        calendar(m, .week)
+        guard let s = m.calendarClips(tomorrow).first?.slot else { return }
+        m.calendarMove(slotId: s.id, to: m.dm.addDays(tomorrow, 1))
+      })
+    }
     if let dense {
       shots.append(c.main("calendar-week-dense", dense) { m in calendar(m, .week) })
       shots.append(c.main("calendar-3day-dense", dense) { m in calendar(m, .threeDay) })

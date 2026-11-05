@@ -7,6 +7,7 @@ import SwiftUI
 extension AppModel {
   /// One status for a post (Calendar rows and chips, menu bar).
   func postStatus(_ p: PlatformPost) -> DSXPostStatus {
+    if postizState(p)?.isRetrying == true { return .resolved("Retrying") }
     if let r = p.resolution { return .resolved(Self.resolutionLabel(r)) }
     switch p.state {
     case .posted: return .posted
@@ -57,7 +58,17 @@ extension AppModel {
   }
 
   /// Today's posts in time order (overdue leftovers from earlier days first).
-  var todayPosts: [PlatformPost] { dueToday.sorted { $0.scheduledAt < $1.scheduledAt } }
+  var todayPosts: [PlatformPost] { dueTodayShown.sorted { $0.scheduledAt < $1.scheduledAt } }
+
+  /// A failure whose retry is on today's list too would say the same thing twice: only the attempt stays.
+  var dueTodayShown: [PlatformPost] { withoutRetriedFailures(dueToday) }
+
+  func withoutRetriedFailures(_ list: [PlatformPost]) -> [PlatformPost] {
+    list.filter { p in
+      guard p.state == .failed, postizState(p)?.isRetrying == true else { return true }
+      return !list.contains { $0.videoId == p.videoId && $0.platform == p.platform && $0.attemptNo > p.attemptNo }
+    }
+  }
 
   /// The Next-up card: the first post due now, else the next one still to come today.
   var todayNextUp: PlatformPost? {

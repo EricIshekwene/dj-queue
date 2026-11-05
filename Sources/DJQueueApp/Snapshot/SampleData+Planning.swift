@@ -6,7 +6,8 @@ import Foundation
 /// runner's temp folder, so they are deleted with it. Never touches a real database.
 extension SampleData {
   @MainActor
-  private static func sandbox(_ c: SnapshotContext, name: String, _ change: (Store, DayMath, String) throws -> Void) -> AppModel? {
+  private static func sandbox(_ c: SnapshotContext, name: String, from source: Store? = nil,
+                              _ change: (Store, DayMath, String) throws -> Void) -> AppModel? {
     do {
       let src = c.store.paths
       let tmp = src.appSupport.deletingLastPathComponent().appendingPathComponent("\(name)-\(UUID().uuidString.prefix(8))")
@@ -14,7 +15,7 @@ extension SampleData {
                         launchAgents: tmp.appendingPathComponent("LaunchAgents"))
       try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
       try? FileManager.default.createSymbolicLink(at: paths.thumbs, withDestinationURL: src.thumbs)
-      try c.store.db.backup(to: paths.database.path)
+      try (source ?? c.store).db.backup(to: paths.database.path)
       let store = try Store(paths: paths, clock: FixedClock(c.now))
       let dm = DayMath(settings: try store.settings())
       try change(store, dm, dm.key(c.now))
@@ -45,6 +46,29 @@ extension SampleData {
       for v in try Queue(store: store).ordered() { try store.setExcluded(v.id, true) }
     }
   }
+
+  /// Today's clip with nothing posted yet, so a clip moved onto today swaps with it (the ask-first sheet).
+  @MainActor
+  static func askFirstSandbox(_ c: SnapshotContext) -> AppModel? {
+    sandbox(c, name: "ask") { store, dm, today in
+      try store.db.run("UPDATE platform_posts SET state='planned', url=NULL, posted_at=NULL WHERE scheduled_at>=? AND scheduled_at<?",
+                       [dm.date(today), dm.date(dm.addDays(today, 1))])
+    }
+  }
+
+  /// Tomorrow's X post was deleted in Postiz (its job is final), so the clip refuses to move. From the Postiz sample.
+  @MainActor
+  static func removedInPostizSandbox(_ c: SnapshotContext) -> AppModel? {
+    sandbox(c, name: "removed", from: c.postiz.store) { store, dm, today in
+      let tomorrow = dm.addDays(today, 1)
+      guard let p = try store.posts(where: "platform='x' AND scheduled_at>=? AND scheduled_at<?", [dm.date(tomorrow), dm.date(dm.addDays(tomorrow, 1))]).first else { return }
+      try store.db.run("UPDATE postiz_jobs SET closed_at=?, final=1, close_reason='vanished' WHERE post_id=?", [c.now, p.id])
+    }
+  }
+
+  /// A plain copy, for shots that change data.
+  @MainActor
+  static func scratchSandbox(_ c: SnapshotContext) -> AppModel? { sandbox(c, name: "scratch") { _, _, _ in } }
 
   /// Two clips a day from today on, so cards stack and month cells overflow.
   @MainActor

@@ -95,6 +95,7 @@ enum SnapshotRunner {
         + SnapshotShots.r3posts(ctx)
         + SnapshotShots.r4previews(ctx)
         + SnapshotShots.r6postiz(ctx)
+        + SnapshotShots.r9retry(ctx)
       if let only = ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_ONLY"] {
         shots = shots.filter { $0.name.contains(only) }
       }

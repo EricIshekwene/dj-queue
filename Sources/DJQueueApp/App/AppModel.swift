@@ -557,7 +557,7 @@ final class AppModel {
 
   /// Today's posts Postiz handles (held or done by it; the inbox and fallbacks are manual tasks), in time order.
   var postizToday: [PlatformPost] {
-    dueToday.filter { p in
+    dueTodayShown.filter { p in
       switch postizState(p) {
       case nil, .fellBack?, .inbox?: false
       default: dm.key(p.scheduledAt) == todayKey
@@ -566,7 +566,7 @@ final class AppModel {
   }
 
   var postedTodayCount: Int { dueToday.filter { $0.state == .posted && dm.key($0.scheduledAt) == todayKey }.count }
-  var todayTotal: Int { dueToday.filter { dm.key($0.scheduledAt) == todayKey && $0.state != .skipped }.count }
+  var todayTotal: Int { dueTodayShown.filter { dm.key($0.scheduledAt) == todayKey && $0.state != .skipped }.count }
   /// Manual tasks only: a post Postiz delivers is never "due" for Eric.
   var dueNow: [PlatformPost] {
     dueToday.filter { ($0.state == .due || $0.state == .overdue || ($0.state.isTerminal == false && $0.scheduledAt <= now)) && postizState($0)?.isHeld != true }

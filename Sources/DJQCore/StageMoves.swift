@@ -112,6 +112,7 @@ extension BulkActions {
         try store.refreshState(videoId: v.id)
         moves[v.id] = StageMove(from: .edit, to: .score, note: "Score \(v.score.map(String.init) ?? "") cleared — back to Score")
       case .queue, .scheduled:
+        if st == .scheduled { try store.dropWaitingRetries(videoId: v.id) }
         let items = try hold(v, planner: planner)
         if !items.isEmpty { removed[v.id] = items }
         moves[v.id] = StageMove(from: st, to: .edit, note: StageWording.backInEdit + Self.daysText(items, store: store))

@@ -105,7 +105,7 @@ struct PostsView: View {
   private func inTab(_ p: PlatformPost, _ tab: PostsTab) -> Bool {
     switch tab {
     case .problems: model.problems.contains { $0.id == p.id }
-    case .scheduled: !p.state.isTerminal && p.state != .overdue
+    case .scheduled: (!p.state.isTerminal && p.state != .overdue) || (p.resolution == nil && model.postizState(p)?.isRetrying == true)
     case .posted: p.state == .posted
     case .all: true
     }

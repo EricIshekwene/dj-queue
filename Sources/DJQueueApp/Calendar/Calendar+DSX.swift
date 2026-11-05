@@ -128,7 +128,7 @@ struct DSXSlotChip: View {
     .background(status.problemTone.map { DS.color.tint($0) } ?? .clear,
                 in: RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
     .contentShape(Rectangle())
-    .dsTooltip("\(platform.displayName) · \(time) · \(postiz?.text ?? status.text)\(testRun ? " · Test run" : "")\(paused ? " · platform paused" : "")\(hasActions ? " · right-click for actions" : "")")
+    .dsTooltip("\(platform.displayName) · \(time)\(postiz?.isRetrying == true ? "" : " · \(postiz?.text ?? status.text)")\(testRun ? " · Test run" : "")\(paused ? " · platform paused" : "")\(hasActions ? " · right-click for actions" : "")")
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("\(platform.displayName), \(time), \(status.text)\(paused ? ", paused" : "")")
   }
