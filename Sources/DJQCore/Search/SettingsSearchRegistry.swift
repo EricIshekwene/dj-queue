@@ -131,7 +131,8 @@ public enum SettingsSearchRegistry {
     // captions
     .group(.captions, "Hashtag groups", description: "Your own groups. A clip has no hashtags until you pick a group in the editor (or set default groups in New clip defaults); extra hashtags can always be added per clip."),
     .group(.captions, "YouTube title templates", description: "{text} = the clip's overlay text, else its title, else the raw marker tag. Over YouTube's limit only {text} is shortened. In the editor, pick one and then edit the title freely."),
-    .group(.captions, "Caption templates", description: "{text} overlay text on one line · {tag} raw marker tag · {set} session name · {hashtags} the clip's hashtags"),
+    .group(.captions, "Caption templates", description: "{text} overlay text on one line · {title} the clip's title · {set} session name · {link} the link line · {tag} raw marker tag · {hashtags} the clip's hashtags. \(CaptionTemplates.hashtagHint)."),
+    .row(.captions, "Link line", group: "Caption templates", description: "What {link} fills in and the editor's Link chip adds. Clips with scheduled or posted posts keep their captions."),
     .group(.captions, "Titles"),
     .row(.captions, "Where titles come from", group: "Titles", description: "videos.json (title, title_suggestions) or an agent running djq title / djq suggest. The app never makes titles up."),
     .row(.captions, "Ask an agent", group: "Titles", description: "Copies a prompt with each clip's tag, set position and the exact djq command. Suggestions appear in the editor."),

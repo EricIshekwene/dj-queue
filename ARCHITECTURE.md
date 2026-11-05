@@ -168,6 +168,21 @@ SwiftUI app per `design/DESIGN.md`. Talks only to the APIs above and `Store`. Ru
   `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption NSTextView (typing cost, mid-text edits, chips in place).
 - **djq:** `hashtag-groups`, `title-templates`, `youtube-title`, `bulk youtube-title-template`.
 
+## v0.8.3 additions (schema v7) — captions you control
+
+Decisions: `DECISIONS-R7.md`, "v0.8.3".
+
+- **`CaptionHold` is the one guarantee:** anything that changes what a caption is built from (default template, New clip defaults, a template's
+  text, the link line, a hashtag cap, a group move) lists the clips with scheduled or posted posts that would change, then proves captions, YouTube tags and
+  titles identical inside one journaled batch. It pins, freezes or writes a platform's own caption as needed, and rolls back rather than let one move.
+- **`CaptionTemplates`** is the write path for templates, the default, New clip defaults, the link line and caps; the editor and Settings both call it.
+  `batchActions` lists what writes clips on its own, so an open editor session moves past it and undo checks for conflicts.
+- **`CaptionParts`** is pure text (`toggled`, `isOn`); `BulkActions.togglePart` applies it by clip id.
+- **`Captions.caption(for:)`** now also writes each tag once where a clip's tags are filled in and applies the platform's cap, so the preview,
+  validation and Postiz all read one result. `sharedCaption`, the editor's field, stays uncapped.
+- **Schema 7 (`CaptionRulesMigration`)** holds clips with posts against those rules at install, journaled. Undoing it needs `--force`.
+- **Editor merge:** `HashtagGroups.keepingFreeze(memory:saved:base:)` brings a hold in under unsaved work.
+
 ## Round 10 additions — whole-app search
 - `Sources/DJQCore/Search/`: `AppSearch.swift` (pure engine: `SearchIndex`, `SearchQuery`, tiers, snippets, no SwiftUI, no database), `SearchCorpus.swift` (clips, posts, weeks, sessions, settings and Health as `SearchItem`s; `Store.searchClipText`, one query for the latest version's text) and `SettingsSearchRegistry.swift` (every Settings row and header; `SettingsRegistryTests` scans the Settings views and fails on a missing label).
 - `AppModel.load` builds `searchIndex` off the main actor on every refresh, so a keystroke only scans folded bytes and never touches the database. Nothing is written and there is no schema change.

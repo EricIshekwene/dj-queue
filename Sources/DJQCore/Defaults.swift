@@ -6,6 +6,9 @@ public enum Defaults {
   /// clip has no hashtags until he picks a group or types extra tags.
   public static let hashtagSets: [HashtagSet] = []
 
+  /// `{link}` in a caption template, and the Link chip (Settings → Captions & titles changes it).
+  public static let captionLink = "Full set on YouTube (link in bio)"
+
   /// The six groups rounds 1–6 seeded, kept only so the schema-6 migration can recognise (and remove) them.
   public static let legacyHashtagSets: [HashtagSet] = [
     HashtagSet(id: "amapiano", name: "Amapiano", category: "Amapiano",

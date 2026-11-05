@@ -486,7 +486,7 @@ private func ids(_ index: SearchIndex, _ q: String) -> [String] { index.search(S
       let anchor = l.call.hasPrefix("SettingsGroupHeader") ? SettingsAnchor.group(l.label) : SettingsAnchor.row(l.label)
       let e = SettingsSearchRegistry.entry(id: "\(pane.rawValue).\(anchor)")
       #expect(e != nil, "\(l.file): \(l.call)(\"\(l.label)\") is missing from SettingsSearchRegistry (\(pane))")
-      if let d = l.description, let e { #expect(e.description == d, "\(l.file): \(l.label): the registry's description differs") }
+      if let d = l.description, !d.contains("\\("), let e { #expect(e.description == d, "\(l.file): \(l.label): the registry's description differs") }
     }
   }
 

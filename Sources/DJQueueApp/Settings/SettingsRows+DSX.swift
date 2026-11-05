@@ -227,6 +227,31 @@ enum SettingsFmt {
 
 /// Small numeric field for tables (limits): typing only edits the text; a positive integer is saved on ↩ or when
 /// the field loses focus (typing "180" never saves 1, then 18). Anything else snaps back to the saved value.
+/// A number where blank means "none" and 0 is a real value (`SettingsNumberField` takes only positive numbers).
+struct SettingsOptionalNumberField: View {
+  let label: String
+  let value: Int?
+  var tooltip: String? = nil
+  let commit: (Int?) -> Void
+  @State private var text = ""
+
+  var body: some View {
+    DSTextField(placeholder: "—", text: Binding(get: { text }, set: { text = $0.filter(\.isNumber) }), size: .sm, onSubmit: save)
+      .multilineTextAlignment(.trailing)
+      .dsTooltip(tooltip)
+      .accessibilityLabel(label)
+      .onAppear { text = value.map(String.init) ?? "" }
+      .onChange(of: value) { _, v in text = v.map(String.init) ?? "" }
+      .onReceive(NotificationCenter.default.publisher(for: NSControl.textDidEndEditingNotification)) { _ in save() }
+      .onDisappear(perform: save)
+  }
+
+  private func save() {
+    let v = Int(text)
+    if v != value { commit(v) }
+  }
+}
+
 struct SettingsNumberField: View {
   let label: String
   let value: Int
