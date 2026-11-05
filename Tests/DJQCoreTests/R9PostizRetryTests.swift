@@ -393,6 +393,24 @@ import Testing
     #expect(try rig.invariants().isEmpty)
   }
 
+  /// Its time comes while the platform is on Manual, the same day: not a task for Eric, and not stuck on Today after.
+  @Test func aRetryWaitingOnManualIsNeverDueByHand() throws {
+    let (rig, x) = try xRig()
+    try fail(rig, x)
+    rig.tick(2)
+    let a = try #require(try attempts(rig, x).last)
+    try rig.f.updateSettings { $0.publishing.publishers[.x] = .manual }
+    rig.tick()
+    rig.f.clock.set(a.scheduledAt.addingTimeInterval(120))
+    rig.tick(2)
+    #expect(!rig.notifier.delivered.contains { $0.postId == a.id })
+    #expect(try rig.store.post(id: a.id)?.state != .due)
+    try rig.f.updateSettings { $0.publishing.publishers[.x] = .postiz }
+    rig.tick(2)
+    #expect(try rig.job(a)?.phase == .live)
+    #expect(try attempts(rig, x).count == 2)
+  }
+
   /// On resume the time has passed, but another post went out meanwhile: the gap still holds.
   @Test func aRetryResumedKeepsTheGap() throws {
     let (rig, x) = try xRig()
@@ -532,6 +550,7 @@ import Testing
     #expect(try attempts(rig, x).count == 2)
     #expect(try rig.service.autoRetries(x).count == 1)
     #expect(try r8.events(rig, "automatic retry") == 1)
+    #expect(try r8.events(rig, "failed in Postiz") == 1)
     #expect(try rig.invariants().isEmpty)
   }
 
@@ -610,46 +629,62 @@ import Testing
   // MARK: Fuzz
 
   /// Whatever happens to it, a clip + platform never has two live jobs or two live posts, and Postiz never holds or
-  /// publishes two copies.
-  @Test(arguments: 1...16)
-  func fuzz(_ seed: UInt64) throws {
-    var rng = Seeded(seed)
-    let (rig, x) = try xRig()
-    let bulk = BulkActions(store: rig.store)
-    let actions = PostActions(store: rig.store)
-    var held = false
-    let errors = ["Something went wrong", "Rate limit reached", nil, "503 Service Unavailable", "Video longer than 2:20"]
-    for step in 0..<70 {
-      switch rng.next() % 12 {
-      case 0...3:
-        // Only what Postiz still holds: a post it published can't fail afterwards.
-        if let j = try rig.store.postizJobs(where: "video_id=? AND platform='x' AND closed_at IS NULL AND phase='live' AND kind='post'", [x.videoId]).first,
-           rig.fake.post(j.postizId!)?.state == "QUEUE" {
-          rig.fake.fail(j.postizId!, error: errors[Int(rng.next() % UInt64(errors.count))])
+  /// publishes two copies. The total at the end proves the runs really went through retries.
+  @Test func fuzz() throws {
+    var retries = 0, waited = 0, published = 0
+    for seed in UInt64(1)...24 {
+      var rng = Seeded(seed)
+      let (rig, x) = try xRig()
+      let bulk = BulkActions(store: rig.store)
+      let actions = PostActions(store: rig.store)
+      let errors = ["Something went wrong", "Rate limit reached", nil, "503 Service Unavailable", "Video longer than 2:20"]
+      for step in 0..<80 {
+        let held = try rig.store.video(id: x.videoId)?.heldInEdit == true
+        let list = try attempts(rig, x)
+        switch rng.next() % 14 {
+        case 0...4:
+          // Only what Postiz still holds: a post it published can't fail afterwards.
+          if let j = try rig.store.postizJobs(where: "video_id=? AND platform='x' AND closed_at IS NULL AND phase='live' AND kind='post'", [x.videoId]).first,
+             rig.fake.post(j.postizId!)?.state == "QUEUE" {
+            rig.fake.fail(j.postizId!, error: errors[Int(rng.next() % UInt64(errors.count))])
+            rig.f.clock.set(max(rig.f.clock.now, j.remoteDate).addingTimeInterval(Double(rng.next() % 3) * 3600 + 700))
+          }
+        case 5: rig.f.clock.advance(Double(rng.next() % 12) * 3600 + 700)
+        case 6: rig.f.clock.advance(Double(rng.next() % 3) * 86400 + 700)
+        case 7: try rig.f.updateSettings { $0.paused.toggle() }
+        case 8: try rig.f.updateSettings { s in
+          if s.pausedPlatforms.contains(.x) { s.pausedPlatforms.remove(.x) } else { s.pausedPlatforms.insert(.x) }
         }
-      case 4: rig.f.clock.advance(Double(rng.next() % 12) * 3600 + 600)
-      case 5: rig.f.clock.advance(Double(rng.next() % 3) * 86400)
-      case 6: try rig.f.updateSettings { $0.paused.toggle() }
-      case 7: try rig.f.updateSettings { s in
-        if s.pausedPlatforms.contains(.x) { s.pausedPlatforms.remove(.x) } else { s.pausedPlatforms.insert(.x) }
+        case 9: try rig.f.updateSettings { s in s.publishing.publishers[.x] = s.publishing.publisher(for: .x) == .postiz ? .manual : .postiz }
+        case 10:
+          if held { _ = try bulk.sendToQueue([x.videoId]) }
+          // Once a failure exists: before that it only takes the clip out of the plan, and the run ends there.
+          else if list.count > 1 || list.first?.state == .failed { _ = try bulk.removeFromQueue([x.videoId]) }
+        case 11:
+          if let f = list.last(where: { $0.state == .failed && $0.resolution == nil }) { _ = try? actions.fixed(postId: f.id) }
+        case 12:
+          // Not at once: it ends the retries, and the guards after a publish are what's left to prove.
+          if step > 15, let j = try rig.store.postizJobs(where: "video_id=? AND platform='x' AND closed_at IS NULL AND phase='live' AND kind='post'", [x.videoId]).first {
+            rig.f.clock.set(max(rig.f.clock.now, j.remoteDate.addingTimeInterval(60)))
+            rig.fake.publishDue(now: rig.f.clock.now)
+          }
+        default: try rig.f.updateSettings { s in s.paused = false; s.pausedPlatforms = []; s.publishing.publishers[.x] = .postiz }
+        }
+        let before = try rig.store.posts(where: "video_id=? AND state='failed' AND resolution IS NULL", [x.videoId]).count
+        rig.tick(1 + Int(rng.next() % 2))
+        if try before > 0 && rig.service.pendingAutoRetries().contains(where: { $0.waiting != nil }) { waited += 1 }
+        let bad = try rig.invariants()
+        #expect(bad.isEmpty, "seed \(seed) step \(step): \(bad)")
+        let live = try attempts(rig, x).filter { !$0.state.isTerminal }
+        #expect(live.count <= 1, "seed \(seed) step \(step): live \(live.map(\.id))")
+        let open = try rig.store.postizJobs(where: "video_id=? AND platform='x' AND closed_at IS NULL AND kind='post'", [x.videoId])
+        #expect(open.filter { $0.phase != .deleting }.count <= 1, "seed \(seed) step \(step): open \(open.map(\.id))")
+        #expect(try rig.service.autoRetries(x).count <= PostizService.maxAutoRetries)
       }
-      case 8: try rig.f.updateSettings { s in s.publishing.publishers[.x] = s.publishing.publisher(for: .x) == .postiz ? .manual : .postiz }
-      case 9:
-        if held { _ = try bulk.sendToQueue([x.videoId]) } else { _ = try bulk.removeFromQueue([x.videoId]) }
-        held = try rig.store.video(id: x.videoId)?.heldInEdit == true
-      case 10:
-        if let f = try attempts(rig, x).last(where: { $0.state == .failed && $0.resolution == nil }) { _ = try? actions.fixed(postId: f.id) }
-      default: rig.fake.publishDue(now: rig.f.clock.now)
-      }
-      rig.tick(1 + Int(rng.next() % 2))
-      let bad = try rig.invariants()
-      #expect(bad.isEmpty, "seed \(seed) step \(step): \(bad)")
-      let live = try attempts(rig, x).filter { !$0.state.isTerminal }
-      #expect(live.count <= 1, "seed \(seed) step \(step): live \(live.map(\.id))")
-      let open = try rig.store.postizJobs(where: "video_id=? AND platform='x' AND closed_at IS NULL AND kind='post'", [x.videoId])
-      #expect(open.filter { $0.phase != .deleting }.count <= 1, "seed \(seed) step \(step): open \(open.map(\.id))")
-      #expect(try rig.service.autoRetries(x).count <= PostizService.maxAutoRetries)
+      retries += try rig.service.autoRetries(x).count
+      if !rig.fake.everPublished.isEmpty { published += 1 }
     }
+    #expect(retries >= 24 && waited >= 24 && published >= 2, "retries \(retries), waited \(waited), published \(published)")
   }
 
   struct Seeded {
