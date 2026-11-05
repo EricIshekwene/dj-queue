@@ -62,8 +62,7 @@ struct MainWindowView: View {
     case .score: ScoreView(model: model)
     case .edit: EditView(model: model)
     case .queue: QueueView(model: model)
-    case .week: WeekView(model: model)
-    case .today: TodayView(model: model)
+    case .calendar: CalendarView(model: model)
     case .library: LibraryView(model: model)
     case .posts: PostsView(model: model)
     case .health: HealthView(model: model)
@@ -214,14 +213,15 @@ struct ShortcutSheet: View {
   @Bindable var model: AppModel
 
   private let groups: [(String, [(String, String)])] = [
-    ("Everywhere", [("⌘K", "Search everything"), ("⌘F", "Filter the list on screen"), ("⌘/", "This cheat sheet"), ("⌘1 – ⌘8", "Score · Edit · Queue · Week · Today · Library · Posts · Health"),
+    ("Everywhere", [("⌘K", "Search everything"), ("⌘F", "Filter the list on screen"), ("⌘/", "This cheat sheet"), ("⌘1 – ⌘7", "Score · Edit · Queue · Calendar · Library · Posts · Health"),
                     ("⌘,", "Settings"), ("⌘R", "Refresh"), ("⌘0", "Open the DJ Queue window (menu bar)"),
                     ("⌘Z", "Undo the most recent change (again for the one before)")]),
     ("Selecting clips", [("Click circle", "Select a clip"), ("⇧ Click", "Select a range"), ("⌘ Click", "Add or remove one"),
                          ("⌘A", "Select every clip on the screen"), ("Esc", "Clear the selection")]),
     ("Clips", [("⌘E", "Open the selected clip in the editor"), ("← / →", "Previous / next clip (Single view)"),
                ("0–9", "Type a score for the selected clips (Queue, Library)"), ("⌘⌫", "Exclude the clip (Score)")]),
-    ("Week", [("⌘↩", "Approve week"), ("Drag", "Move or swap days")]),
+    ("Calendar", [("D · 3 · W · M", "Day, 3 Day, Week, Month"), ("T", "Today"), ("← / →", "Previous / next day, week or month"),
+                  ("Drag", "Move a clip to another day")]),
     ("Editor", [("⌘Z / ⇧⌘Z", "Undo / redo the last change to this clip"), ("⌘[ / ⌘]", "Previous / next clip"), ("⌘↩", "Done"),
                 ("Space", "Play / pause"), ("I / O", "Set the trim start / end at the playhead")]),
   ]

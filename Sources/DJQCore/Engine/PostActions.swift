@@ -244,7 +244,7 @@ public final class PostActions: @unchecked Sendable {
     let placer = try Placer(store: store, dm: dm, excluding: [id])
     guard placer.isTaken(platform, day: day, position: position) else { return true }
     let movable = try store.movablePosts(platform: platform, position: position, after: dm.date(day), inclusive: true, excluding: id)
-    guard movable.contains(where: { dm.key($0.scheduledAt) == day }) else { return false }  // posted/pinned holds it
+    guard try movable.contains(where: { try store.planDay(of: $0, dm: dm) == day }) else { return false }  // posted/pinned holds it
     try store.reflow(movable, days: 0, reserve: [day], dm: dm, note: "made room on \(day)")
     return true
   }
@@ -255,7 +255,7 @@ public final class PostActions: @unchecked Sendable {
     case .postNow: try postNow(postId: postId)
     case .shiftPlan: try shiftPlan(postId: postId)
     case .skip: try skip(postId: postId)
-    case .open, .markPosted: break  // UI: open Today / the Mark-posted sheet
+    case .open, .markPosted: break  // UI: open the Calendar / the Mark-posted sheet
     }
   }
 
@@ -330,7 +330,7 @@ public final class PostActions: @unchecked Sendable {
 
   // MARK: Lists
 
-  /// Today screen rows: everything scheduled today, plus anything still due/overdue from earlier days.
+  /// Calendar rows: everything scheduled today, plus anything still due/overdue from earlier days.
   public func dueToday(now: Date) throws -> [PlatformPost] {
     let dm = try store.dayMath()
     let day = dm.key(now)
@@ -391,11 +391,11 @@ public final class PostActions: @unchecked Sendable {
     let today = store.today(dm)
     let position = try store.position(of: skipped)
     let rest = try store.movablePosts(platform: skipped.platform, position: position, after: dm.date(today), inclusive: true,
-                                      excluding: skipped.id)
+                                      excluding: skipped.id).filter { try store.planDay(of: $0, dm: dm) >= today }
     guard let first = rest.first else { return }
     var placer = try Placer(store: store, dm: dm, excluding: Set(rest.map(\.id)))
     let free = placer.place(skipped.platform, position: position, from: today)
-    let gap = dm.days(from: free, to: dm.key(first.scheduledAt))
+    let gap = dm.days(from: free, to: try store.planDay(of: first, dm: dm))
     guard gap > 0 else { return }
     _ = try store.db.transaction { try store.reflow(rest, days: -gap, dm: dm, note: "gap closed −\(gap) d") }
   }

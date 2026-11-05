@@ -181,6 +181,7 @@ import Testing
     let issues = try Validation.issues(video: try clip(f, id), store: f.store)
     #expect(issues.map(\.kind) == [.noText])
     try f.store.setTitle(id, "Yayo x Johnny")
+    try f.store.setSentToQueue(id, true)
     #expect(try f.store.video(id: id)?.state == .ready)  // no explicit v1 needed
     // A default template that doesn't exist is an issue.
     var s = try f.store.settings()

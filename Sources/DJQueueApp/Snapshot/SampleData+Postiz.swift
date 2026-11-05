@@ -72,6 +72,18 @@ extension SampleData {
       try store.save(j)
     }
 
+    // Yesterday's clip: its X post failed in Postiz ("1 failed" on its card).
+    if var p = posts.first(where: { dm.key($0.scheduledAt) == yesterday && $0.platform == .x && $0.planSlotId != nil }) {
+      let msg = "X refused the video: the file is over its size limit"
+      p.state = .failed
+      p.url = nil
+      p.postedAt = nil
+      p.errorType = .uploadFailed
+      p.errorMessage = msg
+      try store.save(p, note: msg)
+      try job(p, phase: .closed, remote: "ERROR", close: .error, error: msg)
+    }
+
     // Yesterday: four extra posts of the first planned clip, one per outcome.
     guard let videoId = posts.first(where: { dm.key($0.scheduledAt) == today })?.videoId,
           let renderId = posts.first(where: { $0.videoId == videoId && $0.renderId != nil })?.renderId else { return }

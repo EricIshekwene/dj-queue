@@ -8,10 +8,9 @@ extension AppModel {
   func stage(_ v: Video) -> ClipStage? { ClipStage.of(v) }
 
   /// The Queue screen's clips: the upcoming plan, then the backlog — never a clip whose stage is Score or Edit.
-  /// `queueList` takes every clip with an upcoming day, and draft (unapproved) weeks don't make a clip Scheduled, so
-  /// a clip that fell back to Edit while it still sat on a draft day used to show here with Edit's stage control
-  /// ("Send to queue" on a Queue card, round 4 S1). Such a clip is in Edit only. A planned clip whose file went
-  /// missing (no stage) stays in place and shows its problem.
+  /// `queueList` takes every clip with an upcoming day, so a clip that fell back to Edit while it still sat on a day
+  /// could show here with Edit's stage control ("Send to queue" on a Queue card, round 4 S1). Such a clip is in Edit
+  /// only. A planned clip whose file went missing (no stage) stays in place and shows its problem.
   var queueClips: [Video] {
     queueList.filter { v in ClipStage.of(v).map { $0 >= .queue } ?? true }
   }
@@ -27,8 +26,8 @@ extension AppModel {
     }
   }
 
-  /// "Back to Score" · "Back to Edit" · "Back to Queue" — always the clip's real neighbour (round 4 S1; no chevrons
-  /// in the title, the icon carries it). From the clip's own stage, never from the screen it's shown on.
+  /// "Back to Score" · "Back to Edit" — always the clip's real neighbour (round 4 S1; no chevrons in the title, the
+  /// icon carries it). From the clip's own stage, never from the screen it's shown on.
   func stageBackTitle(_ v: Video) -> String { StageWording.backTitle(v) }
 
   /// What back does, in words (tooltip).
@@ -36,7 +35,7 @@ extension AppModel {
 
   static let removeFromQueueHelp = StageWording.backToEditHelp
 
-  /// Why `v` can't leave the plan (Remove from queue / Back to Queue): it already posted somewhere, or every platform
+  /// Why `v` can't leave the Calendar (Back to Edit, Unschedule): it already posted somewhere, or every platform
   /// finished. Mirrors `BulkActions.postedBlocker` from the loaded data.
   func removeFromQueueBlocker(_ v: Video) -> String? {
     if let p = (postsByVideo[v.id] ?? []).filter({ ($0.kind == .regular || $0.kind == .retry) && $0.state == .posted })
@@ -57,8 +56,7 @@ extension AppModel {
     return targets.count == 1 ? reasons[0] : "Every selected clip already posted somewhere — they can't leave the plan"
   }
 
-  /// "Score it" · "Send to Queue" · "Schedule" · "Mark posted…" (from the clip's stage: a Queue card can never say
-  /// "Send to Queue").
+  /// "Score it" · "Send to Queue" · "Mark posted…" (from the clip's stage: a Queue card can never say "Send to Queue").
   func stageForwardTitle(_ v: Video) -> String { StageWording.forwardTitle(v) }
 
   func stageForwardHelp(_ v: Video) -> String { StageWording.forwardHelp(v) }
@@ -81,7 +79,7 @@ extension AppModel {
     return all.flatMap { id, items in
       items.map { i in
         let day = Fmt.day(dm.date(i.date), tz: tz, style: "EEE d MMM")
-        let what = i.platforms.isEmpty ? "proposed, not approved yet" : "\(i.platforms.count) platform\(i.platforms.count == 1 ? "" : "s")"
+        let what = i.platforms.isEmpty ? "scheduled" : "\(i.platforms.count) platform\(i.platforms.count == 1 ? "" : "s")"
         let name = all.count > 1 ? (video(id).map(displayName) ?? id) + " — " : ""
         return name + day + " · " + what + (i.pinned ? " · pinned" : "")
       }
@@ -90,9 +88,9 @@ extension AppModel {
 
   // MARK: Actions
 
-  /// After a direct settings write (New clip defaults, a deleted template): clips whose validity changed move between
-  /// Edit and Queue now instead of on the next engine tick (DJQCore `Revalidation`, states only — the plan is the
-  /// engine's job).
+  /// After a direct settings write (New clip defaults, a deleted template): a Queue clip that's no longer valid drops
+  /// to Edit now instead of on the next engine tick (DJQCore `Revalidation`, states only — the plan is the engine's
+  /// job). Nothing moves forward here: only Send to Queue does that.
   func revalidateStages() {
     let s = store
     Task.detached(priority: .userInitiated) {
@@ -122,27 +120,32 @@ extension AppModel {
   }
 
   /// One stage back for each clip. Asks first for several clips, for Back to Score (clears a score) and whenever
-  /// scheduled days would go.
-  func stageBack(_ ids: [String]) {
+  /// scheduled days would go. `unschedule`: the Calendar's words for the same move.
+  func stageBack(_ ids: [String], unschedule: Bool = false) {
     let vids = ids.compactMap(video)
     guard !vids.isEmpty else { return }
-    if vids.count == 1, ClipStage.of(vids[0]) == .queue { removeFromQueue(ids); return }
+    // Unschedule never clears a score: back from Edit is Back to Score, a different move.
+    if unschedule, vids.contains(where: { ![.queue, .scheduled].contains(ClipStage.of($0)) }) {
+      show("It isn't in the Queue", error: true)
+      return
+    }
+    if vids.count == 1, ClipStage.of(vids[0]) == .queue, !unschedule { removeFromQueue(ids); return }
     let b = bulk
     let one = vids.count == 1 ? vids[0] : nil
     let title: String
     if let v = one, ClipStage.of(v) == .edit {
       title = "Clear score \(v.score.map(String.init) ?? "") and send back to Score?"
-    } else if let v = one, ClipStage.of(v) == .scheduled {
-      title = "Unschedule and send back to Queue?"
+    } else if unschedule || one.map({ ClipStage.of($0) == .scheduled }) == true {
+      title = "Unschedule and send back to Edit?"
     } else {
       title = "Move \(AppModel.pipelineClips(vids.count)) back a stage?"
     }
     let anyScore = vids.contains { ClipStage.of($0) == .edit }
     requestBulk(BulkRequest(
-      title: title, verb: one.map(stageBackTitle) ?? "Move back", ids: ids,
+      title: title, verb: unschedule ? "Unschedule" : one.map(stageBackTitle) ?? "Move back", ids: ids,
       changes: one == nil ? [.init(field: "Edit → Score", value: "Score cleared"),
                              .init(field: "Queue → Edit", value: "Held in Edit until sent to the Queue again"),
-                             .init(field: "Scheduled → Queue", value: "Unposted days removed, stays in the Queue")] : [],
+                             .init(field: "Scheduled → Edit", value: "Unposted days removed, held in Edit")] : [],
       alwaysConfirm: anyScore || hasScheduledDays(ids), previewTitle: one == nil ? "What happens" : "Scheduled days removed",
       previewLines: { [weak self] r in
         guard let self else { return [] }
@@ -150,7 +153,9 @@ extension AppModel {
         return self.moveLines(r)
       },
       previewIcon: one == nil ? "arrow.uturn.backward" : "calendar",
-      doneText: { [weak self] r in self?.moveToast(r, back: true) ?? ("Done", nil) }) { dry in try b.back(ids, dryRun: dry) })
+      doneText: { [weak self] r in unschedule ? ("Unscheduled · back in Edit", nil) : self?.moveToast(r, back: true) ?? ("Done", nil) }) {
+        dry in try b.back(ids, dryRun: dry)
+      })
   }
 
   /// One stage forward. Score → opens Score; Scheduled → Mark posted for the next post; Edit/Queue → BulkActions.
@@ -176,8 +181,7 @@ extension AppModel {
     requestBulk(BulkRequest(
       title: one.map { "\(stageForwardTitle($0))?" } ?? "Move \(AppModel.pipelineClips(vids.count)) forward a stage?",
       verb: one.map(stageForwardTitle) ?? "Move forward", ids: ids,
-      changes: one == nil ? [.init(field: "Edit → Queue", value: "Default crop confirmed; clips still missing something stay in Edit"),
-                             .init(field: "Queue → Scheduled", value: "Next open day this or next week, pinned")] : [],
+      changes: one == nil ? [.init(field: "Edit → Queue", value: "Default crop confirmed; clips still missing something stay in Edit")] : [],
       previewTitle: "What happens", previewLines: { [weak self] r in self?.moveLines(r) ?? [] }, previewIcon: "arrow.right",
       doneText: { [weak self] r in self?.moveToast(r, back: false) ?? ("Done", nil) }) { dry in try b.forward(ids, dryRun: dry) })
   }
@@ -212,20 +216,27 @@ struct StageControl: View {
   var compact = false
   var size: DSButtonSize = .sm
 
+  /// Clips in the Queue schedule themselves: there is no forward move to offer.
+  private var hasForward: Bool { ClipStage.of(video) != .queue }
+
   var body: some View {
     let back = model.stageBlocker(video, .back)
     let fwd = model.stageBlocker(video, .forward)
     if compact {
       DSIconButton("chevron.left", tooltip: back == nil ? "\(model.stageBackTitle(video)) — \(model.stageBackHelp(video))" : model.stageBackTitle(video), size: .sm,
                    disabledReason: back) { model.stageBack([video.id]) }
-      DSIconButton("chevron.right", tooltip: fwd == nil ? "\(model.stageForwardTitle(video)) — \(model.stageForwardHelp(video))" : model.stageForwardTitle(video), size: .sm,
-                   disabledReason: fwd) { model.stageForward([video.id]) }
+      if hasForward {
+        DSIconButton("chevron.right", tooltip: fwd == nil ? "\(model.stageForwardTitle(video)) — \(model.stageForwardHelp(video))" : model.stageForwardTitle(video), size: .sm,
+                     disabledReason: fwd) { model.stageForward([video.id]) }
+      }
     } else {
       HStack(spacing: 4) {
         DSButton(model.stageBackTitle(video), icon: "chevron.left", variant: .ghost, size: size, disabledReason: back,
                  tooltip: model.stageBackHelp(video)) { model.stageBack([video.id]) }
-        DSButton(model.stageForwardTitle(video), trailingIcon: "chevron.right", variant: .outline, size: size, disabledReason: fwd,
-                 tooltip: model.stageForwardHelp(video)) { model.stageForward([video.id]) }
+        if hasForward {
+          DSButton(model.stageForwardTitle(video), trailingIcon: "chevron.right", variant: .outline, size: size, disabledReason: fwd,
+                   tooltip: model.stageForwardHelp(video)) { model.stageForward([video.id]) }
+        }
       }
       .fixedSize()
     }
@@ -247,10 +258,12 @@ struct StageMenuItems: View {
       model.stageBack(targets)
     }
     .disabled(back != nil)
-    Button(menuTitle(many ? "Forward a stage (\(targets.count))" : model.stageForwardTitle(video), blocker: fwd), systemImage: "arrow.forward") {
-      model.stageForward(targets)
+    if many || ClipStage.of(video) != .queue {
+      Button(menuTitle(many ? "Forward a stage (\(targets.count))" : model.stageForwardTitle(video), blocker: fwd), systemImage: "arrow.forward") {
+        model.stageForward(targets)
+      }
+      .disabled(fwd != nil)
     }
-    .disabled(fwd != nil)
   }
 
   private func menuTitle(_ title: String, blocker: String?) -> String {

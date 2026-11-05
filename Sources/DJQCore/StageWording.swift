@@ -3,34 +3,36 @@ import Foundation
 // Round 4 S1 "Stage = readiness": the ONE place that names stages, a stage's real neighbours (the stage control's
 // back/forward labels and what they do) and why a clip is in Edit (reason chips). The app and `djq` both read it,
 // so the words never drift apart. There are no "Ready" / "Needs edit" / "Unready" labels: Edit = not ready yet,
-// Queue = ready (and only ever ready clips), Scheduled = in an approved week.
+// Queue = ready (and only ever ready clips), Scheduled = has a day on the Calendar (a status, not a step: round 13).
 
 // MARK: - Stage control (back / forward)
 
 extension ClipStage {
-  /// The stage the back control goes to (Edit → Score, Queue → Edit, Scheduled → Queue). nil: no back move.
+  /// The stage the back control goes to (Edit → Score, Queue → Edit, Scheduled → Edit: a clip put back in the Queue
+  /// would only get a day again). nil: no back move.
   public var backTarget: ClipStage? {
     switch self {
-    case .edit, .queue, .scheduled: previous
+    case .edit: .score
+    case .queue, .scheduled: .edit
     case .score, .posted: nil
     }
   }
 
-  /// The stage the forward control goes to (Score → Edit, Edit → Queue, Queue → Scheduled, Scheduled → Posted).
-  public var forwardTarget: ClipStage? { next }
+  /// The stage the forward control goes to (Score → Edit, Edit → Queue, Scheduled → Posted). nil: no forward move
+  /// (Queue clips schedule themselves).
+  public var forwardTarget: ClipStage? { self == .queue ? nil : next }
 
-  /// Back control label, naming the real neighbour: "Back to Score" · "Back to Edit" · "Back to Queue".
+  /// Back control label, naming the real neighbour: "Back to Score" · "Back to Edit".
   /// nil for Score (first stage) and Posted (Repost / Reset instead).
   public var backTitle: String? { backTarget.map { "Back to \($0.displayName)" } }
 
-  /// Forward control label: "Score it" · "Send to Queue" · "Schedule" · "Mark posted…". nil for Posted.
+  /// Forward control label: "Score it" · "Send to Queue" · "Mark posted…". nil for the Queue and Posted.
   public var forwardTitle: String? {
     switch self {
     case .score: "Score it"
     case .edit: "Send to Queue"
-    case .queue: "Schedule"
     case .scheduled: "Mark posted…"
-    case .posted: nil
+    case .queue, .posted: nil
     }
   }
 
@@ -39,7 +41,7 @@ extension ClipStage {
     switch self {
     case .edit: "Clears its score (\(score.map(String.init) ?? "–")) and sends it back to Score"
     case .queue: StageWording.backToEditHelp
-    case .scheduled: "Unschedule: removes its unposted days from the plan; it goes back to the Queue"
+    case .scheduled: StageWording.unscheduleHelp
     case .score, .posted: nil
     }
   }
@@ -49,9 +51,8 @@ extension ClipStage {
     switch self {
     case .score: "Opens Score to give it a score"
     case .edit: "Confirms the default crop where missing and sends it to the Queue; if something's still missing it stays in Edit and says what"
-    case .queue: "Pins it to the next open day of this or next week (a draft week still needs approval in Week)"
-    case .scheduled: "Opens Mark posted for its next post (Today)"
-    case .posted: nil
+    case .scheduled: "Opens Mark posted for its next post (Calendar)"
+    case .queue, .posted: nil
     }
   }
 }
@@ -62,11 +63,17 @@ extension ClipStage {
 public enum StageWording {
   /// Queue → Edit (formerly "Remove from queue"): the clip is held in Edit until it is sent to the Queue again.
   public static let backToEditHelp = "Sends it back to Edit and keeps it there until you send it to the Queue again; its unposted days are removed"
+  /// Scheduled → Edit: same move, seen from the Calendar.
+  public static let unscheduleHelp = "Takes it off the calendar and holds it in Edit until you send it to the Queue again"
+  /// Why a swap was refused: the other clip would land on a slot inside the lead.
+  public static let todayTooSoon = "Today's slot is too soon"
+  /// Why the Queue has no forward move.
+  public static let queueSchedulesItself = "Clips in the Queue schedule themselves"
 
-  /// Back label for `v`: "Back to Score" / "Back to Edit" / "Back to Queue"; "Back" when it has no back move.
+  /// Back label for `v`: "Back to Score" / "Back to Edit"; "Back" when it has no back move.
   public static func backTitle(_ v: Video) -> String { ClipStage.of(v)?.backTitle ?? "Back" }
 
-  /// Forward label for `v`: "Score it" / "Send to Queue" / "Schedule" / "Mark posted…"; "Forward" otherwise.
+  /// Forward label for `v`: "Score it" / "Send to Queue" / "Mark posted…"; "Forward" otherwise.
   public static func forwardTitle(_ v: Video) -> String { ClipStage.of(v)?.forwardTitle ?? "Forward" }
 
   /// Back tooltip for `v` (falls back to the blocker, then "Back a stage").
@@ -80,12 +87,14 @@ public enum StageWording {
   }
 
   /// Why `direction` can't move `v`, from the clip alone (nil = no data-free reason; the caller may still add one).
-  /// Covers: no stage (long-form / excluded / file missing), a missing file in Edit, Score back, Posted back/forward.
+  /// Covers: no stage (long-form / excluded / file missing), a missing file in Edit, Score back, Queue forward,
+  /// Posted back/forward.
   public static func blocker(_ v: Video, _ direction: StageDirection) -> String? {
     guard let st = ClipStage.of(v) else { return noStageReason(v) }
     if v.missing, st == .edit { return fileMissing }
     switch (st, direction) {
     case (.score, .back): return "Score is the first stage"
+    case (.queue, .forward): return queueSchedulesItself
     case (.posted, .back): return "Posted — use Repost (next version) or Reset a wrongly marked post in Posts"
     case (.posted, .forward): return "Posted is the last stage"
     default: return nil
@@ -119,8 +128,21 @@ public enum StageWording {
     "Moved to Edit: " + reasonsText(issues)
   }
 
-  /// Event logged when an Edit clip becomes valid again and goes to the Queue.
-  public static let movedToQueue = "Moved to the Queue: nothing missing any more"
+  /// "Queue running low" (the notification, Doctor and the Calendar's card).
+  public static let queueLowTitle = "Queue running low"
+
+  /// "Scheduled through Sat 7 Nov" · "Nothing scheduled". `day` is `Runway.scheduledThrough`.
+  public static func scheduledThrough(_ day: String?, settings s: Settings) -> String {
+    day.map { "Scheduled through \(BulkActions.day($0, DayMath(settings: s), s))" } ?? "Nothing scheduled"
+  }
+
+  /// "Scheduled through Sat 7 Nov. Send more clips from Edit."
+  public static func queueLowBody(_ day: String?, settings s: Settings) -> String {
+    "\(scheduledThrough(day, settings: s)). Send more clips from Edit."
+  }
+
+  /// The event of a clip the scheduler gave a day. `day` is already formatted ("Tue 10 Nov").
+  public static func scheduledFor(_ day: String) -> String { "Scheduled for \(day)" }
 
   /// Event logged instead of "Moved to Edit" for a clip pinned to a day: it stays on that day and can't post until
   /// fixed. `day` is already formatted ("Tue 10 Nov").

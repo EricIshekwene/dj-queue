@@ -158,7 +158,7 @@ struct ReuploadMenu: View {
   }
 }
 
-/// The version choices for "Re-upload anyway" (Today row + Posts problem card). Each item is undoable (toast + ⌘Z).
+/// The version choices for "Re-upload anyway" (Day row + Posts problem card). Each item is undoable (toast + ⌘Z).
 struct ReuploadItems: View {
   @Bindable var model: AppModel
   let post: PlatformPost
@@ -209,7 +209,7 @@ struct MetricsPopover: View {
   }
 }
 
-/// Placeholder rows while the first load runs (Today, Library).
+/// Placeholder rows while the first load runs (Calendar, Library).
 struct SkeletonRows: View {
   var count = 8
   var height: CGFloat = DS.size.listRow

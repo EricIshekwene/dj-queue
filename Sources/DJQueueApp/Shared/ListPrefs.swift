@@ -1,12 +1,12 @@
 import Foundation
 import Observation
 
-/// The six clip lists that share one header (round 4 S3): Score, Edit, Queue, Library, Posts and Week's backlog
-/// drawer. Each keeps its own search, status chip, filters and sort.
+/// The five clip lists that share one header (round 4 S3): Score, Edit, Queue, Library and Posts. Each keeps its own
+/// search, status chip, filters and sort.
 enum ListPage: String, CaseIterable, Codable, Sendable {
-  case score, edit, queue, library, posts, backlog
+  case score, edit, queue, library, posts
 
-  /// The list on `screen` (Week → its backlog drawer); nil for screens without one (Today, Health).
+  /// The list on `screen`; nil for screens without one (Calendar, Health).
   static func of(_ screen: Screen) -> ListPage? {
     switch screen {
     case .score: .score
@@ -14,8 +14,7 @@ enum ListPage: String, CaseIterable, Codable, Sendable {
     case .queue: .queue
     case .library: .library
     case .posts: .posts
-    case .week: .backlog
-    case .today, .health: nil
+    case .calendar, .health: nil
     }
   }
 }
@@ -101,7 +100,7 @@ final class ListPrefs {
     }
   }
 
-  /// A ⌘F that hasn't reached a search field yet (Week: the drawer's field appears after the drawer opens).
+  /// A ⌘F that hasn't reached a search field yet.
   private(set) var pendingFocus: ListPage?
 
   /// A screen-scoped dialog is open (Queue's pin dialog): ⌘F does nothing.

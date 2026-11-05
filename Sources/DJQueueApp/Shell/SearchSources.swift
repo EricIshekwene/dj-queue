@@ -104,9 +104,11 @@ extension AppModel {
     postsScrollTarget = id
   }
 
+  /// The Calendar's Week view on that week, for this session (the remembered view stays what Eric chose).
   func openWeek(_ weekStart: String) {
-    leaveForScreen(.week)
-    self.weekStart = weekStart
+    leaveForScreen(.calendar)
+    calendarMode = .week
+    calendarAnchor = weekStart == thisWeek ? "" : weekStart
   }
 
   /// Library filtered to one session: whatever else narrowed the list goes, so every clip of the session shows.
@@ -141,12 +143,6 @@ extension AppModel {
 
   func paletteWeekRow(_ ws: String) -> PaletteCommand {
     var parts = [weekContext(ws)]
-    switch weekStatus(ws) {
-    case .draft?: parts.append("Draft")
-    case .approved?: parts.append("Approved")
-    case .locked?: parts.append("Locked")
-    case nil: break
-    }
     let n = weekClips[ws] ?? 0
     parts.append(n == 0 ? "No clips planned" : "\(n) clip\(n == 1 ? "" : "s")")
     return searchRow(SearchId.week(ws), weekTitle(ws), symbol: "calendar", group: .week, subtitle: parts.joined(separator: " · ")) {
@@ -196,7 +192,7 @@ extension AppModel {
     // Health doesn't show the runway: the Queue's toolbar does.
     let target: Screen = h.id == "runway" ? .queue : .health
     var subtitle = h.subtitle
-    if h.id == "runway" { subtitle = "\(runway.approvedDays) days approved · \(runway.totalDays) days in total" }
+    if h.id == "runway" { subtitle = "\(runway.approvedDays) days scheduled · \(runway.totalDays) days in total" }
     return searchRow(SearchId.health(h.id), h.title, symbol: h.id == "runway" ? "gauge.with.needle" : "heart", group: .health, subtitle: subtitle) {
       [weak self] in self?.leaveForScreen(target)
     }

@@ -15,7 +15,7 @@ enum ListFilterKey {
 }
 
 /// Clip orders offered by the sort menus. `natural` is the page's own order (Score: set order; Edit: score, worst
-/// first; backlog: queue order).
+/// first).
 enum ClipSort: String, CaseIterable {
   case natural, session, newest, scoreHigh, scoreLow, title
 }
@@ -25,7 +25,7 @@ extension ListPage {
   var filterKeys: [String] {
     switch self {
     case .score: [ListFilterKey.kind]
-    case .edit, .queue, .backlog: [ListFilterKey.session, ListFilterKey.kind, ListFilterKey.score]
+    case .edit, .queue: [ListFilterKey.session, ListFilterKey.kind, ListFilterKey.score]
     case .library: [ListFilterKey.session, ListFilterKey.kind, ListFilterKey.score, ListFilterKey.stage]
     case .posts: [ListFilterKey.platform, ListFilterKey.session, ListFilterKey.kind, ListFilterKey.score]
     }
@@ -37,7 +37,6 @@ extension ListPage {
     case .score: [.natural, .newest, .title]
     case .edit: [.natural, .scoreHigh, .session, .newest, .title]
     case .library: [.session, .newest, .scoreHigh, .scoreLow, .title]
-    case .backlog: [.natural, .scoreHigh, .scoreLow, .newest, .title]
     case .queue, .posts: []
     }
   }
@@ -49,7 +48,6 @@ extension ListPage {
     case .natural:
       switch self {
       case .edit: "Score, worst first"
-      case .backlog: "Queue order"
       default: "Set order"
       }
     case .session: "Session order"
@@ -198,16 +196,10 @@ extension AppModel {
     dsWithAnimation { ListPrefs.shared.clearFilters(page) }
   }
 
-  /// ⌘F: focus the current screen's search (Week: open the backlog drawer first). Nothing while a dialog, sheet or
-  /// in-window overlay is up (native popovers are their own window and never see it).
+  /// ⌘F: focus the current screen's search. Nothing while a dialog, sheet or in-window overlay is up (native popovers
+  /// are their own window and never see it).
   func focusListSearch() {
-    guard editor == nil, !showSettings, !showPalette, !showShortcuts, pendingBulk == nil, pendingConfirm == nil,
-          previewVideo == nil, markPostedTarget == nil, reportTarget == nil, longformTarget == nil, scorePrompt == nil,
-          pinPrompt == nil, pendingReplace == nil, captionDialogIds == nil, !ListPrefs.shared.screenDialogOpen,
-          BrowseUI.shared.quickLook == nil, BrowseUI.shared.longformTargets.isEmpty, BrowseUI.shared.scoreTargets.isEmpty,
-          BrowseUI.shared.pendingPostBulk == nil,
-          let page = ListPage.of(screen) else { return }
-    if page == .backlog && !weekBacklogExpanded { dsWithAnimation { weekBacklogExpanded = true } }
+    guard noOverlayOpen, let page = ListPage.of(screen) else { return }
     ListPrefs.shared.focusSearch(page)
   }
 }
@@ -230,7 +222,7 @@ struct ListNoMatches: View {
   }
 }
 
-/// The sort menu for pages that use `ClipSort` (Score, Edit, Library, backlog).
+/// The sort menu for pages that use `ClipSort` (Score, Edit, Library).
 struct ListSortMenu: View {
   let page: ListPage
   var size: DSButtonSize = .md

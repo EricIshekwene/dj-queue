@@ -81,6 +81,11 @@ extension AppModel {
           self.show(e.localizedDescription, error: true)
         case .success(let res):
           let n = res.changed.count
+          // One clip refused: the reason is the message (a post removed from Postiz, a day too soon).
+          if n == 0, r.ids.count == 1, res.outlook == nil, let why = res.skipped.values.first {
+            self.show(why, error: true)
+            return
+          }
           if n == 0 {
             self.show(DSToastModel(message: "Nothing changed",
                                    detail: res.outlook.map { "\($0.summary)" } ?? res.skipped.values.sorted().first, duration: 4))
@@ -155,6 +160,14 @@ extension AppModel {
     runUndo(id, confirmGoLive: false)
   }
 
+  /// Core's refusal in Eric's words: no action names, no force the app doesn't offer.
+  static func undoFailure(_ message: String) -> String {
+    if message.contains("its slot has passed") { return "That day's slot has passed, so this can't be undone" }
+    guard let colon = message.range(of: ": "), message.hasPrefix("Can't undo the plan part of"),
+          let end = message.range(of: ". Use force") else { return "Couldn't undo: \(message)" }
+    return "Couldn't undo: \(message[colon.upperBound..<end.lowerBound])"
+  }
+
   private func runUndo(_ id: String, confirmGoLive: Bool) {
     splitEditorSession()
     let label = undoHistory.entries.first { $0.batchId == id }?.label
@@ -167,11 +180,12 @@ extension AppModel {
           // An undo from a toast while the editor is open: the session restarts after it (its edits so far were
           // journaled by the split above), so closing the editor never re-applies what was just undone.
           if let s = self.editorSession { self.editorSession = (try? self.bulk.begin(s.action, ids: s.ids)) ?? s }
+          let left = r.summary.contains("plan left as it is") ? "plan left as it is" : "changed since"
           self.show(DSToastModel(message: label.map { "Undone: \($0)" } ?? "Undone",
-                                 detail: r.skipped.isEmpty ? nil : "\(r.skipped.count) skipped · changed since",
+                                 detail: r.skipped.isEmpty ? nil : "\(r.skipped.count) skipped · \(left)",
                                  tone: .neutral, duration: 4))
         case .failure(let e):
-          self.show("Couldn't undo: \(e.localizedDescription)", error: true)
+          self.show(Self.undoFailure(e.localizedDescription), error: true)
         }
       }
     }

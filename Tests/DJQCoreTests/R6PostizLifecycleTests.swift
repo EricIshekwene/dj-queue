@@ -19,7 +19,7 @@ import Testing
       f = try Fixture.engine(n)
       renderer = FakeRenderer(store: f.store)
       service = PostizService(store: f.store, transport: fake, keyStore: keys)
-      engine = Engine(store: f.store, renderer: renderer, publisher: nil, notifier: notifier, postiz: service)
+      engine = Engine(store: f.store, renderer: renderer, publisher: nil, notifier: notifier, postiz: service).planFrozen
       try f.updateSettings { s in
         for p in platforms {
           s.publishing.publishers[p] = .postiz
@@ -623,7 +623,7 @@ import Testing
     #expect(rig.fake.createCount == 1)
     // One more look finds nothing: it never re-sends by itself; Eric decides.
     #expect(throws: EngineError.self) { try rig.service.resolveUnknown(postId: j.postId) }
-    #expect(try rig.service.resolveUnconfirmed(postId: j.postId, inPostiz: false) == "released to Today — post it by hand")
+    #expect(try rig.service.resolveUnconfirmed(postId: j.postId, inPostiz: false) == "released to the Calendar — post it by hand")
     rig.tick(3)
     let p = try #require(try rig.store.post(id: j.postId))
     #expect(rig.fake.createCount == 1 && p.publisher == "manual" && !p.state.isTerminal)
@@ -951,7 +951,7 @@ import Testing
   @Test func defaultEngineMakesNoCallsWhileEverythingIsManual() throws {
     let f = try Fixture.engine(2)
     try Planner(store: f.store).approveWeek(f.week)
-    let e = Engine(store: f.store, renderer: FakeRenderer(store: f.store), publisher: nil, notifier: LogNotifier())
+    let e = Engine(store: f.store, renderer: FakeRenderer(store: f.store), publisher: nil, notifier: LogNotifier()).planFrozen
     let r = e.tick(reason: "t")
     #expect(r.steps["publish"] == "off" && r.steps["sync"] == "off")
     #expect(TickReport.order.firstIndex(of: "publish")! == TickReport.order.firstIndex(of: "render")! + 1)
@@ -1026,7 +1026,7 @@ import Testing
     let rig = try Rig(8, platforms: [.tiktok, .x, .youtube], budget: 150) { $0.postsPerDay = seed % 2 == 0 ? 2 : 1 }
     rig.fake.rng = SeededRNG(seed: seed &+ 99)
     let other = PostizService(store: rig.store, transport: rig.fake, keyStore: rig.keys)
-    let engine2 = Engine(store: rig.store, renderer: rig.renderer, publisher: nil, notifier: rig.notifier, postiz: other)
+    let engine2 = Engine(store: rig.store, renderer: rig.renderer, publisher: nil, notifier: rig.notifier, postiz: other).planFrozen
     var dbFail = false
     for svc in [rig.service, other] {
       svc.afterCreateHook = { if dbFail { dbFail = false; throw SQLiteError(code: 5, message: "database is locked", sql: nil) } }

@@ -1,8 +1,8 @@
 import DJQCore
 import SwiftUI
 
-/// Round 9 (prefix r9-): a failed post with its automatic retry coming, on every screen that shows it: Today, Posts,
-/// Week, the inspector and the menu bar. Nothing here is a Problem, so none of them shows a red badge for it.
+/// Round 9 (prefix r9-): a failed post with its automatic retry coming, on every screen that shows it: the Calendar's
+/// Day, 3 Day and Week views, Posts, the inspector and the menu bar. Nothing here is a Problem, so none of them shows a red badge for it.
 extension SnapshotShots {
   static func r9retry(_ c: SnapshotContext) -> [Shot] {
     let pm = c.postiz
@@ -25,9 +25,14 @@ extension SnapshotShots {
       m.screen = .posts
     }
     return [
-      c.main("r9-today", pm) { m in
+      c.main("r9-day", pm) { m in
         show(m)
-        m.screen = .today
+        m.openCalendarDay()
+      },
+      c.main("r9-3day", pm) { m in
+        show(m)
+        m.calendarMode = .threeDay
+        m.screen = .calendar
       },
       c.main("r9-posts-scheduled", pm) { m in
         scheduled(m) { _ in false }
@@ -48,7 +53,7 @@ extension SnapshotShots {
       },
       c.main("r9-week", pm) { m in
         show(m)
-        m.screen = .week
+        m.screen = .calendar
       },
       c.view("r9-menubar", width: 320) {
         show(pm)

@@ -16,7 +16,7 @@ Locked feel: `R2.FEEL` ChatGPT web (sidebar + centred composer + popover menu), 
 2. **One near-black primary.** Each screen has at most one filled button: a near-black capsule with white text (dark mode: a white capsule with near-black text). Everything else is a ghost or outlined capsule. Blue (#0285FF) appears only on the toggle-on state, focus rings, links and checked checkboxes. **Why:** this matches ChatGPT ("Save", send ↑, "Log in"), and Principle 3 asks for a single restrained accent.
 3. **Soft radii everywhere.** Use capsules for buttons, chips, segmented controls, the bulk bar and the search field. Use 16 pt for cards, modals and the inspector, and 10 pt for rows, menu items and inputs. **Why:** soft rounding is the ChatGPT signature (composer pill, settings modal, account menu).
 4. **Media is the only colour.** Clip covers and autoplaying proxies carry the colour. The UI stays greyscale, plus semantic status colour used sparingly. **Why:** DJ footage is saturated, so a neutral frame keeps it the hero.
-5. **Centred reading column.** Text-heavy screens (Today, Edit, Queue in Cards view, Posts, Health) centre a column of at most 880 pt in the content area, the way ChatGPT centres its conversation. Media-heavy views (grids, Week, Score) use the full width. **Why:** the scan line stays short and the 1440 pt window feels calm instead of stretched.
+5. **Centred reading column.** Text-heavy screens (Calendar Day view, Edit, Queue in Cards view, Posts, Health) centre a column of at most 880 pt in the content area, the way ChatGPT centres its conversation. Media-heavy views (grids, Week, Score) use the full width. **Why:** the scan line stays short and the 1440 pt window feels calm instead of stretched.
 6. **Every control explains itself.** Each control has a visible label, or a tooltip when it is icon-only. A disabled control's tooltip says why it is disabled. A field changed from the default shows a small "Custom" tag with ↺ to reset it. **Why:** Principle 3 and staged edits #6/#7/#10.
 7. **Status is a chip or a dot, never a sentence.** Missing requirements appear as chips on the card (the `R2.EDIT` pattern). Platform state is a small icon plus dot, shown only when the clip is planned or posted.
 8. **Native, not web-imitation.** Keep `NavigationSplitView`, a unified transparent toolbar, SF Pro, SF Symbols, real `Menu`/`Picker`/`Toggle` behaviour, ⌘K, and context menus. Restyle these through the design system; don't hand-roll replacements. **Why:** native SwiftUI is a binding decision. The design system mirrors shadcn/ui and Base UI anatomy with ChatGPT tokens.
@@ -58,7 +58,7 @@ Platform colours are **not** used. Platforms are identified by a drawn generic g
 |---|---|---|
 | `r.xs` | 6 | list thumbnails, duration badge |
 | `r.sm` | 10 | rows, menu items, inputs, tile thumbnails, segmented segment |
-| `r.md` | 12 | grid tiles, Week day cards, toasts |
+| `r.md` | 12 | grid tiles, Calendar cards, toasts |
 | `r.lg` | 16 | horizontal clip cards, inspector, popovers, settings modal, attention cards |
 | `r.xl` | 20 | Score large player, phone mock screen (device bezel 44) |
 | `r.full` | capsule | buttons, chips, segmented track, search, bulk bar, pills |
@@ -115,8 +115,7 @@ Locked: `R2.NAV` ChatGPT web sidebar (alt: ChatGPT iOS drawer). Menus follow `R2
 │ ◎ Score          12  │                                                                    │
 │ ✎ Edit            9  │                                                                    │
 │ ≡ Queue          41  │                                                                    │
-│ ▦ Week               │                                                                    │
-│ ☀ Today         3 ●  │                                                                    │
+│ ▦ Calendar      3 ●  │                                                                    │
 │ Browse               │                                                                    │
 │ ▤ Library            │                                                                    │
 │ ✉ Posts          2 ● │                                                                    │
@@ -127,9 +126,9 @@ Locked: `R2.NAV` ChatGPT web sidebar (alt: ChatGPT iOS drawer). Menus follow `R2
 └──────────────────────┴────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Sidebar (260 pt, `bg.sidebar`)**: rows 36 pt tall, radius 10, with a 16 pt SF Symbol, `callout` label and a right-aligned count (`caption`, tertiary, tabular). The selected row uses `fill.selected`. The pipeline group (Score → Edit → Queue → Week → Today) has no header, like ChatGPT's top items. The "Browse" eyebrow (`micro`, tertiary) heads Library/Posts/Health. Count rules: Score = unscored, Edit = scored but not ready, Queue = ready + planned, Today = posts due today (count turns into a filled near-black capsule when something is due now), Posts = problems (a red capsule, shown only when there are problems), Health = dot only (green, amber or red). A row with zero shows no number.
+- **Sidebar (260 pt, `bg.sidebar`)**: rows 36 pt tall, radius 10, with a 16 pt SF Symbol, `callout` label and a right-aligned count (`caption`, tertiary, tabular). The selected row uses `fill.selected`. The pipeline group (Score → Edit → Queue → Calendar) has no header, like ChatGPT's top items. The "Browse" eyebrow (`micro`, tertiary) heads Library/Posts/Health. Count rules: Score = unscored, Edit = scored but not ready, Queue = ready + planned, Calendar = posts due today (count turns into a filled near-black capsule when something is due now), Posts = problems (a red capsule, shown only when there are problems), Health = dot only (green, amber or red). A row with zero shows no number.
 - **Sidebar footer** (the slot ChatGPT uses for its account row) shows the engine line (`● Running · next 7:00 PM TikTok`, or an amber `Paused` / red `Engine stopped` dot) and Settings. Clicking the engine line opens a small menu: Pause all posting, Pause one platform ▸, Open Health.
-- **Toolbar (52 pt, transparent, unified)**: left has the screen title (`title`) and a secondary context line (`callout`, e.g. "41 ready · next Thu 5 Nov"). Right has the view-mode segmented control when the screen has one, a ⋯ menu, and the screen's single primary capsule. The runway appears as a quiet chip on Queue and Week (`Runway 5 d approved · 21 d ready`, amber below threshold); its popover lists all three numbers.
+- **Toolbar (52 pt, transparent, unified)**: left has the screen title (`title`) and a secondary context line (`callout`, e.g. "41 ready · next Thu 5 Nov"). Right has the view-mode segmented control when the screen has one, a ⋯ menu, and the screen's single primary capsule. The schedule chip sits on Queue and Calendar (`Scheduled through Sat 7 Nov`, amber below the Low Queue alert); its popover lists Scheduled, Queue waiting and Edit left.
 - **Attention card** replaces the round-1 red bar. It is a 16-radius card at the top of the content, `tint.danger` background, with an icon, "2 posts need attention · Instagram copyright, X failed" and a **Review** button that opens Posts → Problems. It can't be dismissed while unresolved. The amber version (low runway, engine off) can be dismissed for 24 h. **Why:** this keeps loud-error visibility (§0.3) without a full-bleed red stripe that breaks the calm.
 - ⌘K palette: a 640 pt `e2` popover with a capsule search field ("Search everything…"), and shortcuts right-aligned in `caption` tertiary. It's the one door to the whole app. It sits above every modal (only a confirmation goes on top), so it works from the editor and from Settings.
   - **Empty field:** Recents, Actions, Go to.
@@ -142,14 +141,15 @@ Locked: `R2.NAV` ChatGPT web sidebar (alt: ChatGPT iOS drawer). Menus follow `R2
 
 ### 3.1 Clip list header (round 4, S3/S4/S1)
 
-Every clip list (Score, Edit, Queue, Library, Posts, Week's Next up drawer) uses one header (`DSListHeader`), in this
+Every clip list (Score, Edit, Queue, Library, Posts) uses one header (`DSListHeader`), in this
 order: **title + count** ("Library 12 of 63") · **search** (⌘F) · **view modes** · [extras, the one primary] /
 **status chips** · **Filters** · **sort** / applied filters as removable chips + **Clear all**. Status chips: Score =
 sessions, Edit = why clips are in Edit (core reason chips), Queue = Scheduled / Not scheduled, Library = All · Posted
 · Excluded · Missing · Long-form, Posts = Problems · Scheduled · Posted. Filters popover: Session · Kind · Score, plus
 Stage (Library) and Platform (Posts); an unapplied filter is never highlighted. Search, chip, filters and sort are
-remembered per page across relaunch. No "Ready" / "Needs edit" wording anywhere: the stage is the readiness (Edit = not
-yet, Queue = complete); Library tiles show the stage name.
+remembered per page across relaunch. No "Ready" / "Needs edit" wording anywhere; Library tiles show the stage name. Since
+round 13 stage is no longer derived from readiness: only Eric's Send to Queue moves a clip from Edit to Queue, so a
+complete clip can wait in Edit with a "Nothing to fix" chip and its own status chip.
 
 ---
 
@@ -181,9 +181,9 @@ Locked: `R2.BULK` Cosmos floating pill bar (alts: Grok top floating selection, R
 - Contents, left to right: `✕` clear (ghost circle 36) · "**4 selected**" (`callout` semibold) · hairline divider · up to **4 labelled ghost buttons** chosen per screen (icon + short label, `callout`) · `More ▾` menu with the remaining bulk actions · the **primary capsule** on the right for the screen's main bulk action.
   - Score: `Set score…` · `Kind ▾` · `Exclude` · More (`±1/±10`) · primary **Save scores** (only when scores are typed in grid mode).
   - Edit: `Accept top title` · `Caption template ▾` · `Hashtags ▾` · `Kind ▾` · More (apply defaults per section, skip platform, re-render) · primary **Make ready with defaults**.
-  - Queue: `Pin to days…` · `Post today` · `Skip platform ▾` · `Exclude` · More · primary **Add to week**.
+  - Queue: `Post today` · `Skip platform ▾` · `Exclude` · More · primary **Pin to days…**.
   - Library: `Score…` · `Kind ▾` · `Exclude/Include` · `Mark long-form posted` · More.
-  - Week/Posts: per their actions (swap/remove, reset/skip/retry).
+  - Posts: per its actions (reset/skip/retry).
 - Any action touching more than one clip opens a confirmation sheet (`e3`, 480 wide). The sheet lists what will change ("9 clips: crop → Default, caption → Template 'DJ set'"), with Cancel and the primary button. After applying, a toast reads "Updated 9 clips · Undo" (⌘Z undoes the whole batch).
 
 ---
@@ -214,17 +214,17 @@ Content area = 1180 × 848 (window minus sidebar and toolbar). "Hidden" lists wh
 - **Hidden:** unscored and not-ready clips (those live in Score/Edit), excluded clips, versions.
 - **Empty:** "Nothing ready yet" + **Go to Edit**.
 
-### 6.4 Week — `R2.WEEK` Hootsuite week with media cards (alt: TikTok Studio scheduler with portrait tiles)
-- **Job:** check and approve the next week.
-- **Toolbar:** "‹ Week of 2 Nov ›" · Draft/Approved status pill · runway chip · ⋯ (Rebuild week, Push plan by a day) · primary **Approve week** (⌘↩).
-- **Grid:** 7 equal columns with 12 pt gaps. Each day has a header ("Thu 5" in `callout` semibold; today in a near-black capsule) and one day card (`r.md`, `e1`): 9:16 cover full column width (≈ 150×267), title, score, then a stack of slot chips (`TikTok 7:00 PM ●`, state-coloured dot). Drag cards between days to swap. Past days at 50 % opacity. Mac-off periods hatched. Backlog drawer collapsed at the bottom ("Next up · 6").
-- **Hidden:** captions, editor controls, history.
-
-### 6.5 Today — `R2.TODAY` Todoist centred Today column (alt: Open wide media cards)
-- **Job:** post what's due, by hand, and mark it posted.
-- **Layout:** centred 720 column. Header "Today · Sat 1 Nov" + "3 of 6 posted" progress ring. A **Next-up card** (`r.lg`, `e1`) shows "Next: TikTok · 7:00 PM · in 2h 21m", the thumb and the title, with actions [Copy caption] [Open upload page] [**Mark posted**] (primary, only on the due post). Below it come rows (64 pt): time (`mono`), platform glyph + name, thumb, title, status pill (Rendering / Ready / Due now / Late 2 h / Posted / Failed / ©) and per-row ghost actions. The file drag-out handle sits on the thumb.
-- **Hidden:** scores, queue order, editor controls.
-- **Empty:** "Nothing due today · next Tue 12:30 PM TikTok".
+### 6.4 Calendar — `C.W` TikTok Studio scheduler + Hootsuite week media cards (replaces §6.4 Week and §6.5 Today, round 13)
+- **Job:** see the posts going out and where. Queue is the last step: a clip in the Queue is approved and the engine gives it a day, so nothing here approves anything. **Why:** Eric read the Week page as a second gate in front of the Queue.
+- **Toolbar:** "Calendar" + the visible range ("Thu 5 Nov" · "5 – 7 Nov" · "2 – 8 Nov" · "November 2026"), then ‹ Today › · Day · 3 Day · Week · Month · platform filter · schedule chip. No primary button and no status pill. Keys D, 3, W, M, T, ← → (never while a text field or an overlay has focus); each control's tooltip shows its key. The view and the filter are remembered; default Week. Steps of 1, 3, 7 days or a month; Week follows `weekStartsOn`.
+- **Day (`C.D` Hootsuite day list, `R2.TODAY` Todoist column):** reading column of 720. On today with something to do, the **Next-up card** with "3 of 6 posted" in the toolbar. Then each clip: header (thumb, title, "Thu 5 Nov", ⋯) and one row per platform in time order without repeating the title; the row's thumb stays the file drag-out handle. Rows keep every Today action; failures sit inline (`C.D-alt` Buffer). Overdue leftovers show on today with their weekday. Past days are the same rows, read-only by state. Empty: "Nothing going out" + the next post. A post shifted to another day shows on that day, in every view.
+- **3 Day:** three equal columns from the anchor. Card: 96 × 171 cover left; title and one slot chip per platform right. Retries and reposts as chips under the day. An empty future day is a dashed "Open" saying what fills it ("Next from the Queue", or "Queue is empty" + Go to Edit); a day only the filter emptied reads "Nothing on TikTok", and today with no time left reads "Nothing going out".
+- **Week:** seven columns with the awake strip and today capsule. Card: full-width 9:16 cover, title (2 lines), "12:30 PM – 7 PM", platform icons with state dots (wrapping when narrow), pin glyph, "1 failed" on the cover. Hover a platform: "TikTok · 7:00 PM · Rendered". Past days 50 %.
+- **Month (`C.M` Buffer, `C.M-alt` Cofounder dots):** 5 or 6 rows filling the height, days outside the month dimmed. Chip: 16 × 28 thumb, one line of title, a dot per platform (glyph at ≥ 150 pt wide). As many as fit, then "+N more". A click on a day opens Day. "N in Queue waiting" at bottom right only when the schedule reaches the 30-day horizon and clips are still left.
+- **Moving (`C.CTX` Motion):** drag a card or chip to another day; it pins there, a full day swaps and the toast names the other clip, Undo works. A landing on today inside the 30-minute lead asks first and names the platforms going out at once. Posted or past clips don't drag and say why. ⋯ and right-click: Move to…, Pin to this day, Post today, Open editor, Unschedule (back to Edit, asks first, Undo), Skip platform. Right-click a platform for its post actions.
+- **Filter (`C.F` Buffer channels):** "All platforms" or one active platform narrows every view; a clip with no post there disappears. Own empty state (`C.F-alt` Later).
+- **States:** paused = the existing card over a calendar that stays visible (`C.P` Buffer). Nothing at all = "Nothing scheduled" + Go to Edit (`C.E` Reddit). Queue almost out = soft "Queue running low · Scheduled through Sat 7 Nov · Go to Edit".
+- **Hidden:** scores, captions, queue order, any approval step.
 
 ### 6.6 Library — `R2.LIBRARY` Frame.io portrait tiles with fields (alt: ClickUp clips with sub-nav counts)
 - **Job:** find any clip in any state.
@@ -250,7 +250,7 @@ Content area = 1180 × 848 (window minus sidebar and toolbar). "Hidden" lists wh
 
 ### 6.10 Menu bar — `R2.MENUBAR` Crouton anchored popover with metric + chips (alt: Lyssna next-session countdown) — **weak match**
 - `MenuBarExtra` window, 320 wide, `r.lg`, `e2`. The header shows "Next post" (`caption` secondary) with the countdown "2h 21m" (`display`) and a row (platform glyph, time, thumb, title). Below it, a chip row: [Copy caption] [**Mark posted**] (primary only when due). Then a due list (at most 3 rows), a danger row when there are problems ("2 need attention › Review"), and a footer: Open DJ Queue · Pause posting (toggle).
-- Icon: template glyph + runway number; red dot on errors; grey when the engine is off; pause glyph when paused.
+- Icon: template glyph + days scheduled; red dot on errors; grey when the engine is off; pause glyph when paused.
 
 ### 6.11 Empty states — `R2.EMPTY` v0 (alt: Babbel)
 - Centred in the content area: a 20 pt SF Symbol in a 40 pt `surface.sunken` tile (`r.sm`), a title (`headline`), one line (`callout` secondary), and **one** near-black capsule button. No illustrations.
@@ -407,7 +407,7 @@ All images are local only, in `refs/r2/` (gitignored). The Mobbin links are the 
 | R2.BULK | R2.BULK--cosmos-floating-pill-bar.webp | https://mobbin.com/screens/ca5fc71d-56ce-4486-934a-586bbbefa500 |
 | ↳ considered | R2.BULK-alt--grok-top-floating-selection.webp — top floating bar, Full/Compact toggle | https://mobbin.com/screens/9f74b211-14d5-4d8c-a78e-521ce19a27f9 |
 | ↳ considered | R2.BULK-alt--recraft-dark-pill-bar.webp — dark pill variant | https://mobbin.com/screens/338b6ed9-5452-4432-a847-bd9b31491f30 |
-| R2.WEEK | R2.WEEK--hootsuite-week-media-cards.webp | https://mobbin.com/screens/fcb9a7cc-9ae1-4ee7-87b6-acf74e33e7c7 |
+| R2.WEEK *(superseded by C.*)* | R2.WEEK--hootsuite-week-media-cards.webp | https://mobbin.com/screens/fcb9a7cc-9ae1-4ee7-87b6-acf74e33e7c7 |
 | ↳ considered | R2.WEEK-alt--tiktok-web-scheduler-portrait-tiles.webp — portrait tiles per day | https://mobbin.com/screens/0c5202c7-2201-4d78-aa94-f5b82f2522a4 |
 | R2.TODAY | R2.TODAY--todoist-today-centered-column.webp | https://mobbin.com/screens/15d32901-2cde-4eaf-9dce-142c4507eac4 |
 | ↳ considered | R2.TODAY-alt--open-wide-media-cards-action.webp — wide media card + action | https://mobbin.com/screens/d5d00070-d101-403a-a0f9-1f468e4117dc |
@@ -439,10 +439,22 @@ All images are local only, in `refs/r2/` (gitignored). The Mobbin links are the 
 | R2.MOCK.x | R2.MOCK.x--x-ios-post-video.webp | https://mobbin.com/screens/db2de9cd-1339-4e10-81a2-8bf08f152258 |
 | ↳ considered | R2.MOCK.x-alt--x-ios-post-tall-video.webp — portrait crop ≈ 4:5 | https://mobbin.com/screens/25e68b95-4af7-4319-bca6-759ebfbe26d9 |
 
+### Calendar (round 13, local files in `refs/` with a `C.` prefix)
+
+| Slot | File | Mobbin |
+|---|---|---|
+| C.W | C.W--tiktok-scheduler-week-covers.webp — 9:16 covers in columns, Week/Month pills | https://mobbin.com/screens/0c5202c7-2201-4d78-aa94-f5b82f2522a4 |
+| C.P (paused) | C.P--buffer-queue-paused-banner.webp — banner over a schedule that stays visible, one Resume | https://mobbin.com/screens/907adc19-03a8-46f2-b83b-b75cdf9ce23c |
+| C.E (empty) | C.E--reddit-nothing-scheduled.webp — "Nothing scheduled yet" + one action | https://mobbin.com/screens/28ba77f9-6b50-477f-b3f2-4cf7e1a89f05 |
+| C.F (filter) | C.F--buffer-channels-filter.webp — channels menu over the month, chips with time and thumb | https://mobbin.com/screens/28c8f5ce-7595-4064-b13c-d8a215c756c1 |
+| C.F-alt (filter empty) | C.F-alt--later-no-filtered-media.webp — its own empty state, filter still visible | https://mobbin.com/screens/8d7ef589-1aa0-4a5f-a711-9e36e4825d29 |
+| C.3D | C.3D--clockwise-day-week-toggle.webp — Today chevrons + pill view switch | https://mobbin.com/screens/e7054460-8119-4b7c-a9d9-1988b42c30ca |
+
 ## 10. Weak matches and rejected directions
 
 - **Menu bar:** Mobbin has no macOS menu-bar extras. The iOS anchored popover sets only the shape and density.
 - **Edit cards:** no app shows "per-media missing requirements". The SEO issue cards (Searchable) set the card, chip and action anatomy, and Copy.ai sets the inline "missing" chip wording.
 - **Score:** no app pairs a single large video with a numeric score. The Google Photos keep/delete card gives the calm layout (big rounded card + floating control pill + progress header); the control itself is ours.
+- **3 Day:** no social scheduler on Mobbin has a 3-day view; Rise's "Display number of days" (`C.SW`) and Clockwise's switch set the control, and the cards are ours.
 - **Threads:** the reference is an older Threads build (no inline counts), and the portrait-video height was not visible.
-- Rejected: dark-first creative-tool UIs (Frame.io, Riverside) as the default theme, because they're too heavy. Their anatomy is reused in light. Also rejected: social-scheduler month calendars (week is the unit), and coloured platform badges (they break "media is the only colour").
+- Rejected: dark-first creative-tool UIs (Frame.io, Riverside) as the default theme, because they're too heavy. Their anatomy is reused in light. Also rejected: coloured platform badges (they break "media is the only colour").

@@ -116,7 +116,7 @@ struct PostProblemCard: View {
           DSButton("It's in Postiz", icon: "checkmark.circle", variant: .outline, size: .sm,
                    tooltip: "Keep it as Postiz's; it's never sent again") { model.resolveUnconfirmed(post, inPostiz: true) }
           DSButton("Not in Postiz — post it myself", variant: .ghost, size: .sm,
-                   tooltip: "Move it to Today as a manual post (asks first)") { model.resolveUnconfirmed(post, inPostiz: false) }
+                   tooltip: "Post it by hand from the Calendar (asks first)") { model.resolveUnconfirmed(post, inPostiz: false) }
             .fixedSize()
         } else if model.postizState(post) == .inbox {
           // Already uploaded to the TikTok inbox: finishing it there is the fix; a second upload would double-post.
@@ -125,7 +125,7 @@ struct PostProblemCard: View {
         } else if post.state == .overdue {
           // A missed slot has nothing to edit: its two real fixes take the first places.
           DSButton("Post now", icon: "bolt", variant: .outline, size: .sm, disabledReason: fixes.heldReason,
-                   tooltip: "Make it due now and open Today") { model.postNow(post) }
+                   tooltip: "Make it due now and open the Calendar") { model.postNow(post) }
           DSButton("Shift plan", icon: "calendar.badge.clock", variant: .ghost, size: .sm, disabledReason: fixes.heldReason,
                    tooltip: "Move it to the next free \(post.platform.displayName) slot") { model.shiftPlan(post) }
         } else {

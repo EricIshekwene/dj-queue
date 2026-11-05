@@ -2,7 +2,7 @@ import DJQCore
 import SwiftUI
 
 /// "Back to Edit" (formerly Remove from queue) + stage moves (prefix 5x): the Queue card's hover stage control and ⋯ menu, the
-/// confirmation listing scheduled days, the toast, Edit's "Sent back from Queue" chip + "Send to Queue", the Week
+/// confirmation listing scheduled days, the toast, Edit's "Sent back from Queue" chip + "Send to Queue", the Calendar
 /// card's stage control, the bulk back confirmation, Library's pill and the editor header. Holds made here are
 /// undone by the last shot.
 extension SnapshotShots {
@@ -72,11 +72,10 @@ extension SnapshotShots {
         // Put the sent-back clips first so they're on screen.
         ListPrefs.shared.setStatus(.edit, EditFilter(kind: .heldInEdit, platform: nil).id)
       },
-      c.main("54-week-card-stage") { m in
-        m.screen = .week
-        SnapshotHover.id = m.weekSlots.first { s in
-          s.date >= m.todayKey && m.video(s.videoId).map { m.stageBlocker($0, .back) == nil } == true
-        }?.videoId
+      c.main("54-calendar-card-menu") { m in
+        m.screen = .calendar
+        SnapshotHover.id = m.calendarDays.lazy.flatMap { m.calendarClips($0) }
+          .first { $0.slot.date >= m.todayKey && m.stageBlocker($0.video, .back) == nil }?.video.id
       },
       c.main("55-queue-bulk-back") { m in
         SnapshotHover.id = nil

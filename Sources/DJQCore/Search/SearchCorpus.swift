@@ -60,7 +60,7 @@ public struct HealthPlace: Sendable, Hashable {
 
   public static let all: [HealthPlace] = [
     HealthPlace(id: "engine", title: "Engine status", subtitle: "Is the engine running, and when it last ticked", words: "heartbeat tick background"),
-    HealthPlace(id: "runway", title: "Runway", subtitle: "Days of clips left, approved and in total", words: "days left approved"),
+    HealthPlace(id: "runway", title: "Runway", subtitle: "Days scheduled and days of clips left", words: "days left scheduled queue calendar"),
     HealthPlace(id: "backups", title: "Backups", subtitle: "When the database was last copied", words: "backup database copy"),
     HealthPlace(id: "awake", title: "Awake chart", subtitle: "When this Mac was awake, last 7 days", words: "sleep missed slots timeline"),
     HealthPlace(id: "doctor", title: "Doctor findings", subtitle: "What Doctor found, and how to fix it", words: "problems report check"),

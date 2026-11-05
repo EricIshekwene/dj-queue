@@ -54,7 +54,7 @@ import Testing
     let q = Queue(store: f.store)
     #expect(try q.runway() == Runway(approvedDays: 0, readyDays: 8, totalDays: 10))
     try Planner(store: f.store).approveWeek(f.week)
-    #expect(try q.runway() == Runway(approvedDays: 7, readyDays: 1, totalDays: 10))
+    #expect(try q.runway() == Runway(approvedDays: 7, readyDays: 1, totalDays: 10, scheduledThrough: "2026-11-08"))
     try f.updateSettings { $0.postsPerDay = 2 }
     #expect(try q.runway().readyDays == 0)
   }

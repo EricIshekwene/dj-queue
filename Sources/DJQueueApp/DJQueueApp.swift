@@ -163,7 +163,8 @@ final class AppHost {
         model.refresh()
         if act == .postNow {
           model.highlightPostId = postId
-          WindowManager.shared.showMain(screen: .today)
+          model.openCalendarDay()
+          WindowManager.shared.showMain()
         }
       } catch {
         UserNotifier.shared.deliver(AppNotification(key: "error:\(UUID().uuidString)", title: "Couldn't \(action.replacingOccurrences(of: "_", with: " "))",
@@ -185,14 +186,16 @@ final class AppHost {
         // Invalid or missing URL: open the sheet with what was typed and the error visible.
         model.markPostedDraftURL = url
         model.markPostedTarget = post
-        WindowManager.shared.showMain(screen: .today)
+        model.openCalendarDay()
+        WindowManager.shared.showMain()
       }
     case .open, .none:
       model.highlightPostId = postId
       let screen: Screen
-      if key.hasPrefix("alert.approve") || key.hasPrefix("alert.weekly") {
-        screen = .week
-        model.goToNextWeek()
+      if key.hasPrefix("alert.queuelow") {
+        screen = .edit  // "Send more clips from Edit"
+      } else if key.hasPrefix("alert.approve") || key.hasPrefix("alert.weekly") {
+        screen = .calendar  // retired alerts still sitting in Notification Center
       } else if key.hasPrefix("alert.record") {
         screen = .queue
       } else if key.hasPrefix("problem:") || key.hasPrefix("renderfail:") || post?.state.isProblem == true {
@@ -202,7 +205,8 @@ final class AppHost {
         screen = .edit
         model.setSelection([videoId], screen: .edit)
       } else {
-        screen = .today
+        model.openCalendarDay()
+        screen = .calendar
       }
       WindowManager.shared.showMain(screen: screen)
     }

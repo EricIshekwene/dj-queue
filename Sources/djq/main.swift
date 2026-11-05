@@ -10,10 +10,11 @@ let usage = """
 usage: djq <command> [args]
 
   status                              runway, today, problems, engine
-  queue [--platform P]                the Queue (nothing missing, not scheduled yet) in posting order
+  queue [--platform P]                clips waiting for a day, in posting order, and how many are scheduled
   today                               today's posts
   posts [--problems] [--json]         upcoming/recent posts (or unresolved problems)
-  week [--propose|--approve|--rebuild] [--json] [YYYY-MM-DD]
+  week [--json] [YYYY-MM-DD]          the week's days, read-only (clips in the Queue schedule themselves)
+  schedule [--dry-run] [--json]       put Queue clips on open days now (the engine does this on every tick)
   videos [--stage S] [--state S] [--json]   clips (stage: score edit queue scheduled posted; state: a stored state, unscored, scored, needs-edit, all)
   video <video> [--json]              one clip: title, suggestions, edit (+resolved), versions, captions, posts
   defaults [--json]                   new clip defaults (Settings → New clip defaults)
@@ -33,20 +34,20 @@ usage: djq <command> [args]
                                       caption templates ({text} {title} {set} {link} {tag} {hashtags}, hashtags can be typed in); undo with bulk undo
   kind <video> "dj vid"|talking
   bulk <action> [args] (--ids a,b,c | --filter F) [--dry-run] [--json]
-       actions: make-ready | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
+       actions: make-ready (Send to Queue with defaults: Eric's word only) | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
        | score-adjust <±n> | kind <k> | exclude | include | caption-template <id|default> | hashtags <group ids a,b|default>
        | caption [--template <id|default>] [--add a,b] [--remove c]   template and groups together, one undo; --add keeps the clip's other groups
        | extra-hashtags "<#a #b>"|default | youtube-title-template <id|default> | drop-hashtags <P>
        | skip-platform <P> | unskip-platform <P>
-       | accept-title | title-raw-tag | title "<t>"|--clear | add-to-week <YYYY-MM-DD> | pin-consecutive <YYYY-MM-DD>
+       | accept-title | title-raw-tag | title "<t>"|--clear | pin-consecutive <YYYY-MM-DD>
        | post-today | re-render | unqueue | requeue
   bulk undo <batch> [--force] [--yes] | bulk batches [--json]   (--yes: Eric's OK when the undo turns Postiz posting back on)
   agent-prompt titles [--ids a,b | --needs-title] [--out FILE]
-  stage <video…> [back|forward] [--dry-run] [--json]   a clip's stage (Score→Edit→Queue→Scheduled→Posted), or move it one stage
+  stage <video…> [back|forward] [--dry-run] [--json]   a clip's stage (Score→Edit→Queue→Posted), or move it one stage
   unqueue <video…> [--dry-run] [--json]   Back to Edit (held there); its unposted slots/posts are removed
-  requeue <video…> [--dry-run] [--json]   Send to Queue again (Queue if nothing is missing, else stays in Edit)
+  requeue <video…> [--dry-run] [--json]   Send to Queue (only when Eric says so; if something's missing it stays in Edit)
   pin <video> <YYYY-MM-DD> | post-today <video> | skip-next <video> | push <YYYY-MM-DD> <days>
-  remove-slot <slot> | swap <slot> <slot> | move <slot> <YYYY-MM-DD>
+  remove-slot <slot> | swap <slot> <slot> | move <slot> <YYYY-MM-DD>   (a removed Queue clip gets a day again; stage back holds it)
   posted <post> <url>                 mark posted (URL host must match the platform)
   problem <post> <type> <message>     type: \(ErrorType.allCases.map(\.rawValue).joined(separator: "|"))
   fixed <post> | reset <post> | skip <post> | post-now <post> | shift-plan <post>
@@ -176,8 +177,7 @@ func printWeek(_ store: Store, _ week: String) throws {
   let planner = Planner(store: store)
   let s = try store.settings()
   let dm = DayMath(settings: s)
-  let w = try planner.week(week)
-  print("Week of \(week) · \(w.state.rawValue)\(w.approvedAt.map { " \(fmt($0, s))" } ?? "")")
+  print("Week of \(week)")
   let slots = try planner.slots(week: week)
   for day in dm.weekDays(week) {
     let ds = slots.filter { $0.date == day }
@@ -197,7 +197,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "posts-per-day", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "posts-per-day", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -221,19 +221,19 @@ func run() throws -> Int32 {
   let actions = PostActions(store: store)
   let planner = Planner(store: store)
   let queue = Queue(store: store)
-  let writes: Set<String> = ["week", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem",
+  let writes: Set<String> = ["pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem",
                              "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted",
                              "score", "exclude", "include", "pause", "resume", "intake", "tick", "render",
                              "title", "suggest", "text", "caption", "kind", "bulk", "unqueue", "requeue", "stage",
                              "youtube-title", "hashtag-groups", "title-templates", "caption-templates"]
-  var wrote = writes.contains(cmd) && (cmd != "week" || args.contains { $0.hasPrefix("--") && $0 != "--json" })
+  var wrote = writes.contains(cmd)
     && !(cmd == "bulk" && (args.contains("--dry-run") || args.first == "batches"))
     && !((cmd == "unqueue" || cmd == "requeue" || cmd == "stage") && args.contains("--dry-run"))
     && !(cmd == "stage" && !args.contains("back") && !args.contains("forward"))
     && !((cmd == "hashtag-groups" || cmd == "title-templates" || cmd == "caption-templates") && (args.isEmpty || args.first == "--json" || args.first == "list"))
   defer {
     if wrote {
-      // Round 4 (S1): after any write, invalid Queue clips move to Edit (and valid Edit clips return) before the app
+      // Round 4 (S1): after any write, invalid Queue clips move to Edit before the app
       // and engine hear about it.
       Revalidation.afterWrite(store: store, command: cmd)
       postChangeSignal()
@@ -247,8 +247,9 @@ func run() throws -> Int32 {
     let today = try actions.dueToday(now: now)
     let problems = try actions.problems()
     print("DJ Queue · \(fmt(now, settings, "EEE d MMM yyyy HH:mm")) (\(settings.timeZone))")
-    print("Runway     approved \(rw.approvedDays) d · queue \(rw.readyDays) d · total \(rw.totalDays) d")
-    print("Stages     Score \(try queue.toScore().count) · Edit \(try queue.needsEdit().count) · Queue \(try queue.ordered().count) (not scheduled)")
+    let waiting = try planner.schedulable(settings).count
+    print("Calendar   \(StageWording.scheduledThrough(rw.scheduledThrough, settings: settings)) · Queue \(waiting) waiting")
+    print("Stages     Score \(try queue.toScore().count) · Edit \(try queue.needsEdit().count) · Queue \(waiting) · about \(rw.totalDays) d of clips left")
     let byState = Dictionary(grouping: today, by: \.state).map { "\($0.value.count) \($0.key.displayName.lowercased())" }.sorted()
     print("Today      \(today.count) post\(today.count == 1 ? "" : "s")\(byState.isEmpty ? "" : " (" + byState.joined(separator: ", ") + ")")")
     print("Problems   \(problems.count)")
@@ -266,7 +267,8 @@ func run() throws -> Int32 {
       print("  \(pad(String(i + 1), 3)) \(short(v.id))  \(pad(String(v.score ?? 0), 4))\(pad(v.tag, 36)) part \(v.part ?? 0) @ \(Int(v.start ?? 0))s")
     }
     let ts = try queue.toScore().count, ne = try queue.needsEdit().count
-    print("  in Score \(ts) · in Edit \(ne)")
+    let scheduled = try store.videos(where: "type='short-form' AND state IN ('planned','posting')").count
+    print("  scheduled \(scheduled) · in Score \(ts) · in Edit \(ne)")
 
   case "today":
     print("Today · \(fmt(store.clock.now, settings, "EEE d MMM"))")
@@ -289,12 +291,21 @@ func run() throws -> Int32 {
     }
 
   case "week":
-    let propose = flag("--propose"), approve = flag("--approve"), rebuild = flag("--rebuild"), json = flag("--json")
+    if flag("--propose") || flag("--approve") || flag("--rebuild") {
+      print("Weeks don't need approval: clips in the Queue schedule themselves")
+      return 2
+    }
+    let json = flag("--json")
     let week = try args.first.map { dm.weekStart(of: dm.date(try validDate($0))) } ?? dm.weekStart(of: store.clock.now)
-    if propose { try planner.proposeWeek(week); wrote = true }
-    if rebuild { try planner.rebuildWeek(week); wrote = true }
-    if approve { try planner.approveWeek(week); wrote = true }
     if json { try printJSON(try AgentAPI.week(week, store: store)) } else { try printWeek(store, week) }
+
+  case "schedule":
+    let json = flag("--json"), dry = flag("--dry-run")
+    let r = try planner.autoSchedule(dryRun: dry, revalidate: true)
+    wrote = !dry && (r.scheduled > 0 || r.relaid > 0)
+    if json { try printJSON(r); return 0 }
+    print("\(dry ? "[dry run] " : "")\(r.summary) · Queue \(r.waiting) waiting")
+    for c in r.clips { print("  \(fmt(dm.date(c.date), settings, "EEE d MMM"))  #\(c.position + 1)  \(tagOf(store, c.videoId))") }
 
   case "videos":
     let state = option("--state")
@@ -639,7 +650,7 @@ func run() throws -> Int32 {
     printBulk(r)
     for (id, items) in (r.unplanned ?? [:]).sorted(by: { $0.key < $1.key }) {
       let days = items.map { i in
-        fmt(dm.date(i.date), settings, "EEE d MMM") + (i.platforms.isEmpty ? " · proposed" : " · \(i.platforms.count) platform\(i.platforms.count == 1 ? "" : "s")")
+        fmt(dm.date(i.date), settings, "EEE d MMM") + (i.platforms.isEmpty ? " · no posts yet" : " · \(i.platforms.count) platform\(i.platforms.count == 1 ? "" : "s")")
           + (i.pinned ? " · pinned" : "")
       }
       print("  \(short(id))  \(tagOf(store, id)): \(r.dryRun ? "would remove" : "removed") \(days.joined(separator: ", "))")
@@ -921,7 +932,7 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
         try printJSON(Refused(refused: true, batch: m[0].id, goesLive: live.map(\.rawValue),
                               reason: "undoing it schedules real posts through Postiz; needs --yes"))
       } else {
-        print("not undone: undoing \(m[0].action) would schedule real posts — approved posts for \(names) would go out through Postiz (test run off).")
+        print("not undone: undoing \(m[0].action) would schedule real posts — scheduled posts for \(names) would go out through Postiz (test run off).")
         print("  That's Eric's call: run it again with --yes (or --dry-run to preview).")
       }
       return 2
@@ -931,7 +942,7 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
     if json { try printJSON(r) } else {
       printBulk(r)
       if !live.isEmpty {
-        print("  \(dry ? "would schedule" : "schedules") real posts: approved posts for \(live.map(\.displayName).joined(separator: ", ")) go out through Postiz"
+        print("  \(dry ? "would schedule" : "schedules") real posts: scheduled posts for \(live.map(\.displayName).joined(separator: ", ")) go out through Postiz"
               + (dry ? " (needs --yes)" : ""))
       }
     }
@@ -989,7 +1000,6 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   case "accept-title": r = try bulk.acceptTopTitleSuggestion(ids, dryRun: dry)
   case "title-raw-tag": r = try bulk.useRawTagAsTitle(ids, dryRun: dry)
   case "title": r = try bulk.setTitle(ids, flag("--clear") ? nil : try arg(0, "title"), dryRun: dry)
-  case "add-to-week": r = try bulk.addToWeek(ids, week: try dateArg(0), dryRun: dry)
   case "pin-consecutive": r = try bulk.pinConsecutive(ids, from: try dateArg(0), dryRun: dry)
   case "post-today": r = try bulk.postToday(ids, dryRun: dry)
   case "re-render": r = try bulk.reRender(ids, dryRun: dry)

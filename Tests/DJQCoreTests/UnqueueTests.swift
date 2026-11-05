@@ -118,8 +118,8 @@ import Testing
     #expect(try f.store.posts(where: "video_id=?", [mon.videoId]).isEmpty)
     #expect(try f.store.video(id: mon.videoId)?.state == .needsEdit)
     let back = try b.back([tue.videoId])
-    #expect(back.moves?[tue.videoId]?.to == .queue)
-    #expect(try f.store.posts(where: "video_id=?", [tue.videoId]).isEmpty && f.store.video(id: tue.videoId)?.state == .ready)
+    #expect(back.moves?[tue.videoId]?.to == .edit)
+    #expect(try f.store.posts(where: "video_id=?", [tue.videoId]).isEmpty && f.store.video(id: tue.videoId)?.state == .needsEdit)
   }
 
   /// Nothing of a held clip can post: fix/retry, re-upload, reset, post now, shift plan and repost are refused.
@@ -206,7 +206,7 @@ import Testing
     #expect(try Queue(store: f.store).ordered().map(\.id).contains("clip-0"))
     let v2 = try #require(try f.store.video(id: "clip-2"))
     #expect(v2.state == .needsEdit && !v2.heldInEdit)
-    #expect(s.remainingIssues["clip-2"]?.contains { $0.kind == .noCrop } == true)
+    #expect(s.remainingIssues["clip-2"]?.isEmpty == false)  // its real issues: the send confirmed the crop
     #expect(s.remainingIssues["clip-2"]?.contains { $0.kind == .heldInEdit } == false)
     try b.undo(try #require(s.batchId))
     #expect(try f.store.video(id: "clip-0")?.heldInEdit == true)
@@ -243,7 +243,7 @@ import Testing
     #expect(try b.blocker(v3, .forward) != nil)
     let v0 = try #require(try f.store.video(id: "clip-0"))
     #expect(try b.blocker(v0, .back) == nil)
-    #expect(try b.blocker(v0, .forward)?.contains("Today") == true)
+    #expect(try b.blocker(v0, .forward)?.contains("Calendar") == true)
     try f.postAll(on: "2026-11-02")
     let posted = try #require(try f.store.video(id: try slot(f, "2026-11-02").videoId))
     #expect(ClipStage.of(posted) == .posted)
@@ -267,19 +267,20 @@ import Testing
     try b.undo(try #require(e.batchId))
     #expect(try f.store.video(id: "clip-4")?.score == 42)
 
-    // Scheduled → Queue: unposted days leave the plan, the clip stays ready (not held), others keep their days.
+    // Scheduled → Edit: unposted days leave the plan, the clip is held there, others keep their days.
     let s = try b.back([thu.videoId])
-    #expect(s.moves?[thu.videoId]?.to == .queue && s.moves?[thu.videoId]?.note.contains("Thu 5 Nov · 6 platforms") == true)
+    #expect(s.moves?[thu.videoId]?.to == .edit && s.moves?[thu.videoId]?.note.contains("Thu 5 Nov · 6 platforms") == true)
     let v = try #require(try f.store.video(id: thu.videoId))
-    #expect(v.state == .ready && !v.heldInEdit)
+    #expect(v.state == .needsEdit && v.heldInEdit && !v.sentToQueue)
     #expect(try f.store.planSlots().map(\.date) == ["2026-11-02", "2026-11-03", "2026-11-04"])
     try b.undo(try #require(s.batchId))
     #expect(try planState(f) == before)
 
-    // Queue → Edit is "Remove from queue" (held).
-    try b.back([thu.videoId])  // scheduled → queue
-    let q = try b.back([thu.videoId])  // queue → edit
-    #expect(q.moves?[thu.videoId]?.to == .edit)
+    // Queue → Edit is the same move (held).
+    try Planner(store: f.store).unplan(videoId: thu.videoId)
+    #expect(try b.stage(of: thu.videoId) == .queue)
+    let q = try b.back([thu.videoId])
+    #expect(q.moves?[thu.videoId]?.to == .edit && q.moves?[thu.videoId]?.from == .queue)
     #expect(try f.store.video(id: thu.videoId)?.heldInEdit == true)
   }
 
@@ -298,31 +299,24 @@ import Testing
     // Nothing left to do but still invalid → skipped with the reason (never silent).
     let again = try b.forward(["clip-3"])
     #expect(again.changed.isEmpty && again.skipped["clip-3"]?.hasPrefix("Still in Edit: Add text") == true)
+    // Fixing the last issue doesn't move it: the title only clears what stopped the send.
     try f.store.setTitle("clip-3", "Song Three")
+    #expect(try f.store.video(id: "clip-3")?.state == .needsEdit)
+    let sent = try b.forward(["clip-3"])
+    #expect(sent.moves?["clip-3"] == StageMove(from: .edit, to: .queue, note: StageWording.sentToQueue))
     #expect(try f.store.video(id: "clip-3")?.state == .ready)
+    try b.undo(try #require(sent.batchId))
+    #expect(try f.store.video(id: "clip-3")?.state == .needsEdit)
     try b.undo(try #require(r.batchId))
     #expect(try f.store.video(id: "clip-2")?.heldInEdit == true && f.store.edit(videoId: "clip-2").crop == nil)
 
-    // Queue → Scheduled: next open day; a draft week says it needs approval; an approved week schedules it.
+    // The Queue has no forward move: clips there schedule themselves.
     let q = try b.forward(["clip-0"])
-    let m0 = try #require(q.moves?["clip-0"])
-    #expect(m0.to == .queue && m0.note.contains("Mon 2 Nov") && m0.note.contains("draft"))
-    #expect(try f.store.planSlots(where: "video_id='clip-0'").first?.pinned == true)
-    let dup = try b.forward(["clip-0"])
-    #expect(dup.skipped["clip-0"]?.contains("proposed week") == true)
+    #expect(q.changed.isEmpty && q.skipped["clip-0"] == "Clips in the Queue schedule themselves")
+    #expect(try f.store.planSlots(where: "video_id='clip-0'").isEmpty)
+    // Scheduled → Posted only via the Calendar.
     try Planner(store: f.store).approveWeek(f.week)
-    let s1 = try b.forward(["clip-1"])
-    let m1 = try #require(s1.moves?["clip-1"])
-    #expect(m1.from == .queue && m1.to == .scheduled && m1.note.hasPrefix("Scheduled for "))
-    let slot1 = try #require(try f.store.planSlots(where: "video_id='clip-1'").first)
-    #expect(slot1.pinned && slot1.date >= "2026-11-02" && slot1.date <= "2026-11-08")
-    #expect(try f.store.week(slot1.weekStart)?.state == .approved)
-    let posts1 = try f.store.posts(where: "video_id='clip-1' AND kind='regular'")
-    #expect(posts1.count == 6 && Set(posts1.map(\.platform)).count == 6 && posts1.allSatisfy { $0.planSlotId == slot1.id })
-    #expect(try f.store.video(id: "clip-1")?.state == .planned)
-    #expect(try f.doublePosts().isEmpty)
-    // Scheduled → Posted only via Today.
-    #expect(try b.forward(["clip-0"]).skipped["clip-0"]?.contains("Today") == true)
+    #expect(try b.forward(["clip-0"]).skipped["clip-0"]?.contains("Calendar") == true)
   }
 
   // MARK: Migration v3

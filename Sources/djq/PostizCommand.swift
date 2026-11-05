@@ -4,7 +4,7 @@ import Foundation
 /// `djq postiz …` (round 6, docs/postiz.md). Live calls go through `PostizService` (budgeted, the key read from the
 /// Keychain at call time and never printed). Channel ids are shown only with `--ids`. Settings changes print exactly
 /// what changes, honour `--dry-run`, are journaled (undo: `djq bulk undo <batch>`) and need `--yes` when they would
-/// make approved posts go out for real through Postiz.
+/// make scheduled posts go out for real through Postiz.
 enum PostizCommand {
   static let usage = """
     usage: djq postiz <command> [--json]
@@ -27,10 +27,10 @@ enum PostizCommand {
       resolve <post> [--in-postiz | --not-in-postiz]   a create whose outcome is unknown (Doctor
                                           postiz.create_unknown): plain = one live look, adopts only an exact single
                                           match (else exit 2); after Eric checked the Postiz calendar, --in-postiz
-                                          (never sent again) or --not-in-postiz (on Today), offline
+                                          (never sent again) or --not-in-postiz (on the Calendar), offline
       sync [--force]                      one sync now, budget permitting (asks DJ Queue's engine when it's running)
 
-    Settings changes print what changes; --dry-run changes nothing. A change that makes approved posts go out for
+    Settings changes print what changes; --dry-run changes nothing. A change that makes scheduled posts go out for
     real through Postiz (a platform to Postiz with a channel, a new channel, test run off) needs --yes: that's
     Eric's call. Undo a settings change with `djq bulk undo <batch>` (an undo that would go live needs --yes too).
     """
@@ -211,8 +211,8 @@ enum PostizCommand {
       var line = "  \(pad(r.platform.displayName, 15)) \(pad(r.publisher.displayName, 7)) \(pad(channelLabel(r.channelId, cache, ids: ids), 44))"
       switch r.route {
       case "postiz": line += " → Postiz"
-      case "fallback": line += " → Today: \(r.fallback ?? "?")"
-      default: line += " → Today (manual)"
+      case "fallback": line += " → the Calendar: \(r.fallback ?? "?")"
+      default: line += " → the Calendar (manual)"
       }
       if let t = row.testRun { line += " · test: \(t)" }
       if r.openJobs > 0 { line += " · \(r.openJobs) in Postiz (" + row.remoteStates.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", ") + ")" }
@@ -307,7 +307,7 @@ enum PostizCommand {
     return out
   }
 
-  /// Platforms whose approved posts would start going out for real through Postiz after this change.
+  /// Platforms whose scheduled posts would start going out for real through Postiz after this change.
   static func goesLive(_ a: Settings, _ b: Settings) -> [Platform] {
     guard !b.publishing.testMode else { return [] }
     return Platform.allCases.sorted().filter { p in
@@ -333,8 +333,8 @@ enum PostizCommand {
         && (before.publishing.publisher(for: p) != .postiz || before.publishing.channels[p] != after.publishing.channels[p] || !before.publishing.testMode)
     } : []
     for p in testReach {
-      notes.append(p == .youtube ? "YouTube (test run): approved posts are uploaded to the channel as unlisted videos"
-                                 : "TikTok (test run): approved posts land in the TikTok app inbox as drafts")
+      notes.append(p == .youtube ? "YouTube (test run): scheduled posts are uploaded to the channel as unlisted videos"
+                                 : "TikTok (test run): scheduled posts land in the TikTok app inbox as drafts")
     }
     var out = ChangeOut(command: "postiz \(command)", dryRun: dry, applied: false, changes: changes, notes: notes,
                         goesLive: live.map(\.rawValue), needsYes: !live.isEmpty && !yes, batchId: nil)
@@ -359,7 +359,7 @@ enum PostizCommand {
       }
       for n in notes { print("  note: \(n)") }
       if !live.isEmpty && !changes.isEmpty {
-        print("  \(blocked || dry ? "would schedule" : "schedules") real posts: from the next tick, approved posts for "
+        print("  \(blocked || dry ? "would schedule" : "schedules") real posts: from the next tick, scheduled posts for "
               + live.map(\.displayName).joined(separator: ", ") + " go out through Postiz (test run is off).")
         if blocked { print("  That's Eric's call: run it again with --yes (or --dry-run to preview).") }
       }
@@ -396,7 +396,7 @@ enum PostizCommand {
       }
       var notes = [note].compactMap { $0 }
       if m[0].identifier != PostizPlatforms.provider(p) { notes.append("\(m[0].identifier) isn't the provider DJ Queue expects for \(p.displayName) (\(PostizPlatforms.provider(p)))") }
-      if m[0].disabled { notes.append("\(m[0].name) is disabled or expired in Postiz; posts go to Today until it's reconnected") }
+      if m[0].disabled { notes.append("\(m[0].name) is disabled or expired in Postiz; posts go to the Calendar until it's reconnected") }
       return try change(store, "map \(p.rawValue)", json: json, ids: ids, notes: notes, wrote: &wrote) { $0.publishing.channels[p] = m[0].id }
     }
     let (list, note, live) = try channelList(store, svc)
@@ -442,7 +442,7 @@ enum PostizCommand {
     if kind == .postiz {
       let unmapped = ps.filter { settings.publishing.channels[$0] == nil }
       if !unmapped.isEmpty {
-        notes.append("no channel mapped for \(unmapped.map(\.displayName).joined(separator: ", ")): their posts go to Today until `djq postiz map`")
+        notes.append("no channel mapped for \(unmapped.map(\.displayName).joined(separator: ", ")): their posts go to the Calendar until `djq postiz map`")
       }
       let off = ps.filter { !settings.enabledPlatforms.contains($0) }
       if !off.isEmpty { notes.append("\(off.map(\.displayName).joined(separator: ", ")) \(off.count == 1 ? "is" : "are") turned off in Settings → Platforms (nothing posts there)") }
@@ -475,7 +475,7 @@ enum PostizCommand {
     if dry && draft { throw CLIError("pick one: --dry-run (no call) or --draft (Postiz drafts)") }
     guard dry || draft else {
       throw CLIError(yes
-        ? "djq postiz test never schedules real posts: they'd bypass DJ Queue's tracking (no double-post guard, no live links back). Real posts go out only from an approved week (docs/postiz-test.md). Use --dry-run or --draft."
+        ? "djq postiz test never schedules real posts: they'd bypass DJ Queue's tracking (no double-post guard, no live links back). Real posts go out only from clips in the Queue (docs/postiz-test.md). Use --dry-run or --draft."
         : "djq postiz test needs --dry-run (prints the six payloads, no call) or --draft (Postiz drafts only, nothing reaches a platform)")
     }
     let settings = try store.settings()
@@ -582,7 +582,7 @@ enum PostizCommand {
         } else {
           print("\(p.platform.displayName) · \(tagOf(store, p.videoId)): \(e)")
           print("  djq postiz resolve \(short(p.id)) --in-postiz       Postiz has it: never sent again (add the link with djq postiz link)")
-          print("  djq postiz resolve \(short(p.id)) --not-in-postiz   it isn't there: on Today to post by hand")
+          print("  djq postiz resolve \(short(p.id)) --not-in-postiz   it isn't there: on the Calendar to post by hand")
         }
         return 2
       }

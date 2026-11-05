@@ -34,7 +34,7 @@ struct PublishingSection: View {
         set: { open in dsWithAnimation { if open { expanded.insert(p) } else { expanded.remove(p) } } }))
     }
 
-    SettingsNote("Manual stays the fallback: anything Postiz can't take goes to Today with the reason.")
+    SettingsNote("Manual stays the fallback: anything Postiz can't take goes to the Calendar with the reason.")
       .onAppear { model.loadPostizKey() }
   }
 
@@ -80,7 +80,7 @@ struct PublishingSection: View {
       let n = model.postiz.channels?.count ?? 0
       let at = (model.postiz.checkedAt ?? model.postiz.channelsFetchedAt).map { "Checked \(PostizFmt.time($0, model.tz))" }
       return [at, "\(n) channel\(n == 1 ? "" : "s")"].compactMap { $0 }.joined(separator: " · ")
-    case .keyInvalid: return "Save the key again; until then Postiz posts go to Today."
+    case .keyInvalid: return "Save the key again; until then Postiz posts go to the Calendar as manual posts."
     case .rateLimited: return "Calls resume by themselves."
     case .unreachable(let e): return e
     }
@@ -168,7 +168,7 @@ struct PublishingPlatformRow: View {
         HStack(spacing: DS.space.xs) {
           stateBadge(kind)
           DSSegmented(selection: Binding(get: { kind }, set: { model.setPublisher(p, $0) }), segments: [
-            DSSegment(value: PublisherKind.manual, title: "Manual", tooltip: "You post \(p.displayName) yourself from Today"),
+            DSSegment(value: PublisherKind.manual, title: "Manual", tooltip: "You post \(p.displayName) yourself from the Calendar"),
             DSSegment(value: PublisherKind.postiz, title: "Postiz", tooltip: "Postiz posts \(p.displayName) at its slot",
                       disabledReason: kind == .postiz ? nil : model.postizUnavailableReason(p)),
           ], size: .sm)
@@ -196,7 +196,7 @@ struct PublishingPlatformRow: View {
 
   private func summary(_ kind: PublisherKind) -> String {
     let ch = model.postiz.channel(model.settings.publishing.channels[platform])
-    if kind == .manual { return "Manual · you post it from Today" }
+    if kind == .manual { return "Manual · you post it from the Calendar" }
     switch model.postizRoute(platform) {
     case .postiz: return "Postiz · " + (ch.map { "\($0.name) · \($0.identifier)" } ?? "channel picked")
     case .fallback(let r): return Self.short(r)
@@ -207,13 +207,13 @@ struct PublishingPlatformRow: View {
   /// One line under the platform name; the badge's tooltip has the full sentence.
   static func short(_ r: PostizFallbackReason) -> String {
     switch r {
-    case .noKey: "No API key yet · goes to Today"
-    case .keyInvalid: "Key refused · goes to Today"
-    case .noChannel: "No channel picked · goes to Today"
-    case .channelDisabled: "Reconnect it in Postiz · goes to Today"
+    case .noKey: "No API key yet · you post it by hand"
+    case .keyInvalid: "Key refused · you post it by hand"
+    case .noChannel: "No channel picked · you post it by hand"
+    case .channelDisabled: "Reconnect it in Postiz · you post it by hand"
     case .channelMissing: "Channel gone from Postiz · pick it again"
-    case .createRejected: "Postiz refused a post · goes to Today"
-    case .vanished: "Deleted in Postiz · goes to Today"
+    case .createRejected: "Postiz refused a post · you post it by hand"
+    case .vanished: "Deleted in Postiz · you post it by hand"
     }
   }
 
@@ -223,7 +223,7 @@ struct PublishingPlatformRow: View {
       DSBadge("Channel disabled", style: .soft(.danger), icon: "exclamationmark",
               help: "\(ch?.name ?? "This channel") is disabled or needs reconnecting in Postiz")
     } else if kind == .postiz, let r = model.postizRoute(platform).fallbackReason {
-      DSBadge("Goes to Today", style: .soft(.warning), help: r.message)
+      DSBadge("Post by hand", style: .soft(.warning), help: r.message)
     }
   }
 }

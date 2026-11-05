@@ -137,7 +137,7 @@ struct PostInspector: View {
           DSButton("It's in Postiz", icon: "checkmark.circle", variant: .outline, size: .sm,
                    tooltip: "Keep it as Postiz's; it's never sent again") { model.resolveUnconfirmed(post, inPostiz: true) }
           DSButton("Not in Postiz — post it myself", variant: .ghost, size: .sm,
-                   tooltip: "Move it to Today as a manual post (asks first)") { model.resolveUnconfirmed(post, inPostiz: false) }
+                   tooltip: "Post it by hand from the Calendar (asks first)") { model.resolveUnconfirmed(post, inPostiz: false) }
         }
         .padding(.top, DS.space.xs)
       }

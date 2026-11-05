@@ -6,11 +6,11 @@ import SwiftUI
 /// Shared list header (round 4 S3): "Queue 41 · next Thu 5 Nov" · search (⌘F) · view toggle · runway chip ·
 /// status chips `All · Has a day · No day yet` · Filters (Session · Kind · Score) · sort ("Worst → best ▾",
 /// tie rule inside, writes `Settings.sort`). No filled primary: the primary act is direct manipulation.
-/// Order = the upcoming plan (date order) then the backlog in sort order; search and filters narrow it without
-/// renumbering. Cards: position · ⋮⋮ on hover · thumb · title + meta · score · next-date chip · platform icons only
-/// when planned/posted · pin glyph. Hover actions: stage control (‹ Back to Edit · Schedule ›), Post today, Pin to
-/// date…, ⋯. Drag a card onto a planned clip to take its day (pinned); the backlog itself follows the sort. Bulk:
-/// Pin to days… · Post today · More · **Add to week**. Hidden: Score/Edit clips, excluded clips, versions.
+/// Order = the Calendar (date order) then the clips waiting, in sort order; search and filters narrow it without
+/// renumbering. A clip here schedules itself: being in the Queue is Eric's approval. Cards: position · ⋮⋮ on hover ·
+/// thumb · title + meta · score · date chip · platform icons only when scheduled/posted · pin glyph. Hover actions:
+/// ‹ Back to Edit, Post today, Pin to date…, ⋯. Drag a card onto a clip with a day to take that day (pinned); the rest
+/// follows the sort. Bulk: Post today · More · **Pin to days…**. Hidden: Score/Edit clips, excluded clips, versions.
 struct QueueView: View {
   @Bindable var model: AppModel
   @State private var pinTarget: [String]?
@@ -41,7 +41,7 @@ struct QueueView: View {
       if !model.loaded {
         Color.clear
       } else if all.isEmpty {
-        DSEmptyState(icon: "list.bullet", title: "The Queue is empty", message: "Clips arrive here once they're scored and finished in Edit.",
+        DSEmptyState(icon: "list.bullet", title: "The Queue is empty", message: "Clips arrive here when you send them from Edit.",
                      actionTitle: "Go to Edit") { model.screen = .edit }
       } else if list.isEmpty {
         ListNoMatches(model: model, page: .queue, title: "No clips match", message: "Nothing in the Queue fits this search or these filters.") {
@@ -54,10 +54,10 @@ struct QueueView: View {
         ClipCollection(model: model, screen: .queue, videos: list, mode: mode, clip: { v in
           var c = model.dsClip(v, for: .queue)
           c.position = positions[v.id]
-          // Grid tiles have no date chip of their own: the next day rides as a tag (only when scheduled).
-          if mode == .grid, let d = c.dateText, d != "Not scheduled" {
+          // Grid tiles have no date chip of their own: the day rides as a tag.
+          if mode == .grid, let d = c.dateText {
             c.tags.append(DSClipTag(text: d, style: .outline, icon: c.isPinned ? "pin.fill" : "calendar",
-                                    tooltip: c.isPinned ? "Pinned to this day — the plan works around it" : "Next planned post day"))
+                                    tooltip: c.isPinned ? "Pinned to this day; the rest flows around it" : "The day it goes out"))
           }
           return c
         }, onOpen: { v in model.openEditor(v.id, in: ids) }) { v in
@@ -84,14 +84,14 @@ struct QueueView: View {
     .onDisappear { ListPrefs.shared.screenDialogOpen = false }
   }
 
-  /// Has a day in the plan (an approved or a draft week): the card's date chip shows it.
+  /// Has a day on the Calendar: the card's date chip shows it.
   private func isScheduled(_ v: Video) -> Bool { model.nextSlotByVideo[v.id] != nil }
 
   private func statusChips(_ scope: [Video]) -> some View {
     let n = scope.filter(isScheduled).count
     return DSStatusChips(options: [
       DSStatusChipOption(id: "scheduled", title: "Has a day", count: n,
-                         tooltip: "Clips with a day in the plan (a draft or an approved week)"),
+                         tooltip: "Clips with a day on the Calendar"),
       DSStatusChipOption(id: "unscheduled", title: "No day yet", count: scope.count - n, tooltip: "Clips still waiting for a day"),
     ], selection: prefs.statusBinding(.queue), allCount: scope.count, allTooltip: "Every clip in the Queue")
   }
@@ -104,7 +104,7 @@ struct QueueView: View {
   }
 }
 
-/// The Queue's sort (Settings › Queue sort: the backlog order the planner uses) with the tie rule explained inside.
+/// The Queue's sort (Settings › Queue sort: the order clips get their days) with the tie rule explained inside.
 struct QueueSortMenu: View {
   @Bindable var model: AppModel
 
@@ -113,14 +113,14 @@ struct QueueSortMenu: View {
                selection: Binding(get: { model.settings.sort.rawValue }, set: { new in
                  if let d = SortDirection(rawValue: new), d != model.settings.sort { model.update { $0.sort = d } }
                }),
-               tooltip: "Order the clips waiting for a day by score",
+               tooltip: "Order the Queue by score",
                notes: ["Ties: the older set first, then part, then start time",
-                       "Clips with a day keep it; this orders the ones waiting"])
+                       "Re-lays the calendar; pinned days stay"])
   }
 }
 
-/// Queue bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Pin to days… · Post today · More (Back to Edit,
-/// Back / Forward a stage, Skip platform ▸, Exclude, post on a platform again, Kind, re-render) · **Add to week**.
+/// Queue bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Post today · More (Back to Edit, Skip platform ▸, Exclude,
+/// post on a platform again, Kind, re-render) · **Pin to days…**.
 private struct QueueBulkBar: View {
   @Bindable var model: AppModel
   let ids: [String]
@@ -129,15 +129,7 @@ private struct QueueBulkBar: View {
   var body: some View {
     let n = AppModel.pipelineClips(ids.count)
     ScreenBulkBar(model: model, screen: .queue) {
-      Button("Pin to days…", systemImage: "pin") { onPin() }
-        .dsTooltip("Pin to consecutive days, in order shown")
-      Button("Post today", systemImage: "bolt") {
-        let ids = ids
-        model.pipelineBulk("Post \(n) today?", verb: "Post today", ids: ids,
-                           changes: [.init(field: "Day", value: "Today · the rest of the plan moves a day later")]) { b, dry in
-          try b.postToday(ids, dryRun: dry)
-        }
-      }
+      Button("Post today", systemImage: "bolt") { model.postTodayAsking(ids) }
       .dsTooltip("Post these today; extras are skipped")
     } more: {
       // Native items show no tooltip: titles carry the consequence (or why not); each asks first and can be undone.
@@ -146,8 +138,6 @@ private struct QueueBulkBar: View {
         model.removeFromQueue(ids)
       }
       .disabled(removeWhy != nil)
-      Button("Back a stage (Scheduled → Queue, Queue → Edit)", systemImage: "chevron.left") { model.stageBack(ids) }
-      Button("Forward a stage (Queue → Scheduled on open days)", systemImage: "chevron.right") { model.stageForward(ids) }
       Divider()
       Button("Caption…", systemImage: "text.alignleft") { model.captionDialogIds = ids }
       Menu("Skip platform") {
@@ -180,17 +170,7 @@ private struct QueueBulkBar: View {
         }
       }
     } primary: {
-      DSButton("Add to week", variant: .primary, size: .sm, tooltip: "Pin to free days of the next open week") { addToWeek() }
-    }
-  }
-
-  private func addToWeek() {
-    let ids = ids
-    let week = model.pipelineWeekWithRoom()
-    let label = Fmt.day(model.dm.date(week), tz: model.tz, style: "d MMM")
-    model.pipelineBulk("Add \(AppModel.pipelineClips(ids.count)) to the week of \(label)?", verb: "Add to week", ids: ids,
-                       changes: [.init(field: "Plan", value: "First free days of the week of \(label), pinned")]) { b, dry in
-      try b.addToWeek(ids, week: week, dryRun: dry)
+      DSButton("Pin to days…", variant: .primary, size: .sm, tooltip: "Pin to consecutive days, in order shown") { onPin() }
     }
   }
 
@@ -210,6 +190,8 @@ private struct QueueBulkBar: View {
 struct QueuePinDialog: View {
   @Bindable var model: AppModel
   let ids: [String]
+  /// Opened from the Calendar's "Move to…": the same pin, in the words of a move.
+  var moving = false
   let onClose: () -> Void
   @State private var date: Date?
 
@@ -217,9 +199,9 @@ struct QueuePinDialog: View {
     let start = model.dm.date(model.todayKey)
     let pick = date ?? model.nextSlotByVideo[ids.first ?? ""].map { model.dm.date($0.date) } ?? start
     let multi = ids.count > 1
-    DSDialog(multi ? "Pin \(AppModel.pipelineClips(ids.count)) to days" : "Pin to date",
+    DSDialog(moving ? "Move to" : multi ? "Pin \(AppModel.pipelineClips(ids.count)) to days" : "Pin to date",
              description: multi ? "The first clip goes on the day you pick, the next on the day after, in the order shown."
-               : "The clip posts on this day and the planner won't move it.",
+               : "The clip posts on this day and stays there.",
              icon: "pin", width: 380, onClose: onClose) {
       DatePicker("Date", selection: Binding(get: { pick }, set: { date = $0 }), in: start..., displayedComponents: .date)
         .datePickerStyle(.graphical)
@@ -228,7 +210,7 @@ struct QueuePinDialog: View {
     } footer: {
       DSButton("Cancel", variant: .ghost, shortcut: "esc") { onClose() }
         .keyboardShortcut(.cancelAction)
-      DSButton(multi ? "Pin \(ids.count)" : "Pin", variant: .primary,
+      DSButton(moving ? "Move" : multi ? "Pin \(ids.count)" : "Pin", variant: .primary,
                tooltip: multi ? "Pin them one a day from this day" : "Pin it to this day", shortcut: "↩") { pin(pick) }
         .keyboardShortcut(.defaultAction)
     }
@@ -238,12 +220,20 @@ struct QueuePinDialog: View {
   private func pin(_ d: Date) {
     let ids = ids
     let day = model.dm.key(d)
+    if moving, ids.count == 1 {
+      onClose()
+      model.calendarMove(videoId: ids[0], to: day)
+      return
+    }
     let first = Fmt.day(d, tz: model.tz)
     let last = Fmt.day(model.dm.date(model.dm.addDays(day, ids.count - 1)), tz: model.tz)
     onClose()
+    if ids.count == 1 {
+      model.pin(ids[0], dayKey: day)
+      return
+    }
     model.pipelineBulk("Pin \(AppModel.pipelineClips(ids.count)) to \(first) – \(last)?", verb: "Pin", ids: ids,
-                       changes: [.init(field: "Days", value: ids.count == 1 ? first : "\(first) – \(last), one a day")],
-                       done: ids.count == 1 ? "Pinned to \(first)" : nil) { b, dry in
+                       changes: [.init(field: "Days", value: "\(first) – \(last), one a day")] + model.goesOutRow(model.platformsTooSoon(ids[0], day: day))) { b, dry in
       try b.pinConsecutive(ids, from: day, dryRun: dry)
     }
   }

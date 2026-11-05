@@ -20,7 +20,7 @@ struct GeneralSettings: View {
     SettingsRow("Time zone", description: "Slot times, days and reminders use this zone.") {
       SettingsSelect(label: "Time zone", selection: model.binding(\.timeZone) { "Time zone set to \($0)" }, options: timeZones)
     }
-    SettingsRow("Week starts on", description: "First day of the Week screen and of each approval.") {
+    SettingsRow("Week starts on", description: "First day of the Calendar.") {
       SettingsSelect(label: "Week starts on", selection: model.binding(\.weekStartsOn) { "Week now starts on \(SettingsFmt.weekday($0))" },
                      options: [DSSelectOption(value: 2, title: "Monday"), DSSelectOption(value: 1, title: "Sunday")])
     }
@@ -70,7 +70,7 @@ struct PlatformsSettings: View {
   private var publishingSummary: String {
     let n = model.settings.publishing.postizPlatforms.count
     let test = model.settings.publishing.testMode ? " · Test run on" : ""
-    return (n == 0 ? "Every platform is Manual: you post from Today." : "\(n) of 6 through Postiz, the rest Manual.") + test
+    return (n == 0 ? "Every platform is Manual: you post from the Calendar." : "\(n) of 6 through Postiz, the rest Manual.") + test
   }
 
   private func description(_ p: Platform) -> String {
@@ -229,7 +229,7 @@ struct QueueSettings: View {
   @Bindable var model: AppModel
 
   var body: some View {
-    SettingsRow("Order", description: "Orders the unplanned backlog by score. Planned days don't move.") {
+    SettingsRow("Order", description: "Orders the Queue by score. A change re-lays the calendar; pinned days stay.") {
       SettingsSelect(label: "Order", selection: model.binding(\.sort) { "Order set to \($0.displayName)" },
                      options: SortDirection.allCases.map { DSSelectOption(value: $0, title: $0.displayName) })
     }
@@ -293,7 +293,7 @@ struct RenderingSettings: View {
                                                 set: { v in model.update("Bitrate set to \(v) Mbps") { $0.videoBitrateKbps = v * 1000 } }),
                  range: 4...40) { "\($0) Mbps" }
     }
-    SettingsRow("Render ahead", description: "Approved posts are rendered this far ahead.") {
+    SettingsRow("Render ahead", description: "Scheduled posts are rendered this far ahead.") {
       DSXStepper(label: "Render ahead", int: model.binding(\.renderHorizonDays) { "Render ahead set to \(SettingsFmt.days($0))" },
                  range: 1...14, format: SettingsFmt.days)
     }
@@ -392,30 +392,19 @@ struct AlertsSettings: View {
   @Bindable var model: AppModel
 
   var body: some View {
-    SettingsGroupHeader("Runway", first: true)
-    SettingsRow("Approve next week", description: "Card and notification when approved runway drops below this.") {
-      DSXStepper(label: "Approve next week", int: model.binding(\.approvedRunwayAlertDays) { "Approval alert at \(SettingsFmt.days($0)) left" },
-                 range: 1...14, less: "Alert when fewer approved days are left", more: "Alert when more approved days are left",
+    SettingsGroupHeader("Queue", first: true)
+    SettingsRow("Low Queue alert", description: "Card and notification when fewer days than this are scheduled and the Queue is about out.") {
+      DSXStepper(label: "Low Queue alert", int: model.binding(\.approvedRunwayAlertDays) { "Low Queue alert at \(SettingsFmt.days($0)) left" },
+                 range: 1...14, less: "Alert when fewer days are scheduled", more: "Alert when more days are scheduled",
                  format: SettingsFmt.days)
     }
-    SettingsRow("Record a new set", description: "Card and notification when total runway drops below this.") {
+    SettingsRow("Record a new set", description: "Card and notification when scheduled days plus clips waiting drop below this.") {
       DSXStepper(label: "Record a new set", int: model.binding(\.totalRunwayAlertDays) { "New-set alert at \(SettingsFmt.days($0)) left" },
                  range: 3...60, less: "Alert when fewer days of clips are left", more: "Alert when more days of clips are left",
                  format: SettingsFmt.days)
     }
 
     SettingsGroupHeader("Reminders")
-    SettingsRow("Approval reminder", description: "Notification if next week isn't approved by then.") {
-      HStack(spacing: DS.space.xxs) {
-        SettingsSelect(label: "Approval reminder day",
-                       selection: model.binding(\.approvalReminderWeekday) { "Approval reminder moved to \(SettingsFmt.weekday($0))" },
-                       options: (1...7).map { DSSelectOption(value: $0, title: SettingsFmt.weekday($0)) })
-        SettingsSelect(label: "Approval reminder time",
-                       selection: model.binding(\.approvalReminderMinutes) { "Approval reminder moved to \(SettingsFmt.time($0))" },
-                       options: SettingsFmt.timeOptions(current: model.settings.approvalReminderMinutes))
-      }
-      .fixedSize()
-    }
     SettingsRow("Slot reminders", description: "One notification per slot; silent when it's already posted.") {
       DSBadge("Always on", style: .soft(.neutral), help: "Slot reminders can't be turned off")
     }

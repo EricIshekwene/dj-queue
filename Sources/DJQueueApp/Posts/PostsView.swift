@@ -145,8 +145,8 @@ struct PostsView: View {
       if !model.loaded {
         Color.clear
       } else if model.posts.isEmpty {
-        DSEmptyState(icon: "paperplane", title: "No posts yet", message: "Posts appear once a week is approved.",
-                     actionTitle: "Open Week") { model.screen = .week }
+        DSEmptyState(icon: "paperplane", title: "No posts yet", message: "Posts appear once clips have a day on the Calendar.",
+                     actionTitle: "Open Calendar") { model.screen = .calendar }
       } else if list.isEmpty {
         if tab == .problems && !prefs[.posts].isNarrowed(ignoringStatus: true) {
           DSEmptyState(icon: "checkmark.circle", title: "No problems", message: "Every post went out or is on schedule.",

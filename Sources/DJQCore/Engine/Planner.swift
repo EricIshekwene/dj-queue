@@ -1,13 +1,15 @@
 import Foundation
 
-/// Weekly plan (spec §5): propose → edit → approve. Only approved slots get PlatformPosts, and only posts ever post.
+/// The plan (round 13): a clip in the Queue is approved, and `autoSchedule` (AutoSchedule.swift) keeps every Queue clip on
+/// the calendar. Only slots of an approved week get PlatformPosts, and only posts ever post; "approved" is an internal
+/// word here (`autoSchedule` marks the week itself, so Eric never sees it).
 ///
 /// A slot counts as approved when its week is approved or it already has posts (e.g. it was pushed into a
 /// draft week, or created by Post today). Any edit to an approved slot regenerates its un-posted posts.
 ///
 /// Never double-post: every regular post is placed with `Placer` on the first day ≥ its intended date that has
 /// no other live regular post for that platform and position, so per-platform shifts (missed days) survive
-/// approvals, swaps, moves and pushes. Retries/reposts are extras staggered ≥ 3 h from that day's post.
+/// scheduling, swaps, moves and pushes. Retries/reposts are extras staggered ≥ 3 h from that day's post.
 public final class Planner: @unchecked Sendable {
   let store: Store
   lazy var queue = Queue(store: store)
@@ -30,7 +32,8 @@ public final class Planner: @unchecked Sendable {
     return try !store.slotPosts(slot.id).isEmpty
   }
 
-  /// Fills every open (date, position) from today onward with the queue order. Pinned/kept slots stay.
+  /// Internal seam (test setup, the draft week `autoSchedule` adopts); nothing aimed at Eric calls it. Fills every open
+  /// (date, position) of the week from today onward with the queue order. Pinned/kept slots stay.
   @discardableResult
   public func proposeWeek(_ week: String) throws -> [PlanSlot] {
     let settings = try store.settings()
@@ -55,8 +58,9 @@ public final class Planner: @unchecked Sendable {
     return try slots(week: week)
   }
 
-  /// Creates a PlatformPost per slot (today on) × active platform; marks the week approved. One transaction: the
-  /// state check, the draft-day refill and the approval all land or none do.
+  /// Internal seam (test setup); the engine uses `autoSchedule`. Creates a PlatformPost per slot (today on) × active
+  /// platform; marks the week approved. One transaction: the state check, the draft-day refill and the approval all
+  /// land or none do.
   public func approveWeek(_ week: String) throws {
     try store.db.transaction { try approveWeekInTransaction(week) }
   }
@@ -113,18 +117,19 @@ public final class Planner: @unchecked Sendable {
       guard !dropped.isEmpty else { return }
       var backlog = try queue.ordered()
       for s in dropped.sorted(by: { ($0.date, $0.position) < ($1.date, $1.position) }) {
-        try store.logEvent("plan", "Removed from the draft plan on \(s.date): not in the Queue any more", videoId: s.videoId)
+        try store.logEvent("plan", "Taken off \(s.date): not in the Queue any more", videoId: s.videoId)
         guard let i = try pickIndex(backlog, for: s.date, settings: settings, dm: dm) else { continue }
         let v = backlog.remove(at: i)
         try store.save(PlanSlot(id: newId(), date: s.date, position: s.position, videoId: v.id, pinned: false, weekStart: s.weekStart))
         try store.refreshState(videoId: v.id)
-        try store.logEvent("plan", "Proposed for \(s.date) (filled a day freed by a clip that went back to Edit)", videoId: v.id)
+        try store.logEvent("plan", "Took \(s.date) (a day freed by a clip that went back to Edit)", videoId: v.id)
       }
     }
     return dropped
   }
 
-  /// Drops unpinned slots (today on) that have nothing posted, deletes their un-posted posts, re-proposes; week → draft.
+  /// Internal seam (test setup). Drops unpinned slots (today on) that have nothing posted, deletes their un-posted
+  /// posts, re-proposes; week → draft.
   public func rebuildWeek(_ week: String) throws {
     let dm = try store.dayMath()
     let today = store.today(dm)
@@ -172,6 +177,7 @@ public final class Planner: @unchecked Sendable {
         try regenerateMany([(s, false)], settings: settings, dm: dm)
       } else if var s = here.first(where: { !$0.pinned }) {
         try ensureNothingPosted(s)
+        try ensureNothingFinal(s)
         let was = try isApproved(s)
         let old = s.videoId
         s.videoId = v.id
@@ -189,6 +195,7 @@ public final class Planner: @unchecked Sendable {
   public func remove(slotId: String) throws {
     guard let s = try store.planSlot(id: slotId) else { throw EngineError("No plan slot \(slotId)") }
     try ensureNothingPosted(s)
+    try ensureNothingFinal(s)
     try store.db.transaction {
       try store.dropAutoRetries(slot: s)
       try clearSlot(s)
@@ -198,12 +205,12 @@ public final class Planner: @unchecked Sendable {
   }
 
   /// What "Remove from queue" takes out for one video, per day: its in-flight posts (planned, rendering, rendered,
-  /// due, overdue) grouped by their local day, plus its removable slots that have no posts yet (a proposed week).
+  /// due, overdue) grouped by their local day, plus its removable slots that have no posts yet.
   public struct UnplanItem: Codable, Sendable, Hashable {
     public var videoId: String
     /// YYYY-MM-DD (the post's day — a platform shifted by a missed day keeps its own day).
     public var date: String
-    /// Platforms whose post is removed that day (empty: a proposed slot that never got posts).
+    /// Platforms whose post is removed that day (empty: a slot that never got posts).
     public var platforms: [Platform]
     /// The slot that day was pinned (its pin goes too).
     public var pinned: Bool
@@ -237,8 +244,8 @@ public final class Planner: @unchecked Sendable {
   /// history and pending extras detached; a pinned slot goes with its pin), and so is a past slot that only held
   /// in-flight posts. Then every post of the video still in flight — planned, rendering, rendered, due, overdue,
   /// in any slot, retries and reposts too — is deleted, so nothing of it posts while it's held. Posted and other
-  /// terminal posts, slots with a posted post and post history stay. The other clips keep their days: like
-  /// `remove`, nothing is backfilled or reshuffled (a never-proposed week is still auto-proposed by the engine).
+  /// terminal posts, slots with a posted post and post history stay. The other clips keep their days: nothing is
+  /// reshuffled, and the gap is filled from the Queue's waiting clips only (`autoSchedule`).
   @discardableResult
   public func unplan(videoId: String) throws -> [UnplanItem] {
     let dm = try store.dayMath()
@@ -258,7 +265,7 @@ public final class Planner: @unchecked Sendable {
     }
     if !preview.isEmpty {
       try store.logEvent("plan", "Removed from the plan: " + preview.map { i in
-        "\(i.date)" + (i.platforms.isEmpty ? " (proposed)" : " · \(i.platforms.count) platform\(i.platforms.count == 1 ? "" : "s")")
+        "\(i.date)" + (i.platforms.isEmpty ? " (no posts yet)" : " · \(i.platforms.count) platform\(i.platforms.count == 1 ? "" : "s")")
       }.joined(separator: ", "), videoId: videoId)
     }
     return preview
@@ -285,6 +292,10 @@ public final class Planner: @unchecked Sendable {
     guard var sa = try store.planSlot(id: a), var sb = try store.planSlot(id: b) else { throw EngineError("No such plan slot") }
     try ensureNothingPosted(sa)
     try ensureNothingPosted(sb)
+    try ensureNothingFinal(sa)
+    try ensureNothingFinal(sb)
+    try refuseTooSoon(sa, settings: settings, dm: dm)
+    try refuseTooSoon(sb, settings: settings, dm: dm)
     try store.db.transaction {
       let aa = try isApproved(sa), ba = try isApproved(sb)
       (sa.videoId, sb.videoId) = (sb.videoId, sa.videoId)
@@ -310,7 +321,12 @@ public final class Planner: @unchecked Sendable {
     let today = store.today(dm)
     let perDay = max(1, settings.postsPerDay)
     let existing = try store.planSlots(where: "video_id=? AND date>=?", [videoId, today]).first
-    if let e = existing { try ensureNothingPosted(e) } else { _ = try readyVideo(videoId) }
+    if let e = existing {
+      try ensureNothingPosted(e)
+      try ensureNothingFinal(e)
+    } else {
+      _ = try readyVideo(videoId)
+    }
     try store.db.transaction {
       var until: String?
       if let e = existing {
@@ -383,8 +399,11 @@ public final class Planner: @unchecked Sendable {
   }
 
   /// One regular post per active platform that doesn't have one for this slot yet, each on the first free day
-  /// ≥ the slot date for that platform and position.
-  func createPosts(_ s: PlanSlot, settings: Settings, dm: DayMath, picker: inout PlatformPicker, placer: inout Placer) throws {
+  /// ≥ the slot date for that platform and position. `note` opens the post's history. `notBefore`: a platform whose time
+  /// comes earlier gets no post. `pullForHistory: false`: a platform the clip already has history on gets no post,
+  /// instead of another clip's (`autoSchedule`, DECISIONS-R13.md).
+  func createPosts(_ s: PlanSlot, settings: Settings, dm: DayMath, picker: inout PlatformPicker, placer: inout Placer,
+                   note: String = "scheduled", notBefore: Date? = nil, pullForHistory: Bool = true) throws {
     let existing = Set(try store.slotPosts(s.id).filter { $0.kind == .regular }.map(\.platform))
     let now = store.clock.now
     var touched: Set<String> = [s.videoId]
@@ -394,18 +413,21 @@ public final class Planner: @unchecked Sendable {
       if picker.hasOverride(p) {
         videoId = try picker.next(p)?.id ?? (try usable(s.videoId, on: p) ? s.videoId : nil)
       } else if try !usable(s.videoId, on: p) {
+        guard pullForHistory else { continue }
         videoId = try picker.next(p)?.id
       }
       guard let vid = videoId else { continue }
+      let day = placer.place(p, position: s.position, from: s.date)
+      let at = Sched.slotTime(settings, dm, date: day, position: s.position, platform: p)
+      if let notBefore, at < notBefore { continue }
       picker.used[p, default: []].insert(vid)
       touched.insert(vid)
-      let day = placer.place(p, position: s.position, from: s.date)
       try store.save(PlatformPost(
         id: newId(), videoId: vid, platform: p, versionNo: 1, attemptNo: try store.nextAttemptNo(videoId: vid, platform: p),
-        kind: .regular, planSlotId: s.id, scheduledAt: Sched.slotTime(settings, dm, date: day, position: s.position, platform: p),
+        kind: .regular, planSlotId: s.id, scheduledAt: at,
         renderId: nil, state: .planned, publisher: "manual", externalId: nil, url: nil, postedAt: nil, errorType: nil,
         errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now),
-        note: day == s.date ? "approved" : "approved (platform plan shifted to \(day))")
+        note: day == s.date ? note : "\(note) (platform plan shifted to \(day))")
     }
     for v in touched { try store.refreshState(videoId: v) }
   }
@@ -444,8 +466,9 @@ public final class Planner: @unchecked Sendable {
     }
     var picker = PlatformPicker(queue: queue, settings: settings)
     var placer = try Placer(store: store, dm: dm)
+    // A move never pulls another clip onto this slot: a platform the clip has history on gets no post (re-review N3).
     for s in todo.sorted(by: { ($0.date, $0.position) < ($1.date, $1.position) }) {
-      try createPosts(s, settings: settings, dm: dm, picker: &picker, placer: &placer)
+      try createPosts(s, settings: settings, dm: dm, picker: &picker, placer: &placer, pullForHistory: false)
     }
     for (s, _) in list { try store.refreshState(videoId: s.videoId) }
   }
@@ -492,7 +515,8 @@ public final class Planner: @unchecked Sendable {
     let positions = Dictionary(uniqueKeysWithValues: newSlots.map { ($0.id, $0.position) })
     for (var p, delta) in regular.sorted(by: { $0.0.scheduledAt < $1.0.scheduledAt }) {
       let pos = positions[p.planSlotId ?? ""] ?? 0
-      let day = placer.place(p.platform, position: pos, from: dm.addDays(dm.key(p.scheduledAt), delta))
+      let planned = Sched.planDay(p.scheduledAt, position: pos, offsetMinutes: settings.secondPostOffsetMinutes, dm)
+      let day = placer.place(p.platform, position: pos, from: dm.addDays(planned, delta))
       p.scheduledAt = Sched.slotTime(settings, dm, date: day, position: pos, platform: p.platform)
       if p.state == .due || p.state == .overdue { p.state = p.renderId == nil ? .planned : .rendered }
       try store.save(p, note: "plan pushed → \(day)")
@@ -509,6 +533,7 @@ public final class Planner: @unchecked Sendable {
 
   func moveSlot(_ s: inout PlanSlot, to date: String, settings: Settings, dm: DayMath) throws {
     try ensureNothingPosted(s)
+    try ensureNothingFinal(s)
     let wasApproved = try isApproved(s)
     let used = try store.planSlots(where: "date=? AND id<>?", [date, s.id])
     if let pos = (0..<max(1, settings.postsPerDay)).first(where: { p in !used.contains { $0.position == p } }) {
@@ -521,6 +546,8 @@ public final class Planner: @unchecked Sendable {
       var other = used.first { $0.position == s.position } ?? used[0]
       if other.pinned { throw EngineError("\(date) is pinned — unpin it first") }
       try ensureNothingPosted(other)
+      try ensureNothingFinal(other)
+      try refuseTooSoon(s, settings: settings, dm: dm)  // `other` takes this slot's day and position
       let otherApproved = try isApproved(other)
       let (d, p, w) = (s.date, s.position, s.weekStart)
       let otherPos = other.position
@@ -532,6 +559,24 @@ public final class Planner: @unchecked Sendable {
       s.weekStart = dm.weekStart(of: dm.date(date))
       try store.save(s)
       try regenerateMany([(s, wasApproved), (other, otherApproved)], settings: settings, dm: dm)
+    }
+  }
+
+  /// A swap would put a clip Eric didn't touch on `s`'s day and position. Inside the lead that clip would post within
+  /// minutes (a past slot goes out 3 minutes after upload), so the swap is refused.
+  func refuseTooSoon(_ s: PlanSlot, settings: Settings, dm: DayMath) throws {
+    let now = store.clock.now
+    guard isOpen(day: s.date, position: s.position, today: dm.key(now), now: now, settings: settings, dm: dm) else {
+      throw EngineError(StageWording.todayTooSoon)
+    }
+  }
+
+  /// Regenerating a slot gives its posts new ids, and a new id forgets a final Postiz job: a post Eric deleted in Postiz would
+  /// go back. So a slot with one stays put. Back to Edit and Send to Queue is the explicit way to send it again.
+  func ensureNothingFinal(_ s: PlanSlot) throws {
+    for p in try store.slotPosts(s.id) where !p.state.isTerminal {
+      guard try store.finalPostizJob(postId: p.id) != nil else { continue }
+      throw EngineError("\(try store.video(id: p.videoId)?.displayName ?? p.videoId) has a post you removed from Postiz")
     }
   }
 
@@ -548,6 +593,7 @@ public final class Planner: @unchecked Sendable {
     if v.excluded { throw EngineError("\(v.tag) is excluded") }
     let issues = try Validation.issues(video: v, store: store).filter { $0.kind != .tooLong }
     if let i = issues.first { throw EngineError("\(v.tag) is in Edit, not the Queue (\(i.message))") }
+    if !v.sentToQueue { throw EngineError("\(v.tag) is in Edit, not the Queue (send it to the Queue first)") }
     return v
   }
 

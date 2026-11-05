@@ -69,7 +69,7 @@ public enum SettingsSearchRegistry {
     .row(.general, "Pause all posting", description: "Nothing is handed to you or posted until you turn this off. The plan stays as it is."),
     .row(.general, "Posts per day", description: "Each clip goes to every platform it posts to."),
     .row(.general, "Time zone", description: "Slot times, days and reminders use this zone."),
-    .row(.general, "Week starts on", description: "First day of the Week screen and of each approval."),
+    .row(.general, "Week starts on", description: "First day of the Calendar."),
     // platforms
     .group(.platforms, "Limits", description: "Used by validation (“Too long for X”) and the caption counters."),
     .group(.platforms, "Publishing"),
@@ -89,7 +89,7 @@ public enum SettingsSearchRegistry {
     .row(.schedule, "Retry stagger", group: "Posting", description: "Re-queued failures post this long after the day's slot."),
     .row(.schedule, "Repost cooldown", group: "Posting", description: "Days before the same clip can post again on a platform."),
     // queue
-    .row(.queue, "Order", description: "Orders the unplanned backlog by score. Planned days don't move."),
+    .row(.queue, "Order", description: "Orders the Queue by score. A change re-lays the calendar; pinned days stay."),
     .row(.queue, "Ties", description: "Equal scores: older session first, then the night's order (part, start)."),
     .group(.queue, "Order per platform", description: "Give one platform its own order."),
     .group(.queue, "Spacing"),
@@ -143,7 +143,7 @@ public enum SettingsSearchRegistry {
     .row(.rendering, "Loudness range", group: "Audio", description: "How much the loudness may vary across the clip."),
     .group(.rendering, "Video"),
     .row(.rendering, "Bitrate", group: "Video", description: "Video bitrate of every render."),
-    .row(.rendering, "Render ahead", group: "Video", description: "Approved posts are rendered this far ahead."),
+    .row(.rendering, "Render ahead", group: "Video", description: "Scheduled posts are rendered this far ahead."),
     .group(.rendering, "Posted renders"),
     .row(.rendering, "Cleanup", group: "Posted renders", description: "What happens to a render once every platform has posted it."),
     .row(.rendering, "Delete after", group: "Posted renders", description: "Days after the last platform posted."),
@@ -154,11 +154,10 @@ public enum SettingsSearchRegistry {
     .row(.playback, "Which clips play", description: "Cards, List and Single views: all visible clips play, at most 4 at once."),
     .row(.playback, "Loop", description: "The trim is what will post; the whole file shows everything around it."),
     // alerts
-    .group(.alerts, "Runway"),
-    .row(.alerts, "Approve next week", group: "Runway", description: "Card and notification when approved runway drops below this."),
-    .row(.alerts, "Record a new set", group: "Runway", description: "Card and notification when total runway drops below this."),
+    .group(.alerts, "Queue"),
+    .row(.alerts, "Low Queue alert", group: "Queue", description: "Card and notification when fewer days than this are scheduled and the Queue is about out."),
+    .row(.alerts, "Record a new set", group: "Queue", description: "Card and notification when scheduled days plus clips waiting drop below this."),
     .group(.alerts, "Reminders"),
-    .row(.alerts, "Approval reminder", group: "Reminders", description: "Notification if next week isn't approved by then."),
     .row(.alerts, "Slot reminders", group: "Reminders", description: "One notification per slot; silent when it's already posted."),
     .row(.alerts, "Copyright and failed posts", group: "Reminders", description: "Red card on every screen and a red badge on the menu-bar icon."),
     // engine

@@ -80,18 +80,17 @@ struct AppSidebar: View {
   }
 
   /// Expanded: what the screen is for, plus what its count or dot means ("Score new clips · 13 to score"). Compact
-  /// (no visible title): the screen's name with the same meaning ("Score · 13 to score"). ⌘1…⌘8 ride as keycaps.
+  /// (no visible title): the screen's name with the same meaning ("Score · 13 to score"). ⌘1…⌘7 ride as keycaps.
   private func rowTooltip(_ s: Screen, count: Int?) -> String {
     let n = count.map { "\($0) " } ?? ""
     let (purpose, meaning): (String, String?) = switch s {
     case .score: ("Score new clips", count == nil ? nil : "\(n)to score")
     case .edit: ("Finish clips for posting", count == nil ? nil : "\(n)in Edit")
     case .queue: ("See Queue clips in posting order", count == nil ? nil : "\(n)in the Queue")
-    case .week: ("Plan and approve the week", nil)
-    case .today: ("See what to post today", count == nil ? nil : "\(n)due")
+    case .calendar: ("See the posts going out", count == nil ? nil : "\(n)due")
     case .library: ("Browse every clip, posted or not", nil)
     case .posts: ("See every post", count == nil ? nil : "\(n)need attention")
-    case .health: ("Check engine and runway", healthMeaning)
+    case .health: ("Check engine and schedule", healthMeaning)
     }
     return [compact ? s.title : purpose, meaning].compactMap { $0 }.joined(separator: " · ")
   }
@@ -101,7 +100,7 @@ struct AppSidebar: View {
     switch model.healthTone {
     case .danger: model.loadError != nil ? "database error" : "engine stopped"
     case .warning:
-      model.settings.paused ? "posting paused" : !model.settings.pausedPlatforms.isEmpty ? "a platform paused" : "runway low"
+      model.settings.paused ? "posting paused" : !model.settings.pausedPlatforms.isEmpty ? "a platform paused" : "Queue running low"
     default: "all good"
     }
   }

@@ -27,7 +27,7 @@ import Testing
 
   func engine(_ f: Fixture, renderer: RenderService? = nil) -> (Engine, LogNotifier) {
     let n = LogNotifier()
-    return (Engine(store: f.store, renderer: renderer, publisher: nil, notifier: n), n)
+    return (Engine(store: f.store, renderer: renderer, publisher: nil, notifier: n).planFrozen, n)
   }
 
   func video(_ f: Fixture, _ id: String) throws -> Video { try #require(try f.store.video(id: id)) }
@@ -97,16 +97,17 @@ import Testing
     try f.intake()
     try Revalidation(store: f.store).run()
     try expectThreeInEdit(f)
-    // Valid again (limit raised, file back) → back in the Queue on the next check.
+    // Valid again (limit raised, file back): round 13 reverses round 4 here, they stay in Edit until Eric sends them.
     try f.updateSettings { $0.limits[.x]?.maxDuration = 140 }
-    let back = try Revalidation(store: f.store).run()
-    #expect(back.movedToQueue == ["clip-5"])
-    #expect(try f.store.events(videoId: "clip-5").contains { $0.message == "Moved to the Queue: nothing missing any more" })
+    try Revalidation(store: f.store).run()
     try f.fakeFile("Clips/\(f.sessionDir.lastPathComponent) – song2 x mix2.mp4", seed: "song2 x mix2")
     try f.intake()
     try Revalidation(store: f.store).run()
+    #expect(try ClipStage.of(video(f, "clip-5")) == .edit && ClipStage.of(video(f, "clip-2")) == .edit)
+    #expect(try ClipStage.of(video(f, "clip-0")) == .edit)
+    let sent = try BulkActions(store: f.store).sendToQueue(["clip-5", "clip-2"])
+    #expect(Set(sent.changed) == ["clip-5", "clip-2"])
     #expect(try ClipStage.of(video(f, "clip-5")) == .queue && ClipStage.of(video(f, "clip-2")) == .queue)
-    #expect(try ClipStage.of(video(f, "clip-0")) == .edit)  // its crop is still missing
   }
 
   @Test func appSettingsChangeMovesQueueClipsAtOnceAndUndoBringsThemBack() throws {
@@ -147,7 +148,7 @@ import Testing
     let newMon = try #require(try f.store.planSlots(where: "date=?", ["2026-11-02"]).first)
     #expect(newMon.videoId != mon.videoId && !newMon.pinned)
     #expect(try ClipStage.of(video(f, newMon.videoId)) == .scheduled)
-    #expect(try f.store.events(videoId: mon.videoId).contains { $0.message.hasPrefix("Removed from the draft plan") })
+    #expect(try f.store.events(videoId: mon.videoId).contains { $0.message.hasPrefix("Taken off ") })
     _ = tue
     #expect(try f.doublePosts().isEmpty)
   }
@@ -274,10 +275,10 @@ import Testing
   @Test func stageControlNamesTheRealNeighbour() throws {
     #expect(ClipStage.queue.backTitle == "Back to Edit")
     #expect(ClipStage.edit.backTitle == "Back to Score")
-    #expect(ClipStage.scheduled.backTitle == "Back to Queue")
+    #expect(ClipStage.scheduled.backTitle == "Back to Edit" && ClipStage.scheduled.backTarget == .edit)
     #expect(ClipStage.score.backTitle == nil && ClipStage.posted.backTitle == nil)
     #expect(ClipStage.edit.forwardTitle == "Send to Queue" && ClipStage.edit.forwardTarget == .queue)
-    #expect(ClipStage.queue.forwardTitle == "Schedule" && ClipStage.queue.forwardTarget == .scheduled)
+    #expect(ClipStage.queue.forwardTitle == nil && ClipStage.queue.forwardTarget == nil)
     #expect(ClipStage.score.forwardTitle == "Score it")
     for st in ClipStage.allCases {
       if let t = st.backTarget { #expect(st.backTitle == "Back to \(t.displayName)") }
@@ -286,7 +287,9 @@ import Testing
     try f.store.setScore("clip-1", 40)
     try f.store.refreshState(videoId: "clip-1")
     let q = try video(f, "clip-0"), e = try video(f, "clip-1")
-    #expect(StageWording.backTitle(q) == "Back to Edit" && StageWording.forwardTitle(q) == "Schedule")
+    #expect(StageWording.backTitle(q) == "Back to Edit" && StageWording.forwardTitle(q) == "Forward")
+    #expect(StageWording.blocker(q, .forward) == "Clips in the Queue schedule themselves")
+    #expect(StageWording.forwardHelp(q) == "Clips in the Queue schedule themselves")
     #expect(StageWording.backTitle(e) == "Back to Score" && StageWording.forwardTitle(e) == "Send to Queue")
     #expect(StageWording.backHelp(q) == StageWording.backToEditHelp)
     #expect(StageWording.backHelp(e).contains("(40)"))

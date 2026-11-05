@@ -2,63 +2,57 @@ import AppKit
 import DJQCore
 import SwiftUI
 
-/// Today (DESIGN-v2 §6.5, `R2.TODAY` Todoist centred column; Next-up card after `R2.MENUBAR-alt` Lyssna).
-/// Job: post what's due, by hand, and mark it posted.
+/// Calendar → Day (B4, DESIGN-v2 §6.4): the operational view, for any day. `C.D` Hootsuite day list + `R2.TODAY`
+/// Todoist column; Next-up card after `R2.MENUBAR-alt` Lyssna; inline failures after `C.D-alt` Buffer.
 ///
 /// ```
-/// ┌ Today · Sun 1 Nov ······················································ ◔ 3 of 6 posted ┐
-/// │            ┌ Next: TikTok · 7:00 PM · in 2h 21m ─────────────────────────────┐           │
-/// │            │ ▮ Golden Hour Blend      [Copy caption] [Open upload page] [Mark posted] │  │
-/// │            └─────────────────────────────────────────────────────────────────┘           │
-/// │            7:00 PM  ♪ TikTok   ▮ title …………  Ready   ⧉ T ⎘ ⌕ ✓ ⋯   (64 pt rows)       │
-/// └────────────────────────────────────────────────────────────────────────────────────────┘
+/// ┌            Next: TikTok · 7:00 PM · in 2h 21m ─────────────────────────────┐  (today, something to do)
+/// │            ▮ Golden Hour Blend      [Copy caption] [Open upload page] [Mark posted] │
+/// └────────────────────────────────────────────────────────────────────────────┘
+/// ▮ Golden Hour Blend · Thu 5 Nov ············································ ⋯   clip header
+///   7:00 PM  ♪ TikTok   ▮ ………………………………  Rendered   ⧉ T ⎘ ⌕ ✓ ⋯               one row per platform
 /// ```
-/// The only filled button is Mark posted on the Next-up card, and only while that post is due. The thumb is the
-/// file drag-out handle. Hidden: scores, queue order, editor controls.
-struct TodayView: View {
+/// The only filled button is Mark posted on the Next-up card, and only while that post is due. Each row's thumb is
+/// the file drag-out handle. Past days keep the same rows, which are read-only by state. Hidden: scores, queue order.
+struct CalendarDayView: View {
   @Bindable var model: AppModel
+  let day: String
 
   static let column: CGFloat = 720
 
   var body: some View {
-    ScreenScaffold(model: model, screen: .today, subtitle: Fmt.day(model.now, tz: model.tz, style: "EEE d MMM"), readingColumn: true) {
-      if model.loaded && model.todayTotal > 0 { progress }
-    } content: {
-      if !model.loaded {
-        TodaySkeleton()
-      } else if model.todayPosts.isEmpty {
-        DSEmptyState(icon: "checkmark.circle", title: "Nothing due today",
-                     message: model.nextAfterTodayText.map { "Next \($0)" } ?? "No posts planned — approve a week to plan some.",
-                     actionTitle: "Open Week") { model.screen = .week }
-      } else {
-        list
+    let groups = model.calendarDayGroups(day)
+    if groups.isEmpty {
+      empty
+    } else {
+      list(groups)
+    }
+  }
+
+  private var isToday: Bool { day == model.todayKey }
+
+  /// "Nothing going out" + the next post, with a way there.
+  @ViewBuilder private var empty: some View {
+    if let next = model.nextPostAfter(day) {
+      let when = model.nextPostText(next)
+      DSEmptyState(icon: "checkmark.circle", title: "Nothing going out", message: "Next \(when)", actionTitle: "Open that day") {
+        model.openCalendarDay(model.dm.key(next.scheduledAt))
       }
+    } else {
+      DSEmptyState(icon: "checkmark.circle", title: "Nothing going out", message: "Clips in the Queue get a day by themselves.",
+                   actionTitle: "Go to Edit") { model.screen = .edit }
     }
   }
 
-  private var progress: some View {
-    let done = model.postedTodayCount, total = model.todayTotal
-    return HStack(spacing: DS.space.xs) {
-      DSProgressRing(value: Double(done) / Double(max(total, 1)), size: 22, lineWidth: 3, tone: .success)
-      Text("\(done) of \(total) posted").font(DS.type.calloutMedium.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
-    }
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel("\(done) of \(total) posted today")
-  }
-
-  private var list: some View {
-    let posts = model.todayPosts
-    let next = model.todayNextUp
+  private func list(_ groups: [CalendarDayGroup]) -> some View {
+    let next = isToday ? model.todayNextUp.flatMap { p in model.calendarFilter == nil || p.platform == model.calendarFilter ? p : nil } : nil
     return ScrollView {
-      VStack(alignment: .leading, spacing: 0) {
-        if let next { NextUpCard(model: model, post: next).padding(.bottom, DS.space.xl) }
-        ForEach(Array(posts.enumerated()), id: \.element.id) { i, p in
-          TodayRow(model: model, post: p)
-          if i < posts.count - 1 { DSSeparator() }
-        }
-        if let after = model.nextAfterTodayText {
-          Text("Next after today: \(after)").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
-            .padding(.top, DS.space.md).padding(.horizontal, DS.space.xs)
+      VStack(alignment: .leading, spacing: DS.space.xl) {
+        if let next { NextUpCard(model: model, post: next) }
+        ForEach(groups) { g in CalendarDayClip(model: model, group: g, day: day) }
+        if let after = model.nextPostAfter(day) {
+          Text("Next after this day: \(model.nextPostText(after))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+            .padding(.horizontal, DS.space.xs)
         }
       }
       .frame(maxWidth: Self.column)
@@ -67,6 +61,70 @@ struct TodayView: View {
       .padding(.top, DS.space.xs)
       .padding(.bottom, DS.space.xxl)
     }
+  }
+}
+
+/// One clip on the Day view: a header (thumb · title · day · ⋯) and one row per platform, without repeating the title.
+struct CalendarDayClip: View {
+  @Bindable var model: AppModel
+  let group: CalendarDayGroup
+  let day: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      header
+      if group.posts.isEmpty {
+        // Scheduled, posts not made yet: where it will go, as chips.
+        DSFlowLayout(spacing: 6) {
+          ForEach(group.platforms, id: \.self) { p in
+            DSXSlotChip(platform: p, time: planText(p), status: .planned)
+          }
+        }
+        .padding(.horizontal, DS.space.xs)
+        .padding(.vertical, DS.space.xs)
+      }
+      ForEach(Array(group.posts.enumerated()), id: \.element.id) { i, p in
+        if i > 0 { DSSeparator() }
+        TodayRow(model: model, post: p, day: day, showsTitle: false)
+      }
+    }
+  }
+
+  private var header: some View {
+    HStack(spacing: DS.space.sm) {
+      DSXThumb(model: model, video: group.video, width: 36, post: group.posts.first)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(group.video.map(model.displayName) ?? "Missing clip").font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(2)
+        HStack(spacing: 4) {
+          if group.slot?.pinned == true {
+            Image(systemName: "pin.fill").font(.system(size: 9, weight: .semibold)).foregroundStyle(DS.color.textTertiary)
+              .dsTooltip(CalendarWords.pinned)
+          }
+          Text(Fmt.day(model.dm.date(day), tz: model.tz, style: "EEE d MMM")).font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+        }
+      }
+      Spacer(minLength: DS.space.xs)
+      if let v = group.video {
+        DSXMenuButton(tooltip: CalendarWords.moreHelp, size: .sm) {
+          CalendarClipMenu(model: model, video: v, slot: group.slot, posts: Self.latest(group.posts), day: day)
+        }
+      }
+    }
+    .padding(.horizontal, DS.space.xs)
+    .padding(.bottom, DS.space.xs)
+    .contentShape(Rectangle())
+    .contextMenu {
+      if let v = group.video { CalendarClipMenu(model: model, video: v, slot: group.slot, posts: Self.latest(group.posts), day: day) }
+    }
+  }
+
+  private static func latest(_ posts: [PlatformPost]) -> [Platform: PlatformPost] {
+    Dictionary(posts.map { ($0.platform, $0) }, uniquingKeysWith: { a, b in a.attemptNo > b.attemptNo ? a : b })
+  }
+
+  private func planText(_ p: Platform) -> String {
+    let at = model.dm.at(day, minutes: model.settings.slot(for: p) + (group.slot?.position ?? 0) * model.settings.secondPostOffsetMinutes)
+    return AppModel.clockText(at, tz: model.tz)
   }
 }
 
@@ -126,10 +184,14 @@ struct NextUpCard: View {
 
 // MARK: - Row
 
-/// 64 pt row: time (mono) · glyph + platform · thumb (file drag-out) · title · status pill · ghost actions.
+/// One post, 64 pt: time (mono) · glyph + platform · thumb (file drag-out) · title · status pill · ghost actions. Under a
+/// Day view clip header `showsTitle` is false: the row is 52 pt and keeps only the Postiz line.
 struct TodayRow: View {
   @Bindable var model: AppModel
   let post: PlatformPost
+  /// The day the list is showing: a post from another day (an overdue leftover) names its weekday.
+  let day: String
+  var showsTitle = true
   @State private var hovering = false
   @State private var showMetrics = false
 
@@ -137,10 +199,10 @@ struct TodayRow: View {
 
   var body: some View {
     let status = model.postStatus(post)
-    let pz = model.postizState(post)
+    let pz = model.postizRowState(post)
     HStack(spacing: DS.space.sm) {
       VStack(alignment: .leading, spacing: 0) {
-        if model.dm.key(post.scheduledAt) != model.todayKey {
+        if model.dm.key(post.scheduledAt) != day {
           Text(Fmt.day(post.scheduledAt, tz: model.tz, style: "EEE")).font(DS.type.micro).foregroundStyle(DS.color.warning)
         }
         Text(AppModel.clockText(post.scheduledAt, tz: model.tz)).font(DS.type.mono).foregroundStyle(DS.color.textSecondary)
@@ -149,9 +211,11 @@ struct TodayRow: View {
       DSPlatformIcon(platform: post.platform, size: 20, showsLabel: false)
       Text(post.platform.dsxCompactName).font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
         .frame(width: 66, alignment: .leading).lineLimit(1)
-      FileDragThumb(model: model, post: post, width: 27)
+      FileDragThumb(model: model, post: post, width: showsTitle ? 27 : 20)
       VStack(alignment: .leading, spacing: 2) {
-        Text(video.map(model.displayName) ?? "Missing clip").font(DS.type.bodyMedium).foregroundStyle(DS.color.text).lineLimit(1)
+        if showsTitle {
+          Text(video.map(model.displayName) ?? "Missing clip").font(DS.type.bodyMedium).foregroundStyle(DS.color.text).lineLimit(1)
+        }
         if let pz { PostizLine(model: model, post: post, state: pz) }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -165,7 +229,7 @@ struct TodayRow: View {
       if let pz, pz.isHeld { postizActions(pz) } else { actions(status) }
     }
     .padding(.horizontal, DS.space.xs)
-    .frame(height: 64)
+    .frame(height: showsTitle ? 64 : 52)
     .background(rowFill(status), in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
     .onHover { hovering = $0 }
     .contextMenu { PostContextMenu(model: model, post: post) }
@@ -302,7 +366,7 @@ struct FileDragThumb: View {
 }
 
 /// Loading placeholder shaped like the Next-up card and the rows.
-struct TodaySkeleton: View {
+struct CalendarDaySkeleton: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack(spacing: DS.space.md) {
@@ -319,7 +383,7 @@ struct TodaySkeleton: View {
       .padding(.bottom, DS.space.xl)
       SkeletonRows(count: 6, height: 64)
     }
-    .frame(maxWidth: TodayView.column)
+    .frame(maxWidth: CalendarDayView.column)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .padding(.horizontal, DS.space.xl)
     .padding(.top, DS.space.xs)

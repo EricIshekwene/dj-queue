@@ -481,7 +481,7 @@ import Testing
     let (rig, yt) = try ytRig()
     try fail(rig, yt)
     let other = PostizService(store: rig.store, transport: rig.fake, keyStore: rig.keys)
-    let engine2 = Engine(store: rig.store, renderer: rig.renderer, publisher: nil, notifier: rig.notifier, postiz: other)
+    let engine2 = Engine(store: rig.store, renderer: rig.renderer, publisher: nil, notifier: rig.notifier, postiz: other).planFrozen
     rig.tick()
     engine2.tick(reason: "b")
     rig.tick()

@@ -6,8 +6,8 @@ import SwiftUI
 /// actions that appear only while the card is hovered. Selection, posters, proxies and ⌘A work as everywhere.
 ///
 /// Drag (core has no free reorder API — DECISIONS): drop a card on a **planned** clip → it takes that day,
-/// pinned (BulkActions.pinConsecutive, undoable; the planner moves the other clip). The ready backlog follows the
-/// sort, so dropping onto a backlog card explains that instead of pretending to reorder.
+/// pinned (BulkActions.pinConsecutive, undoable; the other clip moves). Clips waiting for a day follow the sort, so
+/// dropping onto one explains that instead of pretending to reorder.
 struct QueueCardList: View {
   @Bindable var model: AppModel
   let videos: [Video]
@@ -85,10 +85,7 @@ struct QueueCardList: View {
       model.show("Clips waiting for a day follow the sort (\(model.settings.sort.displayName)). Drop on a planned clip, or pin a clip to a date.")
       return false
     }
-    let day = Fmt.day(model.dm.date(slot.date), tz: model.tz)
-    model.pipelineBulk("Move to \(day)?", verb: "Move", ids: [id], done: "Moved to \(day)") { b, dry in
-      try b.pinConsecutive([id], from: slot.date, dryRun: dry)
-    }
+    model.pinAsking(id, to: slot.date, done: "Moved")
     return true
   }
 }
@@ -132,7 +129,8 @@ struct QueueClipActions: View {
       DSIconButton("pin", tooltip: Self.pinHelp, size: .sm) { onPin() }
       PipelineMoreMenu(tooltip: Self.moreHelp) { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
     default:
-      StageControl(model: model, video: video)
+      // Icon only: with its label the row outgrows the 880 pt card and the whole row slides off-centre.
+      StageControl(model: model, video: video, compact: true)
       DSIconButton("bolt", tooltip: Self.postTodayHelp, size: .sm) { postToday() }
       DSIconButton("pin", tooltip: Self.pinHelp, size: .sm) { onPin() }
       PipelineMoreMenu(tooltip: Self.moreHelp) { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
@@ -140,17 +138,14 @@ struct QueueClipActions: View {
   }
 
   static let postTodayHelp = "Post today; later posts move a day"
-  static let pinHelp = "Pin to a day the planner won't change"
+  static let pinHelp = "Pin to a day that won't change"
   static let moreHelp = "Show more: move later, remove, exclude"
 
-  private func postToday() {
-    let id = video.id
-    model.pipelineBulk("Post today?", verb: "Post today", ids: [id], done: "Posting today") { b, dry in try b.postToday([id], dryRun: dry) }
-  }
+  private func postToday() { model.postTodayAsking([video.id]) }
 }
 
-/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Move one slot later · Back to Edit · stage
-/// moves · Open editor · Exclude. Acts on the selection (where it makes sense) when the clip is part of it. Native
+/// ⋯ / right-click menu of a Queue clip: Post today · Pin to date… · Move one slot later · Back to Edit · Open editor ·
+/// Exclude. Acts on the selection (where it makes sense) when the clip is part of it. Native
 /// items show no tooltip, so a disabled item says why in its title.
 struct QueueClipMenu: View {
   @Bindable var model: AppModel
@@ -162,11 +157,7 @@ struct QueueClipMenu: View {
     let sel = model.selectedIds(.queue)
     let targets = sel.count > 1 && sel.contains(video.id) ? sel : [video.id]
     let n = AppModel.pipelineClips(targets.count)
-    Button(targets.count == 1 ? "Post today" : "Post \(n) today", systemImage: "bolt") {
-      model.pipelineBulk("Post \(n) today?", verb: "Post today", ids: targets, done: targets.count == 1 ? "Posting today" : nil) { b, dry in
-        try b.postToday(targets, dryRun: dry)
-      }
-    }
+    Button(targets.count == 1 ? "Post today" : "Post \(n) today", systemImage: "bolt") { model.postTodayAsking(targets) }
     Button(targets.count == 1 ? "Pin to date…" : "Pin \(n) to days…", systemImage: "pin") { onPin(targets) }
     if targets.count == 1 {
       Button(model.nextSlotByVideo[video.id] == nil ? "Move one place later" : "Move one slot later", systemImage: "forward.end") {
@@ -180,16 +171,9 @@ struct QueueClipMenu: View {
       model.removeFromQueue(targets)
     }
     .disabled(removeWhy != nil)
+    // Back for a Queue clip IS "Back to Edit" (above), and a Queue clip has no forward move: it schedules itself.
     if targets.count == 1 && ClipStage.of(video) != .queue {
       StageMenuItems(model: model, video: video, targets: targets)
-    } else {
-      // Back for a Queue clip IS "Back to Edit" (above); only forward is left.
-      let fwd = targets.count == 1 ? model.stageBlocker(video, .forward) : nil
-      Button((targets.count == 1 ? model.stageForwardTitle(video) : "Forward a stage (\(targets.count))") + AppModel.menuReason(fwd),
-             systemImage: "arrow.forward") {
-        model.stageForward(targets)
-      }
-      .disabled(fwd != nil)
     }
     Divider()
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id, in: ids) }

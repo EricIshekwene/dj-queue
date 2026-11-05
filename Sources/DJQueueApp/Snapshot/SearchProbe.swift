@@ -82,7 +82,7 @@ final class SearchProbe {
         w.appearance = NSAppearance(named: look)
         try FileManager.default.createDirectory(at: out.appendingPathComponent(name), withIntermediateDirectories: true)
         let flows: [(String, () async -> Void)] = [
-          ("caption", p.captionFlow), ("post", p.postFlow), ("week", p.weekFlow), ("session", p.sessionFlow), ("setting", p.settingsFlow),
+          ("caption", p.captionFlow), ("post", p.postFlow), ("week", p.weekFlow), ("calendar", p.calendarFlow), ("session", p.sessionFlow), ("setting", p.settingsFlow),
           ("auto-update", p.autoUpdateFlow), ("health", p.healthFlow), ("action", p.actionFlow), ("show-all", p.showAllFlow),
           ("chip-fallback", p.chipFallbackFlow), ("no-empty-show-all", p.duplicateActionFlow), ("editor", p.editorFlow),
           ("settings", p.fromSettingsFlow), ("modals", p.modalsFlow), ("hand-off", p.handOffFlow), ("recents", p.recentsFlow), ("fresh", p.freshFlow),
@@ -348,6 +348,26 @@ final class SearchProbe {
     await shot("post-open")
   }
 
+  /// The Calendar's commands, and the old names for it, come up and work.
+  private func calendarFlow() async {
+    await start("calendar")
+    await openPalette()
+    await type("calendar: month")
+    check(results("calendar: month").flat.first?.id == "calendar.month", "“calendar: month” finds the command")
+    await shot("month-hit")
+    await enter()
+    await settle(500)
+    check(model.screen == .calendar && model.calendarMode == .month, "it opens Month")
+    await shot("month-open")
+    await start("calendar")
+    await openPalette()
+    await type("today")
+    check(results("today").flat.contains { $0.id == "calendar.open" }, "“today” finds Open Calendar")
+    await shot("today-hit")
+    await esc()
+    await esc()
+  }
+
   /// "12 nov"-style date opens that week; "next week" and a month name work too.
   private func weekFlow() async {
     await start("week")
@@ -362,7 +382,7 @@ final class SearchProbe {
     await shot("date-hit")
     await enter()
     await settle(500)
-    check(model.screen == .week, "opens Week")
+    check(model.screen == .calendar && model.calendarMode == .week, "opens the Calendar's Week view")
     check(model.shownWeek == (sabotage ? "1999-01-04" : target), "shows that week")
     await shot("week-open")
     await openPalette()
@@ -477,7 +497,7 @@ final class SearchProbe {
     await tabTo(.actions, "runway")
     let row = results("runway", .actions).flat.first
     check(row?.id == SearchId.health("runway"), "Runway is the first row under Actions")
-    check(row?.subtitle?.contains("approved") == true, "its second line has the numbers")
+    check(row?.subtitle?.contains("scheduled") == true, "its second line has the numbers")
     await shot("hit")
     await enter()
     await settle(600)
@@ -740,7 +760,7 @@ final class SearchProbe {
     await shot("recents")
     await enter()
     await settle(400)
-    check(model.screen == .week, "the recent runs")
+    check(model.screen == .calendar, "the recent runs")
     await shot("recent-ran")
   }
 

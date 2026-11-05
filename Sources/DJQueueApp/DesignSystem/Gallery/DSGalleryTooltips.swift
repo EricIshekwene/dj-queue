@@ -40,7 +40,7 @@ struct GalleryTooltips: View {
               DSButton("Post today", icon: "bolt", variant: .outline, disabledReason: "Instagram isn't rendered yet") {}
             } bubble: { DSTooltipBubble(text: "Post today", shortcut: "⌘T", disabledReason: "Instagram isn't rendered yet — usually ready within a minute") }
             demo("Reason only", width: 200) {
-              DSButton("Approve week", variant: .primary, size: .sm, disabledReason: "Nothing planned this week") {}
+              DSButton("Pin to days…", variant: .primary, size: .sm, disabledReason: "Nothing selected") {}
             } bubble: { DSTooltipBubble(DSTooltipContent(disabledReason: "Nothing planned this week")) }
           }
           }
@@ -53,7 +53,7 @@ struct GalleryTooltips: View {
               GState(DSViewMode.grid) { DSViewModeSwitcher(mode: $0, size: .sm) }
               DSIconButton("ellipsis", tooltip: "More actions", size: .sm) {}
                 .dsTooltip("More actions", side: .bottom, forceVisible: true)
-              DSButton("Approve week", variant: .primary, size: .sm, shortcut: "⌘↩") {}
+              DSButton("Send to Queue", variant: .primary, size: .sm, shortcut: "⌘↩") {}
             }
             .dsSurface(DS.color.background, radius: DS.radius.lg)
             .frame(width: 680)

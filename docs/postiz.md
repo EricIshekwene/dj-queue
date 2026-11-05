@@ -42,7 +42,7 @@ backoff (a known issue returns some 500s for already-deleted posts).
 | `GET /media/{id}/status` | wait for `processing` media | — | `ready` \| `processing` (+ `warning`) |
 | `POST /posts` | create / schedule / draft one platform post | see §3 | `[{postId, integration}]` — one entry per `posts[]` item; no group, URL or state |
 | `GET /posts?startDate=&endDate=` | status sync (one call covers every open post) | both required, ISO UTC; `customer` optional | `{posts: [{id, content, publishDate, releaseURL, releaseId, state, error, group, settings, integration{id, providerIdentifier, name, picture}, …}]}` (verified in `getPosts`; the docs omit `group` and `releaseId`) |
-| `DELETE /posts/{id}` | cancel (unapprove, unqueue, skip, move, re-render) | — | `{id}`; deletes every row of the post's **group** (soft delete, `deletedAt`) and stops its workflow |
+| `DELETE /posts/{id}` | cancel (unschedule, unqueue, skip, move, re-render) | — | `{id}`; deletes every row of the post's **group** (soft delete, `deletedAt`) and stops its workflow |
 | `PUT /posts/{id}/status` | test mode: release a draft (`schedule`) or hold it (`draft`) | `{"status": "draft" \| "schedule"}` | `{id, state}` |
 | `GET /posts/{id}/missing` + `PUT /posts/{id}/release-id` | link a post whose platform id came back `missing` | `{releaseId}` | `[{id, url}]` / the post |
 | `GET /analytics/post/{postId}?date=<days>` | read-only views/likes per post (phase-3 groundwork) | — | provider metrics; `{missing: true}` when the release id is missing |
@@ -85,7 +85,7 @@ replaces the post instead, §5).
 | Instagram | `instagram-standalone` (direct IG login, **not** via the Facebook Page) | `post_type` | `post_type: "post"` (a Reel for a single video), `is_trial_reel: false`; collaborators/audio not set | 2200 |
 | TikTok | `tiktok-business` | `content_posting_method, privacy_level, duet, stitch, comment, autoAddMusic, brand_content_toggle, brand_organic_toggle` | `DIRECT_POST`, `PUBLIC_TO_EVERYONE`, duet/stitch/comment `true`, `autoAddMusic: "no"`, brand toggles `false`, `video_made_with_ai: false`, `title` = DJ Queue title ≤ 90 | 2200 |
 | Facebook | `facebook` (Page) | — | `post_type: "post"`, `title` = DJ Queue title | 63206 |
-| YouTube Shorts | `youtube` | `title` (2–100), `type` | `type: "public"`, `selfDeclaredMadeForKids: "no"`, `title` = `{text} \| DJ Lovd` (DJ Queue's template, ≤ 100), `thumbnail` = the cover as `{id, path}`, `tags` from the hashtags (no `#`) as `[{value, label}]` (DTO shapes; not seen live — a 400 falls back to Today with Postiz's message) | 5000 |
+| YouTube Shorts | `youtube` | `title` (2–100), `type` | `type: "public"`, `selfDeclaredMadeForKids: "no"`, `title` = `{text} \| DJ Lovd` (DJ Queue's template, ≤ 100), `thumbnail` = the cover as `{id, path}`, `tags` from the hashtags (no `#`) as `[{value, label}]` (DTO shapes; not seen live — a 400 falls back to the Calendar with Postiz's message) | 5000 |
 | Threads | `threads` | — | none | 500 |
 | X | `x` | — (`who_can_reply_post` documented as required by the CLI, optional in the live schema) | `who_can_reply_post: "everyone"`, `post_type: "post"` | 280 (4000 only for X Premium accounts, decided at connect time) |
 
@@ -146,8 +146,8 @@ DJ Queue's post state machine is unchanged: `planned → rendering → rendered 
 skipped | overdue`. The publisher adds a **Postiz job** per platform post (new table, schema v5): Postiz post id, group,
 media id/path, the render id and content hash it was made from, the remote state and error, and sync times.
 
-**Submit ahead.** A tick step `publish` (after `render`) finds every post whose platform publishes through Postiz, whose
-week is approved, whose render is attached, and which has no live job for its current render + content hash. It uploads
+**Submit ahead.** A tick step `publish` (after `render`) finds every post whose platform publishes through Postiz,
+whose render is attached, and which has no live job for its current render + content hash. It uploads
 (reusing a media id already uploaded for that render) and creates the scheduled post. This closes the gap in
 `Engine.due()`: submission no longer waits for the due time or depends on the render existing first. The Mac can be off
 at post time.
@@ -160,7 +160,7 @@ edit restarts the clock, an edit back to what Postiz has clears it), so an edit 
 its copy meanwhile; one quiet "waiting for edits to settle" event per job. A new render, a move, a channel change and
 every cancel stay immediate. Together with the 5-minute safety window, a content edit made from about 7 minutes
 before the slot (2 min settle + 5 min) no longer reaches Postiz: Postiz posts the version it has.
-Unapprove, unqueue, skip, a moved day, a paused platform or switching the platform back to Manual → delete. A post
+Back to Edit, unqueue, skip, a moved day, a re-laid plan, a paused platform or switching the platform back to Manual → delete. A post
 Postiz already published is never deleted or re-sent by DJ Queue.
 
 **Status sync.** A tick step `sync` lists posts (`GET /posts`) over the window of open jobs, at most every 10 minutes
@@ -174,7 +174,7 @@ while a job is within six hours of its slot or waiting for a result, otherwise h
 | `PUBLISHED` + `releaseURL` | `posted`, `url` = `releaseURL`, `externalId` = `releaseId`, `postedAt` = `publishDate` |
 | `PUBLISHED`, `releaseId` = `missing` | `posted` without a link; Doctor `postiz.link_missing` (fix: `djq postiz link`) |
 | `ERROR` + `error` | `failed` with the error; text mentioning copyright / rights / music / audio claims → `copyright_blocked` (loud, never auto-retried); anything else retries by itself unless a retry can't help (below); then the existing "fixed → re-queue next day" rules apply |
-| missing from the list (deleted in Postiz) | the job is closed and the post falls back to Manual (Today) with a loud note |
+| missing from the list (deleted in Postiz) | the job is closed and the post falls back to Manual (the Calendar) with a loud note |
 
 `error` is curated by Postiz (the platform's message when it is a known "bad body" error, otherwise null); null on
 `ERROR` reads "Postiz reported an error (no details)".
@@ -220,11 +220,11 @@ earlier if it must, down to the reset; any other moves later.
 **Ahead of time.** The sync step that reads the `ERROR` makes the new attempt in the same transaction, through
 `PostActions.fixed`, with `scheduledAt` = that time. The publish step submits it, so Postiz sends it with the Mac off. If
 the Mac slept through the time, the attempt is made on wake and goes out at now + 3 min. An attempt the Mac couldn't
-submit in time never goes overdue and never lands on Today: the publish step moves it to now + 3 min (past the gap). A
-400 on create or a copy deleted in Postiz still hands it to Today, as for any post.
+submit in time never goes overdue and never lands on the Calendar as a task: the publish step moves it to now + 3 min (past the gap). A
+400 on create or a copy deleted in Postiz still hands it to the Calendar, as for any post.
 
-**No audit.** A post with a retry coming isn't in `problems()`: no alert, no red badge, no Doctor error. Today, Posts,
-Week, the inspector and the menu bar read "Retrying Thu 8:00 am (try 2 of 5)" (`PostizDisplayState.retrying`). The
+**No audit.** A post with a retry coming isn't in `problems()`: no alert, no red badge, no Doctor error. The Calendar, Posts,
+the inspector and the menu bar read "Retrying Thu 8:00 am (try 2 of 5)" (`PostizDisplayState.retrying`). The
 tries are retries: 1 of 5 is the first one after the failure. Five failed retries, a vetoed failure, or a retry ruled
 out later (published, copyright, platform skipped in the editor) are loud: Failed, alert, Fixed.
 
@@ -251,15 +251,18 @@ The quota error that started this is Postiz's shared Google project (`defaultVid
 channel. It resets at midnight Pacific.
 
 **Missed slots.** A Postiz post isn't "missed" while Postiz still holds it: the overdue/shift logic applies only to
-manual posts and to Postiz posts that never got a job (they fall back to the Today screen). Eric's `fixed` makes a new
+manual posts and to Postiz posts that never got a job (they fall back to the Calendar). Eric's `fixed` makes a new
 attempt the next day, which the publish step submits again. An automatic retry has its own time (above) and is never missed.
 
 **Fallback.** Per platform: no key, an invalid key, no mapped channel, a disabled channel or a create that fails
-validation → that platform's post goes to Today exactly as today, with the reason. Manual never goes away.
+validation → that platform's post goes to the Calendar to post by hand, with the reason. Manual never goes away.
 
 **Budget.** All calls share the 25-per-hour budget. Order: deletes, creates for the soonest slots, sync, analytics.
-Approving a week of 6 platforms is 6–7 uploads + 42 creates, so it spreads over about two hours; the render horizon
-(7 days) leaves plenty of time.
+A week of clips on 6 platforms is 6–7 uploads + 42 creates, so it spreads over about two hours; the render horizon
+(7 days) leaves plenty of time. The calendar is filled 30 days ahead (round 13), but nothing goes to Postiz beyond the
+render horizon. A plan that re-lays (posts/day or Queue sort changed) cancels and re-creates what moved, in the same budget;
+a slot with a post less than an hour away stays where it is, and nothing is created for a clip + platform until the delete
+of its earlier copy is confirmed.
 
 ## 6. Test mode (one switch)
 
@@ -306,21 +309,21 @@ app doesn't trigger a Keychain prompt on every update. Agents keep using the Pos
   is logged and Postiz keeps what it has. A *cancel* there first reads the post's current state (one `GET /posts`):
   published → recorded, never deleted; otherwise (including "not listed") DELETE, a 404 counting as done.
 - **Test mode is frozen per job**: switching Test run changes only posts submitted afterwards (§6).
-- **Handed to Today**: a post whose manual "due" notice went out (or that was missed, posted now or shifted by hand)
+- **Handed to the Calendar**: a post whose manual "due" notice went out (or that was missed, posted now or shifted by hand)
   stays Manual for good, across re-renders, even when the key or channel comes back (Eric may already have posted
   it); only a reset sends it through Postiz again. Later posts follow the platform's route.
 - **Test-run drafts** an hour past their slot are notified (release, or post by hand).
   *sync* lists posts over the open jobs' window (10 min while hot, else hourly), maps §5, probes a refused key hourly,
   refreshes the channel list every 6 h and pulls analytics daily.
 - **Due / missed**: a post with an open job, or routed to Postiz with no final job, gets no manual "due" notification;
-  a post with an open job is never overdue or shifted. Everything else is exactly as before (Today).
+  a post with an open job is never overdue or shifted. Everything else is exactly as before (the Calendar).
 - **A create whose outcome is unknown** (5xx, timeout, an unreadable 2xx, a database error while recording it): the
   claim stays and blocks the lineage. The sync step adopts the one Postiz post with the same channel, the exact date
   sent and the exact caption (two open jobs on one channel never share a minute). None or several → unconfirmed
   (`isUnconfirmed`): a critical notice (daily), Doctor `postiz.create_unknown`, and nothing is sent again until Eric
   checks the Postiz calendar and decides, offline: `resolveUnconfirmed(postId:inPostiz:)` (`djq postiz resolve
   --in-postiz | --not-in-postiz`). A request that never left the Mac (`notSent`) and a claim whose create was never
-  sent are released at once / after 10 min. If the platform is switched off Postiz meanwhile, the post reaches Today
+  sent are released at once / after 10 min. If the platform is switched off Postiz meanwhile, the post reaches the Calendar
   with "check the Postiz calendar first".
 - **Budget** (kv `postiz.budget`, `BEGIN IMMEDIATE`): creates leave 1 call/hour for sync, analytics leave 8; uploads
   count. `429` → no calls for 15 min; `401`/`403` → "key refused" (kv), no calls except an hourly probe, notified once,

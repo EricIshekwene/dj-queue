@@ -2,10 +2,10 @@ import AppKit
 import DJQCore
 import SwiftUI
 
-/// Today + menu bar helpers (Planning leaf). Pure reads of AppModel state, plus copy actions whose toasts use
+/// Post helpers for the Calendar and the menu bar (Planning leaf). Pure reads of AppModel state, plus copy actions whose toasts use
 /// platform names (never codes).
 extension AppModel {
-  /// One status for a post (Today rows, Week slot chips, menu bar).
+  /// One status for a post (Calendar rows and chips, menu bar).
   func postStatus(_ p: PlatformPost) -> DSXPostStatus {
     if postizState(p)?.isRetrying == true { return .resolved("Retrying") }
     if let r = p.resolution { return .resolved(Self.resolutionLabel(r)) }
@@ -61,10 +61,12 @@ extension AppModel {
   var todayPosts: [PlatformPost] { dueTodayShown.sorted { $0.scheduledAt < $1.scheduledAt } }
 
   /// A failure whose retry is on today's list too would say the same thing twice: only the attempt stays.
-  var dueTodayShown: [PlatformPost] {
-    dueToday.filter { p in
+  var dueTodayShown: [PlatformPost] { withoutRetriedFailures(dueToday) }
+
+  func withoutRetriedFailures(_ list: [PlatformPost]) -> [PlatformPost] {
+    list.filter { p in
       guard p.state == .failed, postizState(p)?.isRetrying == true else { return true }
-      return !dueToday.contains { $0.videoId == p.videoId && $0.platform == p.platform && $0.attemptNo > p.attemptNo }
+      return !list.contains { $0.videoId == p.videoId && $0.platform == p.platform && $0.attemptNo > p.attemptNo }
     }
   }
 
@@ -75,11 +77,16 @@ extension AppModel {
       ?? list.first { $0.resolution == nil && !$0.state.isTerminal && postizState($0)?.isHeld != true }
   }
 
-  /// "Tue 12:30 PM TikTok" for the next post after today (empty states).
-  var nextAfterTodayText: String? {
-    guard let n = posts.filter({ !$0.state.isTerminal && dm.key($0.scheduledAt) > todayKey }).min(by: { $0.scheduledAt < $1.scheduledAt })
-    else { return nil }
-    return "\(Fmt.day(n.scheduledAt, tz: tz, style: "EEE")) \(Self.clockText(n.scheduledAt, tz: tz)) \(n.platform.displayName)"
+  /// The next post after `day` still to go out (empty states, the line under a day).
+  func nextPostAfter(_ day: String) -> PlatformPost? {
+    let f = calendarFilter
+    return posts.filter { !$0.state.isTerminal && dm.key($0.scheduledAt) > day && (f == nil || $0.platform == f) }
+      .min { $0.scheduledAt < $1.scheduledAt }
+  }
+
+  /// "Tue 12:30 PM TikTok".
+  func nextPostText(_ p: PlatformPost) -> String {
+    "\(Fmt.day(p.scheduledAt, tz: tz, style: "EEE")) \(Self.clockText(p.scheduledAt, tz: tz)) \(p.platform.displayName)"
   }
 
   /// Copy caption with a platform-name toast ("TikTok caption copied").

@@ -48,6 +48,10 @@ public final class Engine: @unchecked Sendable {
   /// queue and pauses while a render runs. The app can share this instance for its tiles.
   public var proxyService: ProxyService?
 
+  /// Test seam: false leaves the plan alone (no auto-scheduling), for older tests about something else that tick with
+  /// Queue clips. Always true in the app and `djq`.
+  public var autoSchedules = true
+
   /// Called after every tick (on the engine queue when started).
   public var onTick: (@Sendable (TickReport) -> Void)?
   /// Gap between heartbeats that means the Mac was asleep or off.
@@ -144,7 +148,7 @@ public final class Engine: @unchecked Sendable {
       return "sessions \(ir.sessionsSeen) · new \(ir.newVideos.count) · missing \(ir.missing.count) · relinked \(ir.relinked.count)"
     }
     // Round 4 (S1): the Queue only holds ready clips — invalid ones move to Edit (after intake marks missing files,
-    // before planning so a proposal never picks a clip that just left the Queue).
+    // before planning so the scheduler never picks a clip that just left the Queue).
     step("stages", &r) { try Revalidation(store: store).run().summary }
     step("plan", &r) { try planHousekeeping() }
     step("missed", &r) { try missed() }
@@ -186,19 +190,14 @@ public final class Engine: @unchecked Sendable {
   // MARK: Steps
 
   /// Drops past draft-week days that never got posts (round 6, F5: their clips go back to the queue; pinned ones too,
-  /// since a pin on a day that passed unapproved can't post), then proposes the current and next week once (when they
-  /// have never been proposed and the queue has videos).
+  /// since a pin on a day that passed without posts can't post), then keeps every Queue clip on the calendar
+  /// (`Planner.autoSchedule`).
   func planHousekeeping() throws -> String {
     let dm = try store.dayMath()
-    let thisWeek = dm.weekStart(of: store.clock.now)
     var done: [String] = []
     let stale = try store.dropStalePastDraftSlots(today: store.today(dm))
-    if !stale.isEmpty { done.append("dropped \(stale.count) past draft day\(stale.count == 1 ? "" : "s")") }
-    for w in [thisWeek, dm.addDays(thisWeek, 7)] where try store.week(w) == nil {
-      guard try !queue.ordered().isEmpty else { break }
-      try planner.proposeWeek(w)
-      done.append("proposed \(w)")
-    }
+    if !stale.isEmpty { done.append("dropped \(stale.count) past day\(stale.count == 1 ? "" : "s")") }
+    if autoSchedules { done.append(try planner.autoSchedule().summary) }
     return done.isEmpty ? "ok" : done.joined(separator: " · ")
   }
 
@@ -207,7 +206,7 @@ public final class Engine: @unchecked Sendable {
 
   struct RenderFailure: Codable { var hash: String; var at: Date; var error: String }
 
-  /// Approved posts within the horizon get their render; a changed edit/version re-renders. A failure is recorded
+  /// Scheduled posts within the horizon get their render; a changed edit/version re-renders. A failure is recorded
   /// (render row failed, notification once a day) and never stops the loop; that render backs off for an hour.
   func renderAhead(_ ctx: inout TickContext) throws -> String {
     guard let renderer else { return "no renderer" }
@@ -355,7 +354,7 @@ public final class Engine: @unchecked Sendable {
       if let postiz, let router, try postiz.retryAttemptWaits(p, router: router) { continue }
       p.state = .due
       // Postiz delivers it (open job, or routed with its render still to come — the publish step submits it as soon
-      // as the render lands): no manual "Open Today" notification and no manual publisher.
+      // as the render lands): no manual "Open the Calendar" notification and no manual publisher.
       if let postiz, let router, try postiz.deliversThroughPostiz(p, router: router) {
         try store.save(p, note: "due (Postiz)")
         try store.refreshState(videoId: p.videoId)
@@ -371,8 +370,8 @@ public final class Engine: @unchecked Sendable {
       let uncertain = try postiz?.uncertainOnToday(p) == true
       notify(AppNotification(
         key: "due:\(p.id):\(Int(p.scheduledAt.timeIntervalSince1970))", title: "\(p.platform.displayName) · \(v.tag) · \(when)",
-        body: uncertain ? "Check the Postiz calendar first — a Postiz create for it was never confirmed. Then post it from Today."
-          : "Open Today to copy the caption and drag the file in.",
+        body: uncertain ? "Check the Postiz calendar first — a Postiz create for it was never confirmed. Then post it from the Calendar."
+          : "Open the Calendar to copy the caption and drag the file in.",
         critical: uncertain, actions: [.markPosted, .open], postId: p.id, videoId: v.id))
       n += 1
     }
@@ -411,7 +410,7 @@ public final class Engine: @unchecked Sendable {
       failed += 1
     }
     for var p in try store.posts(where: "state='failed' AND error_type='too_long' AND resolution IS NULL") {
-      guard let (_, edit, issues) = try info(p.videoId), active.contains(p.platform) else { continue }
+      guard let (v, edit, issues) = try info(p.videoId), active.contains(p.platform), try !store.isHeld(v) else { continue }
       let newer = try store.posts(where: "video_id=? AND platform=? AND attempt_no>?", [p.videoId, p.platform.rawValue, p.attemptNo])
       guard newer.isEmpty else { continue }
       let snapshot: String? = try store.kv("tooLong.\(p.id)")
@@ -432,7 +431,7 @@ public final class Engine: @unchecked Sendable {
     return "too long \(failed) · re-queued \(requeued) · skipped \(skipped)"
   }
 
-  /// Runway alerts, Sunday approval reminder, loud problem notifications.
+  /// Runway alerts, loud problem notifications.
   func alerts() throws -> String {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
@@ -440,24 +439,15 @@ public final class Engine: @unchecked Sendable {
     let today = dm.key(now)
     let rw = try queue.runway()
     var sent: [String] = []
-    if rw.approvedDays < settings.approvedRunwayAlertDays,
-       notify(AppNotification(key: "alert.approve:\(today)", title: "Approve next week",
-                              body: "Only \(rw.approvedDays) approved day\(rw.approvedDays == 1 ? "" : "s") left.", actions: [.open])) {
-      sent.append("approve")
+    if rw.isLow(settings),
+       notify(AppNotification(key: "alert.queuelow:\(today)", title: StageWording.queueLowTitle,
+                              body: StageWording.queueLowBody(rw.scheduledThrough, settings: settings), actions: [.open])) {
+      sent.append("queue low")
     }
     if rw.totalDays < settings.totalRunwayAlertDays,
        notify(AppNotification(key: "alert.record:\(dm.weekStart(of: now))", title: "Record a new set",
                               body: "About \(rw.totalDays) day\(rw.totalDays == 1 ? "" : "s") of videos left in total.", actions: [.open])) {
       sent.append("record")
-    }
-    let comps = dm.calendar.dateComponents([.weekday, .hour, .minute], from: now)
-    let nextWeek = dm.addDays(dm.weekStart(of: now), 7)
-    if comps.weekday == settings.approvalReminderWeekday,
-       (comps.hour ?? 0) * 60 + (comps.minute ?? 0) >= settings.approvalReminderMinutes,
-       try store.week(nextWeek)?.state != .approved,
-       notify(AppNotification(key: "alert.weekly:\(nextWeek)", title: "Approve next week",
-                              body: "The week of \(nextWeek) isn't approved yet.", actions: [.open])) {
-      sent.append("weekly")
     }
     for p in try actions.problems() where p.state != .overdue {
       let tag = try store.video(id: p.videoId)?.tag ?? p.videoId
@@ -468,7 +458,6 @@ public final class Engine: @unchecked Sendable {
         sent.append("problem")
       }
     }
-    _ = today
     return sent.isEmpty ? "none" : sent.joined(separator: ", ")
   }
 
@@ -513,7 +502,7 @@ public final class Engine: @unchecked Sendable {
     return "moved \(moved)\(deleted > 0 ? " · deleted \(deleted)" : "")\(unneeded > 0 ? " · unneeded \(unneeded)" : "")"
   }
 
-  /// Renders referenced by any live or posted post, current renders for approved posts within the horizon, renders
+  /// Renders referenced by any live or posted post, current renders for scheduled posts within the horizon, renders
   /// of unresolved failed/skipped posts (≤ 7 days), failed renders not yet superseded, and anything made in the last 24 h (editor/CLI previews get a day before they're cleaned up).
   func rendersToKeep(_ renderer: RenderService, settings: Settings) throws -> Set<String> {
     var keep = Set<String>()
@@ -594,7 +583,7 @@ public final class Engine: @unchecked Sendable {
     do {
       let r = try renderer.ensureRender(videoId: p.videoId, versionNo: p.versionNo, platform: p.platform)
       p.renderId = r.id
-      p.state = prior == .due ? .due : .rendered  // a post already due stays due (Today keeps it)
+      p.state = prior == .due ? .due : .rendered  // a post already due stays due (the Calendar keeps it)
       try store.save(p, note: "rendered \(r.id.prefix(8))")
       try? store.heartbeat(.tick)
     } catch {

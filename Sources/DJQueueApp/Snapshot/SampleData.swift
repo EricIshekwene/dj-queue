@@ -1,8 +1,8 @@
 import DJQCore
 import Foundation
 
-/// Plausible scores, edits, an approved week with posts in every state, a draft next week and 7 days of
-/// heartbeats — written ONLY into the throwaway database copy used by `--snapshot`.
+/// Plausible scores, edits, this week with posts in every state, the next three weeks scheduled and 7 days of heartbeats
+/// — written ONLY into the throwaway database copy used by `--snapshot`.
 enum SampleData {
   /// Made-up sample titles for the throwaway snapshot DB (never shown for real data).
   static let sampleTitles = [
@@ -93,7 +93,14 @@ enum SampleData {
     try store.db.run("UPDATE videos SET in_manifest=0 WHERE id=?", [shorts[61].id])
     try store.logEvent("relink", "Relinked \(shorts[3].name)", videoId: shorts[3].id)
 
-    // This week: approved, one video per day, every platform.
+    // Every finished clip was sent to the Queue, except the last, which waits in Edit with nothing to fix. Clips with
+    // something missing were never sent.
+    for v in shorts.prefix(39) where try Validation.issues(video: v, store: store).isEmpty {
+      try store.db.run("UPDATE videos SET sent_to_queue=1 WHERE id=?", [v.id])
+    }
+    for v in shorts { try store.refreshState(videoId: v.id) }
+
+    // This week: scheduled, one video per day, every platform.
     let thisWeek = dm.weekStart(of: now)
     let approvedAt = dm.at(dm.addDays(thisWeek, -1), minutes: 18 * 60 + 5)
     clock.set(approvedAt)
@@ -195,13 +202,17 @@ enum SampleData {
       try store.refreshState(videoId: s.videoId)
     }
 
-    // Next week: draft proposal from the rest of the backlog + a retry and a repost (W.S5).
-    let nextWeek = dm.addDays(thisWeek, 7)
+    // The next three weeks, through the real planner so the posts are real; the rest of the Queue is left waiting,
+    // plus a retry and a repost.
     clock.set(now.addingTimeInterval(-600))
-    try store.save(Week(weekStart: nextWeek, state: .draft, approvedAt: nil))
-    for day in dm.weekDays(nextWeek) where !pool.isEmpty {
-      let v = pool.removeFirst()
-      try store.save(PlanSlot(id: newId(), date: day, position: 0, videoId: v.id, pinned: false, weekStart: nextWeek))
+    for n in 1...3 {
+      let week = dm.addDays(thisWeek, 7 * n)
+      try store.save(Week(weekStart: week, state: .draft, approvedAt: nil))
+      for day in dm.weekDays(week) where !pool.isEmpty {
+        let v = pool.removeFirst()
+        try store.save(PlanSlot(id: newId(), date: day, position: 0, videoId: v.id, pinned: false, weekStart: week))
+      }
+      try Planner(store: store).approveWeek(week)
     }
     if let (_, s) = weekSlots.first {
       let tomorrow = dm.addDays(today, 1)

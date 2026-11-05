@@ -15,6 +15,12 @@ enum Sched {
     dm.at(date, minutes: settings.slot(for: platform) + position * settings.secondPostOffsetMinutes)
   }
 
+  /// The plan day of a regular post at `at`: the day its slot time counts from. It isn't always the local day: with 3 posts
+  /// a day and a 180-minute offset, position 2 of Thursday's slot posts at 00:00 Friday on Instagram.
+  static func planDay(_ at: Date, position: Int, offsetMinutes: Int, _ dm: DayMath) -> String {
+    dm.key(at.addingTimeInterval(-Double(position * offsetMinutes) * 60))
+  }
+
   /// Same local clock time `days` calendar days later (DST-safe).
   static func shift(_ d: Date, days: Int, _ dm: DayMath) -> Date {
     dm.calendar.date(byAdding: .day, value: days, to: d) ?? d.addingTimeInterval(Double(days) * 86400)
@@ -121,14 +127,14 @@ extension Store {
 
   func sessionName(for v: Video) throws -> String { try session(id: v.sessionId)?.name ?? "" }
 
-  /// Round 6 (F5): slots on a day before `today` in a week that isn't approved and that never got a post (pinned or
-  /// not). They can't post any more; left in place they would keep their clip out of the queue for good.
+  /// Round 6 (F5): slots on a day before `today` in a draft week that never got a post (pinned or not). They can't
+  /// post any more; left in place they would keep their clip out of the queue for good.
   public func stalePastDraftSlots(today: String) throws -> [PlanSlot] {
     try planSlots(where: "date<? AND week_start NOT IN (SELECT week_start FROM weeks WHERE state='approved') "
                     + "AND id NOT IN (SELECT plan_slot_id FROM platform_posts WHERE plan_slot_id IS NOT NULL)", [today])
   }
 
-  /// Deletes `stalePastDraftSlots` (only `week`'s when given), each with a "Past draft day … dropped" event.
+  /// Deletes `stalePastDraftSlots` (only `week`'s when given), each with a "Past day … dropped" event.
   @discardableResult
   public func dropStalePastDraftSlots(today: String, week: String? = nil) throws -> [PlanSlot] {
     try db.transaction {
@@ -136,7 +142,7 @@ extension Store {
       for s in list {
         try deletePlanSlot(s.id)
         try refreshState(videoId: s.videoId)
-        try logEvent("plan", "Past draft day \(s.date) dropped (never approved)\(s.pinned ? ", pin removed" : "") — back in the Queue",
+        try logEvent("plan", "Past day \(s.date) dropped (it never got posts)\(s.pinned ? ", pin removed" : "") — back in the Queue",
                      videoId: s.videoId)
       }
       return list
@@ -145,7 +151,9 @@ extension Store {
 }
 
 
-/// Occupancy of live regular posts per (platform, local day, position) — the "never double-post" invariant.
+/// Occupancy of live regular posts per (platform, plan day, position) — the "never double-post" invariant. Keyed by plan
+/// day (`Sched.planDay`), never the local posting day: `place` reserves plan days, and a post past midnight must count
+/// for the day it was placed on, or a later Placer sees the wrong day free.
 /// Live = not terminal, or posted. Retries/reposts are staggered extras and don't occupy a position.
 struct Placer {
   let dm: DayMath
@@ -154,8 +162,12 @@ struct Placer {
   init(store: Store, dm: DayMath, excluding: Set<String> = []) throws {
     self.dm = dm
     let positions = Dictionary(uniqueKeysWithValues: try store.planSlots().map { ($0.id, $0.position) })
+    let offset = try store.settings().secondPostOffsetMinutes
+    let postedNow = try store.postNowIds()
     for p in try store.posts(where: "kind='regular'") where !excluding.contains(p.id) && Self.isLive(p) {
-      taken.insert(Self.key(p.platform, dm.key(p.scheduledAt), positions[p.planSlotId ?? ""] ?? 0))
+      let pos = positions[p.planSlotId ?? ""] ?? 0
+      let day = postedNow.contains(p.id) ? dm.key(p.scheduledAt) : Sched.planDay(p.scheduledAt, position: pos, offsetMinutes: offset, dm)
+      taken.insert(Self.key(p.platform, day, pos))
     }
   }
 
@@ -177,6 +189,21 @@ extension Store {
   /// The plan position of a post (its slot's position; 0 when it has no slot).
   func position(of p: PlatformPost) throws -> Int {
     try p.planSlotId.flatMap { try planSlot(id: $0)?.position } ?? 0
+  }
+
+  /// The plan day of a regular post (`Sched.planDay`). Post now holds its local day: its time is the moment Eric pressed
+  /// it, not a slot time, so it says nothing about a plan day.
+  func planDay(of p: PlatformPost, dm: DayMath) throws -> String {
+    if try postNowIds().contains(p.id) { return dm.key(p.scheduledAt) }
+    return Sched.planDay(p.scheduledAt, position: try position(of: p), offsetMinutes: try settings().secondPostOffsetMinutes, dm)
+  }
+
+  /// Regular posts still at the time Post now gave them (a shift or a reset puts a post back on a slot time).
+  func postNowIds() throws -> Set<String> {
+    Set(try db.query("""
+      SELECT DISTINCT h.post_id AS id FROM post_history h JOIN platform_posts p ON p.id=h.post_id
+      WHERE h.note='post now' AND p.kind='regular' AND p.state IN ('due','overdue','posted')
+      """).compactMap { $0.string("id") })
   }
 }
 
@@ -202,7 +229,7 @@ extension Store {
     for d in reserve { _ = placer.place(first.platform, position: pos, from: d) }
     var moved = 0
     for var o in posts.sorted(by: { $0.scheduledAt < $1.scheduledAt }) {
-      let from = dm.key(o.scheduledAt)
+      let from = try planDay(of: o, dm: dm)
       let to = placer.place(o.platform, position: pos, from: dm.addDays(from, days))
       let delta = dm.days(from: from, to: to)
       guard delta != 0 else { continue }

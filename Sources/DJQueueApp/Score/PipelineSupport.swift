@@ -89,19 +89,6 @@ extension AppModel {
       }
     }
   }
-
-  /// The first week (from this one) that still has a free day for `count` clips, as its week-start key.
-  func pipelineWeekWithRoom() -> String {
-    let perDay = max(1, settings.postsPerDay)
-    var used: [String: Int] = [:]
-    for s in upcomingSlots { used[s.date, default: 0] += 1 }
-    var week = dm.weekStart(of: now)
-    for _ in 0..<12 {
-      if dm.weekDays(week).contains(where: { $0 >= todayKey && used[$0, default: 0] < perDay }) { return week }
-      week = dm.addDays(week, 7)
-    }
-    return dm.weekStart(of: now)
-  }
 }
 
 /// Bookkeeping for the pipeline's own clip layouts (Score single/grid, Queue cards) — what ClipCollection does

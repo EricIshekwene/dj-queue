@@ -141,13 +141,13 @@ extension AppModel {
     }
   }
 
-  /// Asks first: posts set to Postiz then go to Today.
+  /// Asks first: posts set to Postiz then go to the Calendar as manual posts.
   func removePostizKey() {
     let n = settings.publishing.postizPlatforms.count
     confirmHere(ConfirmRequest(
       title: "Remove the Postiz API key?",
       message: n == 0 ? "It's deleted from the Keychain. You can paste it again any time."
-        : "It's deleted from the Keychain. \(n == 1 ? "The platform" : "The \(n) platforms") set to Postiz go to Today as manual posts until you add it again. Posts already in Postiz stay there.",
+        : "It's deleted from the Keychain. \(n == 1 ? "The platform" : "The \(n) platforms") set to Postiz go to the Calendar as manual posts until you add it again. Posts already in Postiz stay there.",
       verb: "Remove key", icon: "key", destructive: true) { [weak self] in
         guard let self else { return }
         let bridge = self.postizBridge
@@ -205,7 +205,7 @@ extension AppModel {
     let n = upcoming.count
     confirmHere(ConfirmRequest(
       title: "Post \(p.displayName) publicly through Postiz?",
-      message: [n == 0 ? "No \(p.displayName) posts are planned yet; approved ones will go out publicly at their slots."
+      message: [n == 0 ? "No \(p.displayName) posts are scheduled yet; scheduled ones will go out publicly at their slots."
                   : "\(n) planned \(p.displayName) post\(n == 1 ? "" : "s") go out publicly at their slots, with no step from you. \(next ?? "")",
                 "A post whose time has already passed goes out within minutes. Turn on Test run first to try it without posting publicly."]
         .joined(separator: "\n\n"),
@@ -370,7 +370,7 @@ extension AppModel {
   static let unconfirmedText = "DJ Queue couldn't confirm Postiz got this post. Check the Postiz calendar."
 
   /// "It's in Postiz": kept as Postiz's (recorded posted, never sent again). "Not in Postiz — post it myself": back
-  /// on Today, which asks first — if Postiz does have it, it would post twice.
+  /// on the Calendar, which asks first — if Postiz does have it, it would post twice.
   func resolveUnconfirmed(_ p: PlatformPost, inPostiz: Bool) {
     let run = { [weak self] in
       guard let self else { return }
@@ -380,7 +380,7 @@ extension AppModel {
         await MainActor.run {
           switch out {
           case .success: self.show(inPostiz ? "\(p.platform.displayName): kept as Postiz's — add its link when it's up"
-                                            : "\(p.platform.displayName) is on Today to post by hand")
+                                            : "\(p.platform.displayName) is on the Calendar to post by hand")
           case .failure(let e): self.show("\(e)", error: true)
           }
           ChangeSignal.post()
@@ -391,7 +391,7 @@ extension AppModel {
     guard !inPostiz else { run(); return }
     confirmHere(ConfirmRequest(
       title: "Post \(p.platform.displayName) yourself?",
-      message: "Only if it isn't in the Postiz calendar. If Postiz does have it, it would go out twice: once from Postiz and once by you. It moves to Today as a manual post.",
+      message: "Only if it isn't in the Postiz calendar. If Postiz does have it, it would go out twice: once from Postiz and once by you. It stays on the Calendar as a manual post.",
       verb: "Post it myself", icon: "exclamationmark.triangle", destructive: true, action: run))
   }
 }
