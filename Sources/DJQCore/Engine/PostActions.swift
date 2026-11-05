@@ -20,6 +20,7 @@ public final class PostActions: @unchecked Sendable {
 
   public func markPosted(postId: String, url: String, at: Date? = nil) throws {
     var p = try post(postId)
+    let wasFailed = p.state == .failed
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     try Self.validate(url: url, for: p.platform)
@@ -37,6 +38,14 @@ public final class PostActions: @unchecked Sendable {
     p.url = url.trimmingCharacters(in: .whitespacesAndNewlines)
     p.postedAt = at ?? now
     try store.save(p, note: "marked posted")
+    // Posted by hand from a failed row: its retry must not go out too (the publish step deletes it from Postiz).
+    if wasFailed {
+      for var a in try store.posts(where: "video_id=? AND platform=? AND version_no=? AND attempt_no>?",
+                                   [p.videoId, p.platform.rawValue, p.versionNo, p.attemptNo]) where !a.state.isTerminal {
+        a.state = .skipped
+        try store.save(a, note: "attempt \(p.attemptNo) was marked posted")
+      }
+    }
     try store.logEvent("posted", "\(p.platform.displayName) posted: \(p.url!)", videoId: p.videoId, postId: p.id)
     try store.refreshState(videoId: p.videoId)
   }
@@ -164,6 +173,7 @@ public final class PostActions: @unchecked Sendable {
     p.resolution = nil
     try store.save(p, note: "reset")
     try store.releasePostizJobs(postId: p.id)  // a reset post may go through Postiz again (never a published one)
+    try store.clearRetryPromise(p)
     try store.clearNotified(Self.problemKey(p.id))  // a later failure of this post gets its own alert
     try store.refreshState(videoId: p.videoId)
   }

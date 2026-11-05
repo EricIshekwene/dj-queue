@@ -258,6 +258,10 @@ public struct PostizMedia: Codable, Sendable, Hashable {
 
 /// One entry of `GET /posts` (only the fields DJ Queue reads).
 public struct PostizRemotePost: Codable, Sendable, Hashable {
+  /// The platform gave back a link or an id, so it has the post, whatever `state` says.
+  public var hasRelease: Bool {
+    !(releaseURL ?? "").isEmpty || !["", "missing"].contains(releaseId ?? "")
+  }
   public var id: String
   public var group: String?
   public var publishDate: Date?

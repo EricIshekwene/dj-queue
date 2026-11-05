@@ -47,6 +47,7 @@ import Testing
     (.tiktok, "Failed to pull video from URL"), (.instagram, "The media is not ready for publishing, please wait"),
     (.instagram, "Application request limit reached"), (.facebook, "An unexpected error has occurred. Please retry your request later."),
     (.facebook, "Video upload failed"), (.threads, "Service temporarily unavailable"), (.x, "503 Service Unavailable"),
+    (.x, "Rate limit exceeded"), (.x, "Quota exceeded"), (.x, "This request exceeds your quota for today"),
     (.x, "502 Bad Gateway"), (.threads, "socket hang up"), (.instagram, "Request timed out"), (.youtube, Self.quota),
     (.youtube, "defaultVideoInsertPerDayPerProject exceeded"), (.tiktok, "Internal server error"),
   ] as [(Platform, String)])
@@ -71,6 +72,22 @@ import Testing
     (.facebook, "Error validating access token: Session has expired"), (.tiktok, "access_token_invalid"), (.tiktok, "scope_not_authorized"),
     (.x, "Please re-authenticate your account"), (.instagram, "Refresh token expired, reconnect the channel"),
     (.threads, "You need to log in"), (.x, "You don't have permission to do this"),
+    // the platform has it, in any wording
+    (.instagram, "This media has already been posted"), (.threads, "This post has already been published"),
+    (.tiktok, "This video has been posted before"), (.x, "Whoops! You already said that."),
+    // policy
+    (.facebook, "(#368) The action attempted has been deemed abusive or is otherwise disallowed"), (.instagram, "This content is prohibited"),
+    (.x, "You are not permitted to perform this action."), (.instagram, "Nudity or sexual activity"), (.facebook, "Hate speech"),
+    (.threads, "Sensitive content detected"),
+    // sign-in
+    (.x, "Please reauthenticate your account"), (.facebook, "Please reauthorize the app"), (.threads, "Unauthenticated"),
+    (.instagram, "Refresh your connection"), (.x, "Request failed with status code 401"), (.x, "Request failed with status code 403"),
+    // size
+    (.facebook, "Video exceeds the maximum allowed"), (.x, "Video exceeds 5 minutes"), (.x, "Your video is over the limit of 512MB"),
+    (.threads, "The video is 200 seconds; maximum is 180"), (.facebook, "HTTP 413"), (.tiktok, "FileSizeExceeded"), (.tiktok, "UnsupportedMedia"),
+    // TikTok codes
+    (.tiktok, "unaudited_client_can_only_post_to_private_accounts"), (.tiktok, "privacy_level_option_mismatch"),
+    (.tiktok, "url_ownership_unverified"), (.instagram, "Instagram account is private"), (.tiktok, "reached_active_user_cap"),
     // YouTube: the video may exist
     (.youtube, "Unknown error"), (.youtube, "Rate limit reached while setting the thumbnail"), (.youtube, "Internal server error"), (.youtube, ""),
     (.youtube, "Postiz reported an error (no details)"),
@@ -381,7 +398,7 @@ import Testing
     if case .retrying(let s, let line?)? = try rig.service.displayState(for: cur) {
       #expect(s == "Retry waits (try 1 of 5)" && line.hasPrefix("Retrying when"))
     } else { Issue.record("not retrying") }
-    #expect(!rig.notifier.delivered.contains { $0.postId == a.id })
+    #expect(!rig.notifier.delivered.contains { $0.postId == a.id && !$0.key.hasPrefix("postiz.retryWaits:") })
     try rig.f.updateSettings { $0 = before }
     rig.tick(3)
     cur = try #require(try rig.store.post(id: a.id))
@@ -591,6 +608,226 @@ import Testing
     guard case .fellBack? = try rig.service.displayState(for: cur) else { Issue.record("expected fellBack"); return }
   }
 
+  // MARK: Review fixes
+
+  /// The platform took the post and a later step failed: Postiz says ERROR, with the release. Never a second post.
+  @Test(arguments: [Platform.x, .instagram, .threads, .facebook, .tiktok, .youtube])
+  func anErrorWithAReleaseCountsAsPublished(_ platform: Platform) throws {
+    let (rig, p) = try xRig([platform])
+    let j = try #require(try rig.job(p))
+    let creates = rig.fake.createCount
+    rig.fake.publish(j.postizId!)
+    try fail(rig, p, "Something went wrong")
+    rig.tick(3)
+    let cur = try #require(try rig.store.post(id: p.id))
+    #expect(cur.state == .posted && cur.url != nil)
+    #expect(try attempts(rig, p).count == 1 && r8.problems(rig).isEmpty)
+    #expect(rig.fake.createCount == creates)
+    #expect(try rig.store.postizJob(id: j.id)?.closeReason == .published)
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func aReleaseIdAloneCountsAndMissingDoesNot() {
+    #expect(PostizRemotePost(id: "a", state: "ERROR", releaseId: "123").hasRelease)
+    #expect(PostizRemotePost(id: "a", state: "ERROR", releaseURL: "https://x.com/1").hasRelease)
+    #expect(!PostizRemotePost(id: "a", state: "ERROR", releaseId: "missing").hasRelease)
+    #expect(!PostizRemotePost(id: "a", state: "ERROR", releaseURL: "", releaseId: "").hasRelease)
+    #expect(!PostizRemotePost(id: "a", state: "ERROR").hasRelease)
+  }
+
+  /// D1: no release, unknown wording: it retries (Postiz records a release only on success). YouTube stays with Eric.
+  @Test func anUnknownErrorWithNoReleaseRetriesExceptOnYouTube() throws {
+    let (rig, x) = try xRig()
+    try fail(rig, x, nil)
+    #expect(try attempts(rig, x).count == 2)
+    let (rig2, yt) = try xRig([.youtube])
+    try fail(rig2, yt, nil)
+    #expect(try attempts(rig2, yt).count == 1 && r8.problems(rig2) == [yt.id])
+  }
+
+  /// The stale copy from the publish loop's list must not undo what Eric did meanwhile.
+  @Test(arguments: ["posted", "skipped", "removed"])
+  func aStaleRetimeNeverOverwritesEric(_ what: String) throws {
+    let (rig, x) = try xRig()
+    try fail(rig, x)
+    let a = try #require(try attempts(rig, x).last)
+    let settings = try rig.store.settings()
+    rig.f.clock.set(a.scheduledAt.addingTimeInterval(600))
+    let stale = try #require(try rig.store.post(id: a.id))  // what the loop read
+    let actions = PostActions(store: rig.store)
+    switch what {
+    case "posted": try actions.markPosted(postId: a.id, url: "https://x.com/lovd/status/1")
+    case "skipped": try actions.skip(postId: a.id)
+    default: try rig.store.deletePost(a.id)
+    }
+    #expect(try rig.service.retimeRetry(stale, settings: settings) == nil)
+    let cur = try rig.store.post(id: a.id)
+    if what == "posted" { #expect(cur?.state == .posted && cur?.url != nil) }
+    if what == "skipped" { #expect(cur?.state == .skipped) }
+    if what == "removed" { #expect(cur == nil) }
+  }
+
+  /// A retry waited, Eric reset the post, and it failed for a reason a retry can't fix: loud, whatever the kv row says.
+  @Test func aResetFailureThatFailsVetoedIsLoud() throws {
+    let (rig, x) = try xRig()
+    let j = try #require(try rig.job(x))
+    rig.fake.fail(j.postizId!, error: "Something went wrong")
+    rig.f.clock.set(j.remoteDate.addingTimeInterval(700))
+    try rig.f.updateSettings { $0.pausedPlatforms.insert(.x) }
+    rig.tick()
+    #expect(try r8.problems(rig).isEmpty)
+    try PostActions(store: rig.store).reset(postId: x.id)
+    #expect(try rig.service.autoRetries(x).failedPostId == nil)
+    try rig.f.updateSettings { $0.pausedPlatforms.remove(.x) }
+    rig.tick(2)
+    let job = try #require(try rig.job(x))
+    rig.fake.fail(job.postizId!, error: "Video longer than 2:20")
+    rig.f.clock.advance(3600)
+    rig.tick(2)
+    #expect(try r8.problems(rig) == [x.id])
+    #expect(rig.notifier.delivered.contains { $0.key == "problem:\(x.id)" })
+  }
+
+  /// A row left by anything at all doesn't hide a failure: the failure itself has to be the kind that retries.
+  @Test func aLeftoverPromiseCantHideAFailure() throws {
+    let (rig, x) = try xRig()
+    var r = PostizAutoRetries()
+    r.failedPostId = x.id
+    try rig.store.setKV(PostizService.autoRetryKey(x), r)
+    try PostActions(store: rig.store).reportProblem(postId: x.id, type: .uploadFailed, message: "Failed by hand")
+    #expect(try r8.problems(rig) == [x.id])
+  }
+
+  /// Excluded after its attempt exists: it can't render, so it can't go. A day late it comes back to Eric with a reason.
+  @Test func anAttemptThatCantBeSentGoesBackToEric() throws {
+    let (rig, x) = try xRig()
+    try fail(rig, x)
+    let a = try #require(try attempts(rig, x).last)
+    #expect(try rig.job(a) == nil)
+    var v = try #require(try rig.store.video(id: x.videoId))
+    v.excluded = true
+    try rig.store.save(v)
+    rig.f.clock.set(a.scheduledAt.addingTimeInterval(PostizService.stuckAfter + 3600))
+    rig.tick(3)
+    #expect(try rig.service.isRetryAttempt(a))  // not after a few ticks: a Mac that just woke looks the same
+    var r = try rig.service.autoRetries(a)
+    r.unsentTicks = PostizService.maxUnsentTicks - 1
+    try rig.store.setKV(PostizService.autoRetryKey(a), r)
+    rig.tick(2)
+    let cur = try #require(try rig.store.post(id: a.id))
+    #expect(try !rig.service.isRetryAttempt(cur))
+    #expect(cur.state == .overdue && cur.errorMessage?.contains("couldn't be sent") == true)
+    #expect(try PostActions(store: rig.store).problems().contains { $0.id == a.id })
+    if case .retrying? = try rig.service.displayState(for: cur) { Issue.record("still says retrying") }
+  }
+
+  /// Nothing sits silently: a retry stuck on a setting or a pause alerts once, a day past its time, and keeps waiting.
+  @Test(arguments: ["manual", "paused", "pausedAll"])
+  func aRetryStuckForADayAlertsOnce(_ how: String) throws {
+    let (rig, x) = try xRig()
+    try fail(rig, x)
+    let a = try #require(try attempts(rig, x).last)
+    try rig.f.updateSettings { s in
+      switch how {
+      case "manual": s.publishing.publishers[.x] = .manual
+      case "paused": s.pausedPlatforms.insert(.x)
+      default: s.paused = true
+      }
+    }
+    rig.tick()
+    rig.f.clock.set(a.scheduledAt.addingTimeInterval(PostizService.stuckAfter - 600))
+    rig.tick(2)
+    let key = "postiz.retryWaits:\(a.id)"
+    #expect(!rig.notifier.delivered.contains { $0.key == key })
+    rig.f.clock.set(a.scheduledAt.addingTimeInterval(PostizService.stuckAfter + 600))
+    rig.tick(3)
+    #expect(rig.notifier.delivered.filter { $0.key == key }.count == 1)
+    #expect(try rig.service.isRetryAttempt(a))
+  }
+
+  @Test func aFailureWaitingOnAPauseAlertsToo() throws {
+    let (rig, x) = try xRig()
+    let j = try #require(try rig.job(x))
+    rig.fake.fail(j.postizId!, error: "Something went wrong")
+    rig.f.clock.set(j.remoteDate.addingTimeInterval(700))
+    try rig.f.updateSettings { $0.paused = true }
+    rig.tick()
+    rig.f.clock.advance(2 * 86400)
+    rig.tick()
+    #expect(rig.notifier.delivered.contains { $0.key == "postiz.retryWaits:\(x.id)" })
+  }
+
+  /// Eric took the clip out of the plan while a retry waited: it doesn't fire on resume.
+  @Test func anUnscheduledClipDoesntRetry() throws {
+    let (rig, x) = try xRig()
+    let j = try #require(try rig.job(x))
+    rig.fake.fail(j.postizId!, error: "Something went wrong")
+    rig.f.clock.set(j.remoteDate.addingTimeInterval(700))
+    try rig.f.updateSettings { $0.paused = true }
+    rig.tick()
+    let r = try BulkActions(store: rig.store).back([x.videoId])
+    #expect(r.changed == [x.videoId])
+    try rig.f.updateSettings { $0.paused = false }
+    rig.tick(3)
+    #expect(try attempts(rig, x).count == 1)
+    #expect(try rig.store.post(id: x.id)?.resolution == "unscheduled")
+    #expect(try rig.service.pendingAutoRetries().isEmpty)
+  }
+
+  /// `djq posted` on the failed row: the attempt waiting in Postiz must not go out too.
+  @Test func markingTheFailedRowPostedClosesItsAttempt() throws {
+    let (rig, x) = try xRig()
+    try fail(rig, x)
+    rig.tick(2)
+    let a = try #require(try attempts(rig, x).last)
+    let job = try #require(try rig.job(a))
+    try PostActions(store: rig.store).markPosted(postId: x.id, url: "https://x.com/lovd/status/1")
+    rig.tick(3)
+    #expect(try rig.store.post(id: a.id)?.state == .skipped)
+    #expect(rig.fake.post(job.postizId!)?.deleted == true)
+    #expect(try rig.service.pendingAutoRetries().isEmpty)
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func waitingBehindAnotherPostSaysSo() throws {
+    let (rig, x) = try xRig()
+    try another(rig, x, at: rig.f.clock.now.addingTimeInterval(30 * 86400))
+    var other = try #require(try rig.store.posts(where: "video_id=? AND version_no=9", [x.videoId]).first)
+    other.versionNo = 1
+    try rig.store.save(other, note: "test")
+    try fail(rig, x)
+    let f = try #require(try rig.store.post(id: x.id))
+    #expect(try rig.service.displayState(for: f) == .retrying("Retry waits (try 1 of 5)", line: "Retrying when its other post is done (try 1 of 5)"))
+  }
+
+  @Test func aSecondFailureWhileWaitingIsListedOnce() throws {
+    let (rig, x) = try xRig()
+    try fail(rig, x)
+    let a = try #require(try attempts(rig, x).last)
+    rig.tick(2)
+    let job = try #require(try rig.job(a))
+    rig.fake.fail(job.postizId!, error: "Something went wrong")
+    rig.f.clock.set(job.remoteDate.addingTimeInterval(700))
+    try rig.f.updateSettings { $0.pausedPlatforms.insert(.x) }
+    rig.tick()
+    #expect(try rig.service.pendingAutoRetries().count == 1)
+  }
+
+  /// A clip whose only platform has a retry coming isn't finished.
+  @Test func aWaitingFailureLeavesTheClipScheduledAndTheCardSaysRetrying() throws {
+    let (rig, x) = try xRig()
+    try rig.f.updateSettings { $0.enabledPlatforms = [.x] }
+    let j = try #require(try rig.job(x))
+    rig.fake.fail(j.postizId!, error: "Something went wrong")
+    rig.f.clock.set(j.remoteDate.addingTimeInterval(700))
+    try rig.f.updateSettings { $0.paused = true }
+    rig.tick()
+    #expect(try rig.store.video(id: x.videoId)?.state == .planned)
+    let f = try #require(try rig.store.post(id: x.id))
+    #expect(PostGrouping.summary([f], retrying: [f.id]) == "1 platform · retrying")
+    #expect(PostGrouping.summary([f]) == "1 platform · failed")
+  }
+
   // MARK: The inbox guard stays
 
   /// Post 4ab3180d: closed as `inbox` and sent outside DJ Queue. A closed test-run inbox job still blocks everything.
@@ -643,9 +880,8 @@ import Testing
         let list = try attempts(rig, x)
         switch rng.next() % 14 {
         case 0...4:
-          // Only what Postiz still holds: a post it published can't fail afterwards.
-          if let j = try rig.store.postizJobs(where: "video_id=? AND platform='x' AND closed_at IS NULL AND phase='live' AND kind='post'", [x.videoId]).first,
-             rig.fake.post(j.postizId!)?.state == "QUEUE" {
+          // A post Postiz published can fail too, in a later step: the fake keeps its release, and that must never resend.
+          if let j = try rig.store.postizJobs(where: "video_id=? AND platform='x' AND closed_at IS NULL AND phase='live' AND kind='post'", [x.videoId]).first {
             rig.fake.fail(j.postizId!, error: errors[Int(rng.next() % UInt64(errors.count))])
             rig.f.clock.set(max(rig.f.clock.now, j.remoteDate).addingTimeInterval(Double(rng.next() % 3) * 3600 + 700))
           }

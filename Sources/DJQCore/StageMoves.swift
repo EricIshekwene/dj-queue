@@ -116,6 +116,7 @@ extension BulkActions {
         if !items.isEmpty { removed[v.id] = items }
         moves[v.id] = StageMove(from: .queue, to: .edit, note: StageWording.backInEdit + Self.daysText(items, store: store))
       case .scheduled:
+        try store.dropWaitingRetries(videoId: v.id)
         let items = try planner.unplan(videoId: v.id)
         if !items.isEmpty { removed[v.id] = items }
         let now = try stage(of: v.id) ?? .queue

@@ -88,7 +88,7 @@ struct PostGroupCard: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       VStack(alignment: .trailing, spacing: 2) {
         Text(dayText).font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.text).lineLimit(1)
-        Text(problems ? problemSummary : group.summary).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+        Text(problems ? problemSummary : PostGrouping.summary(group.posts, retrying: Set(group.posts.filter { model.postizState($0)?.isRetrying == true }.map(\.id)))).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
       }
       if !problems {
         Button {

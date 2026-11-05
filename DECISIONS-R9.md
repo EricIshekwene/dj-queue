@@ -12,7 +12,7 @@ cap and #13's scope; the rest of R8 stands, the double-post guards above all.
 
 1. **The default flips (`retriesByItself`).** A failure that a retry can't fix is the exception, so the veto list is what's written down: R8's policy, account and paid-limit words, plus too long, too large, format, validation and sign-in. A wrong "retry" costs at most 5 attempts of a post that fails again; a wrong "veto" costs one Fixed.
 2. **`isTemporary` is gone.** Nothing reads "temporary" any more; `isVetoed` is the one test.
-3. **"Duplicate" and "already posted" are vetoes, though the brief doesn't list them.** A platform saying it has the post is the one failure where a retry could double-post.
+3. **Anything saying the platform has the post is a veto, though the brief doesn't list it.** It's the one failure where a retry could double-post, so it's broad on purpose: any "already", "duplicate", "has been posted", "posted before". A false veto costs one Fixed.
 4. **Codes count as words.** `duration_check_failed` and `spam_risk_too_many_posts` are how TikTok speaks, and `\b` doesn't split on `_`, so `_` reads as a space.
 5. **A veto word beats a quota word, as in R8.** "Your storage quota is full" and "Video too large, quota" don't retry.
 6. **Tries are retries.** The brief's table has five delays and "cap 5", so try 1 of 5 is the first retry after the failure, and the original post isn't counted. The R8 count in kv carries over.
@@ -29,11 +29,11 @@ cap and #13's scope; the rest of R8 stands, the double-post guards above all.
 17. **An automatic attempt is never overdue, and never due by hand while it waits (`isRetryAttempt`).** Without this a Mac asleep over midnight, or a pause, turned the retry into a Missed post for Eric, and the sticky "handed to Today" kept it off Postiz for good. A final job (a 400 on create, deleted in Postiz) ends this: it goes to Today like any post.
 18. **The R8 rule that a retry waits for the alert is gone.** There's no alert while a retry is coming, so nothing to wait for. A retry that falls through (ruled out later, tries used up) goes back to Problems with a note and gets its alert then.
 19. **`problems()` filters, not each screen.** Alerts, badges, Doctor, `djq status` and `djq posts --problems` all read it, so none can disagree.
-20. **The kv record is the promise (`failedPostId`), and it counts only while that post is Failed and unhandled.** So Fixed, skip and reset need no cleanup, and new fields are optional so a v0.8 row still decodes.
+20. **The kv record is the promise (`failedPostId`), and it counts only while that post is Failed, unhandled and its final job is a retryable error.** A row alone hid a real failure after a reset (review H2), so `reset` and a non-retryable ERROR clear it too. New fields are optional so a v0.8 row still decodes.
 21. **Pause and Manual stop the attempt being made, and don't take away one already made.** Failing while paused leaves the failure waiting; pausing after the attempt exists deletes the Postiz copy (the usual rule) and the attempt waits. Both run once on resume.
-22. **A retry waiting on Manual isn't a Problem, as the brief says, and Doctor warns.** A platform left on Manual never brings it back, so this is the one quiet wait that could become a silent loss. It stays in Scheduled with the reason, and `postiz.auto_retry` turns to a warning. Worth Eric's look: see the report.
+22. **A retry waiting on Manual or a pause isn't a Problem, as the brief says, and a day past its time it alerts, once.** Doctor alone wasn't a signal: Eric doesn't read it, and "no audit" is the point. It stays in Scheduled with the reason, keeps waiting, and `postiz.auto_retry` is a warning on a setting.
 23. **Remove from queue hands the attempt back to its failure.** `unplan` deletes every live post of the clip, so the attempt would be gone and the platform lost. `hold` reverts the failure first, marked `tryUnused`, so Send to queue makes one new attempt and the cap isn't charged for a try that never went out. After Undo the restored attempt stands and nothing more is made.
-24. **Scheduled → Queue doesn't do that.** Eric took the clip out of the plan on purpose, and the attempt goes with it. The failed row stays "Re-queued", as it did for a Fixed attempt before.
+24. **Scheduled → Queue doesn't do that.** Eric took the clip out of the plan on purpose, and the attempt goes with it. The failed row stays "Re-queued", as it did for a Fixed attempt before. A failure still waiting for its attempt becomes "Unscheduled", so it can't fire on resume.
 25. **Fixed once the attempt exists is refused ("Already handled").** The failure is handled by then. Fixed before it (a retry waiting) wins, and that attempt replaces the retry.
 26. **A waiting badge is "Retry waits (try 2 of 5)", with the reason on the line under it.** The full sentence pushed the inspector past the window edge; the design rule is a chip, not a sentence. The timed form fits everywhere, so it stays whole as the brief wrote it.
 27. **The failed row on Today says what the attempt says, and goes when the attempt is on today's list too.** Otherwise Today read Failed, or said it twice.
@@ -43,3 +43,15 @@ cap and #13's scope; the rest of R8 stands, the double-post guards above all.
 31. **The YouTube note reads "no automatic retry: YouTube may already have the video, so check the channel, then mark Fixed".** It's added only to an error that isn't vetoed, because a veto has its own reason.
 32. **The inbox guard is untouched.** `retryRuledOut`, `versionIsOut` and `publishedPostizJob` still count a closed `inbox` job, and a test proves it, so post 4ab3180d stays out of every retry.
 33. **Failures sitting Failed at install qualify, as in R8.** A copy of the last backup has one failed post, already fixed by Eric, so the wider rule starts nothing at install.
+
+## After review
+
+34. **An ERROR with a release link or id counts as published, on every platform.** A later step failed after the platform took the post, so a retry is a double post. It closes as `published`, with the link, and the post reads posted. Copyright wording stays copyright. `releaseId: "missing"` isn't a release.
+35. **Unknown or empty errors with no release id do retry (controller's decision on the review's D1).** Postiz records a release id only on success, so no id means it didn't land. YouTube is the exception, as built: it keeps its guard.
+36. **"Exceeds" vetoes a size, never a rate.** "Rate limit exceeded", "Quota exceeded" and "exceeds your quota" retry. CamelCase splits before matching, so `FileSizeExceeded` reads as words.
+37. **`retimeRetry` re-reads the attempt in a transaction and returns nil if it isn't open any more.** The publish loop's list is minutes old after an upload, and saving that copy undid Mark posted.
+38. **An attempt nothing stops, unsent a day past its time, stops being a retry after 60 more ticks (about an hour awake).** Wall time alone can't tell this from a Mac that slept three days, and a wake must never hand a retry to Eric. It then goes overdue like any post, with the reason in its message.
+39. **`markPosted` on a failed row skips that row's later live attempts.** The publish step then deletes the Postiz copy. It also covers an attempt from Fixed.
+40. **A clip with a retry coming stays Scheduled.** `planOrPostState` doesn't count that failure as finished, so a single-platform clip doesn't read Posted, and Remove from queue still works.
+41. **`errored` builds the router before its transaction.** It can spawn `security`, which doesn't belong under a write lock.
+42. **Nothing depends on v0.8.2's alert order.** No code reads `problem:` keys to decide a retry; the only test that pinned `retry` right after `alerts` now pins only `retry` before `publish`.

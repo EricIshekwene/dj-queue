@@ -380,7 +380,10 @@ struct WeekDayCard: View {
 
   private func chip(_ pl: Platform) -> some View {
     let post = posts[pl]
-    let time = post.map { AppModel.clockText($0.scheduledAt, tz: model.tz) }
+    // A retry can leave its slot's day: the chip says which day.
+    let time = post.map { p in
+      (model.dm.key(p.scheduledAt) == slot.date ? "" : Fmt.day(p.scheduledAt, tz: model.tz, style: "EEE") + " ") + AppModel.clockText(p.scheduledAt, tz: model.tz)
+    }
       ?? AppModel.clockText(model.dm.at(slot.date, minutes: model.settings.slot(for: pl) + slot.position * model.settings.secondPostOffsetMinutes),
                             tz: model.tz)
     let status: DSXPostStatus = post.map { model.postStatus($0) } ?? (approved ? .planned : .draft)

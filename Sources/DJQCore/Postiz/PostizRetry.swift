@@ -18,6 +18,8 @@ public struct PostizAutoRetries: Codable, Sendable, Hashable {
   public var nextRetryAt: Date?
   /// The clip went back to Edit and took its attempt with it: the try wasn't used, so the next attempt doesn't count.
   public var tryUnused: Bool?
+  /// Ticks the attempt has spent a day late with nothing stopping it, and still unsent (`maxUnsentTicks`).
+  public var unsentTicks: Int?
   public init() {}
 }
 
@@ -89,10 +91,30 @@ extension Store {
     try kv(PostizService.autoRetryKey(p)) ?? PostizAutoRetries()
   }
 
-  /// A failure with a retry coming is no Problem: no alert, no badge, nothing for Eric to do.
+  /// A failure with a retry coming is no Problem: no alert, no badge, nothing for Eric to do. The kv row alone isn't
+  /// enough: after a reset the same post can fail for another reason, and that one must be loud. So the failure itself
+  /// has to be the kind that retries.
   func retryIsComing(_ p: PlatformPost) throws -> Bool {
-    guard p.state == .failed, p.resolution == nil else { return false }
-    return try autoRetries(p).failedPostId == p.id
+    guard p.state == .failed, p.resolution == nil, p.errorType == .uploadFailed, try autoRetries(p).failedPostId == p.id,
+          let job = try finalPostizJob(postId: p.id), job.closeReason == .error else { return false }
+    return PostizService.retriesByItself(job.lastError ?? "", on: p.platform)
+  }
+
+  /// `p`'s failure no longer has a retry coming.
+  func clearRetryPromise(_ p: PlatformPost) throws {
+    var r = try autoRetries(p)
+    guard r.failedPostId == p.id else { return }
+    r.failedPostId = nil
+    try setKV(PostizService.autoRetryKey(p), r)
+  }
+
+  /// Eric took the clip out of the plan: a failure of it that still waits for its retry stops waiting.
+  func dropWaitingRetries(videoId: String) throws {
+    for var f in try posts(where: "video_id=? AND state='failed' AND resolution IS NULL", [videoId]) where try retryIsComing(f) {
+      try clearRetryPromise(f)
+      f.resolution = "unscheduled"
+      try save(f, note: "no automatic retry: taken out of the plan")
+    }
   }
 
   /// The clip goes back to Edit, which removes every live post of it: each automatic attempt becomes its failure's
@@ -130,22 +152,31 @@ extension PostizService {
 
   /// Words that mean more than "not now": a policy or rights problem, an account problem or a paid limit.
   static let notTemporary = #"\b(violat\w*|infring\w*|intellectual property|dmca|content[- ]?id|copy[- ]right|trademark\w*|"#
+    + #"abus\w*|disallow\w*|prohibit\w*|not permitted|nud\w*|sexual\w*|adult|hate|harass\w*|violen\w*|sensitive|inappropriate|harmful|unsafe|"#
+    + #"private|privacy|unaudited|unverified|ownership|active user|"#
     + #"(un)?licen[sc]\w*|songs?|sounds?|soundtracks?|tracks?|lyrics|strikes?|takedowns?|taken? down|third[- ]party|polic(y|ies)|"#
     + #"guidelines?|community|terms|not allowed|\w+n't allowed|spam\w*|flagged|reject\w*|remov\w*|revok\w*|bans?|banned|suspen\w*|restrict\w*|"#
     + #"block\w*|locked|disabled|deactivat\w*|terminated|denied|forbidden|unauthori[sz]ed|upgrade\w*|plans?|subscri\w*|storage)\b"#
-  /// Failures the same post would hit again: too long, too large, its format, its fields, the channel's sign-in, or a
-  /// platform that says it already has the post.
-  static let cantBeFixedByARetry = #"\b(too (long|short|large|big|small)|(longer|shorter|larger|bigger|smaller) than|size|duration|length|"#
-    + #"format\w*|codecs?|aspect ratio|resolution|frame rate|bitrate|unsupported|not supported|hashtags?|"#
+  /// Failures the same post would hit again: too long, too large, its format, its fields or the channel's sign-in.
+  /// "Exceeds" counts for a size, never for "rate limit exceeded" or "exceeds the quota".
+  static let cantBeFixedByARetry = #"\b(too (long|short|large|big|small)|(longer|shorter|larger|bigger|smaller) than|sizes?|duration|length|"#
+    + #"maximum|minimum|max|over the limit|\d+ ?(kb|mb|gb)|400|401|403|413|415|422|"#
+    + #"format\w*|codecs?|aspect ratio|resolution|frame rate|bitrate|unsupported|not supported|hashtags?|mismatch|"#
     + #"validat\w*|invalid\w*|not a valid|malformed|bad (request|body)|missing|required|must (be|have|not|contain)|"#
-    + #"duplicate\w*|already (posted|published|uploaded|exists?)|"#
-    + #"auth\w*|oauth\w*|tokens?|expired|credentials?|permissions?|scopes?|log ?in|sign ?in|re-?connect\w*|re-?link\w*|disconnected|not connected|sessions?)\b"#
+    + #"(re|un)?-?auth\w*|oauth\w*|tokens?|expired|credentials?|permissions?|scopes?|log[- ]?in|sign[- ]?in|refresh\w*|"#
+    + #"re-?connect\w*|re-?link\w*|disconnected|not connected|sessions?)\b|\bexceeds\b(?!\s+(the |your )?(rate|quota|daily|request|api))"#
+  /// The platform says it has the post. A retry here is a double post, so any "already" counts, in any tense.
+  static let alreadyThere = #"\b(already|duplicate\w*|identical|repeat\w*|(been|was|were) (posted|published|uploaded|shared)|"#
+    + #"(posted|published|uploaded|shared) (before|earlier|previously)|same (post|content|video|media|status|tweet))\b"#
 
-  /// Copyright, or a veto word anywhere in the message. Platforms write codes too ("duration_check_failed").
+  /// Copyright, or a veto word anywhere in the message. Platforms write codes too ("duration_check_failed",
+  /// "FileSizeExceeded"), so those read as words.
   static func isVetoed(_ message: String) -> Bool {
-    let m = message.lowercased().replacingOccurrences(of: "_", with: " ")
-    return isCopyright(message) || m.range(of: notTemporary, options: .regularExpression) != nil
-      || m.range(of: cantBeFixedByARetry, options: .regularExpression) != nil
+    let m = message.replacingOccurrences(of: "([a-z0-9])([A-Z])", with: "$1 $2", options: .regularExpression)
+      .lowercased().replacingOccurrences(of: "_", with: " ")
+    return isCopyright(message) || [notTemporary, cantBeFixedByARetry, alreadyThere].contains {
+      m.range(of: $0, options: .regularExpression) != nil
+    }
   }
 
   /// This failure may retry by itself on `platform`: anything not vetoed, an unknown or empty error too. On YouTube only
@@ -192,6 +223,7 @@ extension PostizService {
     r.failedPostId = p.id
     r.failedAt = failedAt
     r.tryUnused = nil
+    r.unsentTicks = nil
     r.nextRetryAt = PostizRetrySchedule.next(after: failedAt, retry: r.count + 1, platform: p.platform, settings: try store.settings())
     try store.setKV(Self.autoRetryKey(p), r)
   }
@@ -312,6 +344,7 @@ extension PostizService {
     let n = try PostActions(store: store).fixed(postId: p.id, by: "auto-retry", at: at)
     if r.tryUnused != true { r.count += 1 }
     r.tryUnused = nil
+    r.unsentTicks = nil
     r.failedPostId = nil
     r.lastPostId = n.id
     if job.testMode { r.testRunPosts.append(n.id) }
@@ -321,12 +354,60 @@ extension PostizService {
     return true
   }
 
+  /// A day past its time, a retry stops being quiet.
+  public static let stuckAfter: TimeInterval = 86400
+  /// A day late with nothing stopping it, an attempt gets this many more ticks (about an hour awake) before it's handed
+  /// to Eric. Wall time alone can't tell: a Mac that slept three days wakes with every attempt "a day late".
+  public static let maxUnsentTicks = 60
+
+  /// Retries with something still to come (no read of the settings or Keychain for these).
+  func openRetryRecords() throws -> [PostizAutoRetries] {
+    let rows = try store.db.query("SELECT json FROM kv WHERE substr(key, 1, ?) = ?", [Self.autoRetryPrefix.count, Self.autoRetryPrefix])
+    return try rows.compactMap { row -> PostizAutoRetries? in
+      guard let r: PostizAutoRetries = row.json("json") else { return nil }
+      if let id = r.lastPostId, let a = try store.post(id: id), !a.state.isTerminal { return r }
+      if let id = r.failedPostId, let f = try store.post(id: id), f.state == .failed, f.resolution == nil { return r }
+      return nil
+    }
+  }
+
+  /// Nothing sits silently. A retry that has waited a day on a pause or a setting says so once, and it keeps waiting. An
+  /// attempt nothing stops, still unsent (the clip went invalid, Postiz won't take it), goes back to Eric as a normal
+  /// post: it stops being a retry, so it can go overdue.
+  func watchStuckRetries(settings: Settings, router: PostizRouter) throws {
+    for retry in try pendingAutoRetries(settings: settings, router: router) {
+      let p = retry.post
+      let due = try autoRetries(p).nextRetryAt ?? p.scheduledAt
+      guard now.timeIntervalSince(due) >= Self.stuckAfter else { continue }
+      if retry.waiting != nil {
+        let tag = try store.video(id: p.videoId)?.tag ?? p.videoId
+        _ = notify(AppNotification(key: "postiz.retryWaits:\(p.id)", title: "\(p.platform.displayName) · \(tag) · retry still waiting",
+                                   body: "\(retry.text). It has waited a day and won't go out until then.", critical: false,
+                                   actions: [.open], postId: p.id, videoId: p.videoId))
+      } else if retry.queued, try store.livePostizJob(postId: p.id) == nil {
+        try store.db.transaction {
+          var r = try autoRetries(p)
+          guard r.lastPostId == p.id, var a = try store.post(id: p.id), !a.state.isTerminal else { return }
+          r.unsentTicks = (r.unsentTicks ?? 0) + 1
+          if r.unsentTicks! >= Self.maxUnsentTicks {
+            r.lastPostId = nil
+            r.unsentTicks = nil
+            a.errorMessage = "The automatic retry couldn't be sent for a day, so it's yours now"
+            try store.save(a, note: "automatic retry gave up: unsent a day after its time")
+            try store.logEvent("postiz", "\(p.platform.displayName): \(a.errorMessage!)", videoId: p.videoId, postId: p.id)
+          }
+          try store.setKV(Self.autoRetryKey(p), r)
+        }
+      }
+    }
+  }
+
   /// The engine's `retry` step: a failure that waited, or one an older build left. A failure the sync step just read has
   /// its attempt already. Each post is re-read inside its own `BEGIN IMMEDIATE`, so two processes ticking retry once. No
   /// read of the settings or Keychain with nothing to do, and no write lock for a post that only waits.
   public func retryFailures() throws -> String {
     let failed = try store.posts(where: Self.failedFromPostiz, [ErrorType.uploadFailed.rawValue])
-    guard !failed.isEmpty else { return "none" }
+    guard try !failed.isEmpty || !openRetryRecords().isEmpty else { return "none" }
     let settings = try store.settings()
     let router = try router(settings)
     var queued = 0
@@ -335,18 +416,24 @@ extension PostizService {
       if try d == .nothing || (d == .wait && store.retryIsComing(c)) { continue }
       if try store.db.transaction({ try retryOne(c.id, settings: settings, router: router) }) { queued += 1 }
     }
+    try watchStuckRetries(settings: settings, router: router)
     return queued == 0 ? "none" : "scheduled \(queued)"
   }
 
   /// A retry attempt whose time passed while it couldn't be sent (the Mac slept, posting was paused): it goes out now,
-  /// past the gap from the platform's other posts.
-  func retimeRetry(_ p: PlatformPost, settings: Settings) throws -> PlatformPost {
-    guard p.scheduledAt < now.addingTimeInterval(Self.leadTime), try isRetryAttempt(p) else { return p }
-    var q = p
-    q.scheduledAt = try Sched.retrySlot(store: store, platform: p.platform, target: soonestRetry, settings: settings, excluding: [p.id])
-    if q.state == .due { q.state = q.renderId == nil ? .planned : .rendered }
-    try store.save(q, note: "retry time passed → \(Sched.shortTime(q.scheduledAt, settings))")
-    return q
+  /// past the gap from the platform's other posts. `p` comes from a list read before the publish loop, whose uploads take
+  /// minutes, so it's read again here: nil when Eric marked it posted, skipped or removed it meanwhile. A stale copy
+  /// must never be saved over that, or sent.
+  func retimeRetry(_ p: PlatformPost, settings: Settings) throws -> PlatformPost? {
+    guard p.kind != .regular else { return p }
+    return try store.db.transaction {
+      guard var q = try store.post(id: p.id), Self.openStates.contains(q.state), try store.livePostizJob(postId: p.id) == nil else { return nil }
+      guard q.scheduledAt < now.addingTimeInterval(Self.leadTime), try isRetryAttempt(q) else { return q }
+      q.scheduledAt = try Sched.retrySlot(store: store, platform: p.platform, target: soonestRetry, settings: settings, excluding: [p.id])
+      if q.state == .due { q.state = q.renderId == nil ? .planned : .rendered }
+      try store.save(q, note: "retry time passed → \(Sched.shortTime(q.scheduledAt, settings))")
+      return q
+    }
   }
 
   /// The retry behind `p`, for every screen: an attempt on its way, a failure whose attempt is still to come. nil for
@@ -359,8 +446,10 @@ extension PostizService {
       return Self.pending(p, number: max(1, r.count), queued: true, at: job?.remoteDate ?? p.scheduledAt, wait: wait, settings: settings, now: now)
     }
     guard try store.retryIsComing(p) else { return nil }
-    return Self.pending(p, number: r.count + (r.tryUnused == true ? 0 : 1), queued: false, at: r.nextRetryAt,
-                        wait: try retryWaitReason(p, settings: settings, router: router), settings: settings, now: now)
+    let wait = try retryWaitReason(p, settings: settings, router: router)
+      ?? (retryMustWait(p) ? ("when its other post is done", false) : nil)
+    return Self.pending(p, number: r.count + (r.tryUnused == true ? 0 : 1), queued: false, at: r.nextRetryAt, wait: wait,
+                        settings: settings, now: now)
   }
 
   static func pending(_ p: PlatformPost, number: Int, queued: Bool, at: Date?, wait: (text: String, offPostiz: Bool)?,
@@ -392,14 +481,15 @@ extension PostizService {
 
   /// Retries still to come, soonest first, for Doctor and `djq postiz status`.
   public func pendingAutoRetries() throws -> [PostizPendingRetry] {
-    let rows = try store.db.query("SELECT json FROM kv WHERE substr(key, 1, ?) = ?", [Self.autoRetryPrefix.count, Self.autoRetryPrefix])
-    guard !rows.isEmpty else { return [] }
+    guard try !openRetryRecords().isEmpty else { return [] }
     let settings = try store.settings()
-    let router = try router(settings)
+    return try pendingAutoRetries(settings: settings, router: try router(settings))
+  }
+
+  func pendingAutoRetries(settings: Settings, router: PostizRouter) throws -> [PostizPendingRetry] {
     var out: [PostizPendingRetry] = []
-    for row in rows {
-      guard let r: PostizAutoRetries = row.json("json") else { continue }
-      for id in [r.lastPostId, r.failedPostId].compactMap({ $0 }) {
+    for r in try openRetryRecords() {
+      for id in Set([r.lastPostId, r.failedPostId].compactMap({ $0 })) {
         if let p = try store.post(id: id), let pending = try pendingRetry(p, settings: settings, router: router) { out.append(pending) }
       }
     }

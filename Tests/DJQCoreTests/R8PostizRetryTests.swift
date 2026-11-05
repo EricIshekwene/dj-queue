@@ -629,7 +629,6 @@ import Testing
   @Test func aTickWithNoFailureDoesNothing() throws {
     let (rig, _) = try ytRig()
     #expect(rig.tick().steps["retry"] == "none")
-    #expect(TickReport.order.firstIndex(of: "retry")! == TickReport.order.firstIndex(of: "alerts")! + 1)
     #expect(TickReport.order.firstIndex(of: "retry")! < TickReport.order.firstIndex(of: "publish")!)
   }
 }

@@ -372,7 +372,7 @@ public final class PostizService: @unchecked Sendable {
         if try !store.openPostizJobs(lineage: lineage).isEmpty { blocked += 1; continue }  // earlier copy not confirmed gone
         if stopped != nil { waiting += 1; continue }
         do {
-          let p = try retimeRetry(p, settings: settings)
+          guard let p = try retimeRetry(p, settings: settings) else { continue }
           switch try submit(p, integrationId: integration, provider: provider, settings: settings) {
           case .created: created += 1
           case .rejected: rejected += 1
@@ -927,17 +927,29 @@ public final class PostizService: @unchecked Sendable {
   /// The failure and what follows it, in one transaction: a retryable failure never exists without its next-retry time,
   /// and its new attempt goes to Postiz ahead of that time. The failure happened when Postiz was to send it, however
   /// late the Mac noticed. Re-read inside, so two processes reading the same ERROR act once.
+  /// An ERROR with a release link or id means the platform has the post (a later step failed): it counts as published
+  /// and is never sent again, on any platform. Copyright stays copyright.
   func errored(_ j: PostizJob, _ r: PostizRemotePost) throws {
     let msg = (r.error?.isEmpty == false ? r.error! : "Postiz reported an error (no details)")
     let copyright = Self.isCopyright(msg)
+    let settings = try store.settings()
+    let router = try router(settings)  // outside the transaction: it can ask the Keychain
     try store.db.transaction {
       guard try store.postizJob(id: j.id)?.isOpen == true else { return }
+      if !copyright, r.hasRelease {
+        try published(j, r, settings)
+        try store.logEvent("postiz", "\(j.platform.displayName): Postiz reported an error after the platform took the post (\(msg)), so it counts as posted and isn't sent again",
+                           videoId: j.videoId, postId: j.postId)
+        return
+      }
       var failed: PlatformPost?
       if let p = try store.post(id: j.postId), !p.state.isTerminal {
         let note = copyright ? "" : try retryNote(msg, p)
         if try !copyright && retryPromised(msg, p) {
           try recordFailure(p, at: min(j.remoteDate, now))
           failed = p
+        } else {
+          try store.clearRetryPromise(p)
         }
         try PostActions(store: store).reportProblem(postId: p.id, type: copyright ? .copyrightBlocked : .uploadFailed,
                                                     message: msg + note, raw: "postiz:\(r.id)")
@@ -945,8 +957,8 @@ public final class PostizService: @unchecked Sendable {
       try store.closePostizJob(id: j.id, reason: copyright ? .copyright : .error, note: msg)
       try store.logEvent("postiz", "\(j.platform.displayName) failed in Postiz: \(msg)", videoId: j.videoId, postId: j.postId)
       if let failed {
-        let settings = try store.settings()
-        _ = try retryOne(failed.id, settings: settings, router: try router(settings))
+        _ = try retryOne(failed.id, settings: settings, router: router)
+        try store.refreshState(videoId: failed.videoId)  // the job is closed now, so a waiting retry counts
       }
     }
   }

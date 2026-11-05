@@ -19,7 +19,9 @@ struct PostInspector: View {
         VStack(alignment: .leading, spacing: 0) {
           section("Details") { facts }
           if let pz = model.postizState(post) { section("Postiz") { postizSection(pz) } }
-          if post.errorType != nil || post.errorMessage != nil { section("Problem") { problem } }
+          if post.errorType != nil || post.errorMessage != nil {
+            section(model.postizState(post)?.isRetrying == true ? "Last failure" : "Problem") { problem }
+          }
           if post.state == .posted { section("Metrics") { metrics } }
           section("Attempts") { attempts }
           section("Repost") { repost }
@@ -165,7 +167,8 @@ struct PostInspector: View {
 
   private var problem: some View {
     VStack(alignment: .leading, spacing: 6) {
-      DSBadge(PostText.problemType(post), style: .soft(.danger), help: "What went wrong with this post")
+      DSBadge(PostText.problemType(post), style: model.postizState(post)?.isRetrying == true ? .soft(.neutral) : .soft(.danger),
+              help: "What went wrong with this post")
       if let m = post.errorMessage, !m.isEmpty {
         Text(m).font(DS.type.callout).foregroundStyle(DS.color.text).fixedSize(horizontal: false, vertical: true)
       }
