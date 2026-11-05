@@ -126,6 +126,7 @@ public final class BulkActions: @unchecked Sendable {
   /// confirms the default crop, and sends the clip only when it has a score and nothing is left to fix. A clip that stays
   /// in Edit stays unsent, so fixing it later doesn't promote it.
   func send(_ v: Video, _ s: Settings) throws -> Outcome {
+    if v.excluded { return .skipped("excluded — include it first") }
     var changed = false
     if v.heldInEdit {
       try store.setHeldInEdit(v.id, false)
@@ -698,12 +699,18 @@ public final class BulkActions: @unchecked Sendable {
             continue
           }
           restored.insert(b.id)
-          if cur == b { continue }
-          try restore(b)
+          // The sent flag comes back only when this batch changed it: anything else that took a clip out of the Queue
+          // since (a limit, a missing file) still stands, and only Send to Queue reverses it.
+          var target = b
+          if afterById[b.id]?.sent == b.sent { target.sent = cur.sent }
+          if cur == target { continue }
+          try restore(target)
           result.changed.append(b.id)
         }
         var touched = Set(result.changed)
-        if let bp = before.plan, let ap = after.plan, !restored.contains(Self.planMarker) {
+        // A clip left as it is keeps its plan too: restoring only the plan would put live posts on a held clip.
+        let planWaits = !force && !result.skipped.isEmpty && before.plan != nil && !restored.contains(Self.planMarker)
+        if !planWaits, let bp = before.plan, let ap = after.plan, !restored.contains(Self.planMarker) {
           let cp = try planSnapshot()
           if !force, let why = try planConflict(before: bp, after: ap, current: cp) {
             throw EngineError("Can't undo the plan part of \(rec.action): \(why). Use force to overwrite.")
@@ -747,7 +754,7 @@ public final class BulkActions: @unchecked Sendable {
         try store.db.run("UPDATE batches SET restored=?, undone_at=? WHERE id=?",
                          [JSONCoding.string(restored.sorted()), complete ? store.clock.now : nil, id])
         result.summary = "undid \(rec.action): \(result.changed.count) restored"
-          + (complete ? "" : ", \(result.skipped.count) skipped — batch stays open; undo again with force to restore them")
+          + (complete ? "" : ", \(result.skipped.count) skipped\(planWaits ? ", plan left as it is" : "") — batch stays open; undo again with force to restore them")
         if dryRun { throw DryRun(result: result) }
       }
     } catch let d as DryRun {
@@ -881,6 +888,8 @@ public final class BulkActions: @unchecked Sendable {
             result.skipped[id] = "\(error)"
           }
         }
+        // A batch that took a clip out of the Queue did it here, not on the next tick: the journal records the flag it cleared.
+        for id in result.changed { try store.refreshState(videoId: id) }
         let reported = reportsAll ? existing.filter { result.skipped[$0] == nil } : result.changed
         var rows: [(id: String, issues: [ValidationIssue], hasTitle: Bool, hasScore: Bool)] = []
         for id in reported {
@@ -1019,7 +1028,8 @@ public final class BulkActions: @unchecked Sendable {
     let known = Set(b.posts.map(\.id) + a.posts.map(\.id))
     let untouched: Set<PostState> = [.planned, .rendering, .rendered]
     for p in c.posts where !known.contains(p.id) {
-      guard p.kind == .regular, untouched.contains(p.state), try store.livePostizJob(postId: p.id) == nil else {
+      guard p.kind == .regular, untouched.contains(p.state), try store.livePostizJob(postId: p.id) == nil,
+            try store.finalPostizJob(postId: p.id) == nil else {
         return "a new \(p.platform.displayName) post was created after the batch"
       }
     }

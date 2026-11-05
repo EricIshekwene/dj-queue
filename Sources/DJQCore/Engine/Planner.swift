@@ -289,6 +289,8 @@ public final class Planner: @unchecked Sendable {
     guard var sa = try store.planSlot(id: a), var sb = try store.planSlot(id: b) else { throw EngineError("No such plan slot") }
     try ensureNothingPosted(sa)
     try ensureNothingPosted(sb)
+    try refuseTooSoon(sa, settings: settings, dm: dm)
+    try refuseTooSoon(sb, settings: settings, dm: dm)
     try store.db.transaction {
       let aa = try isApproved(sa), ba = try isApproved(sb)
       (sa.videoId, sb.videoId) = (sb.videoId, sa.videoId)
@@ -502,7 +504,8 @@ public final class Planner: @unchecked Sendable {
     let positions = Dictionary(uniqueKeysWithValues: newSlots.map { ($0.id, $0.position) })
     for (var p, delta) in regular.sorted(by: { $0.0.scheduledAt < $1.0.scheduledAt }) {
       let pos = positions[p.planSlotId ?? ""] ?? 0
-      let day = placer.place(p.platform, position: pos, from: dm.addDays(dm.key(p.scheduledAt), delta))
+      let planned = Sched.planDay(p.scheduledAt, position: pos, offsetMinutes: settings.secondPostOffsetMinutes, dm)
+      let day = placer.place(p.platform, position: pos, from: dm.addDays(planned, delta))
       p.scheduledAt = Sched.slotTime(settings, dm, date: day, position: pos, platform: p.platform)
       if p.state == .due || p.state == .overdue { p.state = p.renderId == nil ? .planned : .rendered }
       try store.save(p, note: "plan pushed → \(day)")
@@ -531,6 +534,7 @@ public final class Planner: @unchecked Sendable {
       var other = used.first { $0.position == s.position } ?? used[0]
       if other.pinned { throw EngineError("\(date) is pinned — unpin it first") }
       try ensureNothingPosted(other)
+      try refuseTooSoon(s, settings: settings, dm: dm)  // `other` takes this slot's day and position
       let otherApproved = try isApproved(other)
       let (d, p, w) = (s.date, s.position, s.weekStart)
       let otherPos = other.position
@@ -542,6 +546,15 @@ public final class Planner: @unchecked Sendable {
       s.weekStart = dm.weekStart(of: dm.date(date))
       try store.save(s)
       try regenerateMany([(s, wasApproved), (other, otherApproved)], settings: settings, dm: dm)
+    }
+  }
+
+  /// A swap would put a clip Eric didn't touch on `s`'s day and position. Inside the lead that clip would post within
+  /// minutes (a past slot goes out 3 minutes after upload), so the swap is refused.
+  func refuseTooSoon(_ s: PlanSlot, settings: Settings, dm: DayMath) throws {
+    let now = store.clock.now
+    guard isOpen(day: s.date, position: s.position, today: dm.key(now), now: now, settings: settings, dm: dm) else {
+      throw EngineError(StageWording.todayTooSoon)
     }
   }
 

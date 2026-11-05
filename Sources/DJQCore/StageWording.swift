@@ -65,6 +65,8 @@ public enum StageWording {
   public static let backToEditHelp = "Sends it back to Edit and keeps it there until you send it to the Queue again; its unposted days are removed"
   /// Scheduled → Edit: same move, seen from the Calendar.
   public static let unscheduleHelp = "Takes it off the calendar and holds it in Edit until you send it to the Queue again"
+  /// Why a swap was refused: the other clip would land on a slot inside the lead.
+  public static let todayTooSoon = "Today's slot is too soon"
   /// Why the Queue has no forward move.
   public static let queueSchedulesItself = "Clips in the Queue schedule themselves"
 

@@ -6,8 +6,8 @@ import Foundation
 /// which is why `isApproved`, `regenerateMany`, the runway and undo snapshots work unchanged.
 ///
 /// Guards it adds to the planner's own:
-/// - a position on today is open only when its earliest platform time is at least `autoScheduleLead` away, so Eric can
-///   always cancel, and no post is ever created in the past or inside the lead;
+/// - a position is open only when its earliest platform time is at least `autoScheduleLead` away, so Eric can always
+///   cancel, and no post is ever created in the past or inside the lead;
 /// - the plan re-lays only when posts/day or the Queue sort changed (`plan.layoutSig`), never otherwise: a gap is filled
 ///   from the waiting clips and the other clips keep their days;
 /// - a clip with history on a platform skips that platform on its day instead of pulling another clip onto its card
@@ -15,7 +15,7 @@ import Foundation
 extension Planner {
   /// How far ahead the calendar is filled (days after today, no setting).
   public static let autoScheduleHorizonDays = 30
-  /// Today's position is open only when its earliest platform time is at least this far away.
+  /// A position is open only when its earliest platform time is at least this far away.
   public static let autoScheduleLead: TimeInterval = 30 * 60
   /// A relay leaves a slot alone when one of its live posts goes out sooner than this.
   public static let relayLead: TimeInterval = 60 * 60
@@ -44,10 +44,13 @@ extension Planner {
     public var scheduled = 0
     /// Clips the relay took off the calendar and laid again.
     public var relaid = 0
-    /// Why nothing was scheduled ("paused", "no platforms on", "Queue empty", "no open day"); nil when something was.
+    /// Why nothing was scheduled ("paused", "no platforms on", "Queue empty", "no open day", or clips with nowhere left to
+    /// post); nil when something was.
     public var reason: String?
-    /// Clips still waiting in the Queue afterwards.
+    /// Clips still waiting for a day afterwards.
     public var waiting = 0
+    /// Clips in the Queue that will never get a day: every platform is done or skipped for them.
+    public var nowhereToPost = 0
     /// Where each clip landed, in calendar order.
     public var clips: [ScheduledClip] = []
     public var dryRun = false
@@ -95,9 +98,13 @@ extension Planner {
     let first = try relayIfDue(&ctx, &r)
     try fill(&ctx, first: first, &r)
     r.clips.sort { ($0.date, $0.position) < ($1.date, $1.position) }
-    r.waiting = try queue.ordered().count
+    let queued = try queue.ordered().count
+    r.waiting = try schedulable(settings).count
+    r.nowhereToPost = queued - r.waiting
     if r.scheduled == 0, r.relaid == 0 {
-      r.reason = r.waiting == 0 ? "Queue empty" : "no open day"
+      r.reason = r.waiting > 0 ? "no open day"
+        : r.nowhereToPost > 0 ? "\(r.nowhereToPost) clip\(r.nowhereToPost == 1 ? "" : "s") in the Queue with nowhere left to post"
+        : "Queue empty"
     }
     return r
   }
@@ -114,9 +121,9 @@ extension Planner {
     var previousDay: [String: String] = [:]
   }
 
-  /// Today's position `pos` still has every platform at least the lead away. Any later day is open.
+  /// The position still has every platform at least the lead away: today's, and tomorrow's just after midnight.
   func isOpen(day: String, position pos: Int, today: String, now: Date, settings: Settings, dm: DayMath) -> Bool {
-    guard day == today else { return day > today }
+    guard day >= today else { return false }
     let times = settings.activePlatforms.map { Sched.slotTime(settings, dm, date: day, position: pos, platform: $0) }
     guard let earliest = times.min() else { return false }
     return earliest >= now.addingTimeInterval(Self.autoScheduleLead)
@@ -143,7 +150,7 @@ extension Planner {
   }
 
   /// The Queue in posting order, without clips that have nowhere left to post: they would take a day and post nothing.
-  func schedulable(_ settings: Settings) throws -> [Video] {
+  public func schedulable(_ settings: Settings) throws -> [Video] {
     try queue.ordered().filter { v in try settings.activePlatforms.contains { try usable(v.id, on: $0) } }
   }
 
@@ -211,7 +218,7 @@ extension Planner {
 
   /// What a relay may take off: unpinned slots from today on with nothing posted, each live post at least `relayLead`
   /// away and untouched. Postiz keeps its guards: a slot with a live job moves (the publish step cancels the job, and the
-  /// lineage blocks a new create until that's confirmed); one whose job isn't settled, or that Postiz already published,
+  /// lineage blocks a new create until that's confirmed); one whose job isn't settled or ended Postiz delivery for good,
   /// or that went to Eric by hand, stays.
   private func movableSlots(_ c: Pass) throws -> [PlanSlot] {
     let cutoff = c.now.addingTimeInterval(Self.relayLead)
@@ -219,6 +226,8 @@ extension Planner {
     func movable(_ p: PlatformPost) throws -> Bool {
       guard !p.state.isTerminal else { return true }  // failed/skipped history is detached and kept
       guard untouched.contains(p.state), p.scheduledAt >= cutoff, try !PostizService.handedToToday(p, store: store) else { return false }
+      // Deleted in Postiz, refused, or released by Eric: final for this post, and a new post id would forget it.
+      if try store.finalPostizJob(postId: p.id) != nil { return false }
       if try store.publishedPostizJob(lineage: PostizJob.lineage(p)) != nil { return false }
       guard let job = try store.livePostizJob(postId: p.id) else { return true }
       return job.phase == .live && job.remoteDate >= cutoff
@@ -252,6 +261,12 @@ extension Planner {
       try store.save(s)
       try createPosts(s, settings: c.settings, dm: c.dm, picker: &c.picker, placer: &placer, note: "auto-scheduled",
                       notBefore: c.now.addingTimeInterval(Self.autoScheduleLead), pullForHistory: false)
+      guard try !store.slotPosts(s.id).isEmpty else {  // a slot with no posts would hold its clip on Scheduled for good
+        try store.deletePlanSlot(s.id)
+        try store.refreshState(videoId: v.id)
+        backlog.insert(v, at: i)
+        continue
+      }
       r.clips.append(ScheduledClip(videoId: v.id, date: day, position: pos))
       if c.previousDay[v.id] == nil { r.scheduled += 1 }
       if c.previousDay[v.id] != day { try logScheduled(v.id, day, c) }

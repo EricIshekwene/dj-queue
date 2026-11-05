@@ -474,7 +474,7 @@ enum PostizCommand {
     if dry && draft { throw CLIError("pick one: --dry-run (no call) or --draft (Postiz drafts)") }
     guard dry || draft else {
       throw CLIError(yes
-        ? "djq postiz test never schedules real posts: they'd bypass DJ Queue's tracking (no double-post guard, no live links back). Real posts go out only from an approved week (docs/postiz-test.md). Use --dry-run or --draft."
+        ? "djq postiz test never schedules real posts: they'd bypass DJ Queue's tracking (no double-post guard, no live links back). Real posts go out only from clips in the Queue (docs/postiz-test.md). Use --dry-run or --draft."
         : "djq postiz test needs --dry-run (prints the six payloads, no call) or --draft (Postiz drafts only, nothing reaches a platform)")
     }
     let settings = try store.settings()

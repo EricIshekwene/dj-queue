@@ -262,6 +262,7 @@ import Testing
     #expect(try order(f) == ["clip-1"] && r.scheduled == 1)
     // It waits in the Queue, and Doctor doesn't call that stuck.
     #expect(try Queue(store: f.store).ordered().map(\.id) == ["clip-0"])
+    #expect(r.waiting == 0 && r.nowhereToPost == 1)
     #expect(try !Doctor(store: f.store).planGaps().contains { $0.id == "plan.gaps" })
   }
 

@@ -32,7 +32,7 @@ usage: djq <command> [args]
                                       YouTube title templates ({text}); undo with bulk undo
   kind <video> "dj vid"|talking
   bulk <action> [args] (--ids a,b,c | --filter F) [--dry-run] [--json]
-       actions: make-ready | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
+       actions: make-ready (Send to Queue with defaults: Eric's word only) | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
        | score-adjust <±n> | kind <k> | exclude | include | caption-template <id|default> | hashtags <group ids a,b|default>
        | extra-hashtags "<#a #b>"|default | youtube-title-template <id|default> | drop-hashtags <P>
        | skip-platform <P> | unskip-platform <P>
@@ -243,7 +243,7 @@ func run() throws -> Int32 {
     let today = try actions.dueToday(now: now)
     let problems = try actions.problems()
     print("DJ Queue · \(fmt(now, settings, "EEE d MMM yyyy HH:mm")) (\(settings.timeZone))")
-    let waiting = try queue.ordered().count
+    let waiting = try planner.schedulable(settings).count
     print("Calendar   \(StageWording.scheduledThrough(rw.scheduledThrough, settings: settings)) · Queue \(waiting) waiting")
     print("Stages     Score \(try queue.toScore().count) · Edit \(try queue.needsEdit().count) · Queue \(waiting) · about \(rw.totalDays) d of clips left")
     let byState = Dictionary(grouping: today, by: \.state).map { "\($0.value.count) \($0.key.displayName.lowercased())" }.sorted()
