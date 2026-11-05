@@ -202,6 +202,12 @@ final class AppModel {
   var pendingBulk: PendingBulk?
   /// The clips the Caption dialog is open for (nil = closed).
   var captionDialogIds: [String]?
+  /// Its Save as template form is open: Esc and a click outside go back to the dialog, so the picks survive.
+  var captionDialogFormOpen = false
+
+  func dismissCaptionDialog() {
+    if captionDialogFormOpen { captionDialogFormOpen = false } else { captionDialogIds = nil }
+  }
   /// ⌘Z order: every undoable action's journal batch, most recent last (UndoHistory, round 3 F8).
   var undoHistory = UndoHistory() {
     didSet {

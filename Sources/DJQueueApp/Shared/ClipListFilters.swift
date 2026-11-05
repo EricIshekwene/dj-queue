@@ -203,7 +203,7 @@ extension AppModel {
   func focusListSearch() {
     guard editor == nil, !showSettings, !showPalette, !showShortcuts, pendingBulk == nil, pendingConfirm == nil,
           previewVideo == nil, markPostedTarget == nil, reportTarget == nil, longformTarget == nil, scorePrompt == nil,
-          pinPrompt == nil, pendingReplace == nil, !ListPrefs.shared.screenDialogOpen,
+          pinPrompt == nil, pendingReplace == nil, captionDialogIds == nil, !ListPrefs.shared.screenDialogOpen,
           BrowseUI.shared.quickLook == nil, BrowseUI.shared.longformTargets.isEmpty, BrowseUI.shared.scoreTargets.isEmpty,
           BrowseUI.shared.pendingPostBulk == nil,
           let page = ListPage.of(screen) else { return }

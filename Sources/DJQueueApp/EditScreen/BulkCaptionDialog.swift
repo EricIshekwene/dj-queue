@@ -9,8 +9,7 @@ struct BulkCaptionDialog: View {
   @Bindable var model: AppModel
   let ids: [String]
   @State private var change = CaptionChange()
-  @State private var counts: [String: Int] = [:]
-  @State private var total = 0
+  @State private var use: GroupUse?
   @State private var previews: [CaptionPreview] = []
   @State private var index = 0
   @State private var job: Task<Void, Never>?
@@ -22,10 +21,13 @@ struct BulkCaptionDialog: View {
     var template: String
   }
 
+  private var counts: [String: Int] { use?.counts ?? [:] }
+  private var total: Int { use?.total ?? 0 }
+
   var body: some View {
     DSDialog(form == nil ? "Caption for \(AppModel.pipelineClips(ids.count))" : "Save as template",
              description: form == nil ? "Pick a template, several hashtag groups, or both" : "It joins your templates here, in the editor and in Settings",
-             icon: "text.alignleft", width: 560, onClose: close) {
+             icon: "text.alignleft", width: 560, onClose: { model.dismissCaptionDialog() }) {
       if form == nil {
         VStack(alignment: .leading, spacing: DS.space.md) {
           templatePicker
@@ -43,7 +45,7 @@ struct BulkCaptionDialog: View {
         DSButton(verb, variant: .primary, disabledReason: disabledReason, tooltip: "You can undo this", shortcut: "↩", action: apply)
           .keyboardShortcut(.defaultAction)
       } else {
-        DSButton("Back", variant: .ghost, shortcut: "esc") { form = nil }
+        DSButton("Back", variant: .ghost, shortcut: "esc") { model.dismissCaptionDialog() }
           .keyboardShortcut(.cancelAction)
         DSButton("Save template", variant: .primary, disabledReason: formProblem, shortcut: "↩", action: saveForm)
           .keyboardShortcut(.defaultAction)
@@ -52,7 +54,12 @@ struct BulkCaptionDialog: View {
     }
     .dsFloatingSurface(radius: DS.radius.lg, elevation: DS.elevation.e3)
     .onAppear(perform: load)
+    .onDisappear { model.captionDialogFormOpen = false }
     .onChange(of: change) { _, _ in refresh() }
+    // Undo from the toast while the dialog is open: the clips moved under it.
+    .onChange(of: model.undoHistory.entries.count) { _, _ in load() }
+    .onChange(of: form == nil) { _, closed in model.captionDialogFormOpen = !closed }
+    .onChange(of: model.captionDialogFormOpen) { _, open in if !open { form = nil } }
   }
 
   private var changing: Int { previews.filter(\.changes).count }
@@ -103,13 +110,14 @@ struct BulkCaptionDialog: View {
     case .use(let t): id = t
     }
     let base = model.captionTemplates.first { $0.id == id }?.template ?? "{text}\n\n{hashtags}"
-    let tags = change.addGroups.flatMap { g in model.hashtagSets.first { $0.id == g }?.tags ?? [] }
+    // Every group the preview shows for all these clips, in its order: a checked group is part of what's being saved.
+    let tags = change.groups(from: use?.common ?? []).flatMap { g in model.hashtagSets.first { $0.id == g }?.tags ?? [] }
     form = Form(template: CaptionTemplates.template(from: base, carrying: tags))
   }
 
   private var formFields: some View {
     VStack(alignment: .leading, spacing: DS.space.sm) {
-      DSTextField("Name", placeholder: "e.g. Mashup", text: Binding(get: { form?.name ?? "" }, set: { form?.name = $0 }), size: .sm, autoFocus: true)
+      DSTextField("Name", placeholder: "e.g. Mashup", text: Binding(get: { form?.name ?? "" }, set: { form?.name = $0 }), size: .sm, autoFocus: true, onSubmit: saveForm)
       DSTextArea("Template", placeholder: "{text}\n\n{hashtags}", text: Binding(get: { form?.template ?? "" }, set: { form?.template = $0 }),
                  hint: CaptionTemplates.hashtagHint, minHeight: 104, maxHeight: 200)
     }
@@ -147,7 +155,7 @@ struct BulkCaptionDialog: View {
         DSFlowLayout(spacing: 5) {
           ForEach(groups) { chip($0) }
         }
-        Text("Tags go in the order you click. Each clip keeps its other groups.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+        Text("Tags you add go in the order you click, after each clip's other groups.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
       }
     }
   }
@@ -155,18 +163,20 @@ struct BulkCaptionDialog: View {
   private func chip(_ s: HashtagSet) -> some View {
     let n = counts[s.id] ?? 0
     let mark = change.mark(s.id, count: n, total: total)
-    return DSChip(HashtagGroups.label(s), isSelected: mark == .all, isMixed: mark == .some, size: .sm, tooltip: help(s, mark, n)) {
+    return DSChip(HashtagGroups.label(s), isSelected: mark == .all, isMixed: mark == .some,
+                  disabledReason: use == nil ? "Checking these clips…" : nil, size: .sm, tooltip: help(s, mark, n)) {
       change.toggle(s.id, count: n, total: total)
     }
     .background(ScriptAnchor(HashtagGroups.label(s)))
   }
 
   private func help(_ s: HashtagSet, _ mark: CaptionChange.GroupMark, _ n: Int) -> String {
-    let tags = s.tags.joined(separator: " ")
+    let tags = s.tags.isEmpty ? "this group" : s.tags.joined(separator: " ")
+    let mixed = n > 0 && n < total
     switch mark {
-    case .all: return "Take \(tags) off these clips"
+    case .all: return change.addGroups.contains(s.id) && mixed ? "Take \(tags) off all of these clips" : "Take \(tags) off these clips"
     case .some: return "\(tags) is on \(n) of \(total) clips. Click to add it to all"
-    case .none: return "Add \(tags) to these clips"
+    case .none: return change.removeGroups.contains(s.id) ? "Leave \(tags) as it was" : "Add \(tags) to these clips"
     }
   }
 
@@ -202,32 +212,36 @@ struct BulkCaptionDialog: View {
   @ViewBuilder private var notes: some View {
     let written = previews.filter(\.replacesWritten).count
     let skipped = previews.filter { $0.skipped != nil }.count
-    let own = previews.filter { $0.skipped == nil && !$0.ownCaptions.isEmpty }.count
-    let long = Set(previews.flatMap(\.tooLong))
+    let other = previews.filter { !$0.otherCaptions.isEmpty }
+    let hidden = previews.filter(\.hidesGroups).count
+    let long = previews.filter { !$0.tooLong.isEmpty }
+    let leaving = previews.filter(\.leavesQueue).count
     VStack(alignment: .leading, spacing: 4) {
       if written > 0 {
         EditorHint("Replaces \(written == 1 ? "1 caption" : "\(written) captions") you wrote", icon: "exclamationmark.triangle.fill", tone: .warning)
       }
-      if templateDropsGroups { EditorHint("This template has no {hashtags}, so the groups won't show", icon: "exclamationmark.triangle.fill", tone: .warning) }
-      if !long.isEmpty {
-        let n = previews.filter { !$0.tooLong.isEmpty }.count
-        EditorHint("\(n == 1 ? "1 clip" : "\(n) clips") too long for \(Platform.allCases.filter(long.contains).map(\.displayName).joined(separator: ", "))",
-                   icon: "exclamationmark.triangle.fill", tone: .warning)
+      if hidden > 0 {
+        EditorHint("\(AppModel.pipelineClips(hidden)) won't show the groups: the template has no {hashtags}", icon: "exclamationmark.triangle.fill", tone: .warning)
       }
-      if own > 0 { EditorHint("\(own == 1 ? "1 clip keeps" : "\(own) clips keep") a caption written for one platform", icon: "info.circle") }
-      if skipped > 0 { EditorHint("\(skipped == 1 ? "1 clip stays" : "\(skipped) clips stay") as it is: scheduled or posted posts", icon: "lock") }
+      if !long.isEmpty {
+        EditorHint("\(AppModel.pipelineClips(long.count)) too long for \(names(long.flatMap(\.tooLong)))", icon: "exclamationmark.triangle.fill", tone: .warning)
+      }
+      if leaving > 0 { EditorHint("\(AppModel.pipelineClips(leaving)) go back to Edit until that's fixed", icon: "exclamationmark.triangle.fill", tone: .warning) }
+      ForEach(current?.capNotes.filter { !$0.own } ?? []) { EditorHint($0.message, icon: "number") }
+      if !other.isEmpty {
+        EditorHint("\(AppModel.pipelineClips(other.count)) post\(other.count == 1 ? "s" : "") something else on \(names(other.flatMap(\.otherCaptions))), which stays", icon: "info.circle")
+      }
+      if skipped > 0 { EditorHint("\(skipped == 1 ? "1 clip stays" : "\(skipped) clips stay") as it is: \(skipReason)", icon: "lock") }
     }
   }
 
-  private var templateDropsGroups: Bool {
-    guard !change.addGroups.isEmpty else { return false }
-    let id: String
-    switch change.template {
-    case .keep: return false
-    case .useDefault: id = model.settings.defaults.captionTemplateId
-    case .use(let t): id = t
-    }
-    return model.captionTemplates.first { $0.id == id }?.template.contains("{hashtags}") == false
+  private func names(_ list: [Platform]) -> String {
+    let set = Set(list)
+    return Platform.allCases.filter(set.contains).map(\.displayName).joined(separator: ", ")
+  }
+
+  private var skipReason: String {
+    previews.allSatisfy { $0.skipped == nil || $0.skipped == BulkActions.captionHeldReason } ? "scheduled or posted posts" : "see each clip"
   }
 
   // MARK: Data
@@ -235,12 +249,10 @@ struct BulkCaptionDialog: View {
   private func load() {
     let b = model.bulk, ids = ids
     Task.detached(priority: .userInitiated) {
-      let use = try? b.groupUse(ids)
-      let list = (try? b.previewCaption(ids, CaptionChange())) ?? []
+      let groups = try? b.groupUse(ids)
       await MainActor.run {
-        counts = use?.counts ?? [:]
-        total = use?.total ?? 0
-        previews = list
+        use = groups ?? GroupUse()
+        refresh()
       }
     }
   }

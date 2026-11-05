@@ -229,7 +229,7 @@ func run() throws -> Int32 {
     && !(cmd == "bulk" && (args.contains("--dry-run") || args.first == "batches"))
     && !((cmd == "unqueue" || cmd == "requeue" || cmd == "stage") && args.contains("--dry-run"))
     && !(cmd == "stage" && !args.contains("back") && !args.contains("forward"))
-    && !((cmd == "hashtag-groups" || cmd == "title-templates" || cmd == "caption-templates") && (args.isEmpty || args.first == "--json"))
+    && !((cmd == "hashtag-groups" || cmd == "title-templates" || cmd == "caption-templates") && (args.isEmpty || args.first == "--json" || args.first == "list"))
   defer {
     if wrote {
       // Round 4 (S1): after any write, invalid Queue clips move to Edit (and valid Edit clips return) before the app
@@ -495,7 +495,7 @@ func run() throws -> Int32 {
       print("added caption template \(t.id) “\(t.name)”")
     case "edit":
       var t = try find(try arg(0, "template id"))
-      if let n = option("--name") { t.name = n }
+      if let n = option("--name") { t.name = HashtagGroups.cleanName(n) }
       if let x = option("--template") { t.template = x.replacingOccurrences(of: "\\n", with: "\n") }
       if let p = CaptionTemplates.problem(name: t.name, template: t.template, existing: all, editing: t.id) { throw CLIError(p.message) }
       change = try CaptionTemplates.update(t, store: store, bulk: bulk)
@@ -952,6 +952,7 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   case "caption":
     func list(_ name: String) -> [String] { option(name)?.split(separator: ",").map(String.init) ?? [] }
     var change = CaptionChange(addGroups: list("--add"), removeGroups: list("--remove"))
+    if args.contains("--template"), args.last == "--template" { throw CLIError("--template needs a template id or default") }
     if let t = option("--template") { change.template = t == "default" ? .useDefault : .use(t) }
     guard !change.isEmpty else { throw CLIError("bulk caption needs --template, --add or --remove") }
     r = try bulk.setCaption(ids, change, dryRun: dry)

@@ -131,6 +131,12 @@ enum BulkCaptionScript {
     check("Save as template opens the form", await click("Save as template"))
     await wait(600)
     await shot("save-as-template")
+    await key("\u{1b}", code: 53)
+    check("Esc in the form goes back to the dialog", app.captionDialogIds != nil)
+    await wait(400)
+    await shot("back-from-form")
+    check("the picks survive and the form opens again", await click("Save as template"))
+    await wait(600)
     func field(_ v: NSView) -> NSTextField? {
       if let f = v as? NSTextField, f.placeholderString == "e.g. Mashup" { return f }
       for c in v.subviews { if let hit = field(c) { return hit } }
@@ -142,7 +148,7 @@ enum BulkCaptionScript {
       if let e = f.currentEditor() as? NSTextView { for ch in "My mashup" { e.insertText(String(ch), replacementRange: e.selectedRange()) } }
       await wait(300)
     }
-    check("Save template saves it", await click("Save template"))
+    check("↩ in the Name field saves it", { (window.firstResponder as? NSTextView)?.doCommand(by: #selector(NSResponder.insertNewline(_:))); return true }())
     await wait(800)
     await shot("template-saved")
     let made = (try? store.captionTemplates())?.first { $0.name == "My mashup" }
@@ -179,6 +185,15 @@ enum BulkCaptionScript {
     _ = await click("Piano")
     await wait(600)
     await shot("mixed-template-piano")
+    await key("\u{1b}", code: 53)
+    check("Esc closes the dialog and keeps the selection", app.captionDialogIds == nil && app.selected(.edit).count == 3)
+    await wait(600)
+    check("nothing changed", caption(mixed[1]) == caption(mixed[1]) && !caption(mixed[1]).contains("#amapiano"))
+    check("the dialog opens again", await click("Caption"))
+    await wait(800)
+    _ = await click("Short")
+    _ = await click("Piano")
+    await wait(600)
     await key("\r", code: 36)
     await wait(1000)
     await shot("mixed-applied")

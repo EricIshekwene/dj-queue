@@ -87,7 +87,7 @@ struct MainWindowView: View {
       ModalHost(onDismiss: { model.cancelPendingBulk() }) { BulkConfirmSheet(model: model, pending: p) }
     }
     if let ids = model.captionDialogIds {
-      ModalHost(onDismiss: { model.captionDialogIds = nil }) { BulkCaptionDialog(model: model, ids: ids) }
+      ModalHost(onDismiss: { model.dismissCaptionDialog() }) { BulkCaptionDialog(model: model, ids: ids) }
     }
     // PLANNING: post dialogs in-window (DSDialog over the scrim; they also render in snapshots).
     if let p = model.markPostedTarget {
@@ -191,8 +191,8 @@ struct ShortcutButtons: View {
   }
 
   private var anyOverlay: Bool {
-    model.showPalette || model.showSettings || model.pendingBulk != nil || model.previewVideo != nil || model.showShortcuts
-      || model.editor != nil
+    model.showPalette || model.showSettings || model.pendingBulk != nil || model.captionDialogIds != nil || model.previewVideo != nil
+      || model.showShortcuts || model.editor != nil
   }
 
   private func go(_ s: Screen) {

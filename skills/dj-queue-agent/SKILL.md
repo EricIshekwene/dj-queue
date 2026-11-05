@@ -151,7 +151,7 @@ Actions: `make-ready` (confirm the default crop; reports how many go to the Queu
 [--sections frame,trim,text,cover,caption,platforms]` (clear overrides) · `score <n|clear>` · `score-adjust <±n>` ·
 `kind <k>` · `exclude` · `include` · `caption-template <id|default>` (rewrites a written caption from the template) ·
 `caption [--template <id|default>] [--add a,b] [--remove c]` (template and several groups as one undo; `--add` keeps the clip's other
-groups, in the order given; clips with scheduled or posted posts are skipped) ·
+groups and puts these after them in the order given; `--template` replaces a written caption; clips with scheduled or posted posts are skipped) ·
 `hashtags <group,group|default>` · `extra-hashtags "<#a #b>"|default` · `youtube-title-template <id|default>` ·
 `drop-hashtags <platform>` · `skip-platform <p>` · `unskip-platform <p>` ·
 `accept-title` · `title "<t>"|--clear` · `add-to-week <date>` · `pin-consecutive <date>` · `post-today` ·

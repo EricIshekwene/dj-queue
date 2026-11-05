@@ -103,8 +103,9 @@ import Testing
     #expect(r.changed == ["clip-2"] && r.skipped["clip-0"] == BulkActions.captionHeldReason)
     #expect(try caption(f, "clip-0") == before)
     #expect(try b.previewCaption(["clip-0"], change).first?.skipped == BulkActions.captionHeldReason)
+    try b.setCaption(["clip-2"], change)
     let use = try b.groupUse(["clip-0", "clip-2"])
-    #expect(use.total == 1 && use.counts["lovd"] == 1)
+    #expect(use.total == 1 && use.counts["lovd"] == 1 && use.common == ["lovd"])
   }
 
   @Test func chipClicksCycleAndRememberOrder() {
@@ -154,6 +155,60 @@ import Testing
     // A group added later shows after them, and a tag it shares appears once.
     try b.setCaption(["clip-0"], CaptionChange(addGroups: ["lovd", "mash"]))
     #expect(try caption(f, "clip-0") == "Boots x Rider\n\n#djtransition #mashup #mix #djlovd")
+  }
+
+  /// Eric's order holds on a clip that already has one of the clicked groups.
+  @Test func clickOrderWinsOverGroupsAClipAlreadyHas() throws {
+    let (f, b) = try setUp()
+    try b.setHashtagSets(["clip-0"], ["afro", "piano"])
+    try b.setCaption(["clip-0", "clip-2"], CaptionChange(addGroups: ["lovd", "mash", "afro"]))
+    #expect(try f.store.resolvedVersion(videoId: "clip-0", number: 1)?.hashtagSetIds == ["piano", "lovd", "mash", "afro"])
+    #expect(try f.store.resolvedVersion(videoId: "clip-2", number: 1)?.hashtagSetIds == ["lovd", "mash", "afro"])
+  }
+
+  /// Saving as a template carries what the preview shows, checked groups included, and the caption doesn't move.
+  @Test func savingAsTemplateKeepsThePreview() throws {
+    let (f, b) = try setUp()
+    try b.setCaption(["clip-0", "clip-2"], CaptionChange(template: .use("plain"), addGroups: ["lovd"]))
+    let change = CaptionChange(addGroups: ["mash", "afro"])
+    let ids = ["clip-0", "clip-2"]
+    let before = try b.previewCaption(ids, change).map(\.caption)
+    let use = try b.groupUse(ids)
+    #expect(use.common == ["lovd"])
+    let tags = try change.groups(from: use.common).flatMap { g in try f.store.hashtagSets().first { $0.id == g }?.tags ?? [] }
+    let text = CaptionTemplates.template(from: plain.template, carrying: tags)
+    #expect(text == "{text}\n\n#djlovd #djtransition #mashup #mix #afrobeats {hashtags}")
+    try f.store.save(CaptionTemplate(id: "saved", name: "Saved", template: text, sort: 11))
+    #expect(try b.previewCaption(ids, CaptionChange(template: .use("saved"))).map(\.caption) == before)
+  }
+
+  @Test func previewNamesWhatPostsSomethingElse() throws {
+    let (f, b) = try setUp()
+    var s = try f.store.settings()
+    s.defaults.platformCaptionTemplates[.x] = "short"
+    s.enabledPlatforms = [.tiktok, .x, .threads]
+    try f.store.save(s)
+    var v = Version(number: 1)
+    v.platformCaptions = [.threads: "Threads only", .youtube: "Not posting there"]
+    try f.store.save(v, videoId: "clip-2")
+    let p = try b.previewCaption(["clip-0", "clip-2"], CaptionChange(template: .keep, addGroups: ["lovd", "mash"]))
+    #expect(p[0].otherCaptions == [.x] && p[1].otherCaptions.contains(.threads) && !p[1].otherCaptions.contains(.youtube))
+  }
+
+  /// A cap isn't "posts something else": it's a note, with the tags it drops.
+  @Test func capsShowWhatEachPlatformDrops() throws {
+    let (f, b) = try setUp()
+    let p = try b.previewCaption(["clip-0"], CaptionChange(template: .use("plain"), addGroups: ["lovd", "mash"]))
+    #expect(p.first?.otherCaptions.isEmpty == true)
+    let threads = try #require(p.first?.capNotes.first { $0.platform == .threads })
+    #expect(threads.cap == 1 && threads.dropped == ["#djtransition", "#mashup", "#mix"])
+  }
+
+  @Test func aTemplateWithoutHashtagsSaysTheGroupsWontShow() throws {
+    let (f, b) = try setUp()
+    try f.store.save(CaptionTemplate(id: "bare", name: "Bare", template: "{text}", sort: 12))
+    #expect(try b.previewCaption(["clip-0"], CaptionChange(template: .use("bare"), addGroups: ["lovd"])).first?.hidesGroups == true)
+    #expect(try b.previewCaption(["clip-0"], CaptionChange(template: .use("plain"), addGroups: ["lovd"])).first?.hidesGroups == false)
   }
 
   @Test func unknownTemplateOrGroupIsRefused() throws {

@@ -47,11 +47,10 @@ public struct CaptionChange: Sendable, Hashable {
     }
   }
 
-  /// `current` without the removed groups, then the added ones it doesn't have yet.
+  /// `current` without the removed groups, then the added ones in click order, so every clip ends on the same tags: a group a
+  /// clip already has moves to its place in that order.
   public func groups(from current: [String]) -> [String] {
-    var out = current.filter { !removeGroups.contains($0) }
-    for id in addGroups where !out.contains(id) { out.append(id) }
-    return out
+    current.filter { !removeGroups.contains($0) && !addGroups.contains($0) } + addGroups
   }
 
   /// `current` = the groups this clip resolves to now. A written caption goes when a template is chosen, as in the editor.
@@ -88,10 +87,32 @@ public struct CaptionPreview: Sendable, Identifiable, Equatable {
   public var replacesWritten: Bool
   /// Why this clip is left out (nil = it isn't).
   public var skipped: String?
-  /// Platforms with their own caption: they stay as they are.
-  public var ownCaptions: [Platform]
+  /// Posting platforms that post something else: their own caption, or their own default template. Hashtag caps don't count.
+  public var otherCaptions: [Platform]
   /// Platforms the caption would be too long for.
   public var tooLong: [Platform]
+  /// What each platform's hashtag cap drops.
+  public var capNotes: [Captions.CapNote]
+  /// Groups were picked but their tags aren't in the caption: its template has no `{hashtags}`.
+  public var hidesGroups: Bool
+  /// A Queue clip the change would send back to Edit.
+  public var leavesQueue: Bool
+
+  init(id: String, name: String, caption: String, changes: Bool = false, replacesWritten: Bool = false, skipped: String? = nil,
+       otherCaptions: [Platform] = [], tooLong: [Platform] = [], capNotes: [Captions.CapNote] = [], hidesGroups: Bool = false,
+       leavesQueue: Bool = false) {
+    self.id = id; self.name = name; self.caption = caption; self.changes = changes; self.replacesWritten = replacesWritten
+    self.skipped = skipped; self.otherCaptions = otherCaptions; self.tooLong = tooLong; self.capNotes = capNotes
+    self.hidesGroups = hidesGroups; self.leavesQueue = leavesQueue
+  }
+}
+
+/// Where the selected clips stand on hashtag groups.
+public struct GroupUse: Sendable, Equatable {
+  public var counts: [String: Int] = [:]
+  public var total = 0
+  public var common: [String] = []
+  public init() {}
 }
 
 public extension BulkActions {
@@ -128,50 +149,63 @@ public extension BulkActions {
   }
 
   /// Each clip's outcome, in the order of `ids`, without writing anything. Fast enough to run on every click in the dialog.
+  /// A clip that can't be read is left out with the reason, the way `setCaption` skips it.
   func previewCaption(_ ids: [String], _ change: CaptionChange) throws -> [CaptionPreview] {
     let settings = try store.settings(), sets = try store.hashtagSets(), templates = try store.captionTemplates()
     let held = try HashtagGroupsMigration.clipsWithPosts(store)
+    let added = change.addGroups.flatMap { g in sets.first { $0.id == g }?.tags ?? [] }.map(Captions.normalizeTag)
     return try ids.compactMap { id in
       guard let v = try store.video(id: id) else { return nil }
-      let all = try store.versions(videoId: id)
-      var v1 = all.first { $0.number == 1 } ?? Version(number: 1)
-      let saved = all.isEmpty ? [v1] : all
-      let session = try store.sessionName(for: v)
-      let before = VersionResolver.resolve(saved, number: 1, settings: settings, video: v)
-      func shared(_ r: ResolvedVersion) -> String {
-        Captions.sharedCaption(version: r, video: v, sessionName: session, sets: sets, templates: templates, settings: settings)
+      do {
+        return try preview(v, change, held: held.contains(id), added: added, settings: settings, sets: sets, templates: templates)
+      } catch {
+        return CaptionPreview(id: id, name: v.displayName, caption: "", skipped: "\(error)")
       }
-      let own = Platform.allCases.filter { !(before.platformCaptions[$0] ?? "").isEmpty }
-      if held.contains(id) {
-        return CaptionPreview(id: id, name: v.displayName, caption: shared(before), changes: false, replacesWritten: false,
-                              skipped: Self.captionHeldReason, ownCaptions: own, tooLong: [])
-      }
-      change.apply(to: &v1, current: before.hashtagSetIds)
-      var after = VersionResolver.resolve([v1], number: 1, settings: settings, video: v)
-      var retagged = v1
-      Captions.retag(&retagged, before: before, after: after, sets: sets)
-      if retagged != v1 { after = VersionResolver.resolve([retagged], number: 1, settings: settings, video: v) }
-      let caption = shared(after)
-      let re = (try? store.edit(videoId: id)).map { EditResolver.resolve($0, video: v, defaults: settings.defaults) }
-      let platforms = settings.activePlatforms.filter { re?.isSkipped($0) != true }
-      let tooLong = platforms.filter { p in
-        guard let limit = settings.limits[p]?.captionLimit else { return false }
-        return Captions.caption(for: p, version: after, video: v, sessionName: session, sets: sets, templates: templates, settings: settings).count > limit
-      }
-      return CaptionPreview(id: id, name: v.displayName, caption: caption, changes: caption != shared(before) || after != before,
-                            replacesWritten: change.setsTemplate && !before.caption.isEmpty, skipped: nil, ownCaptions: own, tooLong: tooLong)
     }
   }
 
-  /// How many of `ids` have each group now (clips left out don't count), for the dialog's chips.
-  func groupUse(_ ids: [String]) throws -> (counts: [String: Int], total: Int) {
-    let settings = try store.settings(), held = try HashtagGroupsMigration.clipsWithPosts(store)
-    var counts: [String: Int] = [:], total = 0
-    for id in ids where !held.contains(id) {
-      guard try store.video(id: id) != nil, let r = try store.resolvedVersion(videoId: id, number: 1, settings: settings) else { continue }
-      total += 1
-      for g in Set(r.hashtagSetIds) { counts[g, default: 0] += 1 }
+  private func preview(_ v: Video, _ change: CaptionChange, held: Bool, added: [String], settings: Settings, sets: [HashtagSet],
+                       templates: [CaptionTemplate]) throws -> CaptionPreview {
+    let all = try store.versions(videoId: v.id)
+    var v1 = all.first { $0.number == 1 } ?? Version(number: 1)
+    let session = try store.sessionName(for: v)
+    let before = VersionResolver.resolve(all.isEmpty ? [v1] : all, number: 1, settings: settings, video: v)
+    func shared(_ r: ResolvedVersion) -> String {
+      Captions.sharedCaption(version: r, video: v, sessionName: session, sets: sets, templates: templates, settings: settings)
     }
-    return (counts, total)
+    func posted(_ p: Platform, _ r: ResolvedVersion) -> String {
+      Captions.caption(for: p, version: r, video: v, sessionName: session, sets: sets, templates: templates, settings: settings)
+    }
+    if held { return CaptionPreview(id: v.id, name: v.displayName, caption: shared(before), skipped: Self.captionHeldReason) }
+    change.apply(to: &v1, current: before.hashtagSetIds)
+    var after = VersionResolver.resolve([v1], number: 1, settings: settings, video: v)
+    var retagged = v1
+    Captions.retag(&retagged, before: before, after: after, sets: sets)
+    if retagged != v1 { after = VersionResolver.resolve([retagged], number: 1, settings: settings, video: v) }
+    let caption = shared(after)
+    let re = EditResolver.resolve(try store.edit(videoId: v.id), video: v, defaults: settings.defaults)
+    let platforms = settings.activePlatforms.filter { !re.isSkipped($0) }
+    let other = platforms.filter { posted($0, after) != Captions.capped(caption, to: settings.limits[$0]?.maxHashtags).text }
+    let long = platforms.filter { p in settings.limits[p].map { posted(p, after).count > $0.captionLimit } ?? false }
+    let shown = Set(Captions.tags(in: caption))
+    return CaptionPreview(id: v.id, name: v.displayName, caption: caption, changes: caption != shared(before) || after != before,
+                          replacesWritten: change.setsTemplate && !before.caption.isEmpty, otherCaptions: other, tooLong: long,
+                          capNotes: Captions.capNotes(platforms, version: after, video: v, sessionName: session, sets: sets,
+                                                      templates: templates, settings: settings),
+                          hidesGroups: added.contains { !shown.contains($0) }, leavesQueue: v.state == .ready && !long.isEmpty)
+  }
+
+  /// How many of `ids` have each group now, and the groups all of them have in the first clip's order. Clips left out don't count.
+  func groupUse(_ ids: [String]) throws -> GroupUse {
+    let settings = try store.settings(), held = try HashtagGroupsMigration.clipsWithPosts(store)
+    var use = GroupUse(), first: [String]?
+    for id in ids where !held.contains(id) {
+      guard try store.video(id: id) != nil, let r = try? store.resolvedVersion(videoId: id, number: 1, settings: settings) else { continue }
+      use.total += 1
+      if first == nil { first = r.hashtagSetIds }
+      for g in Set(r.hashtagSetIds) { use.counts[g, default: 0] += 1 }
+    }
+    use.common = (first ?? []).filter { use.counts[$0] == use.total }
+    return use
   }
 }
