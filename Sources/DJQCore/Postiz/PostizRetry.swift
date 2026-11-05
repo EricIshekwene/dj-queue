@@ -34,12 +34,13 @@ extension PostizService {
 
   /// Words that mean more than "not now": a policy or rights problem, an account problem or a paid limit. One of
   /// them anywhere beats a temporary word, because re-posting a flagged clip risks a strike on the account.
-  static let notTemporary = #"\b(violat\w*|infring\w*|intellectual property|dmca|content[- ]?id|copy right|(un)?licen[sc]\w*|"#
-    + #"songs?|sounds?|tracks?|strikes?|takedowns?|polic(y|ies)|guidelines?|terms|spam\w*|rejected|removed|revoked|banned|"#
-    + #"suspend\w*|restrict\w*|blocked|disabled|terminated|denied|forbidden|unauthori[sz]ed|upgrade\w*|plans?|subscri\w*|storage)\b"#
-  /// Word boundaries: never "quotation", "moderate limit" or "separate limit".
-  static let plainlyTemporary = #"\bquotas?\b|\brate[- ]?limit|\btoo many requests\b|\btry again later\b"#
-    + #"|\breschedule this post for a later time\b|\btemporarily unavailable\b"#
+  static let notTemporary = #"\b(violat\w*|infring\w*|intellectual property|dmca|content[- ]?id|copy[- ]right|trademark\w*|"#
+    + #"(un)?licen[sc]\w*|songs?|sounds?|soundtracks?|tracks?|lyrics|strikes?|takedowns?|taken? down|third[- ]party|polic(y|ies)|"#
+    + #"guidelines?|community|terms|not allowed|\w+n't allowed|spam\w*|flagged|reject\w*|remov\w*|revok\w*|bans?|banned|suspen\w*|restrict\w*|"#
+    + #"block\w*|locked|disabled|deactivat\w*|terminated|denied|forbidden|unauthori[sz]ed|upgrade\w*|plans?|subscri\w*|storage)\b"#
+  /// Only an explicit quota or rate limit. A generic "try again later" or "temporarily unavailable" says nothing about
+  /// the cause. Word boundaries: never "quotation", "moderate limit" or "separate limit".
+  static let plainlyTemporary = #"\bquotas?\b|\brate[- ]?limit|\btoo many requests\b|\breschedule this post for a later time\b"#
 
   /// Only clear wording counts; an unclear message stays a normal failure. Copyright and every `notTemporary` word win.
   public static func isTemporary(_ message: String) -> Bool {
@@ -55,7 +56,8 @@ extension PostizService {
   public static func retriesByItself(_ message: String, on platform: Platform) -> Bool {
     guard platform == .youtube else { return isTemporary(message) }
     let m = message.lowercased()
-    return !isVetoed(message) && (m.contains("daily upload quota") || m.contains("defaultvideoinsertperdayperproject"))
+    guard !isVetoed(message), !m.contains("thumbnail"), !m.contains("uploaded") else { return false }  // the video may exist
+    return m.contains("daily upload quota") || m.contains("defaultvideoinsertperdayperproject")
   }
 
   static let autoRetryPrefix = "postiz.autoRetry."

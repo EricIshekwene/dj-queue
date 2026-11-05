@@ -43,11 +43,15 @@ import Testing
   // MARK: Classification
 
   @Test(arguments: [quota, "Quota exceeded", "exceeded your quotas", "Rate limit reached", "rate-limited by the platform",
-                    "HTTP 429: Too Many Requests", "Please try again later.", "Service temporarily unavailable"])
+                    "HTTP 429: Too Many Requests"])
   func clearWordingIsTemporary(_ m: String) { #expect(PostizService.isTemporary(m)) }
 
   @Test(arguments: ["Upload failed at the platform", "Postiz reported an error (no details)", "Account suspended", "Invalid token",
-                    "Invalid quotation mark in title", "try again", "unavailable", "limit", "video too long", ""])
+                    "Invalid quotation mark in title", "try again", "unavailable", "limit", "video too long", "",
+                    "Please try again later.", "Service temporarily unavailable", "Something went wrong, try again later",
+                    "Matched third party content. Try again later.", "Your account has been locked. Try again later.",
+                    "Account deactivated, try again later", "This content isn't allowed here. Try again later.",
+                    "Lyrics match, try again later"])
   func anythingElseIsNormal(_ m: String) { #expect(!PostizService.isTemporary(m)) }
 
   @Test(arguments: ["Copyright claim, try again later", "Music rights quota exceeded", "audio rate limit", "Rights holder: too many requests"])
@@ -69,7 +73,16 @@ import Testing
                     "Your storage quota is full, upgrade your plan",
                     "You have used your plan's post quota. Upgrade to continue.",
                     "Subscription quota exceeded", "Video rejected: spam. Too many requests",
-                    "Exceeds the moderate limit for video size", "Exceeds the separate limit on hashtags"])
+                    "Exceeds the moderate limit for video size", "Exceeds the separate limit on hashtags",
+                    "Account suspension in effect, quota", "Instagram blocks your request, rate limit",
+                    "Your account has a posting ban. Too many requests", "Content removal pending, quota",
+                    "Post rejection: quota", "Access revoke in progress, too many requests",
+                    "Soundtrack not cleared, quota", "Copy-right notice, quota",
+                    "Your post goes against our Community Standards. Quota", "Your video was flagged, rate limit",
+                    "Your video was taken down, too many requests", "Trademark complaint received, quota",
+                    "Matched third party content, quota", "Your account has been locked, rate limit",
+                    "Account deactivated, too many requests", "This content isn't allowed here, quota",
+                    "Lyrics match, rate limit"])
   func aVetoWordBeatsATemporaryWord(_ m: String) { #expect(!PostizService.isTemporary(m)) }
 
   @Test func aPolicyErrorIsAPlainFailureAndNeverRetries() throws {
@@ -86,7 +99,9 @@ import Testing
   @Test func youTubeRetriesOnlyTheUploadQuota() {
     for m in [Self.quota, "defaultVideoInsertPerDayPerProject exceeded"] { #expect(PostizService.retriesByItself(m, on: .youtube)) }
     for m in ["Rate limit reached while setting the thumbnail", "Too Many Requests", "Please try again later.",
-              "Service temporarily unavailable", "Quota exceeded", "Your channel is suspended: daily upload quota"] {
+              "Service temporarily unavailable", "Quota exceeded", "Your channel is suspended: daily upload quota",
+              "We have uploaded your video but could not set the thumbnail: daily upload quota",
+              "Thumbnail failed, defaultVideoInsertPerDayPerProject"] {
       #expect(!PostizService.retriesByItself(m, on: .youtube), "\(m)")
     }
     #expect(PostizService.retriesByItself("Rate limit reached", on: .x))
@@ -458,6 +473,36 @@ import Testing
     #expect(try attempts(rig, yt).count == 2)
     try actions.resolveCopyright(postId: repost.id, .reuploadAnyway(versionNo: 2))
     #expect(try attempts(rig, yt).count == 3)
+  }
+
+  @Test func reuploadRefusesAVersionStillLiveOrPublishedUnsynced() throws {
+    let (rig, yt) = try ytRig()
+    let actions = PostActions(store: rig.store)
+    var v2 = Version(number: 2)
+    v2.caption = "second cut"
+    try rig.store.save(v2, videoId: yt.videoId)
+    // A repost planned while the regular v1 is still in flight: its copyright block can't re-upload v1.
+    var repost = yt
+    repost.id = "repost-v2"
+    repost.versionNo = 2
+    repost.kind = .repost
+    repost.attemptNo = 2
+    repost.state = .copyrightBlocked
+    repost.errorType = .copyrightBlocked
+    repost.renderId = nil
+    try rig.store.save(repost, note: "test")
+    #expect(throws: EngineError.self) { try actions.resolveCopyright(postId: repost.id, .reuploadAnyway(versionNo: 1)) }
+    // Postiz published v1 and the post reads Failed: the job still counts.
+    let j = try #require(try rig.job(yt))
+    var seen = j
+    seen.remoteState = "PUBLISHED"
+    try rig.store.save(seen)
+    var failed = try #require(try rig.store.post(id: yt.id))
+    failed.state = .failed
+    try rig.store.save(failed, note: "test")
+    #expect(throws: EngineError.self) { try actions.resolveCopyright(postId: repost.id, .reuploadAnyway(versionNo: 1)) }
+    // Its own version is still free.
+    try actions.resolveCopyright(postId: repost.id, .reuploadAnyway(versionNo: 2))
   }
 
   // MARK: Two processes

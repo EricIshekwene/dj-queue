@@ -176,15 +176,15 @@ while a job is within six hours of its slot or waiting for a result, otherwise h
 `error` is curated by Postiz (the platform's message when it is a known "bad body" error, otherwise null); null on
 `ERROR` reads "Postiz reported an error (no details)".
 
-**Temporary failures retry by themselves** (`PostizRetry.swift`, DECISIONS-R8.md). An `ERROR` is temporary only on clear
-wording: quota, rate limit / too many requests, "try again later", "reschedule this post for a later time", temporarily
-unavailable. Copyright wins over temporary, always, and so does any word that means more than "not now": a policy or
-rights word (violates, DMCA, Content ID, licensed, song, sound, …), an account word (banned, suspended, restricted,
-disabled, unauthorized, …) or a paid limit (upgrade, plan, subscription, storage). One of them anywhere makes it a normal
+**Temporary failures retry by themselves** (`PostizRetry.swift`, DECISIONS-R8.md). An `ERROR` is temporary only on an
+explicit quota or rate limit: quota, rate limit / too many requests, "reschedule this post for a later time". A generic
+"try again later" or "temporarily unavailable" doesn't count. Copyright wins over temporary, always, and so does any word that means more than "not now": a policy or
+rights word (violates, DMCA, Content ID, trademark, licensed, song, sound, Community Standards, flagged, …), an account
+word (ban, suspension, blocks, restricted, disabled, unauthorized, …) or a paid limit (upgrade, plan, subscription, storage). One of them anywhere makes it a normal
 failure, or `copyright_blocked` when the copyright words above match. Everything else stays a normal failure too. On
 YouTube only the upload quota ("daily upload quota" / `defaultVideoInsertPerDayPerProject`) counts, because no video was
-created; any other error may come after the video exists (a rate limit on the thumbnail step), so it stays a normal
-failure and a retry can't double-post. A temporary failure still reads Failed and still gets its alert, with the message plus "retries tomorrow automatically",
+created, and a message that mentions a thumbnail or an uploaded video doesn't count; any other error may come after the
+video exists, so it stays a normal failure and a retry can't double-post. A temporary failure still reads Failed and still gets its alert, with the message plus "retries tomorrow automatically",
 or the Fixed wording when no retry can come (retries used up, or ruled out below). A tick step `retry` (right
 after `alerts`, and only once the post's alert went out) re-queues it through `PostActions.fixed`: next day, the usual
 stagger, a new attempt the publish step submits. At most 2 automatic retries per clip + platform + version (kv

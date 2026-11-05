@@ -104,8 +104,9 @@ public final class PostActions: @unchecked Sendable {
       try ensureNotHeld(p.videoId)
       let v = versionNo ?? p.versionNo
       if try store.resolvedVersion(videoId: p.videoId, number: v) == nil { throw EngineError("Add v\(v) first") }
-      let live = try store.posts(where: "video_id=? AND platform=? AND version_no=? AND state='posted'", [p.videoId, p.platform.rawValue, v])
-      guard live.isEmpty else { throw EngineError("v\(v) is already posted on \(p.platform.displayName) — pick another version") }
+      guard try !versionIsOut(v, of: p) else {
+        throw EngineError("v\(v) is already posted or on its way on \(p.platform.displayName) — pick another version")
+      }
       let n = try newAttempt(from: p, kind: .retry, versionNo: v, note: "re-upload after \(p.state.rawValue)")
       p.resolution = "reuploaded"
       try store.save(p, note: "re-upload → attempt \(n.attemptNo)")
@@ -118,6 +119,14 @@ public final class PostActions: @unchecked Sendable {
       try store.save(p, note: "copyright: accepted")
     }
     try store.refreshState(videoId: p.videoId)
+  }
+
+  /// Another post of this version on the platform is posted, still live, or was published by Postiz (even if not synced).
+  func versionIsOut(_ v: Int, of p: PlatformPost) throws -> Bool {
+    try store.posts(where: "video_id=? AND platform=? AND version_no=? AND id<>?", [p.videoId, p.platform.rawValue, v, p.id]).contains { o in
+      if o.state == .posted || !o.state.isTerminal { return true }
+      return try store.postizJobs(postId: o.id).contains { [.published, .inbox].contains($0.closeReason) || $0.remoteState == "PUBLISHED" }
+    }
   }
 
   /// The cause of a (non-copyright) failure is fixed: new attempt on the next day's slot, ≥ 3 h from that day's
