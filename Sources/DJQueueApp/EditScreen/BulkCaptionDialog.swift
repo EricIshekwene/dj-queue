@@ -23,7 +23,8 @@ struct BulkCaptionDialog: View {
   }
 
   var body: some View {
-    DSDialog("Caption for \(AppModel.pipelineClips(ids.count))", description: "Pick a template, several hashtag groups, or both",
+    DSDialog(form == nil ? "Caption for \(AppModel.pipelineClips(ids.count))" : "Save as template",
+             description: form == nil ? "Pick a template, several hashtag groups, or both" : "It joins your templates here, in the editor and in Settings",
              icon: "text.alignleft", width: 560, onClose: close) {
       if form == nil {
         VStack(alignment: .leading, spacing: DS.space.md) {
@@ -37,9 +38,6 @@ struct BulkCaptionDialog: View {
       }
     } footer: {
       if form == nil {
-        DSButton("Save as template", icon: "plus", variant: .ghost, tooltip: "Keep this template and these hashtags to use again", action: openForm)
-          .background(ScriptAnchor("Save as template"))
-        Spacer(minLength: 0)
         DSButton("Cancel", variant: .ghost, shortcut: "esc", action: close)
           .keyboardShortcut(.cancelAction)
         DSButton(verb, variant: .primary, disabledReason: disabledReason, tooltip: "You can undo this", shortcut: "↩", action: apply)
@@ -70,12 +68,19 @@ struct BulkCaptionDialog: View {
   /// Chips, not a menu: Eric's templates stay in view, one click each, like the groups below them.
   private var templatePicker: some View {
     let def = model.captionTemplates.first { $0.id == model.settings.defaults.captionTemplateId }?.name ?? "Default"
+    // The default's own name would be the same chip twice.
+    let others = model.captionTemplates.filter { $0.id != model.settings.defaults.captionTemplateId }
     return VStack(alignment: .leading, spacing: DS.space.xs) {
-      Text("Template").font(DS.type.captionMedium).foregroundStyle(DS.color.textSecondary)
+      HStack(spacing: DS.space.xs) {
+        Text("Template").font(DS.type.captionMedium).foregroundStyle(DS.color.textSecondary)
+        Spacer(minLength: 0)
+        DSButton("Save as template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Keep this template and these hashtags to use again", action: openForm)
+          .background(ScriptAnchor("Save as template"))
+      }
       DSFlowLayout(spacing: 5) {
         templateChip("Keep captions", .keep, help: "Each clip keeps its text. Only the hashtags change")
         templateChip("Default · \(def)", .useDefault, help: "Back to the default template")
-        ForEach(model.captionTemplates) { t in
+        ForEach(others) { t in
           templateChip(t.name, .use(t.id), help: t.template.replacingOccurrences(of: "\n", with: " ⏎ "))
         }
       }

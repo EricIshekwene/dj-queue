@@ -155,6 +155,36 @@ enum BulkCaptionScript {
       let title = (try? store.video(id: id)?.displayName) ?? ""
       check("\(title): the saved template on its own gives the same caption", caption(id) == "\(title)\n\n\(want)")
     }
+
+    // A mixed selection: one clip has Piano and a caption Eric wrote, one has neither, one has a scheduled post.
+    let mixed = Array(app.videos.filter { $0.state == .needsEdit && $0.type == .short }.prefix(5).dropFirst(2).map(\.id))
+    guard mixed.count == 3, let piano = sets.first(where: { $0.name == "Piano" }) else {
+      check("three more clips and a Piano group", false)
+      return 1
+    }
+    _ = try? app.bulk.setHashtagSets([mixed[0]], [piano.id])
+    if var v = try? store.versions(videoId: mixed[0]).first { v.caption = "Written by hand\n#amapiano"; try? store.save(v, videoId: mixed[0]) }
+    _ = try? store.db.run("""
+      INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+      VALUES('bulk-post',?,'tiktok',1,1,'regular',0,'planned','manual',0,0)
+      """, [mixed[2]])
+    let held = caption(mixed[2])
+    app.refreshNow()
+    app.selectAll(.edit, ids: mixed)
+    await wait(800)
+    check("the dialog opens on the mixed selection", await click("Caption") && app.captionDialogIds?.count == 3)
+    await wait(800)
+    await shot("mixed-selection")
+    _ = await click("Short")
+    _ = await click("Piano")
+    await wait(600)
+    await shot("mixed-template-piano")
+    await key("\r", code: 36)
+    await wait(1000)
+    await shot("mixed-applied")
+    check("Piano is now on the clip that lacked it", caption(mixed[1]).contains("#amapiano"))
+    check("the written caption was replaced by the template", !caption(mixed[0]).contains("Written by hand"))
+    check("the clip with a post stayed byte-identical", caption(mixed[2]) == held)
     try? log.joined(separator: "\n").write(to: out.appendingPathComponent("bulk-checks-\(appearance).txt"), atomically: true, encoding: .utf8)
     return failed == 0 ? 0 : 1
   }
