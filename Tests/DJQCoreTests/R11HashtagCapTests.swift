@@ -203,11 +203,11 @@ import Testing
     v.hashtagSetIds = ["a", "b"]
     try f.store.save(v, videoId: "clip-0")
     let before = try f.captions("clip-0"), hashes = try f.hashes()
-    let r = try HashtagGroups.move("b", by: -1, store: f.store, bulk: f.bulk)
+    let r = try HashtagGroups.move("b", by: -1, store: f.store, bulk: f.bulk).result
     #expect(try f.store.hashtagSets().map(\.id) == ["b", "a", "c"])
     #expect(try f.captions("clip-0") == before)
     #expect(try f.hashes() == hashes)
-    #expect(try HashtagGroups.move("b", by: -1, store: f.store, bulk: f.bulk).batchId == nil)
+    #expect(try HashtagGroups.move("b", by: -1, store: f.store, bulk: f.bulk).result.batchId == nil)
     try f.bulk.undo(#require(r.batchId))
     #expect(try f.store.hashtagSets().map(\.id) == ["a", "b", "c"])
   }

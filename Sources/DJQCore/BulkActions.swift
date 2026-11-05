@@ -437,6 +437,20 @@ public final class BulkActions: @unchecked Sendable {
     }
   }
 
+  /// Adds or removes a part in each clip's v1 caption text (`CaptionParts`). A clip whose posts went out is skipped with the reason;
+  /// a clip that's only scheduled is edited, like typing, and Postiz replaces its posts after the settle.
+  @discardableResult
+  public func togglePart(_ ids: [String], _ part: CaptionPart, dryRun: Bool = false) throws -> BulkResult {
+    let sets = try store.hashtagSets(), templates = try store.captionTemplates()
+    return try run("caption-part", ids: ids, params: ["part": part.rawValue], dryRun: dryRun) { _, v, s in
+      if let why = CaptionParts.lockReason(posts: try store.posts(where: "video_id=?", [v.id], order: "id")) { return .skipped(why) }
+      guard let r = try store.resolvedVersion(videoId: v.id, number: 1, settings: s),
+            let next = CaptionParts.toggling(part, version: r, video: v, sessionName: try store.sessionName(for: v), sets: sets,
+                                             templates: templates, settings: s) else { return .unchanged }
+      return try updateV1(v) { $0.caption = next }
+    }
+  }
+
   // MARK: Single actions (journaled)
 
   /// Runs any app action (`body`) as one undoable journal entry — the same snapshot/restore machinery as the bulk

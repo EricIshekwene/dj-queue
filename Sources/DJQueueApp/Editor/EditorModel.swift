@@ -135,6 +135,8 @@ final class EditorModel: ObservableObject {
   let playback = EditorPlayback()
   private var pendingEdit = false
   private var pendingVersions = Set<Int>()
+  /// The versions as the store last had them, so a hold landing under unsaved work can be told from that work.
+  private var syncedVersions: [Version] = []
   private var saveTask: Task<Void, Never>?
   private var overlayTask: Task<Void, Never>?
   private var overlayKey: OverlayKey?
@@ -256,7 +258,7 @@ final class EditorModel: ObservableObject {
     loading = false
     settings = l.settings; sets = l.sets; templates = l.templates; lastCrop = l.lastCrop
     video = l.video; sessionName = l.sessionName; fileURL = l.fileURL; fileMissing = l.fileMissing
-    suggestions = l.suggestions; textSuggestions = l.textSuggestions; edit = l.edit; versions = l.versions; posts = l.posts; issues = l.issues
+    suggestions = l.suggestions; textSuggestions = l.textSuggestions; edit = l.edit; versions = l.versions; syncedVersions = l.versions; posts = l.posts; issues = l.issues
     readOnly = l.readOnly; loadError = l.error
     fieldRevision &+= 1
     if let v = l.video, let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
@@ -849,6 +851,7 @@ final class EditorModel: ObservableObject {
   /// Versions changed under the editor (a freeze, or Undo of one): the history no longer applies to them.
   private func replaceVersions(_ fresh: [Version]) {
     versions = fresh
+    syncedVersions = fresh
     clearUndo()
     fieldRevision &+= 1
     refreshOverlay()
@@ -896,8 +899,15 @@ final class EditorModel: ObservableObject {
   /// What each platform's hashtag cap does to this clip's caption.
   var capNotes: [Captions.CapNote] {
     guard let v = video else { return [] }
-    return Captions.capNotes(postingPlatforms, version: resolved, video: v, sessionName: sessionName, sets: sets, templates: templates, settings: settings)
+    return Captions.capNotes(postingPlatforms, version: resolved, video: v, sessionName: sessionName, sets: sets, templates: templates, settings: settings,
+                             scheduled: clipHasPosts)
   }
+
+  /// Scheduled or posted posts: a new template doesn't take this clip's caption over.
+  var clipHasPosts: Bool { posts.contains { $0.state.holdsCaption } }
+
+  /// Why the part chips are off (nil = they work).
+  var partsOffReason: String? { readOnly ? EditorView.readOnlyReason : CaptionParts.lockReason(posts: posts) }
 
   /// What the part chips read for this clip.
   var partValues: CaptionParts.Values? {
@@ -906,10 +916,10 @@ final class EditorModel: ObservableObject {
 
   /// Adds or removes a part in the caption text, which makes a template caption a written one (↺ goes back).
   func togglePart(_ part: CaptionPart) {
-    guard !readOnly, let values = partValues else { return }
+    guard partsOffReason == nil, let v = video else { return }
     commitCaptionDraft()
-    let next = CaptionParts.toggled(part, in: mainCaption, values)
-    guard next != mainCaption else { return }
+    guard let next = CaptionParts.toggling(part, version: resolved, video: v, sessionName: sessionName, sets: sets, templates: templates,
+                                           settings: settings) else { return }
     typeCaption(next)
     commitCaptionDraft()
     fieldRevision &+= 1
@@ -932,7 +942,7 @@ final class EditorModel: ObservableObject {
       fromCaption: mainCaption, version: resolved, video: v, sessionName: sessionName, sets: sets, link: settings.captionLink))
   }
 
-  /// Saves the form through the core path. A new template goes on for this clip; an edit reaches every clip built from it
+  /// Saves the form through the core path. A new template goes on for this clip unless it has posts; an edit reaches every clip built from it
   /// except those with scheduled or posted posts.
   @discardableResult
   func saveTemplate(name: String, template: String) -> Bool {
@@ -945,8 +955,12 @@ final class EditorModel: ObservableObject {
       let t = CaptionTemplates.make(name: name, template: template, existing: templates)
       guard writeGroup(failure: failure, { try CaptionTemplates.create(t, store: $0, bulk: $1) }) != nil else { return false }
       templateForm = nil
-      setCaptionTemplate(t.id)
-      show("“\(t.name)” saved and on for this clip")
+      if clipHasPosts {
+        show("“\(t.name)” saved. This clip keeps its caption: it has scheduled or posted posts")
+      } else {
+        setCaptionTemplate(t.id)
+        show("“\(t.name)” saved and on for this clip")
+      }
       return true
     }
     guard var t = templates.first(where: { $0.id == editing }) else {  // deleted while the form was open
@@ -993,13 +1007,14 @@ final class EditorModel: ObservableObject {
           self.fieldRevision &+= 1
         } else if !self.pendingEdit, self.pendingVersions.isEmpty {
           self.replaceVersions(saved)
-        } else if let merged = HashtagGroups.keepingFreeze(memory: self.versions, saved: saved) {
-          // Unsaved changes on a clip frozen underneath them: the next save keeps the freeze and Eric's work.
+        } else if let merged = HashtagGroups.keepingFreeze(memory: self.versions, saved: saved, base: self.syncedVersions) {
+          // Unsaved changes on a clip frozen or held underneath them: the next save keeps the hold and Eric's work.
           self.replaceVersions(merged)
           self.pendingVersions.formUnion(merged.map(\.number))
         } else {
           self.fieldRevision &+= 1
         }
+        self.syncedVersions = saved
       }
     }
   }
@@ -1384,6 +1399,10 @@ final class EditorModel: ObservableObject {
     pendingEdit = false
     pendingVersions = []
     saving = true
+    for v in vs {
+      syncedVersions.removeAll { $0.number == v.number }
+      syncedVersions.append(v)
+    }
     Self.saveQueue.async { [weak self] in
       do {
         if let e { try store.save(e, videoId: id) }

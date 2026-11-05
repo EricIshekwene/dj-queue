@@ -49,6 +49,7 @@ enum EditorTemplateScript {
     let model = EditorModel(store: store, videoId: video)
     model.appHooks.beforeGroupWrite = { app.splitEditorSession() }
     model.appHooks.afterGroupEdit = { app.groupEdited($0, message: $1) }
+    model.appHooks.deleteTemplate = { app.confirmDeleteTemplate($0, undoHint: "Undo on the message that follows brings it back.") }
     let host = NSHostingView(rootView: EditorView(model: model, videoIds: ids, onDone: {}))
     window.contentView = host
     window.isReleasedWhenClosed = false
@@ -206,7 +207,7 @@ enum EditorTemplateScript {
     if let t = made {
       var edited = t
       edited.template = "Edited {text}\n{hashtags}"
-      app.confirmDeleteTemplate(edited, undoHint: "Undo on the message that follows brings it back.")
+      model.onDeleteTemplate?(edited)
       note("confirm says: \(app.pendingConfirm?.message ?? "nothing")")
       // The edit above froze the scheduled clip, so it no longer builds from this template.
       check("delete asks first, with the count", app.pendingConfirm?.message.contains("1 other clip goes back to the default template") == true)
@@ -250,8 +251,12 @@ enum EditorTemplateScript {
       guard let a = EditorGroupScript.anchor(in: host) else { note("no anchor"); return }
       let f = a.convert(a.bounds, to: nil)
       let x: CGFloat = [.text: 24, .set: 76, .link: 128, .title: 184][p] ?? 24
-      await click(NSPoint(x: f.minX + x, y: f.maxY + 54))
-      await wait(500)
+      let before = field()
+      for attempt in 0..<3 where field() == before {  // the layout can still be settling under load
+        if attempt > 0 { await wait(600) }
+        await click(NSPoint(x: f.minX + x, y: f.maxY + 54))
+        await wait(500)
+      }
     }
     await shot("parts-eric-caption")
     let start = field()
@@ -260,7 +265,7 @@ enum EditorTemplateScript {
     await chip(.link)
     check("Link follows it", field() == "Amarider blend\n\(Defaults.captionLink)\n\n#djlovd #afrobeats #amapiano")
     await chip(.set)
-    check("Set lands between them", field().components(separatedBy: "\n")[1] == values().set && on(.link) && on(.text))
+    check("Set lands between them", field().components(separatedBy: "\n").dropFirst().first == values().set && on(.link) && on(.text))
     await shot("parts-three-on")
     await chip(.set)
     await chip(.link)
@@ -280,6 +285,30 @@ enum EditorTemplateScript {
     await shot("parts-on-template")
     await chip(.link)
     check("a chip makes a template caption written", model.captionIsWritten)
+
+    // A clip with posts: a new template leaves its caption alone, chips lock once a post went out.
+    model.load(scheduled)
+    await wait(1200)
+    let keptCaption = model.mainCaption
+    model.openTemplateForm()
+    await wait(500)
+    await shot("template-form-on-a-scheduled-clip")
+    check("a new template doesn't switch a clip with posts", model.saveTemplate(name: "For later", template: "Later {text}")
+          && model.resolved.captionTemplateId == nil && model.mainCaption == keptCaption && !model.captionIsWritten)
+    check("it says so", model.toast?.contains("keeps its caption") == true)
+    await wait(400)
+    check("a chip works on a clip that's only scheduled", model.partsOffReason == nil)
+    _ = try? store.db.run("UPDATE platform_posts SET state='posted' WHERE id='tpl-post'")
+    model.load(scheduled)
+    await wait(1200)
+    check("a chip is off once a post went out", model.partsOffReason != nil)
+    let wentOut = model.mainCaption
+    model.togglePart(.link)
+    check("and does nothing", model.mainCaption == wentOut)
+    await shot("parts-locked-posted")
+    _ = try? store.db.run("UPDATE platform_posts SET state='planned' WHERE id='tpl-post'")
+    model.load(video)
+    await wait(1000)
 
     // Hashtag caps: order in the caption is the priority.
     model.flushAndWait()

@@ -12,6 +12,8 @@ struct CaptionsSettings: View {
   @State private var reach: [String: HashtagGroups.Impact] = [:]
   /// Groups added here and not changed yet. They aren't saved, so one Eric never fills in goes away with the screen.
   @State private var drafts: Set<String> = []
+  /// Group rows still waiting to save what Eric typed.
+  @State private var pendingGroups: Set<String> = []
   @State private var titles: [TitleTemplate] = []
   /// Each template's save waiting for typing to pause.
   @State private var templateSaves: [String: Task<Void, Never>] = [:]
@@ -29,7 +31,8 @@ struct CaptionsSettings: View {
       }
       ForEach($sets) { $s in
         HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), reach: reach[s.id], canMoveUp: canMove(s, -1),
-                      canMoveDown: canMove(s, 1), onMove: moveSet, onSave: save, onDelete: deleteSet)
+                      canMoveDown: canMove(s, 1), onMove: moveSet, onSave: save, onDelete: deleteSet,
+                      onPending: { pending in if pending { pendingGroups.insert(s.id) } else { pendingGroups.remove(s.id) } })
       }
       DSButton("Add hashtag group", icon: "plus", variant: .ghost, size: .sm, tooltip: "Make a new hashtag group: a name and its hashtags") { addSet() }
         .padding(.top, DS.space.xs)
@@ -71,6 +74,16 @@ struct CaptionsSettings: View {
       }
     }
     .onAppear(perform: load)
+    // Undo, the editor and `djq` change these underneath: rows follow, except one still waiting to save what Eric typed.
+    .onChange(of: model.captionTemplates) { _, fresh in
+      let local = Dictionary(templates.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+      templates = fresh.map { templateSaves[$0.id] != nil ? local[$0.id] ?? $0 : $0 }
+    }
+    .onChange(of: model.hashtagSets) { _, fresh in
+      let local = Dictionary(sets.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+      sets = fresh.map { pendingGroups.contains($0.id) ? local[$0.id] ?? $0 : $0 } + sets.filter { drafts.contains($0.id) }
+      measureReach()
+    }
   }
 
   private var askTitle: String {
@@ -104,19 +117,20 @@ struct CaptionsSettings: View {
       templateSaves[id] = Task { @MainActor in
         try? await Task.sleep(for: .milliseconds(600))
         guard !Task.isCancelled else { return }
+        templateSaves[id] = nil
         model.saveTemplateEdit(nt)
       }
     }
   }
 
   private func addTemplate() {
-    let t = CaptionTemplate(id: newId(), name: "New template", template: "{text}\n\n{hashtags}", sort: (templates.map(\.sort).max() ?? 0) + 1)
-    try? model.store.save(t)
-    templates.append(t)
+    let t = CaptionTemplates.make(name: CaptionTemplates.uniqueName("New template", existing: templates), template: "{text}\n\n{hashtags}", existing: templates)
+    if model.addTemplate(t), !templates.contains(where: { $0.id == t.id }) { templates.append(t) }
   }
 
   private func deleteTemplate(_ t: CaptionTemplate) {
     templateSaves[t.id]?.cancel()
+    templateSaves[t.id] = nil
     model.confirmDeleteTemplate(t, undoHint: "Undo (⌘Z) brings it back.") { templates.removeAll { $0.id == t.id } }
   }
 
@@ -235,6 +249,7 @@ private struct HashtagSetRow: View {
   var onMove: (HashtagSet, Int) -> Void = { _, _ in }
   let onSave: (HashtagSet) -> Void
   let onDelete: (HashtagSet) -> Void
+  var onPending: (Bool) -> Void = { _ in }
   @State private var tags = ""
   @State private var saveTask: Task<Void, Never>?
 
@@ -254,11 +269,16 @@ private struct HashtagSetRow: View {
     // Saved once typing pauses: each save is a journaled change that can freeze clips.
     .onChange(of: set) { _, s in
       saveTask?.cancel()
+      onPending(true)
       saveTask = Task { @MainActor in
         try? await Task.sleep(for: .milliseconds(600))
         guard !Task.isCancelled else { return }
+        onPending(false)
         onSave(s)
       }
+    }
+    .onChange(of: set.tags) { _, t in
+      if tags.split(whereSeparator: \.isWhitespace).map(String.init) != t { tags = t.joined(separator: " ") }
     }
   }
 
