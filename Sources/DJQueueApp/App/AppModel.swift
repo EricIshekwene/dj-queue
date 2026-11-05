@@ -710,6 +710,18 @@ final class AppModel {
     journaled("Template “\(t.name)” saved") { try CaptionTemplates.update(t, store: store, bulk: bulk).result }
   }
 
+  /// Saves a platform's hashtag cap from Settings through the core path.
+  func saveHashtagCap(_ cap: Int?, for p: Platform) {
+    guard (try? store.settings())?.limits[p]?.maxHashtags != cap else { return }
+    journaled(cap.map { "\(p.displayName) keeps \($0) hashtag\($0 == 1 ? "" : "s")" } ?? "\(p.displayName) has no hashtag cap") {
+      try CaptionTemplates.setHashtagCap(cap, for: p, store: store, bulk: bulk).result
+    }
+  }
+
+  func moveGroup(_ s: HashtagSet, by: Int) -> Bool {
+    journaled("Hashtag group “\(HashtagGroups.label(s))” moved") { try HashtagGroups.move(s.id, by: by, store: store, bulk: bulk) }
+  }
+
   /// Saves the link line from Settings through the core path.
   func saveCaptionLink(_ link: String) {
     guard (try? store.settings())?.captionLink != link else { return }

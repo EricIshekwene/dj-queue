@@ -278,7 +278,9 @@ import Testing
     #expect(try f.captions("clip-0") == old)
     #expect(try f.store.db.one("PRAGMA user_version")?.int("user_version") == 7)
     let batch = try #require(try f.bulk.batches().first { $0.action == CaptionRulesMigration.action })
-    try f.bulk.undo(batch.id)
+    #expect(throws: (any Error).self) { try f.bulk.undo(batch.id) }
+    #expect(try f.captions("clip-0") == old)
+    try f.bulk.undo(batch.id, force: true)
     #expect(try f.store.versions(videoId: "clip-0").first?.platformCaptions == nil)
   }
 

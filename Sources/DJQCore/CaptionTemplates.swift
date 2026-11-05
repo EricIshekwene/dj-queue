@@ -10,9 +10,10 @@ public enum CaptionTemplates {
   public static let editAction = "caption-template-edit"
   public static let deleteAction = "caption-template-delete"
   public static let linkAction = "caption-link"
+  public static let capAction = "hashtag-cap"
 
   /// Journaled changes that write clips on their own: an open editor session moves past them (`rebasedOntoGroupChanges`).
-  static let batchActions = [setDefaultAction, editAction, deleteAction, linkAction]
+  static let batchActions = [setDefaultAction, editAction, deleteAction, linkAction, capAction]
 
   /// What the editor's form and Settings say beside a template.
   public static let hashtagHint = "You can type hashtags here too; {hashtags} adds the clip's groups"
@@ -187,6 +188,24 @@ public enum CaptionTemplates {
     after.settings.captionLink = link
     let kept = try CaptionHold.affected(from: before, to: after, store: store)
     let r = try bulk.record(linkAction, ids: kept.map(\.id), settings: true) {
+      let saved = try kept.map { ($0, try CaptionHold.outputs($0, before, store: store)) }
+      try store.save(after.settings)
+      for (v, outputs) in saved { try CaptionHold.keep(v, as: outputs, store: store) }
+    }
+    return HashtagGroups.Change(result: r, kept: kept.map(\.id))
+  }
+
+  /// Sets a platform's hashtag cap (nil = none). A clip with scheduled or posted posts that it would change keeps its caption as
+  /// that platform's own. An own caption is never cut, only warned about.
+  @discardableResult
+  public static func setHashtagCap(_ cap: Int?, for platform: Platform, store: Store, bulk: BulkActions) throws -> HashtagGroups.Change {
+    let before = try CaptionHold.Sources(store)
+    var after = before
+    guard var limits = after.settings.limits[platform] ?? PlatformLimits.defaults[platform] else { throw EngineError("No limits for \(platform.displayName)") }
+    limits.maxHashtags = cap.map { max($0, 0) }
+    after.settings.limits[platform] = limits
+    let kept = try CaptionHold.affected(from: before, to: after, store: store)
+    let r = try bulk.record(capAction, ids: kept.map(\.id), params: ["platform": platform.rawValue], settings: true) {
       let saved = try kept.map { ($0, try CaptionHold.outputs($0, before, store: store)) }
       try store.save(after.settings)
       for (v, outputs) in saved { try CaptionHold.keep(v, as: outputs, store: store) }

@@ -81,7 +81,52 @@ public enum Captions {
                      _ templates: [CaptionTemplate], _ settings: Settings, legacy: Bool = false) -> String {
     if let o = v.platformCaptions[platform], !o.isEmpty { return o }
     let s = build(platform, v, video, sessionName, hashtags(v, sets: sets), templates, settings, legacy: legacy)
-    return legacy ? s : onceEach(s, v)
+    return legacy ? s : capped(onceEach(s, v), to: settings.limits[platform]?.maxHashtags).text
+  }
+
+  /// `text` with its first `cap` hashtags, in caption order, tags typed in the text included, and the ones it lost.
+  public static func capped(_ text: String, to cap: Int?) -> (text: String, dropped: [String]) {
+    guard let cap, let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_#])#[\p{L}\p{N}_]+"#) else { return (text, []) }
+    let ns = text as NSString
+    let all = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map(\.range)
+    guard all.count > max(cap, 0) else { return (text, []) }
+    let extra = all[max(cap, 0)...]
+    var out = text
+    for r in extra.reversed() { out = removeRange(out as NSString, r) }
+    return (out, extra.map { ns.substring(with: $0) })
+  }
+
+  /// What a platform's hashtag cap does to one clip's caption, for the line under the caption.
+  public struct CapNote: Equatable, Sendable, Identifiable {
+    public var platform: Platform
+    public var cap: Int
+    public var total: Int
+    public var dropped: [String]
+    /// The platform has its own caption: it's left as written, so nothing is dropped and it may go over.
+    public var own: Bool
+    public var id: Platform { platform }
+
+    public var message: String {
+      let name = platform.displayName
+      if own { return "\(name)'s own caption has \(total) hashtags and \(name) keeps \(cap). It's left as you wrote it" }
+      let list = dropped.joined(separator: " ")
+      return cap == 0 ? "\(name) keeps no hashtags: drops \(list)" : "\(name) keeps \(cap) of \(total): drops \(list)"
+    }
+  }
+
+  /// One note per platform a cap reaches, for `platforms`.
+  public static func capNotes(_ platforms: [Platform], version v: ResolvedVersion, video: Video, sessionName: String, sets: [HashtagSet],
+                              templates: [CaptionTemplate], settings: Settings) -> [CapNote] {
+    platforms.compactMap { p in
+      guard let cap = settings.limits[p]?.maxHashtags else { return nil }
+      if let own = v.platformCaptions[p], !own.isEmpty {
+        let n = tags(in: own).count
+        return n > cap ? CapNote(platform: p, cap: cap, total: n, dropped: [], own: true) : nil
+      }
+      let full = onceEach(build(p, v, video, sessionName, hashtags(v, sets: sets), templates, settings), v)
+      let dropped = capped(full, to: cap).dropped
+      return dropped.isEmpty ? nil : CapNote(platform: p, cap: cap, total: cap + dropped.count, dropped: dropped, own: false)
+    }
   }
 
   /// Each tag once, at its first position, where the clip's tags are filled in beside tags typed in a template or caption. A

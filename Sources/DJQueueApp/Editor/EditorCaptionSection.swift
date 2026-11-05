@@ -130,6 +130,7 @@ struct EditorCaptionSection: View {
           EditorHint("\(other.map(\.editorShortName).joined(separator: ", ")) post\(other.count == 1 ? "s" : "") a different caption — see Captions for one platform below",
                      icon: "info.circle")
         }
+        ForEach(model.capNotes) { n in EditorHint(n.message, icon: "number", tone: n.own ? .warning : nil) }
         ForEach(model.captionWarnings) { w in warning(w) }
       }
     }

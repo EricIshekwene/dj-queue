@@ -28,7 +28,8 @@ struct CaptionsSettings: View {
           .padding(.top, DS.space.sm)
       }
       ForEach($sets) { $s in
-        HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), reach: reach[s.id], onSave: save, onDelete: deleteSet)
+        HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), reach: reach[s.id], canMoveUp: canMove(s, -1),
+                      canMoveDown: canMove(s, 1), onMove: moveSet, onSave: save, onDelete: deleteSet)
       }
       DSButton("Add hashtag group", icon: "plus", variant: .ghost, size: .sm, tooltip: "Make a new hashtag group: a name and its hashtags") { addSet() }
         .padding(.top, DS.space.xs)
@@ -143,6 +144,17 @@ struct CaptionsSettings: View {
     sets.append(s)
   }
 
+  /// Saved groups move past each other; a draft stays at the end until it's saved.
+  private func canMove(_ s: HashtagSet, _ by: Int) -> Bool {
+    let saved = sets.filter { !drafts.contains($0.id) }
+    return saved.firstIndex { $0.id == s.id }.map { saved.indices.contains($0 + by) } ?? false
+  }
+
+  private func moveSet(_ s: HashtagSet, _ by: Int) {
+    guard model.moveGroup(s, by: by), let stored = try? model.store.hashtagSets() else { return }
+    sets = stored + sets.filter { drafts.contains($0.id) }
+  }
+
   private func deleteSet(_ s: HashtagSet) {
     if drafts.remove(s.id) != nil {
       sets.removeAll { $0.id == s.id }
@@ -218,6 +230,9 @@ private struct HashtagSetRow: View {
   @Binding var set: HashtagSet
   let isDefault: Bool
   var reach: HashtagGroups.Impact?
+  var canMoveUp = false
+  var canMoveDown = false
+  var onMove: (HashtagSet, Int) -> Void = { _, _ in }
   let onSave: (HashtagSet) -> Void
   let onDelete: (HashtagSet) -> Void
   @State private var tags = ""
@@ -258,6 +273,10 @@ private struct HashtagSetRow: View {
       }), size: .sm)
       .accessibilityLabel("Hashtags")
       if isDefault { DSBadge("Default", style: .soft(.neutral), help: "New clips get this group") }
+      DSIconButton("chevron.up", tooltip: "Move up: its tags come earlier when groups are turned on", size: .sm,
+                   disabledReason: canMoveUp ? nil : "Already first") { onMove(set, -1) }
+      DSIconButton("chevron.down", tooltip: "Move down: its tags come later when groups are turned on", size: .sm,
+                   disabledReason: canMoveDown ? nil : "Already last") { onMove(set, 1) }
       DSIconButton("trash", tooltip: "Delete this hashtag group…", size: .sm) {
         onDelete(set)
       }

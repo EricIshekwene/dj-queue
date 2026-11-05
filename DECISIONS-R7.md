@@ -254,7 +254,7 @@ Eric: "allow me to create hashtags groups from within the editor".
     bio)").
 25. **Schema 7, `CaptionRulesMigration`:** those two rules could change a caption at install, so any clip with posts that would read differently
     keeps its old caption as that platform's own, in a journaled batch. No clip's data changes otherwise, and no batch is written when
-    nothing applies. The newest backup has no template with these tokens or with typed tags, so no clip is expected to change.
+    nothing applies. Undoing that batch would move those captions, so it needs `--force`. The newest backup has no template with these tokens or with typed tags, so no clip is expected to change.
 
 ### Part chips
 
@@ -272,3 +272,30 @@ Eric: "allow me to create hashtags groups from within the editor".
     below that line. Splitting it would mean rewriting the hashtags, and the brief says they're left alone.
 32. **The link line is editable in Settings → Captions & titles (small enough),** saved after a typing pause through `CaptionTemplates.setLink`,
     journaled and held like the others. A blank link turns the chip off with a reason.
+
+### Hashtag priority and caps
+
+33. **Order in the caption is the priority.** Each platform has a cap in Settings → Platforms (`PlatformLimits.maxHashtags`, blank = none, 0 is
+    a real cap). Over it, that platform's caption keeps the first tags in caption order, tags in the text body and typed in a template
+    included. The field stays whole, so a hand edit changes the order. `Captions.caption(for:)` applies it, which covers the preview, the
+    length breakdown, validation and Postiz with one change. It never blocks.
+34. **Nothing is dropped silently:** the Caption section shows a line per affected platform ("Threads keeps 1 of 4: drops #a #b #c").
+    A platform's own caption is left as written, with a warning line.
+35. **Default caps, only where a limit is confirmed** (read 2026-11-05):
+    - **Threads 1.** Meta's Threads API: "Only one topic tag is allowed per post."
+      https://developers.facebook.com/docs/threads/posts/
+    - **YouTube 60.** YouTube Help: over 60, every hashtag on the video is ignored. https://support.google.com/youtube/answer/6390658
+    - **Instagram 30.** Meta's IG User Media reference: "Maximum 2200 characters, 30 hashtags, and 20 @ tags."
+      https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media/
+    - **TikTok, X, Facebook blank.** TikTok and Facebook publish no limit in anything found, only third-party pages saying so. X's help
+      page recommends two but allows more, so that's advice, not a limit. https://help.x.com/en/using-x/how-to-use-hashtags
+36. **Eric's call on Instagram:** press reports that Instagram announced a limit of 5 in December 2025, quoting its creators account. No primary
+    page could be opened to confirm it, and Meta's API reference, which is what Postiz posts through, still says 30. Under "don't guess" it
+    stays 30. If Eric wants 5, it's that one field; scheduled clips are held either way.
+37. **A cap change holds clips with posts:** `CaptionTemplates.setHashtagCap` writes the old text as that platform's own caption, journaled,
+    with an open editor session rebased past it and an undo refused if a clip scheduled later would move. Raising or clearing a cap holds them too.
+38. **Install:** the default caps arrive with limits revision 3, which never replaces a cap Eric set. Schema 7 holds scheduled clips against them
+    with the rules in decision 25. On a copy of the newest backup: 63 videos, 27 versions, 7 posts, unchanged scores, titles and states, doctor 0
+    errors, and 1 clip held (it has 4 tags, so Threads would have cut it), its Threads caption now its own.
+39. **Group order:** move arrows in Settings, journaled (`HashtagGroups.move`). A move reaches no caption, because a clip keeps its stored order
+    until its groups are toggled, and then they follow Eric's order. A group's tags keep the order typed; a test covers it.

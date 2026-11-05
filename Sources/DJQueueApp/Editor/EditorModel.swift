@@ -893,6 +893,12 @@ final class EditorModel: ObservableObject {
     return templates.first { $0.id == id }
   }
 
+  /// What each platform's hashtag cap does to this clip's caption.
+  var capNotes: [Captions.CapNote] {
+    guard let v = video else { return [] }
+    return Captions.capNotes(postingPlatforms, version: resolved, video: v, sessionName: sessionName, sets: sets, templates: templates, settings: settings)
+  }
+
   /// What the part chips read for this clip.
   var partValues: CaptionParts.Values? {
     video.map { CaptionParts.Values(version: resolved, video: $0, sessionName: sessionName, link: settings.captionLink) }
