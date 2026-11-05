@@ -277,7 +277,7 @@ struct DSClipCard<Actions: View>: View {
         }
         DSFlowLayout(spacing: 6) { chips() }
       }
-      .frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
+      .frame(minWidth: 176, maxWidth: .infinity, alignment: .leading)
       HStack(spacing: DS.space.md) {
         platformsRow
         dateChip
