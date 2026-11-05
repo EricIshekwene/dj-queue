@@ -58,3 +58,7 @@ cap and #13's scope; the rest of R8 stands, the double-post guards above all.
 43. **Any "published", "posted", "live" or "permalink" in a failure message vetoes the retry.** Even "could not be posted". It's the likeliest wording of a failure after a live post, and a false veto costs one Fixed where a false retry costs a double post.
 44. **`reportProblem` ends the promise.** A report by hand on a waiting failure is a new failure, and it would otherwise read as retrying with nothing to fire it. `errored` records its promise after reporting.
 45. **Removing a day takes that day's automatic attempt with it, and ends a waiting one.** Same call as #24: Eric took it out. An attempt from Fixed stays, as `clearSlot` always kept extras: that one's Eric's own decision to send it.
+
+## `djq posts-per-day`
+
+**Posts per day gets a djq command.** It was only in Settings, so an agent could not set it without writing SQLite, which the rules forbid. `djq posts-per-day [1-5] [--dry-run]` saves through `BulkActions.record(settings: true)` like the other settings commands, so it is undoable and signals the app.
