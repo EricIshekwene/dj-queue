@@ -407,7 +407,7 @@ public final class Engine: @unchecked Sendable {
       failed += 1
     }
     for var p in try store.posts(where: "state='failed' AND error_type='too_long' AND resolution IS NULL") {
-      guard let (_, edit, issues) = try info(p.videoId), active.contains(p.platform) else { continue }
+      guard let (v, edit, issues) = try info(p.videoId), active.contains(p.platform), try !store.isHeld(v) else { continue }
       let newer = try store.posts(where: "video_id=? AND platform=? AND attempt_no>?", [p.videoId, p.platform.rawValue, p.attemptNo])
       guard newer.isEmpty else { continue }
       let snapshot: String? = try store.kv("tooLong.\(p.id)")

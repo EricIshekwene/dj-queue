@@ -127,9 +127,11 @@ struct Placer {
     self.dm = dm
     let positions = Dictionary(uniqueKeysWithValues: try store.planSlots().map { ($0.id, $0.position) })
     let offset = try store.settings().secondPostOffsetMinutes
+    let postedNow = try store.postNowIds()
     for p in try store.posts(where: "kind='regular'") where !excluding.contains(p.id) && Self.isLive(p) {
       let pos = positions[p.planSlotId ?? ""] ?? 0
-      taken.insert(Self.key(p.platform, Sched.planDay(p.scheduledAt, position: pos, offsetMinutes: offset, dm), pos))
+      let day = postedNow.contains(p.id) ? dm.key(p.scheduledAt) : Sched.planDay(p.scheduledAt, position: pos, offsetMinutes: offset, dm)
+      taken.insert(Self.key(p.platform, day, pos))
     }
   }
 
@@ -153,9 +155,19 @@ extension Store {
     try p.planSlotId.flatMap { try planSlot(id: $0)?.position } ?? 0
   }
 
-  /// The plan day of a regular post (`Sched.planDay`).
+  /// The plan day of a regular post (`Sched.planDay`). Post now holds its local day: its time is the moment Eric pressed
+  /// it, not a slot time, so it says nothing about a plan day.
   func planDay(of p: PlatformPost, dm: DayMath) throws -> String {
-    Sched.planDay(p.scheduledAt, position: try position(of: p), offsetMinutes: try settings().secondPostOffsetMinutes, dm)
+    if try postNowIds().contains(p.id) { return dm.key(p.scheduledAt) }
+    return Sched.planDay(p.scheduledAt, position: try position(of: p), offsetMinutes: try settings().secondPostOffsetMinutes, dm)
+  }
+
+  /// Regular posts still at the time Post now gave them (a shift or a reset puts a post back on a slot time).
+  func postNowIds() throws -> Set<String> {
+    Set(try db.query("""
+      SELECT DISTINCT h.post_id AS id FROM post_history h JOIN platform_posts p ON p.id=h.post_id
+      WHERE h.note='post now' AND p.kind='regular' AND p.state IN ('due','overdue','posted')
+      """).compactMap { $0.string("id") })
   }
 }
 
