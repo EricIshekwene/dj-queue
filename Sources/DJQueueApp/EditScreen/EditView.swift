@@ -35,11 +35,12 @@ struct EditView: View {
         PipelineViewModeSwitcher(mode: model.viewModeBinding(.edit))
       } chips: {
         if !all.isEmpty {
-          DSStatusChips(options: filters.map { f in
-            DSStatusChipOption(id: f.filter.id, title: f.filter.title, count: f.count, tone: f.filter.kind.isBlock ? .danger : nil,
-                               tooltip: f.filter.help)
-          } + (clean.isEmpty ? [] : [DSStatusChipOption(id: Self.nothingToFixId, title: "Nothing to fix", count: clean.count,
-                                                        tooltip: "Clips waiting for your Send to Queue")]),
+          DSStatusChips(options: (clean.isEmpty ? [] : [DSStatusChipOption(id: Self.nothingToFixId, title: "Nothing to fix", count: clean.count,
+                                                                           tooltip: "Clips waiting for your Send to Queue")])
+            + filters.map { f in
+              DSStatusChipOption(id: f.filter.id, title: f.filter.title, count: f.count, tone: f.filter.kind.isBlock ? .danger : nil,
+                                 tooltip: f.filter.help)
+            },
           selection: prefs.statusBinding(.edit), allCount: scope.count, allTooltip: "Show every clip in Edit")
         }
       } sort: {

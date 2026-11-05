@@ -51,9 +51,10 @@ extension SnapshotShots {
         calendar(m, .day)
         m.loaded = false
       },
-      c.main("edit-nothing-to-fix") { m in  // B16: stands in for a clip with no issues until the send flag lands in Core
+      c.main("edit-nothing-to-fix") { m in  // B16: complete, and waiting for Send to Queue
         m.setViewMode(.wide, for: .edit)
-        if let v = m.editList.first { m.issuesByVideo[v.id] = [] }
+        if !m.editList.contains(where: { (m.issuesByVideo[$0.id] ?? []).isEmpty }), let v = m.editList.first { m.issuesByVideo[v.id] = [] }
+        ListPrefs.shared.setStatus(.edit, EditView.nothingToFixId)
         m.screen = .edit
       },
       c.main("calendar-move-dialog") { m in

@@ -132,7 +132,8 @@ struct QueueClipActions: View {
       DSIconButton("pin", tooltip: Self.pinHelp, size: .sm) { onPin() }
       PipelineMoreMenu(tooltip: Self.moreHelp) { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
     default:
-      StageControl(model: model, video: video)
+      // Icon only: with its label the row outgrows the 880 pt card and the whole row slides off-centre.
+      StageControl(model: model, video: video, compact: true)
       DSIconButton("bolt", tooltip: Self.postTodayHelp, size: .sm) { postToday() }
       DSIconButton("pin", tooltip: Self.pinHelp, size: .sm) { onPin() }
       PipelineMoreMenu(tooltip: Self.moreHelp) { QueueClipMenu(model: model, video: video, ids: ids, onPin: { _ in onPin() }) }
