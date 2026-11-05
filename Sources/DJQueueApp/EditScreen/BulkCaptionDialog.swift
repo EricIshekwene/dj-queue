@@ -14,21 +14,43 @@ struct BulkCaptionDialog: View {
   @State private var previews: [CaptionPreview] = []
   @State private var index = 0
   @State private var job: Task<Void, Never>?
+  /// Save as template: the form takes the dialog's place until it's saved or closed.
+  @State private var form: Form?
+
+  private struct Form: Equatable {
+    var name = ""
+    var template: String
+  }
 
   var body: some View {
     DSDialog("Caption for \(AppModel.pipelineClips(ids.count))", description: "Pick a template, several hashtag groups, or both",
              icon: "text.alignleft", width: 560, onClose: close) {
-      VStack(alignment: .leading, spacing: DS.space.md) {
-        templatePicker
-        groups
-        preview
-        notes
+      if form == nil {
+        VStack(alignment: .leading, spacing: DS.space.md) {
+          templatePicker
+          groups
+          preview
+          notes
+        }
+      } else {
+        formFields
       }
     } footer: {
-      DSButton("Cancel", variant: .ghost, shortcut: "esc", action: close)
-        .keyboardShortcut(.cancelAction)
-      DSButton(verb, variant: .primary, disabledReason: disabledReason, tooltip: "You can undo this", shortcut: "↩", action: apply)
-        .keyboardShortcut(.defaultAction)
+      if form == nil {
+        DSButton("Save as template", icon: "plus", variant: .ghost, tooltip: "Keep this template and these hashtags to use again", action: openForm)
+          .background(ScriptAnchor("Save as template"))
+        Spacer(minLength: 0)
+        DSButton("Cancel", variant: .ghost, shortcut: "esc", action: close)
+          .keyboardShortcut(.cancelAction)
+        DSButton(verb, variant: .primary, disabledReason: disabledReason, tooltip: "You can undo this", shortcut: "↩", action: apply)
+          .keyboardShortcut(.defaultAction)
+      } else {
+        DSButton("Back", variant: .ghost, shortcut: "esc") { form = nil }
+          .keyboardShortcut(.cancelAction)
+        DSButton("Save template", variant: .primary, disabledReason: formProblem, shortcut: "↩", action: saveForm)
+          .keyboardShortcut(.defaultAction)
+          .background(ScriptAnchor("Save template"))
+      }
     }
     .dsFloatingSurface(radius: DS.radius.lg, elevation: DS.elevation.e3)
     .onAppear(perform: load)
@@ -65,16 +87,60 @@ struct BulkCaptionDialog: View {
       .background(ScriptAnchor(title))
   }
 
+  // MARK: Save as template
+
+  /// The picked template (or text and hashtags, when none is picked) with the picked groups' tags typed in.
+  private func openForm() {
+    let id: String?
+    switch change.template {
+    case .keep: id = nil
+    case .useDefault: id = model.settings.defaults.captionTemplateId
+    case .use(let t): id = t
+    }
+    let base = model.captionTemplates.first { $0.id == id }?.template ?? "{text}\n\n{hashtags}"
+    let tags = change.addGroups.flatMap { g in model.hashtagSets.first { $0.id == g }?.tags ?? [] }
+    form = Form(template: CaptionTemplates.template(from: base, carrying: tags))
+  }
+
+  private var formFields: some View {
+    VStack(alignment: .leading, spacing: DS.space.sm) {
+      DSTextField("Name", placeholder: "e.g. Mashup", text: Binding(get: { form?.name ?? "" }, set: { form?.name = $0 }), size: .sm, autoFocus: true)
+      DSTextArea("Template", placeholder: "{text}\n\n{hashtags}", text: Binding(get: { form?.template ?? "" }, set: { form?.template = $0 }),
+                 hint: CaptionTemplates.hashtagHint, minHeight: 104, maxHeight: 200)
+    }
+  }
+
+  private var formProblem: String? {
+    guard let form else { return nil }
+    return CaptionTemplates.problem(name: form.name, template: form.template, existing: model.captionTemplates)?.message
+  }
+
+  /// The new template is picked, and its typed tags stand in for the groups that were picked.
+  private func saveForm() {
+    guard let form, formProblem == nil else { return }
+    let t = CaptionTemplates.make(name: form.name, template: form.template, existing: model.captionTemplates)
+    do {
+      let saved = try CaptionTemplates.create(t, store: model.store, bulk: model.bulk)
+      model.groupEdited(saved.result, message: "“\(t.name)” saved")
+      model.refreshNow()
+      change = CaptionChange(template: .use(t.id), removeGroups: change.removeGroups)
+      self.form = nil
+    } catch {
+      model.show(error.localizedDescription, error: true)
+    }
+  }
+
   // MARK: Groups
 
   private var groups: some View {
     VStack(alignment: .leading, spacing: DS.space.xs) {
       Text("Hashtag groups").font(DS.type.captionMedium).foregroundStyle(DS.color.textSecondary)
-      if model.hashtagSets.isEmpty {
+      let groups = HashtagGroups.pickable(model.hashtagSets)
+      if groups.isEmpty {
         Text("No hashtag groups yet. Make one in Settings or in the editor.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
       } else {
         DSFlowLayout(spacing: 5) {
-          ForEach(model.hashtagSets) { chip($0) }
+          ForEach(groups) { chip($0) }
         }
         Text("Tags go in the order you click. Each clip keeps its other groups.").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
       }
@@ -84,10 +150,10 @@ struct BulkCaptionDialog: View {
   private func chip(_ s: HashtagSet) -> some View {
     let n = counts[s.id] ?? 0
     let mark = change.mark(s.id, count: n, total: total)
-    return DSChip(s.name, isSelected: mark == .all, isMixed: mark == .some, size: .sm, tooltip: help(s, mark, n)) {
+    return DSChip(HashtagGroups.label(s), isSelected: mark == .all, isMixed: mark == .some, size: .sm, tooltip: help(s, mark, n)) {
       change.toggle(s.id, count: n, total: total)
     }
-    .background(ScriptAnchor(s.name))
+    .background(ScriptAnchor(HashtagGroups.label(s)))
   }
 
   private func help(_ s: HashtagSet, _ mark: CaptionChange.GroupMark, _ n: Int) -> String {

@@ -141,6 +141,21 @@ import Testing
     #expect(p.first?.tooLong.contains(.x) == true)
   }
 
+  @Test func aSavedTemplateCarriesItsTags() throws {
+    let (f, b) = try setUp()
+    let tags = mash.tags
+    #expect(CaptionTemplates.template(from: "{text}\n\n{hashtags}", carrying: []) == "{text}\n\n{hashtags}")
+    #expect(CaptionTemplates.template(from: "{text}\n\n{hashtags}", carrying: tags) == "{text}\n\n#djtransition #mashup #mix {hashtags}")
+    #expect(CaptionTemplates.template(from: "{text}", carrying: ["#a"]) == "{text}\n\n#a {hashtags}")
+    let t = CaptionTemplate(id: "carry", name: "Carry", template: CaptionTemplates.template(from: "{text}\n\n{hashtags}", carrying: tags), sort: 10)
+    try f.store.save(t)
+    try b.setCaption(["clip-0"], CaptionChange(template: .use("carry")))
+    #expect(try caption(f, "clip-0") == "Boots x Rider\n\n#djtransition #mashup #mix")
+    // A group added later shows after them, and a tag it shares appears once.
+    try b.setCaption(["clip-0"], CaptionChange(addGroups: ["lovd", "mash"]))
+    #expect(try caption(f, "clip-0") == "Boots x Rider\n\n#djtransition #mashup #mix #djlovd")
+  }
+
   @Test func unknownTemplateOrGroupIsRefused() throws {
     let (_, b) = try setUp()
     #expect(throws: EngineError.self) { try b.setCaption(["clip-0"], CaptionChange(template: .use("nope"))) }

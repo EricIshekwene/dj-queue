@@ -66,6 +66,17 @@ public struct CaptionChange: Sendable, Hashable {
   }
 }
 
+public extension CaptionTemplates {
+  /// A template that carries `tags`, for "Save as template" in the Caption dialog: `base` with the tags typed in where the clip's
+  /// hashtags go. `{hashtags}` stays after them, so a group added to a clip later still shows.
+  static func template(from base: String, carrying tags: [String]) -> String {
+    let list = tags.joined(separator: " ")
+    guard !list.isEmpty else { return base }
+    if base.contains("{hashtags}") { return base.replacingOccurrences(of: "{hashtags}", with: list + " {hashtags}") }
+    return base.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + list + " {hashtags}"
+  }
+}
+
 /// What a caption pass would do to one clip.
 public struct CaptionPreview: Sendable, Identifiable, Equatable {
   public var id: String

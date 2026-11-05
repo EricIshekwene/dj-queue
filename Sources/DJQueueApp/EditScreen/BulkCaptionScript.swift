@@ -121,6 +121,40 @@ enum BulkCaptionScript {
     await wait(1000)
     await shot("undone")
     check("one Undo takes it all back", caption(ids[0]) == before && undo > 0)
+
+    // Way 1: save the picks as a template, then use it. The Save button clicks through the real form.
+    app.selectAll(.edit, ids: ids)  // Apply cleared the selection, as it should.
+    await wait(800)
+    check("the dialog opens again", await click("Caption") && app.captionDialogIds?.count == 2)
+    await wait(800)
+    for name in ["DJ lovd", "General mashup", "Afrobeats"] { _ = await click(name) }
+    check("Save as template opens the form", await click("Save as template"))
+    await wait(600)
+    await shot("save-as-template")
+    func field(_ v: NSView) -> NSTextField? {
+      if let f = v as? NSTextField, f.placeholderString == "e.g. Mashup" { return f }
+      for c in v.subviews { if let hit = field(c) { return hit } }
+      return nil
+    }
+    if let f = field(host) {
+      window.makeFirstResponder(f)
+      await wait(150)
+      if let e = f.currentEditor() as? NSTextView { for ch in "My mashup" { e.insertText(String(ch), replacementRange: e.selectedRange()) } }
+      await wait(300)
+    }
+    check("Save template saves it", await click("Save template"))
+    await wait(800)
+    await shot("template-saved")
+    let made = (try? store.captionTemplates())?.first { $0.name == "My mashup" }
+    check("the template carries the tags", made?.template == "{text}\n\n\(want) {hashtags}")
+    check("still nothing written to the clips", caption(ids[0]) == before)
+    await key("\r", code: 36)
+    await wait(1000)
+    await shot("template-applied")
+    for id in ids {
+      let title = (try? store.video(id: id)?.displayName) ?? ""
+      check("\(title): the saved template on its own gives the same caption", caption(id) == "\(title)\n\n\(want)")
+    }
     try? log.joined(separator: "\n").write(to: out.appendingPathComponent("bulk-checks-\(appearance).txt"), atomically: true, encoding: .utf8)
     return failed == 0 ? 0 : 1
   }
