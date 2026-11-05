@@ -365,6 +365,8 @@ public final class PostizService: @unchecked Sendable {
         guard Self.settingsAllow(p.platform, settings), case .postiz(let integration, let provider) = router.route(p.platform),
               try store.livePostizJob(postId: p.id) == nil, try store.finalPostizJob(postId: p.id) == nil,
               try !handedToToday(p) else { continue }
+        // Nothing of a held clip goes out, whatever left a post behind.
+        if let v = try store.video(id: p.videoId), try store.isHeld(v) { continue }
         let lineage = PostizJob.lineage(p)
         if let pub = try store.publishedPostizJob(lineage: lineage) {
           try reconcilePublished(p, from: pub)

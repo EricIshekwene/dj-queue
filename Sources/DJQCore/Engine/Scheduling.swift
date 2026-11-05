@@ -15,6 +15,12 @@ enum Sched {
     dm.at(date, minutes: settings.slot(for: platform) + position * settings.secondPostOffsetMinutes)
   }
 
+  /// The plan day of a regular post at `at`: the day its slot time counts from. It isn't always the local day: with 3 posts
+  /// a day and a 180-minute offset, position 2 of Thursday's slot posts at 00:00 Friday on Instagram.
+  static func planDay(_ at: Date, position: Int, offsetMinutes: Int, _ dm: DayMath) -> String {
+    dm.key(at.addingTimeInterval(-Double(position * offsetMinutes) * 60))
+  }
+
   /// Same local clock time `days` calendar days later (DST-safe).
   static func shift(_ d: Date, days: Int, _ dm: DayMath) -> Date {
     dm.calendar.date(byAdding: .day, value: days, to: d) ?? d.addingTimeInterval(Double(days) * 86400)
@@ -109,7 +115,9 @@ extension Store {
 }
 
 
-/// Occupancy of live regular posts per (platform, local day, position) — the "never double-post" invariant.
+/// Occupancy of live regular posts per (platform, plan day, position) — the "never double-post" invariant. Keyed by plan
+/// day (`Sched.planDay`), never the local posting day: `place` reserves plan days, and a post past midnight must count
+/// for the day it was placed on, or a later Placer sees the wrong day free.
 /// Live = not terminal, or posted. Retries/reposts are staggered extras and don't occupy a position.
 struct Placer {
   let dm: DayMath
@@ -118,8 +126,10 @@ struct Placer {
   init(store: Store, dm: DayMath, excluding: Set<String> = []) throws {
     self.dm = dm
     let positions = Dictionary(uniqueKeysWithValues: try store.planSlots().map { ($0.id, $0.position) })
+    let offset = try store.settings().secondPostOffsetMinutes
     for p in try store.posts(where: "kind='regular'") where !excluding.contains(p.id) && Self.isLive(p) {
-      taken.insert(Self.key(p.platform, dm.key(p.scheduledAt), positions[p.planSlotId ?? ""] ?? 0))
+      let pos = positions[p.planSlotId ?? ""] ?? 0
+      taken.insert(Self.key(p.platform, Sched.planDay(p.scheduledAt, position: pos, offsetMinutes: offset, dm), pos))
     }
   }
 
@@ -141,6 +151,11 @@ extension Store {
   /// The plan position of a post (its slot's position; 0 when it has no slot).
   func position(of p: PlatformPost) throws -> Int {
     try p.planSlotId.flatMap { try planSlot(id: $0)?.position } ?? 0
+  }
+
+  /// The plan day of a regular post (`Sched.planDay`).
+  func planDay(of p: PlatformPost, dm: DayMath) throws -> String {
+    Sched.planDay(p.scheduledAt, position: try position(of: p), offsetMinutes: try settings().secondPostOffsetMinutes, dm)
   }
 }
 
@@ -166,7 +181,7 @@ extension Store {
     for d in reserve { _ = placer.place(first.platform, position: pos, from: d) }
     var moved = 0
     for var o in posts.sorted(by: { $0.scheduledAt < $1.scheduledAt }) {
-      let from = dm.key(o.scheduledAt)
+      let from = try planDay(of: o, dm: dm)
       let to = placer.place(o.platform, position: pos, from: dm.addDays(from, days))
       let delta = dm.days(from: from, to: to)
       guard delta != 0 else { continue }

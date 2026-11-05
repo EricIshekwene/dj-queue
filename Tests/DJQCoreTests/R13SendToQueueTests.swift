@@ -318,7 +318,7 @@ import Testing
 
   // MARK: Migration
 
-  /// A schema 6 database: the column gone, the version back.
+  /// A schema 6 database: the column gone, the version back. Only a `ready` clip with a send on record counts as sent.
   func downgrade(_ file: String) throws {
     let db = try SQLite(path: file)
     try db.exec("ALTER TABLE videos DROP COLUMN sent_to_queue; PRAGMA user_version = 6;")
@@ -340,6 +340,7 @@ import Testing
     try f.store.db.backup(to: file)
     do {
       let db = try SQLite(path: file)
+      try db.run("INSERT INTO events(at,kind,message,video_id) VALUES(1,'queue','Sent to Queue','clip-0')")
       for (id, state) in [("clip-0", "ready"), ("clip-1", "planned"), ("clip-2", "posting"), ("clip-3", "posted"), ("clip-4", "partial")] {
         try db.run("UPDATE videos SET state=? WHERE id=?", [state, id])
       }
@@ -374,8 +375,12 @@ import Testing
     #expect(try rows(s.db) == before)
     #expect(!before.isEmpty)
     for v in try s.videos(where: "type='short-form'") {
-      let past = [.planned, .posting, .posted, .partial].contains(v.state) || (v.state == .ready && v.score != nil)
-      #expect(v.sentToQueue == past, "\(v.id)")
+      if v.state == .ready {  // only with proof of a send
+        let queue = try s.events(limit: 500, videoId: v.id).filter { $0.kind == "queue" }  // newest first
+        #expect(v.sentToQueue == (queue.first?.message == "Sent to Queue" && v.score != nil), "\(v.id)")
+      } else {
+        #expect(v.sentToQueue == [.planned, .posting, .posted, .partial].contains(v.state), "\(v.id)")
+      }
     }
   }
 }

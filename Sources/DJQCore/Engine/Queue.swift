@@ -72,7 +72,7 @@ public final class Queue: @unchecked Sendable {
       through = d
       d = dm.addDays(d, 1)
     }
-    let ready = try ordered().count
+    let ready = try Planner(store: store).schedulable(settings).count  // not clips that will never get a day
     // Missing-file clips are in Edit but can't become posting days until relinked, so runway leaves them out.
     let edit = try needsEdit().filter { !$0.missing }.count
     return Runway(approvedDays: approved, readyDays: ready / perDay, totalDays: approved + (ready + edit) / perDay,

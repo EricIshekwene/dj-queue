@@ -38,6 +38,7 @@ public final class Doctor: @unchecked Sendable {
     check("files.duration", durations)
     check("plan.notReady", notReadyButPlanned)
     check("plan.gaps", planGaps)
+    check("plan.nowhereToPost", nowhereToPost)
     check("runway", runway)
     check("renders.missing", rendersMissing)
     check("renders.failed", renderFailures)
@@ -202,6 +203,17 @@ public final class Doctor: @unchecked Sendable {
     return [.init(id: "plan.gaps", severity: .warning, title: "Open days with clips waiting in the Queue",
                   detail: "\(waiting.count) clip\(waiting.count == 1 ? "" : "s") waiting and days still open: the scheduler should have filled them.",
                   where_: w, fix: "Check the engine is running (`djq status`), then `djq schedule --dry-run` says what it would do and why not; `djq schedule` runs it once.")]
+  }
+
+  /// A Queue clip with history or a skip on every platform never gets a day. Not a fault, but nothing else says so.
+  func nowhereToPost() throws -> [DoctorFinding] {
+    let settings = try store.settings()
+    let waiting = Set(try Planner(store: store).schedulable(settings).map(\.id))
+    let stuck = try Queue(store: store).ordered().filter { !waiting.contains($0.id) }
+    guard !stuck.isEmpty else { return [] }
+    return [.init(id: "plan.nowhereToPost", severity: .info, title: "\(stuck.count) Queue clip\(stuck.count == 1 ? "" : "s") with nowhere left to post",
+                  detail: "Every platform is done or skipped for these, so they never get a day. They aren't counted as waiting.",
+                  where_: stuck.map { "\($0.id) · \($0.tag)" }, fix: "Nothing to do. To post one again use `djq repost <video-id> <platform>`; `djq stage <video-id> back` takes it out of the Queue.")]
   }
 
   func runway() throws -> [DoctorFinding] {

@@ -92,6 +92,7 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | `files.duration` | File length ≠ `videos.json`. Re-export that clip with `export_clips.py --only N`, `djq intake`; the engine re-renders automatically when the edit/hash changes. |
 | `plan.notReady` | A scheduled clip lost its crop/text/caption, its file, or was excluded (it stays on its day and shows the problem). Eric finishes it in the app, or takes it off the calendar: `djq stage <video> back` holds it in Edit, and the next waiting clip fills the day. |
 | `plan.gaps` | Open days with clips waiting in the Queue: the scheduler should have filled them, so it looks stuck. Check the engine (`djq status`), then `djq schedule --dry-run` says what it would do and why not; `djq schedule` runs it once. The avoid-overlap setting can also leave a day open. |
+| `plan.nowhereToPost` | Info: a Queue clip has history or a skip on every platform, so it never gets a day and isn't counted as waiting. Nothing to do unless Eric wants it out again: `djq repost <video> <platform>`, or `djq stage <video> back`. |
 | `runway.queue` | Queue running low: few days scheduled and the Queue is about out. Nothing to fix in data: Eric sends clips to the Queue from Edit. Never send them on Eric's behalf. |
 | `runway.total` | Eric needs to score videos (`djq queue` shows "in Score" / "in Edit"), finish edits, or record/export a new set. Nothing to fix in data. |
 | `renders.missing` | Normal if the Mac was asleep. `djq tick` (renders one per tick, due posts first) or `djq render <video> --version N [--platform P]`. |
