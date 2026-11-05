@@ -203,3 +203,24 @@ Eric: "allow me to create hashtags groups from within the editor".
 4. **Settings shows every stored row, blank ones included,** so they can be fixed or deleted. The same goes for `djq hashtag-groups`.
 5. **New clip defaults filters only what it shows,** so a hidden group already in the default list isn't dropped by an unrelated edit.
 6. **The Edit screen's bulk menu follows the same rule,** so it can't offer an empty item. Not in the brief, same bug.
+
+### Set as default (editor)
+
+7. **`CaptionTemplates.setDefault` is one journaled batch ("default-caption-template").** Versions with no chosen template and no written
+   caption, on clips with scheduled or posted posts (`clipsWithPosts`), are pinned to the old default; every other clip follows the new
+   one. Failed and skipped posts don't count, the same as the freeze for groups.
+8. **Pinning alone isn't byte-identical when a platform has its own default template.** A pin wins over that platform's template, so
+   `CaptionHold.keep` writes that platform's old caption as its own and then proves every platform and version unchanged. If it can't, the
+   whole batch rolls back. The per-platform defaults themselves aren't touched. `CaptionHold` is the one guarantee behind all the caption
+   changes in this release.
+9. **An editor session never claims the pin:** the action is in `CaptionTemplates.batchActions`, which `rebasedOntoGroupChanges` reads, the
+   same fix as decision 24.
+10. **Undo is refused when a clip scheduled after the change would move** (like decision 27); `--force` still overrides. Undo restores the
+    settings row and each pinned version exactly.
+11. **Editor label follows at once, Undo included:** `reloadGroups` now also re-reads settings and templates. So a change made in Settings
+    over the editor also reaches it, which it didn't before.
+12. **No `djq` change:** `djq defaults` only reads and no command sets the default caption template, so this is Core only.
+13. **Known, not changed:** Settings → New clip defaults still saves the default template without pinning, as it always has, so changing it
+    there can still move a scheduled caption. Out of scope here and worth its own fix.
+14. **A template's text is not part of a clip's render:** the real `Renderer` hash covers what's in the file, so a pin starts no new render
+    (`renderHashIgnoresTheCaption`). The tests' `FakeRenderer` hashes the whole version, so they reuse one render.

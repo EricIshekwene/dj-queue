@@ -12,7 +12,8 @@ import SwiftUI
 ///   `editor-live: window <number>` so it can be captured with `screencapture -l <number>`.
 /// - `DJQ_EDITOR_GROUP_SCRIPT=<dir>` makes a hashtag group in the real editor (`EditorGroupScript`);
 ///   `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption field (`EditorCaptionScript`);
-///   `DJQ_SETTINGS_GROUP_SCRIPT=<dir>` drives the real Settings group rows (`SettingsGroupScript`).
+///   `DJQ_SETTINGS_GROUP_SCRIPT=<dir>` drives the real Settings group rows (`SettingsGroupScript`);
+///   `DJQ_EDITOR_TEMPLATE_SCRIPT=<dir>` drives the template actions and part chips (`EditorTemplateScript`).
 @MainActor
 enum EditorSnapshot {
   static func run(outputDir: String) async -> Int32 {
@@ -50,6 +51,9 @@ enum EditorSnapshot {
       if let dir = env["DJQ_EDITOR_GROUP_SCRIPT"] {
         return await EditorGroupScript.run(store: store, video: pick.id, ids: ids, dir: dir,
                                            appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
+      }
+      if let dir = env["DJQ_EDITOR_TEMPLATE_SCRIPT"] {
+        return await EditorTemplateScript.run(store: store, video: pick.id, ids: ids, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
       }
       if let dir = env["DJQ_SETTINGS_GROUP_SCRIPT"] {
         return await SettingsGroupScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
@@ -226,6 +230,9 @@ enum EditorSnapshot {
         try? store.save(HashtagSet(id: "b-untitled", name: "  ", category: "My groups", tags: ["#amapiano", "#piano"], sort: 1))
         try? store.save(HashtagSet(id: "b-named", name: "Piano · SA", category: "My groups", tags: ["#amapianosa"], sort: 2))
         model.load(pick.id); model.setHashtagSets(["b-untitled"]); inCaption()
+      }
+      shot("tpl-01-set-as-default") {
+        reset(); clearGroups(); model.setCaptionTemplate("short"); inCaption()
       }
       shot("g-01-empty") { reset(); clearGroups(); inCaption() }
       shot("g-02-form-open") { reset(); model.openGroupForm(); inCaption() }

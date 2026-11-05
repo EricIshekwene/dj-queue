@@ -519,8 +519,9 @@ public final class BulkActions: @unchecked Sendable {
   /// process): their freezes are their own batch, so the entry never claims them and its undo can't un-freeze a clip.
   func rebasedOntoGroupChanges(_ e: OpenEntry) throws -> OpenEntry {
     var out = e
+    let actions = (["hashtag-group-edit", "hashtag-group-delete"] + CaptionTemplates.batchActions).map { "'\($0)'" }.joined(separator: ",")
     for row in try store.db.query("""
-      SELECT id FROM batches WHERE rowid>? AND undone_at IS NULL AND action IN ('hashtag-group-edit','hashtag-group-delete') ORDER BY rowid
+      SELECT id FROM batches WHERE rowid>? AND undone_at IS NULL AND action IN (\(actions)) ORDER BY rowid
       """, [e.startRow]) {
       if let id = row.string("id") { out = try rebase(out, onto: id) }
     }
@@ -681,6 +682,14 @@ public final class BulkActions: @unchecked Sendable {
           let cur = try settingsSnapshot()
           if !force, cur != aset {
             throw EngineError("Can't undo the settings part of \(rec.action): settings changed after it. Use force to overwrite.")
+          }
+          if !force, CaptionTemplates.batchActions.contains(rec.action) {
+            let now = try CaptionHold.Sources(store)
+            var then = now
+            then.settings = bset.json.map(Store.decodeSettings) ?? Settings()
+            if let why = try CaptionHold.undoConflict(from: now, to: then, restoring: Set(before.clips.map(\.id)), store: store) {
+              throw EngineError("Can't undo \(rec.action): \(why). Use force to overwrite.")
+            }
           }
           if cur != bset {
             try restoreSettings(bset)

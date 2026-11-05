@@ -61,12 +61,20 @@ struct EditorCaptionSection: View {
                        isCustom: !r.isDefault("captionTemplateId"),
                        inheritedFrom: model.source(of: "captionTemplateId"), resetHelp: "Back to the default template",
                        onReset: model.ownsField(["captionTemplateId"]) ? { model.setCaptionTemplate(nil) } : nil) {
-      DSSelect(selection: Binding(get: { written ? Self.customValue : (r.captionTemplateId ?? "") },
-                                  set: { id in if id != Self.customValue { model.setCaptionTemplate(id) } }),
-               options: options,
-               hint: written && inherited == nil ? "The caption is your own text. Picking a template rewrites it." : nil,
-               size: .sm,
-               disabledReason: inherited.map { "v\($0)'s written caption is used — edit it below; v\($0) can go back to a template" })
+      VStack(alignment: .leading, spacing: DS.space.xxs) {
+        DSSelect(selection: Binding(get: { written ? Self.customValue : (r.captionTemplateId ?? "") },
+                                    set: { id in if id != Self.customValue { model.setCaptionTemplate(id) } }),
+                 options: options,
+                 hint: written && inherited == nil ? "The caption is your own text. Picking a template rewrites it." : nil,
+                 size: .sm,
+                 disabledReason: inherited.map { "v\($0)'s written caption is used — edit it below; v\($0) can go back to a template" })
+        if let t = model.defaultCandidate {
+          DSButton("Set as default", variant: .ghost, size: .sm, disabledReason: model.groupsOffReason,
+                   tooltip: "New clips start from “\(t.name)”. Clips with scheduled or posted posts keep their captions") {
+            model.setDefaultTemplate(t.id)
+          }
+        }
+      }
     }
   }
 
