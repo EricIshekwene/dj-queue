@@ -267,6 +267,7 @@ public enum HashtagGroups {
       take(\.caption, i, from: s, base: b)
       take(\.captionTemplateId, i, from: s, base: b)
       take(\.platformCaptions, i, from: s, base: b)
+      take(\.youtubeTitle, i, from: s, base: b)
       if let b {
         take(\.hashtagSetIds, i, from: s, base: b)
         take(\.extraHashtags, i, from: s, base: b)
