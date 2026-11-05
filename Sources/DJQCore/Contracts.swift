@@ -134,7 +134,22 @@ public enum CopyrightResolution: Sendable, Hashable {
 /// Posted by any process after it changes the database, so the app/engine refresh promptly.
 public enum ChangeSignal {
   public static let name = "com.djlovd.queue.changed"
+  /// `DJQ_NO_SIGNAL=1` (tests, snapshots and scripted runs): `post` and `observe` stay inside this process, so a dev run can
+  /// never make the installed DJ Queue reload or tick. The app's and engine's own observers aren't part of those runs.
+  public static var isLocal: Bool { ProcessInfo.processInfo.environment["DJQ_NO_SIGNAL"] == "1" }
+
   public static func post() {
-    DistributedNotificationCenter.default().postNotificationName(.init(name), object: nil, userInfo: nil, deliverImmediately: true)
+    if isLocal {
+      // Never from the main queue: an observer on `.main` makes the poster wait for it, which deadlocks on the main actor.
+      DispatchQueue.global(qos: .userInitiated).async { NotificationCenter.default.post(name: .init(name), object: nil) }
+    } else {
+      DistributedNotificationCenter.default().postNotificationName(.init(name), object: nil, userInfo: nil, deliverImmediately: true)
+    }
+  }
+
+  /// Calls `block` on the main queue after each signal; remove the token from `center`.
+  public static func observe(_ block: @escaping @Sendable () -> Void) -> (center: NotificationCenter, token: NSObjectProtocol) {
+    let center: NotificationCenter = isLocal ? .default : DistributedNotificationCenter.default()
+    return (center, center.addObserver(forName: .init(name), object: nil, queue: .main) { _ in block() })
   }
 }

@@ -189,6 +189,8 @@ extension AppModel {
   /// session — bulk batch or single action alike (UndoHistory). Again for the one before.
   func undoLast() {
     guard let e = undoHistory.top else { show("Nothing to undo"); return }
+    // ⌘Z over an overlay: edits to the clip open behind it stay in the editor's own history.
+    if editor != nil, openEditorBatches.contains(e.batchId) { show("Close the editor to undo \(e.label.lowercased())"); return }
     undo(batch: e.batchId)
   }
 

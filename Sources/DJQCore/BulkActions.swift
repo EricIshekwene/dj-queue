@@ -502,6 +502,8 @@ public final class BulkActions: @unchecked Sendable {
     public let action: String
     public let ids: [String]
     var before: Snapshot
+    /// The journal's last row when this entry opened: group batches after it are never this entry's own.
+    var startRow = 0
   }
 
   /// Snapshots `ids` now; `commit` later records ONE undoable batch for whatever changed in between (e.g. a whole
@@ -509,7 +511,20 @@ public final class BulkActions: @unchecked Sendable {
   public func begin(_ action: String, ids raw: [String]) throws -> OpenEntry {
     var seen = Set<String>()
     let ids = try raw.filter { !$0.isEmpty && seen.insert($0).inserted }.filter { try store.video(id: $0) != nil }
-    return OpenEntry(action: action, ids: ids, before: Snapshot(clips: try ids.map { try clipSnapshot($0, renders: false) }, plan: nil))
+    return OpenEntry(action: action, ids: ids, before: Snapshot(clips: try ids.map { try clipSnapshot($0, renders: false) }, plan: nil),
+                     startRow: try store.db.one("SELECT COALESCE(MAX(rowid),0) AS n FROM batches")?.int("n") ?? 0)
+  }
+
+  /// `e` moved past every hashtag group edit or delete since it opened, whoever made it (the app, or `djq` from another
+  /// process): their freezes are their own batch, so the entry never claims them and its undo can't un-freeze a clip.
+  func rebasedOntoGroupChanges(_ e: OpenEntry) throws -> OpenEntry {
+    var out = e
+    for row in try store.db.query("""
+      SELECT id FROM batches WHERE rowid>? AND undone_at IS NULL AND action IN ('hashtag-group-edit','hashtag-group-delete') ORDER BY rowid
+      """, [e.startRow]) {
+      if let id = row.string("id") { out = try rebase(out, onto: id) }
+    }
+    return out
   }
 
   /// Records the batch for an `OpenEntry` (nil `batchId` when nothing changed). Only the clips that changed are
@@ -518,6 +533,7 @@ public final class BulkActions: @unchecked Sendable {
   public func commit(_ e: OpenEntry) throws -> BulkResult {
     var result = BulkResult(batchId: nil, action: e.action, dryRun: false, videoIds: e.ids, changed: [], skipped: [:],
                             remainingIssues: [:], summary: "")
+    let e = try rebasedOntoGroupChanges(e)
     try store.db.transaction {
       let now = try e.before.clips.map { try clipSnapshot($0.id, renders: false) }
       // Only the fields a long interaction owns (kind, title, edit, versions) are journaled here. Score, excluded and
@@ -676,6 +692,9 @@ public final class BulkActions: @unchecked Sendable {
           let cur = try store.hashtagSets()
           if !force, cur != aset {
             throw EngineError("Can't undo the hashtag group part of \(rec.action): hashtag groups changed after it. Use force to overwrite.")
+          }
+          if !force, let why = try HashtagGroups.undoConflict(from: cur, to: bset, restoring: Set(before.clips.map(\.id)), store: store) {
+            throw EngineError("Can't undo the hashtag group part of \(rec.action): \(why). Use force to overwrite.")
           }
           if cur != bset {
             try restoreHashtagSets(bset)

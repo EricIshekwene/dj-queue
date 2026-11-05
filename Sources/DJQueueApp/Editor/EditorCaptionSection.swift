@@ -1,3 +1,4 @@
+import AppKit
 import DJQCore
 import SwiftUI
 
@@ -11,6 +12,8 @@ struct EditorCaptionSection: View {
   @State private var extra = ""
   @State private var extraTask: Task<Void, Never>?
   @State private var showOwn = false
+  /// Where the keyboard was when the group form opened; Cancel gives it back.
+  @State private var focusMemo = EditorFocusMemo()
 
   var body: some View {
     let r = model.resolved
@@ -164,21 +167,14 @@ struct EditorCaptionSection: View {
 
   private func hashtags(_ r: ResolvedVersion) -> some View {
     VStack(alignment: .leading, spacing: DS.space.md) {
-      EditorField(label: "Hashtag groups", help: "Your own groups from Settings → Captions & titles",
+      EditorField(label: "Hashtag groups", help: "Your own groups, shared by every clip. Right-click one to edit or delete it",
                   isCustom: !r.isDefault("hashtagSetIds"), inheritedFrom: model.source(of: "hashtagSetIds"),
                   resetHelp: "Back to the default groups (New clip defaults)",
                   onReset: model.ownsField(["hashtagSetIds"]) ? { model.setHashtagSets(model.fallback(\.hashtagSetIds, \.hashtagSetIds)) } : nil) {
-        if model.sets.isEmpty {
-          HStack(spacing: DS.space.xs) {
+        VStack(alignment: .leading, spacing: DS.space.xs) {
+          if model.sets.isEmpty {
             Text("No hashtag groups yet").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
-            Spacer(minLength: 0)
-            DSButton("Create groups", icon: "plus", variant: .ghost, size: .sm,
-                     tooltip: "Open Settings → Captions & titles to make your own hashtag groups") {
-              WindowManager.shared.showSettings(section: .captions)
-            }
-          }
-        } else {
-          VStack(alignment: .leading, spacing: DS.space.xs) {
+          } else {
             ForEach(categories, id: \.self) { cat in
               VStack(alignment: .leading, spacing: 4) {
                 if categories.count > 1 { Text(cat).font(DS.type.micro).foregroundStyle(DS.color.textTertiary) }
@@ -188,7 +184,14 @@ struct EditorCaptionSection: View {
               }
             }
           }
+          if let form = model.groupForm {
+            EditorGroupFormView(model: model, form: form, focusMemo: focusMemo).id(form.id)
+              .id(EditorInspector.groupFormAnchor)
+          } else {
+            groupActions
+          }
         }
+        .background(EditorFocusMemoAnchor(memo: focusMemo))
       }
       EditorField(label: "Extra hashtags", help: "Added after the groups, separated by spaces",
                   isCustom: !r.isDefault("extraHashtags"), inheritedFrom: model.source(of: "extraHashtags"),
@@ -201,16 +204,37 @@ struct EditorCaptionSection: View {
     }
   }
 
+  /// New group is the main path; Settings stays one click away for managing them all.
+  private var groupActions: some View {
+    HStack(spacing: DS.space.xxs) {
+      DSButton("New group", icon: "plus", variant: .ghost, size: .sm, disabledReason: model.groupsOffReason,
+               tooltip: "Make a group and turn it on for this clip") {
+        focusMemo.remember()
+        dsWithAnimation { model.openGroupForm() }
+      }
+      DSButton("Manage in Settings", variant: .ghost, size: .sm, tooltip: "Open Settings → Captions & titles") {
+        WindowManager.shared.showSettings(section: .captions)
+      }
+    }
+  }
+
   private func groupChip(_ s: HashtagSet, _ r: ResolvedVersion) -> some View {
     let on = r.hashtagSetIds.contains(s.id)
-    return DSChip(s.name, isSelected: on, size: .sm) {
-      var ids = model.sets.map(\.id).filter { r.hashtagSetIds.contains($0) }
-      if on { ids.removeAll { $0 == s.id } } else { ids.append(s.id) }
-      model.setHashtagSets(ids)
-    }
-    .dsTooltip(s.tags.isEmpty ? "This group has no hashtags yet — add them in Settings → Captions & titles"
-               : on ? "Take \(s.tags.joined(separator: " ")) out of the caption"
-               : "Add \(s.tags.joined(separator: " ")) to the caption")
+    return DSChip(s.name, isSelected: on, size: .sm) { model.setGroup(s.id, on: !on) }
+      .dsTooltip(s.tags.isEmpty ? "This group has no hashtags yet — right-click it to add some"
+                 : on ? "Take \(s.tags.joined(separator: " ")) out of the caption"
+                 : "Add \(s.tags.joined(separator: " ")) to the caption")
+      .contextMenu {
+        if model.groupsOffReason == nil {
+          Button("Edit group…") {
+            focusMemo.remember()
+            dsWithAnimation { model.openGroupForm(s) }
+          }
+          if let delete = model.onDeleteGroup {
+            Button("Delete group…", role: .destructive) { delete(s) }
+          }
+        }
+      }
   }
 
   private func parse(_ s: String) -> [String] {
@@ -312,6 +336,106 @@ struct EditorCaptionSection: View {
                           limit: model.captionLimit(p), minHeight: 72, maxHeight: 240)
       }
     }
+  }
+}
+
+/// Where the keyboard was before the group form took it. Only a real text view counts: the field editor is shared, so
+/// by the time the form closes it belongs to the form.
+@MainActor
+final class EditorFocusMemo {
+  weak var anchor: NSView?
+  private weak var previous: NSTextView?
+
+  func remember() {
+    let t = anchor?.window?.firstResponder as? NSTextView
+    previous = t?.isFieldEditor == false ? t : nil
+  }
+
+  /// Cancel: straight back to the caption Eric was typing in. After Save nothing keeps the keyboard, so ⌘Z takes the
+  /// group back off and Space plays (a focused text field would take ⌘Z for its own typing).
+  func close(restoring: Bool) {
+    let window = anchor?.window, target = restoring ? previous : nil
+    previous = nil
+    DispatchQueue.main.async { window?.makeFirstResponder(target) }
+  }
+}
+
+/// Fills the groups area: the memo finds the window from it, and the live script finds the buttons.
+final class EditorGroupsAnchorView: NSView {}
+
+struct EditorFocusMemoAnchor: NSViewRepresentable {
+  let memo: EditorFocusMemo
+  func makeNSView(context: Context) -> NSView {
+    let v = EditorGroupsAnchorView()
+    memo.anchor = v
+    return v
+  }
+  func updateNSView(_ v: NSView, context: Context) { memo.anchor = v }
+}
+
+/// New / edit hashtag group, inline under the chips so the caption stays in view. It owns its text while Eric types.
+/// ↩ moves from Name to Hashtags and saves from there; Esc or Cancel discards.
+struct EditorGroupFormView: View {
+  @ObservedObject var model: EditorModel
+  let form: EditorGroupForm
+  let focusMemo: EditorFocusMemo
+  @State private var name: String
+  @State private var tags: String
+  @State private var focusTags = 0
+
+  init(model: EditorModel, form: EditorGroupForm, focusMemo: EditorFocusMemo) {
+    self.model = model
+    self.form = form
+    self.focusMemo = focusMemo
+    _name = State(initialValue: form.name)
+    _tags = State(initialValue: form.tags)
+  }
+
+  private var parsed: [String] { HashtagGroups.parseTags(tags) }
+  private var problem: HashtagGroups.Problem? {
+    HashtagGroups.problem(name: name, tags: parsed, existing: model.sets, editing: form.editing)
+  }
+  private var duplicate: String? {
+    if case .duplicateName = problem { return problem?.message }
+    return nil
+  }
+  private var isNew: Bool { form.editing == nil }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: DS.space.xs) {
+      DSTextField("Name", placeholder: "e.g. Piano", text: $name, error: duplicate, size: .sm, autoFocus: true) {
+        if parsed.isEmpty { focusTags += 1 } else { save() }
+      }
+      DSTextField("Hashtags", placeholder: "#amapiano #piano", text: $tags,
+                  hint: parsed.isEmpty ? "Spaces between them; the # is optional" : "Saves as \(parsed.joined(separator: " "))",
+                  size: .sm, focusToken: focusTags, onSubmit: save)
+      if isNew {
+        EditorHint("Saved for every clip, and on for this one.")
+      } else if let reach = form.impact {
+        EditorHint(reach.editSummary, icon: "info.circle")
+      }
+      HStack(spacing: DS.space.xxs) {
+        Spacer(minLength: 0)
+        DSButton("Cancel", variant: .ghost, size: .sm, tooltip: "Close without saving", shortcut: "esc", action: cancel)
+          .keyboardShortcut(.cancelAction)
+        DSButton(isNew ? "Save group" : "Save changes", variant: .outline, size: .sm,
+                 disabledReason: problem?.message, shortcut: "↩", action: save)
+      }
+    }
+    .padding(DS.space.sm)
+    .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+  }
+
+  private func save() {
+    guard problem == nil else { return }
+    var ok = false
+    dsWithAnimation { ok = model.saveGroup(name: name, tags: tags) }
+    if ok { focusMemo.close(restoring: false) }
+  }
+
+  private func cancel() {
+    dsWithAnimation { model.groupForm = nil }
+    focusMemo.close(restoring: true)
   }
 }
 

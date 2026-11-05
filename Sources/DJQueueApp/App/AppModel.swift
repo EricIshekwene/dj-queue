@@ -123,6 +123,8 @@ final class AppModel {
   /// The open editor session's journal entry: every clip it can reach is snapshotted at open, and the whole session
   /// becomes ONE app-level undo ("Edits to <clip>") when the editor closes (F8; in-editor ⌘Z is field-level).
   var editorSession: BulkActions.OpenEntry?
+  /// Batches split off the open editor's session: its unsaved view of the clip sits on top of them.
+  var openEditorBatches: Set<String> = []
   /// Undos run one at a time, in the order asked (rapid ⌘Z⌘Z).
   @ObservationIgnored lazy var undoRunner = UndoRunner(bulk: bulk)
   var showPalette = false
@@ -620,18 +622,17 @@ final class AppModel {
   @discardableResult
   func undoable(_ label: String, _ action: String, ids: [String] = [], plan: Bool = false, settings: Bool = false,
                 renders: Bool = false, hashtagGroups: Bool = false, _ body: () throws -> Void) -> Bool {
+    journaled(label) {
+      try bulk.record(action, ids: ids, plan: plan, settings: settings, renders: renders, hashtagGroups: hashtagGroups, body)
+    }
+  }
+
+  /// `undoable`'s steps around any journaled write.
+  @discardableResult
+  func journaled(_ label: String, _ write: () throws -> BulkResult) -> Bool {
     splitEditorSession()
     do {
-      let r = try bulk.record(action, ids: ids, plan: plan, settings: settings, renders: renders, hashtagGroups: hashtagGroups, body)
-      ChangeSignal.post()
-      refresh()
-      if let b = r.batchId {
-        undoHistory.push(b, label: label)
-        show(DSToastModel(message: label, tone: .neutral, actionTitle: "Undo", action: { [weak self] in self?.undo(batch: b) },
-                          duration: 6))
-      } else {
-        show(label)
-      }
+      didJournal(try write(), label: label)
       return true
     } catch {
       refresh()
@@ -640,8 +641,49 @@ final class AppModel {
     }
   }
 
+  /// A journaled write landed: into the history (which moves an open editor session past it), with Undo on the toast.
+  func didJournal(_ r: BulkResult, label: String) {
+    ChangeSignal.post()
+    refresh()
+    if let b = r.batchId {
+      undoHistory.push(b, label: label)
+      show(DSToastModel(message: label, tone: .neutral, actionTitle: "Undo", action: { [weak self] in self?.undo(batch: b) },
+                        duration: 6))
+    } else {
+      show(label)
+    }
+  }
+
+  /// A group edit made by the editor, which wrote it itself so it could see which clips were frozen.
+  func groupEdited(_ r: BulkResult, message: String) { didJournal(r, label: message) }
+
   /// Asks before a destructive or plan-wide action (in-window dialog; Cancel is the default).
   func confirm(_ r: ConfirmRequest) { pendingConfirm = r }
+
+  /// An in-window overlay is over the editor: ⌘Z is the app's, not the hidden clip's.
+  var overlayCoversEditor: Bool {
+    editor != nil && (showSettings || showPalette || showShortcuts || pendingConfirm != nil || pendingBulk != nil || previewVideo != nil)
+  }
+
+  /// Deletes a hashtag group after asking (Settings and the editor), through the core path: clips with scheduled or posted
+  /// posts keep their tags. Undoable: the group, its place in the default groups and those clips come back.
+  func confirmDeleteGroup(_ s: HashtagSet, undoHint: String, then done: @escaping () -> Void = {}) {
+    let reach = (try? HashtagGroups.impact(of: s.id, store: store))?.deleteSummary ?? "Clips with scheduled or posted posts keep these tags."
+    let holds = s.tags.isEmpty ? "“\(s.name)” has no hashtags." : "“\(s.name)” holds \(s.tags.joined(separator: " "))."
+    confirm(ConfirmRequest(
+      title: "Delete “\(s.name)”?",
+      message: "\(holds) \(reach) \(undoHint)",
+      verb: "Delete group", icon: "trash", destructive: true) { [self] in
+        if journaled("Hashtag group “\(s.name)” deleted", { try HashtagGroups.delete(s, store: store, bulk: bulk).result }) {
+          done()
+        }
+      })
+  }
+
+  /// Saves a group edited in Settings through the core path.
+  func saveGroupEdit(_ s: HashtagSet) {
+    journaled("Hashtag group “\(s.name)” saved") { try HashtagGroups.update(s, store: store, bulk: bulk).result }
+  }
 
   /// One-line toast. Errors use the danger tone and stay 6 s (others 3 s); snapshot mode keeps it on screen.
   func show(_ text: String, error: Bool = false) {
@@ -1001,6 +1043,7 @@ final class AppModel {
       if let b = r.batchId {
         let name = r.changed.count == 1 ? video(r.changed[0]).map(displayName) ?? "1 clip" : "\(r.changed.count) clips"
         undoHistory.push(b, label: "Edits to \(name)")
+        openEditorBatches.insert(b)
       }
       editorSession = next
     } catch {
@@ -1012,6 +1055,7 @@ final class AppModel {
   private func finishEditorSession() {
     guard let e = editorSession else { return }
     editorSession = nil
+    openEditorBatches = []
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
       EditorModel.waitForSaves()

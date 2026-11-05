@@ -6,6 +6,7 @@ import SwiftUI
 struct EditorInspector: View {
   @ObservedObject var model: EditorModel
   @State private var current: EditorSection = .title
+  static let groupFormAnchor = "editor.groupForm"
 
   var body: some View {
     VStack(spacing: 0) {
@@ -39,6 +40,11 @@ struct EditorInspector: View {
         .scrollIndicators(.automatic)
         .onAppear { if let t = model.scrollTarget { jump(proxy, t, animated: false) } }
         .onChange(of: model.scrollTarget) { _, t in if let t { jump(proxy, t, animated: true) } }
+        // The group form can open below the fold when New group sits at the bottom edge.
+        .onChange(of: model.groupForm == nil) { _, closed in
+          guard !closed else { return }
+          DispatchQueue.main.async { dsWithAnimation { proxy.scrollTo(Self.groupFormAnchor, anchor: .bottom) } }
+        }
       }
     }
     .frame(width: DS.size.inspectorWidth)

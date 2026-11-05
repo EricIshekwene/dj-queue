@@ -35,6 +35,27 @@ extension SnapshotShots {
       open(m, .newClipDefaults)  // after 46b, which made the groups
       SettingsUIState.shared.scrollTarget = NewClipDefaultsSettings.captionAnchor
     })
+    // v0.8.1: a group used by a clip with a planned post and by one without. Deleting from the editor's chip asks in the
+    // app's own dialog, over the editor, with the counts; Settings says the same under the group's row.
+    let group = HashtagSet(id: "r7-piano", name: "Piano", category: "My groups", tags: ["#amapiano", "#piano"], sort: 0)
+    let seedUse: (AppModel) -> String? = { m in
+      try? m.store.save(group)
+      var used = Version(number: 1)
+      used.hashtagSetIds = [group.id]
+      if let planned = c.firstPlannedId { try? m.store.save(used, videoId: planned) }
+      let other = m.videos.first { $0.type == .short && $0.id != c.firstPlannedId && !$0.excluded }?.id
+      if let other { try? m.store.save(used, videoId: other) }
+      m.refreshNow()
+      return other
+    }
+    shots.append(c.main("46c-editor-delete-group-confirm") { m in
+      if let id = seedUse(m) { m.openEditor(id) }
+      m.confirmDeleteGroup(group, undoHint: "Undo on the message that follows brings it back.")
+    })
+    shots.append(c.main("46d-settings-group-reach") { m in
+      _ = seedUse(m)
+      open(m, .captions)
+    })
     return shots
   }
 
