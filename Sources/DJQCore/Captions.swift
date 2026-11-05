@@ -88,12 +88,19 @@ public enum Captions {
   public static func capped(_ text: String, to cap: Int?) -> (text: String, dropped: [String]) {
     guard let cap, let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_#])#[\p{L}\p{N}_]+"#) else { return (text, []) }
     let ns = text as NSString
-    let all = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map(\.range)
+    let all = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { wholeToken(ns, $0.range) }
     guard all.count > max(cap, 0) else { return (text, []) }
     let extra = all[max(cap, 0)...]
     var out = text
     for r in extra.reversed() { out = removeRange(out as NSString, r) }
     return (out, extra.map { ns.substring(with: $0) })
+  }
+
+  /// `r` out to the next space: dropping the `#hip` of `#hip-hop` must not leave `-hop` behind.
+  private static func wholeToken(_ ns: NSString, _ r: NSRange) -> NSRange {
+    var end = r.location + r.length
+    while end < ns.length, let u = UnicodeScalar(ns.character(at: end)), !CharacterSet.whitespacesAndNewlines.contains(u) { end += 1 }
+    return NSRange(location: r.location, length: end - r.location)
   }
 
   /// What a platform's hashtag cap does to one clip's caption, for the line under the caption.
@@ -136,7 +143,7 @@ public enum Captions {
           let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_#])#[\p{L}\p{N}_]+"#) else { return text }
     var seen = Set<String>(), out = text
     let ns = text as NSString
-    let repeats = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map(\.range).filter {
+    let repeats = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { wholeToken(ns, $0.range) }.filter {
       !seen.insert(normalizeTag(ns.substring(with: $0))).inserted
     }
     for r in repeats.reversed() { out = removeRange(out as NSString, r) }

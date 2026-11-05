@@ -211,6 +211,27 @@ import Testing
     #expect(try b.previewCaption(["clip-0"], CaptionChange(template: .use("plain"), addGroups: ["lovd"])).first?.hidesGroups == false)
   }
 
+  @Test func tagsWithPunctuationStayWhole() throws {
+    let (f, b) = try setUp()
+    try f.store.save(HashtagSet(id: "hh", name: "Hip hop", category: "My groups", tags: ["#hip-hop"], sort: 5))
+    #expect(try b.previewCaption(["clip-0"], CaptionChange(template: .use("plain"), addGroups: ["hh"])).first?.hidesGroups == false)
+    let capped = Captions.capped("Words\n#a #hip-hop", to: 1)
+    #expect(capped.text == "Words\n#a" && capped.dropped == ["#hip-hop"])
+  }
+
+  @Test func aGroupGivenTwiceIsOneGroup() {
+    #expect(CaptionChange(addGroups: ["a", "a", "b"]).groups(from: ["c", "a"]) == ["c", "a", "b"])
+  }
+
+  @Test func theSummaryCountsReplacedCaptions() throws {
+    let (f, b) = try setUp()
+    try f.store.save({ var v = Version(number: 1); v.caption = "Written"; return v }(), videoId: "clip-0")
+    let change = CaptionChange(template: .use("plain"))
+    #expect(try b.setCaption(["clip-0", "clip-2"], change, dryRun: true).summary.contains("1 written caption replaced"))
+    #expect(try b.setCaption(["clip-0", "clip-2"], change).summary.contains("1 written caption replaced"))
+    #expect(try !b.setCaption(["clip-2"], CaptionChange(addGroups: ["lovd"])).summary.contains("replaced"))
+  }
+
   @Test func unknownTemplateOrGroupIsRefused() throws {
     let (_, b) = try setUp()
     #expect(throws: EngineError.self) { try b.setCaption(["clip-0"], CaptionChange(template: .use("nope"))) }

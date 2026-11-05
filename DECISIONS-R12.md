@@ -19,8 +19,10 @@ Every untouched clip still posted the default template, with its set line and no
 6. **Clips with scheduled or posted posts are skipped,** with the reason, so their captions stay byte-identical. They don't count toward the chips.
 7. **Picking a template replaces a written caption, as in the editor,** and the dialog counts them first. With Keep captions, a written
    caption keeps its words and only its hashtags change.
-8. **Save as template types the groups the preview shows into the template, and keeps `{hashtags}`.** Typed tags keep their order and
-   each tag appears once, so the caption doesn't move on saving and a group added to a clip later still shows.
+8. **Save as template types the groups the preview shows for every clip into the template, and keeps `{hashtags}`.** Typed tags keep
+   their order and each tag appears once, so a group added to a clip later still shows. On clips with the same groups the caption
+   doesn't move; a clip with an extra group gets it after the typed tags. Started from Keep captions, the template is text then
+   hashtags (what Eric's hand-edited captions are), not the default template's set line. The form shows the text before it saves.
 9. **The preview shows the shared caption; notes cover the rest:** hashtag caps with what they drop, platforms that post something else,
    captions too long, Queue clips that would go back to Edit, templates that hide the groups. Lines appear only when true.
 10. **`djq caption-templates` and `djq bulk caption`,** because agents write only through `djq`.

@@ -10,6 +10,7 @@ import SwiftUI
 ///   `DJQ_SNAPSHOT_ONLY=<substring>` filters shots.
 /// - `DJQ_EDITOR_LIVE=<seconds>` instead opens the real editor (live player) in a window for that long and prints
 ///   `editor-live: window <number>` so it can be captured with `screencapture -l <number>`.
+/// - `DJQ_BULK_CAPTION_SCRIPT=<dir>` drives the main window's Caption dialog (`BulkCaptionScript`).
 /// - `DJQ_EDITOR_GROUP_SCRIPT=<dir>` makes a hashtag group in the real editor (`EditorGroupScript`);
 ///   `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption field (`EditorCaptionScript`);
 ///   `DJQ_SETTINGS_GROUP_SCRIPT=<dir>` drives the real Settings group rows (`SettingsGroupScript`);

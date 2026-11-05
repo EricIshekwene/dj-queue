@@ -58,6 +58,10 @@ struct BulkCaptionDialog: View {
     .onChange(of: change) { _, _ in refresh() }
     // Undo from the toast while the dialog is open: the clips moved under it.
     .onChange(of: model.undoHistory.entries.count) { _, _ in load() }
+    // A saved template undone from the toast: the pick goes with it, so Apply can't fail on a template that's gone.
+    .onChange(of: model.captionTemplates.map(\.id)) { _, list in
+      if case .use(let id) = change.template, !list.contains(id) { change.template = .keep }
+    }
     .onChange(of: form == nil) { _, closed in model.captionDialogFormOpen = !closed }
     .onChange(of: model.captionDialogFormOpen) { _, open in if !open { form = nil } }
   }

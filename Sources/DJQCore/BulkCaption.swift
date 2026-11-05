@@ -50,7 +50,8 @@ public struct CaptionChange: Sendable, Hashable {
   /// `current` without the removed groups, then the added ones in click order, so every clip ends on the same tags: a group a
   /// clip already has moves to its place in that order.
   public func groups(from current: [String]) -> [String] {
-    current.filter { !removeGroups.contains($0) && !addGroups.contains($0) } + addGroups
+    var seen = Set<String>()
+    return (current.filter { !removeGroups.contains($0) && !addGroups.contains($0) } + addGroups).filter { seen.insert($0).inserted }
   }
 
   /// `current` = the groups this clip resolves to now. A written caption goes when a template is chosen, as in the editor.
@@ -133,11 +134,15 @@ public extension BulkActions {
     var params = ["template": Self.templateParam(change.template)]
     if !change.addGroups.isEmpty { params["add"] = change.addGroups.joined(separator: ",") }
     if !change.removeGroups.isEmpty { params["remove"] = change.removeGroups.joined(separator: ",") }
-    return try run("caption", ids: ids, params: params, dryRun: dryRun) { _, v, s in
+    var replaced = 0
+    var result = try run("caption", ids: ids, params: params, dryRun: dryRun) { _, v, s in
       if held.contains(v.id) { return .skipped(Self.captionHeldReason) }
-      let current = try store.resolvedVersion(videoId: v.id, number: 1, settings: s)?.hashtagSetIds ?? []
-      return try updateV1Retagged(v, s) { change.apply(to: &$0, current: current) }
+      let r = try store.resolvedVersion(videoId: v.id, number: 1, settings: s)
+      if change.setsTemplate, r?.caption.isEmpty == false { replaced += 1 }
+      return try updateV1Retagged(v, s) { change.apply(to: &$0, current: r?.hashtagSetIds ?? []) }
     }
+    if replaced > 0 { result.summary += " · \(replaced) written caption\(replaced == 1 ? "" : "s") replaced" }
+    return result
   }
 
   private static func templateParam(_ t: CaptionChange.Template) -> String {
@@ -153,7 +158,8 @@ public extension BulkActions {
   func previewCaption(_ ids: [String], _ change: CaptionChange) throws -> [CaptionPreview] {
     let settings = try store.settings(), sets = try store.hashtagSets(), templates = try store.captionTemplates()
     let held = try HashtagGroupsMigration.clipsWithPosts(store)
-    let added = change.addGroups.flatMap { g in sets.first { $0.id == g }?.tags ?? [] }.map(Captions.normalizeTag)
+    // Read the way the caption's tags are read, so "#hip-hop" compares as the same token.
+    let added = Captions.tags(in: change.addGroups.flatMap { g in sets.first { $0.id == g }?.tags ?? [] }.joined(separator: " "))
     return try ids.compactMap { id in
       guard let v = try store.video(id: id) else { return nil }
       do {
