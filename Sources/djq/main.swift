@@ -233,7 +233,7 @@ func run() throws -> Int32 {
     && !((cmd == "hashtag-groups" || cmd == "title-templates" || cmd == "caption-templates") && (args.isEmpty || args.first == "--json" || args.first == "list"))
   defer {
     if wrote {
-      // Round 4 (S1): after any write, invalid Queue clips move to Edit (and valid Edit clips return) before the app
+      // Round 4 (S1): after any write, invalid Queue clips move to Edit before the app
       // and engine hear about it.
       Revalidation.afterWrite(store: store, command: cmd)
       postChangeSignal()

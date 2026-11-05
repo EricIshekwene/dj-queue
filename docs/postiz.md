@@ -220,11 +220,11 @@ earlier if it must, down to the reset; any other moves later.
 **Ahead of time.** The sync step that reads the `ERROR` makes the new attempt in the same transaction, through
 `PostActions.fixed`, with `scheduledAt` = that time. The publish step submits it, so Postiz sends it with the Mac off. If
 the Mac slept through the time, the attempt is made on wake and goes out at now + 3 min. An attempt the Mac couldn't
-submit in time never goes overdue and never lands on Today: the publish step moves it to now + 3 min (past the gap). A
-400 on create or a copy deleted in Postiz still hands it to Today, as for any post.
+submit in time never goes overdue and never lands on the Calendar as a task: the publish step moves it to now + 3 min (past the gap). A
+400 on create or a copy deleted in Postiz still hands it to the Calendar, as for any post.
 
-**No audit.** A post with a retry coming isn't in `problems()`: no alert, no red badge, no Doctor error. Today, Posts,
-Week, the inspector and the menu bar read "Retrying Thu 8:00 am (try 2 of 5)" (`PostizDisplayState.retrying`). The
+**No audit.** A post with a retry coming isn't in `problems()`: no alert, no red badge, no Doctor error. The Calendar, Posts,
+the inspector and the menu bar read "Retrying Thu 8:00 am (try 2 of 5)" (`PostizDisplayState.retrying`). The
 tries are retries: 1 of 5 is the first one after the failure. Five failed retries, a vetoed failure, or a retry ruled
 out later (published, copyright, platform skipped in the editor) are loud: Failed, alert, Fixed.
 

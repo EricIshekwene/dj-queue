@@ -391,6 +391,7 @@ import Testing
     #expect(throws: refusal) { try planner.move(slotId: thu.id, to: "2026-11-20") }  // or the clip itself
     #expect(throws: refusal) { try planner.postToday(videoId: th.videoId) }
     #expect(throws: refusal) { try planner.pin(videoId: th.videoId, date: "2026-11-20") }
+    #expect(throws: refusal) { try planner.remove(slotId: thu.id) }  // Move one slot later with no swap partner lands here
     rig.settle()
     #expect(try rig.store.post(id: th.id) != nil && rig.job(th) == nil)
     #expect(try rig.invariants().isEmpty)

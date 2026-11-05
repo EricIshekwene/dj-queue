@@ -7,10 +7,10 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  /// Schema step that adds `videos.sent_to_queue` (`migrateSentToQueue`). Its own constant, so merging another round's
-  /// schema step only means changing this number and `schemaVersion`.
+  public static let schemaVersion = 8
+  /// Schema step that adds `videos.sent_to_queue` (`migrateSentToQueue`). `schemaVersion` stays a literal: build-app.sh
+  /// reads the number from that line into the bundle, and `djq autoupdate rollback` relies on it.
   static let sentToQueueVersion = 8
-  public static let schemaVersion = sentToQueueVersion
 
   public init(paths: Paths, clock: Clock = SystemClock(), path: String? = nil) throws {
     self.paths = paths

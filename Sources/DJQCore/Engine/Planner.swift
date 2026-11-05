@@ -195,6 +195,7 @@ public final class Planner: @unchecked Sendable {
   public func remove(slotId: String) throws {
     guard let s = try store.planSlot(id: slotId) else { throw EngineError("No plan slot \(slotId)") }
     try ensureNothingPosted(s)
+    try ensureNothingFinal(s)
     try store.db.transaction {
       try store.dropAutoRetries(slot: s)
       try clearSlot(s)

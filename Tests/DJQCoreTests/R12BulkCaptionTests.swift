@@ -237,4 +237,28 @@ import Testing
     #expect(throws: EngineError.self) { try b.setCaption(["clip-0"], CaptionChange(template: .use("nope"))) }
     #expect(throws: EngineError.self) { try b.setCaption(["clip-0"], CaptionChange(addGroups: ["nope"])) }
   }
+
+  /// Round 13: a bulk caption pass saves through `store.save`, and that must never move a clip out of Edit.
+  @Test func aBulkCaptionPassNeverSendsAClipToTheQueue() throws {
+    let f = try Fixture.engine(3, ready: 0)
+    for v in try f.store.videos(where: "type='short-form'") {
+      try f.store.db.run("UPDATE videos SET sent_to_queue=0, state='needs_edit' WHERE id=?", [v.id])
+    }
+    let b = BulkActions(store: f.store)
+    try b.setCaption(["clip-0"], CaptionChange(template: .useDefault))
+    try f.store.save(HashtagSet(id: "g1", name: "G", category: "c", tags: ["#a"], sort: 0))
+    try b.setCaption(["clip-0"], CaptionChange(addGroups: ["g1"]))
+    try Revalidation(store: f.store).run()
+    try Planner(store: f.store).autoSchedule()
+    let v = try #require(try f.store.video(id: "clip-0"))
+    #expect(v.state == .needsEdit && !v.sentToQueue)
+    #expect(try f.store.planSlots().isEmpty)
+  }
+
+  /// `scripts/build-app.sh` stamps the bundle from this literal; `djq autoupdate rollback` depends on it.
+  @Test func theSchemaVersionLineStaysALiteralNumber() throws {
+    let src = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/DJQCore/Store.swift"), encoding: .utf8)
+    #expect(src.range(of: #"static let schemaVersion = [0-9]+"#, options: .regularExpression) != nil)
+  }
 }
