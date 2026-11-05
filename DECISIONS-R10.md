@@ -20,7 +20,7 @@ Routine decisions made while building whole-app search, one line each with the w
 11. **Post dates carry short phrases only; weeks and sessions also carry the year.** Posts are the most numerous items, and a post is rarely looked up by year.
 12. **Health places cover more than the five named: disk space and the render queue too.** They're on the same screen at the same cost.
 13. **Runway opens Queue, not Health.** Health doesn't show it; the Queue toolbar's runway chip does. The row's subtitle has the numbers.
-14. **The index rebuilds on every refresh, off the main actor.** Keeping it fresh by checking what changed would be more code than the work it saves, and it's small next to the rest of the load.
+14. **The index rebuilds on every refresh, off the main actor.** It takes about 28 ms for 5,759 items in a release build, small next to the rest of the load, and a query on it about 1 ms. Tracking what changed would be more code than the work it saves.
 
 ## Palette
 
