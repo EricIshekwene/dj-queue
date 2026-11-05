@@ -37,6 +37,12 @@ public struct AutoUpdateEngineControl: Sendable {
           return r.status == 0 ? (true, "engine restarted (launchctl kickstart)")
             : (false, "launchctl kickstart failed: \(r.output.trimmingCharacters(in: .whitespacesAndNewlines))")
         }
+        // Round 9: an installed agent that isn't loaded is brought back, so an install never leaves the engine down
+        // (2026-11-05: it stayed down 15:18–16:13 because no app was open to answer the signal).
+        if LaunchAgent.isInstalled(paths: paths) {
+          let r = LaunchAgent.run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", paths.agentPlist.path])
+          if r.status == 0 { return (true, "engine started (launchctl bootstrap; it wasn't loaded)") }
+        }
         AutoUpdate.post(AutoUpdate.restartSignal, paths)
         return (true, "engine LaunchAgent not loaded; asked an open app to relaunch")
       },

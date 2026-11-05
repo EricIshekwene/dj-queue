@@ -62,3 +62,7 @@ cap and #13's scope; the rest of R8 stands, the double-post guards above all.
 ## `djq posts-per-day`
 
 **Posts per day gets a djq command.** It was only in Settings, so an agent could not set it without writing SQLite, which the rules forbid. `djq posts-per-day [1-5] [--dry-run]` saves through `BulkActions.record(settings: true)` like the other settings commands, so it is undoable and signals the app.
+
+## Engine stays up across installs
+
+**An install brings back an unloaded engine agent.** On 2026-11-05 the engine LaunchAgent wasn't loaded, the v0.8.3 install asked an open app to relaunch it, no app was open, and the engine stayed down for about an hour. Restart now runs `launchctl bootstrap` when the plist is installed and only falls back to the signal if that fails. What unloaded it first wasn't found in the logs.
