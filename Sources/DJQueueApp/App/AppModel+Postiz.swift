@@ -377,7 +377,7 @@ extension AppModel {
     guard !inPostiz else { run(); return }
     confirmHere(ConfirmRequest(
       title: "Post \(p.platform.displayName) yourself?",
-      message: "Only if it isn't in the Postiz calendar. If Postiz does have it, it would go out twice: once from Postiz and once by you. It moves to Today as a manual post.",
+      message: "Only if it isn't in the Postiz calendar. If Postiz does have it, it would go out twice: once from Postiz and once by you. It stays on the Calendar as a manual post.",
       verb: "Post it myself", icon: "exclamationmark.triangle", destructive: true, action: run))
   }
 }

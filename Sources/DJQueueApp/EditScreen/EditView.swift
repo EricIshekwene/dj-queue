@@ -1,11 +1,13 @@
 import DJQCore
 import SwiftUI
 
-/// Edit (DESIGN-v2 §6.2, ref R2.EDIT issue cards) — job: finish scored clips so they can go to the Queue.
+/// Edit (DESIGN-v2 §6.2, ref R2.EDIT issue cards) — job: finish scored clips, then send them to the Queue. Only Eric's
+/// Send to Queue moves a clip on (the stage control, the bulk bar or the toolbar button); fixing the last issue doesn't.
 ///
 /// Shared list header (round 4 S3): "Edit 9" · search (⌘F) · view toggle (Cards · Grid · Single · List) · primary
 /// **Send to Queue with defaults** (the selection, else every clip shown; > 1 clip asks first) · status chips = what's
-/// missing (`All 9 · No crop 4 · No text 6 · …`, from `issuesByVideo`) · Filters (Session · Kind · Score) · sort.
+/// missing (`All 9 · No crop 4 · No text 6 · … · Nothing to fix 2`, from `issuesByVideo`) · Filters (Session · Kind ·
+/// Score) · sort.
 /// Cards show missing chips (warning), hard blocks (danger) with explicit fixes ("Trim for X", "Drop hashtags for
 /// X", "Write an X caption"), up to three title suggestions (click = set Title, undoable), an "Add title" field when
 /// there are none, "Ask an agent" when the title is ambiguous, a "Cover" badge, Open editor and ⋯. Hidden: dates,
@@ -19,7 +21,9 @@ struct EditView: View {
     let scope = model.listScope(.edit, all)
     let filters = Self.filters(scope, issues: model.issuesByVideo)
     let active = prefs[.edit].status.flatMap { id in filters.first { $0.filter.id == id }?.filter }
-    let list = model.listSorted(.edit, active.map { f in scope.filter { f.matches(model.issuesByVideo[$0.id] ?? []) } } ?? scope)
+    let clean = scope.filter(nothingToFix)
+    let cleanOnly = prefs[.edit].status == Self.nothingToFixId
+    let list = model.listSorted(.edit, cleanOnly ? clean : active.map { f in scope.filter { f.matches(model.issuesByVideo[$0.id] ?? []) } } ?? scope)
     let ids = list.map(\.id)
     let mode = model.viewMode(.edit)
     let sel = model.selectedIds(.edit)
@@ -34,15 +38,17 @@ struct EditView: View {
           DSStatusChips(options: filters.map { f in
             DSStatusChipOption(id: f.filter.id, title: f.filter.title, count: f.count, tone: f.filter.kind.isBlock ? .danger : nil,
                                tooltip: f.filter.help)
-          }, selection: prefs.statusBinding(.edit), allCount: scope.count, allTooltip: "Show every clip in Edit")
+          } + (clean.isEmpty ? [] : [DSStatusChipOption(id: Self.nothingToFixId, title: "Nothing to fix", count: clean.count,
+                                                        tooltip: "Clips waiting for your Send to Queue")]),
+          selection: prefs.statusBinding(.edit), allCount: scope.count, allTooltip: "Show every clip in Edit")
         }
       } sort: {
         if !all.isEmpty { ListSortMenu(page: .edit) }
       } trailing: {
         DSButton("Send to Queue with defaults", variant: sel.isEmpty ? .primary : .outline,
                  disabledReason: list.isEmpty ? "Nothing to edit" : nil,
-                 tooltip: sel.isEmpty ? "Confirm default crop for \(AppModel.pipelineClips(ids.count)) shown"
-                   : "Confirm default crop for \(AppModel.pipelineClips(sel.count)) selected") {
+                 tooltip: sel.isEmpty ? "Send \(AppModel.pipelineClips(ids.count)) shown to the Queue"
+                   : "Send \(AppModel.pipelineClips(sel.count)) selected to the Queue") {
           makeReady(sel.isEmpty ? ids : sel)
         }
       }
@@ -73,7 +79,13 @@ struct EditView: View {
     }
   }
 
-  /// Card model: the shared mapping, plus a "Cover" badge; suggestion chips keep only their text outside Single
+  static let nothingToFixId = "nothing-to-fix"
+  static let nothingToFixHelp = "Nothing missing. Press Send to Queue when it's ready to post."
+
+  /// Complete, and still here because only Send to Queue moves a clip on.
+  private func nothingToFix(_ v: Video) -> Bool { !v.missing && (model.issuesByVideo[v.id] ?? []).isEmpty }
+
+  /// Card model: the shared mapping, plus "Nothing to fix" and a "Cover" badge; suggestion chips keep only their text outside Single
   /// (the matched tracks would wrap a 132 pt card — Single's side panel and the editor show them). List rows have
   /// no chip row, so their second line lists what's missing instead of the session.
   private func clip(_ v: Video, mode: DSViewMode) -> DSClip {
@@ -83,6 +95,7 @@ struct EditView: View {
     let short = c.blocks.map { $0.components(separatedBy: " · ").first ?? $0 }
     if mode == .grid { c.blocks = short }
     if mode == .list, !(short + c.issues).isEmpty { c.subtitle = (short + c.issues).joined(separator: " · ") }
+    if nothingToFix(v) { c.tags.append(DSClipTag(text: "Nothing to fix", style: .soft(.success), icon: "checkmark", tooltip: Self.nothingToFixHelp)) }
     if model.coverIds.contains(v.id) { c.tags.append(DSClipTag(text: "Cover", style: .outline, icon: "photo",
                                                                            tooltip: "Cover frame chosen in the editor")) }
     return c
@@ -182,7 +195,7 @@ private struct EditBulkBar: View {
       }
     } primary: {
       DSButton("Send to Queue", variant: .primary, size: .sm,
-               tooltip: "Confirm default crop for \(n) selected", action: makeReady)
+               tooltip: "Send \(n) selected to the Queue", action: makeReady)
     }
   }
 

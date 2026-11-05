@@ -88,9 +88,9 @@ extension AppModel {
 
   // MARK: Actions
 
-  /// After a direct settings write (New clip defaults, a deleted template): clips whose validity changed move between
-  /// Edit and Queue now instead of on the next engine tick (DJQCore `Revalidation`, states only — the plan is the
-  /// engine's job).
+  /// After a direct settings write (New clip defaults, a deleted template): a Queue clip that's no longer valid drops
+  /// to Edit now instead of on the next engine tick (DJQCore `Revalidation`, states only — the plan is the engine's
+  /// job). Nothing moves forward here: only Send to Queue does that.
   func revalidateStages() {
     let s = store
     Task.detached(priority: .userInitiated) {

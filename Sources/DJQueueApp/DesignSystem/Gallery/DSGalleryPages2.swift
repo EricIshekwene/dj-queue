@@ -18,7 +18,7 @@ struct GallerySurfaces: View {
         GSection("Attention card", note: "replaces full-width bars") {
           VStack(spacing: 8) {
             DSAttentionCard(title: "2 posts need attention", message: "Instagram copyright · X failed", tone: .danger, actionTitle: "Review", action: {})
-            DSAttentionCard(title: "Low runway", message: "Approved through Tue · approve next week", tone: .warning, actionTitle: "Open Week",
+            DSAttentionCard(title: "Queue running low", message: "Scheduled through Tue 10 Nov", tone: .warning, actionTitle: "Open Week",
                             onDismiss: {}, action: {})
           }
           .frame(width: 560)
@@ -29,7 +29,7 @@ struct GallerySurfaces: View {
           } trailing: {
             GState(DSViewMode.wide) { DSViewModeSwitcher(mode: $0, size: .sm) }
             DSIconButton("ellipsis", tooltip: "More", size: .sm) {}
-            DSButton("Approve week", variant: .primary, size: .sm, shortcut: "⌘↩") {}
+            DSButton("Send to Queue", variant: .primary, size: .sm, shortcut: "⌘↩") {}
           }
           .dsSurface(DS.color.background, radius: DS.radius.lg)
           .frame(width: 560)

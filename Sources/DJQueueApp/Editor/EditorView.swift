@@ -264,8 +264,9 @@ struct EditorHeader: View {
       DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark.triangle.fill")
         .dsTooltip("The clip file is gone; relink it in Health")
     } else if issues.isEmpty {
-      // Round 4 S1: no "Ready" label — stage is readiness; the stage control beside it names where the clip goes.
-      DSBadge("Nothing to fix", style: .soft(.success), icon: "checkmark").dsTooltip("Nothing missing; it can go to the Queue")
+      // No "Ready" label: only Send to Queue, in the stage control beside it, moves the clip on (round 13).
+      DSBadge("Nothing to fix", style: .soft(.success), icon: "checkmark")
+        .dsTooltip("Nothing missing. Press Send to Queue when it's ready to post.")
     } else {
       // Round 7 (C1): jump to the first issue that has a section; a held clip is fixed with the stage control beside the
       // chip ("Send to Queue"), so the chip says that instead of pointing at an inspector section.

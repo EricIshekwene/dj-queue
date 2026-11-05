@@ -45,8 +45,7 @@ struct CalendarView: View {
     if mode == .day && model.calendarDay == model.todayKey && model.loaded && model.todayTotal > 0 { progress }
     HStack(spacing: 2) {
       DSIconButton("chevron.left", tooltip: "Show the previous \(mode.stepName)", size: .sm, shortcut: "←") { model.stepCalendar(-1) }
-      DSButton("Today", variant: .ghost, size: .sm, disabledReason: model.calendarVisible.contains(model.todayKey) ? "Already showing today" : nil,
-               tooltip: "Jump back to today", shortcut: "T") { model.calendarToday() }
+      DSButton("Today", variant: .ghost, size: .sm, tooltip: "Jump back to today", shortcut: "T") { model.calendarToday() }
       DSIconButton("chevron.right", tooltip: "Show the next \(mode.stepName)", size: .sm, shortcut: "→") { model.stepCalendar(1) }
     }
     DSSegmented(selection: Binding(get: { model.calendarMode }, set: { model.setCalendarMode($0) }),

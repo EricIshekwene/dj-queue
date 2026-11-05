@@ -222,7 +222,7 @@ struct QueueSettings: View {
   @Bindable var model: AppModel
 
   var body: some View {
-    SettingsRow("Order", description: "Orders the unplanned backlog by score. Planned days don't move.") {
+    SettingsRow("Order", description: "Orders the Queue by score. A change re-lays the calendar; pinned days stay.") {
       SettingsSelect(label: "Order", selection: model.binding(\.sort) { "Order set to \($0.displayName)" },
                      options: SortDirection.allCases.map { DSSelectOption(value: $0, title: $0.displayName) })
     }

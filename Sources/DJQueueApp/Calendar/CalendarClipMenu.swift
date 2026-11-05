@@ -66,7 +66,7 @@ struct ExtraPostChip: View {
       Image(systemName: post.kind == .repost ? "arrow.uturn.forward" : "arrow.clockwise")
         .font(.system(size: 9, weight: .semibold)).foregroundStyle(DS.color.textSecondary)
       Image(systemName: post.platform.dsSymbol).font(.system(size: 9.5, weight: .medium)).foregroundStyle(DS.color.textSecondary)
-      Text("\(post.platform.dsxCompactName) \(AppModel.clockText(post.scheduledAt, tz: model.tz))")
+      Text("\(post.platform.dsxCompactName) \(AppModel.shortClock(post.scheduledAt, tz: model.tz))")
         .font(DS.type.microCompact).foregroundStyle(DS.color.text).lineLimit(1).minimumScaleFactor(0.9)
       Spacer(minLength: 2)
       if let dot = status.dot { Circle().fill(dot).frame(width: 6, height: 6) }

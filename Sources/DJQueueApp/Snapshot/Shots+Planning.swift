@@ -51,6 +51,11 @@ extension SnapshotShots {
         calendar(m, .day)
         m.loaded = false
       },
+      c.main("edit-nothing-to-fix") { m in  // B16: stands in for a clip with no issues until the send flag lands in Core
+        m.setViewMode(.wide, for: .edit)
+        if let v = m.editList.first { m.issuesByVideo[v.id] = [] }
+        m.screen = .edit
+      },
       c.main("calendar-move-dialog") { m in
         calendar(m, .week)
         m.calendarPinTarget = m.calendarClips(m.dm.addDays(m.todayKey, 1)).first.map { [$0.video.id] }

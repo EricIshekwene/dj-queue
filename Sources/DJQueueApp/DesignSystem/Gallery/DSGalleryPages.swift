@@ -390,7 +390,7 @@ struct GalleryStatus: View {
       VStack(alignment: .leading, spacing: DS.space.lg) {
         GSection("Stats") {
           HStack(alignment: .top, spacing: DS.space.xxl) {
-            DSStat(value: "5d", label: "Approved runway")
+            DSStat(value: "5d", label: "Days scheduled")
             DSStat(value: "21d", label: "Queue runway", hint: "+3 this week")
             DSStat(value: "1d", label: "Low runway", tone: .warning)
             DSStat(value: "41", label: "Score (card)", size: .sm)
@@ -427,7 +427,7 @@ struct GalleryStatus: View {
               DSButton("Worst → best", trailingIcon: "chevron.down", variant: .ghost, size: .sm) {}
             }
             DSSeparator()
-            DSSectionHeader("Backlog", count: 23)
+            DSSectionHeader("Waiting", count: 23)
           }
           .frame(width: 400)
         }

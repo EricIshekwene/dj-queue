@@ -41,7 +41,7 @@ struct QueueView: View {
       if !model.loaded {
         Color.clear
       } else if all.isEmpty {
-        DSEmptyState(icon: "list.bullet", title: "The Queue is empty", message: "Clips arrive here once they're scored and finished in Edit.",
+        DSEmptyState(icon: "list.bullet", title: "The Queue is empty", message: "Clips arrive here when you send them from Edit.",
                      actionTitle: "Go to Edit") { model.screen = .edit }
       } else if list.isEmpty {
         DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match",
