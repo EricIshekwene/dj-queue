@@ -29,10 +29,13 @@ usage: djq <command> [args]
                                       Eric's own groups (none ship); undo with bulk undo
   title-templates [--json] | add "<name>" "<template>" | edit <id> [--name N] [--template T] | delete <id> | default <id>
                                       YouTube title templates ({text}); undo with bulk undo
+  caption-templates [--json] | add "<name>" "<template>" | edit <id> [--name N] [--template T] | delete <id>
+                                      caption templates ({text} {title} {set} {link} {tag} {hashtags}, hashtags can be typed in); undo with bulk undo
   kind <video> "dj vid"|talking
   bulk <action> [args] (--ids a,b,c | --filter F) [--dry-run] [--json]
        actions: make-ready | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
        | score-adjust <±n> | kind <k> | exclude | include | caption-template <id|default> | hashtags <group ids a,b|default>
+       | caption [--template <id|default>] [--add a,b] [--remove c]   template and groups together, one undo; --add keeps the clip's other groups
        | extra-hashtags "<#a #b>"|default | youtube-title-template <id|default> | drop-hashtags <P>
        | skip-platform <P> | unskip-platform <P>
        | accept-title | title-raw-tag | title "<t>"|--clear | add-to-week <YYYY-MM-DD> | pin-consecutive <YYYY-MM-DD>
@@ -194,7 +197,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "posts-per-day", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "posts-per-day", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -222,12 +225,12 @@ func run() throws -> Int32 {
                              "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted",
                              "score", "exclude", "include", "pause", "resume", "intake", "tick", "render",
                              "title", "suggest", "text", "caption", "kind", "bulk", "unqueue", "requeue", "stage",
-                             "youtube-title", "hashtag-groups", "title-templates"]
+                             "youtube-title", "hashtag-groups", "title-templates", "caption-templates"]
   var wrote = writes.contains(cmd) && (cmd != "week" || args.contains { $0.hasPrefix("--") && $0 != "--json" })
     && !(cmd == "bulk" && (args.contains("--dry-run") || args.first == "batches"))
     && !((cmd == "unqueue" || cmd == "requeue" || cmd == "stage") && args.contains("--dry-run"))
     && !(cmd == "stage" && !args.contains("back") && !args.contains("forward"))
-    && !((cmd == "hashtag-groups" || cmd == "title-templates") && (args.isEmpty || args.first == "--json"))
+    && !((cmd == "hashtag-groups" || cmd == "title-templates" || cmd == "caption-templates") && (args.isEmpty || args.first == "--json" || args.first == "list"))
   defer {
     if wrote {
       // Round 4 (S1): after any write, invalid Queue clips move to Edit (and valid Edit clips return) before the app
@@ -465,6 +468,46 @@ func run() throws -> Int32 {
     default: throw CLIError("hashtag-groups: list | add | edit | delete")
     }
     if let b = r.batchId { print("  undo: djq bulk undo \(short(b))") }
+
+  case "caption-templates":
+    let bulk = BulkActions(store: store)
+    let all = try store.captionTemplates()
+    let sub = args.first ?? "list"
+    if sub == "list" || sub == "--json" {
+      if flag("--json") { try printJSON(all); return 0 }
+      for t in all {
+        print("  \(pad(t.id, 38)) \(pad(t.name, 24)) \(t.template.replacingOccurrences(of: "\n", with: "⏎"))\(t.id == settings.defaults.captionTemplateId ? "  (default)" : "")")
+      }
+      return 0
+    }
+    args.removeFirst()
+    func find(_ id: String) throws -> CaptionTemplate {
+      let m = all.filter { $0.id.hasPrefix(id) || $0.name.lowercased() == id.lowercased() }
+      guard m.count == 1 else { throw CLIError(m.isEmpty ? "no caption template \(id)" : "\(id) matches \(m.count) templates") }
+      return m[0]
+    }
+    let change: HashtagGroups.Change
+    switch sub {
+    case "add":
+      let name = try arg(0, "name"), text = try arg(1, "template").replacingOccurrences(of: "\\n", with: "\n")
+      if let p = CaptionTemplates.problem(name: name, template: text, existing: all) { throw CLIError(p.message) }
+      let t = CaptionTemplates.make(name: name, template: text, existing: all)
+      change = try CaptionTemplates.create(t, store: store, bulk: bulk)
+      print("added caption template \(t.id) “\(t.name)”")
+    case "edit":
+      var t = try find(try arg(0, "template id"))
+      if let n = option("--name") { t.name = HashtagGroups.cleanName(n) }
+      if let x = option("--template") { t.template = x.replacingOccurrences(of: "\\n", with: "\n") }
+      if let p = CaptionTemplates.problem(name: t.name, template: t.template, existing: all, editing: t.id) { throw CLIError(p.message) }
+      change = try CaptionTemplates.update(t, store: store, bulk: bulk)
+      print("caption template \(t.id) “\(t.name)” (\(change.kept.count) clip(s) with posts kept their caption)")
+    case "delete":
+      let t = try find(try arg(0, "template id"))
+      change = try CaptionTemplates.delete(t, store: store, bulk: bulk)
+      print("deleted caption template “\(t.name)” (clips that chose it use the default)")
+    default: throw CLIError("caption-templates: list | add | edit | delete")
+    }
+    if let b = change.result.batchId { print("undo: djq bulk undo \(b.prefix(8))") }
 
   case "title-templates":
     let bulk = BulkActions(store: store)
@@ -928,6 +971,13 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   case "hashtags":
     let t = try arg(0, "set ids|default")
     r = try bulk.setHashtagSets(ids, t == "default" ? nil : t.split(separator: ",").map(String.init), dryRun: dry)
+  case "caption":
+    func list(_ name: String) -> [String] { option(name)?.split(separator: ",").map(String.init) ?? [] }
+    var change = CaptionChange(addGroups: list("--add"), removeGroups: list("--remove"))
+    if args.contains("--template"), args.last == "--template" { throw CLIError("--template needs a template id or default") }
+    if let t = option("--template") { change.template = t == "default" ? .useDefault : .use(t) }
+    guard !change.isEmpty else { throw CLIError("bulk caption needs --template, --add or --remove") }
+    r = try bulk.setCaption(ids, change, dryRun: dry)
   case "extra-hashtags":
     let t = try arg(0, "\"#a #b\"|default")
     r = try bulk.setExtraHashtags(ids, t == "default" ? nil : t.split(separator: " ").map(String.init), dryRun: dry)

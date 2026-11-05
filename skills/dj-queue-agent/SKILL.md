@@ -86,6 +86,8 @@ Either list may be left out.
   default groups. Don't create, edit or delete groups unless Eric asks:
   `djq hashtag-groups [--json]` · `add "<name>" "<#a #b>"` · `edit <id|name> [--name N] [--tags "<#a #b>"]` ·
   `delete <id|name>` (undoable: each prints `djq bulk undo <batch>`).
+- Caption templates: `djq caption-templates [--json]` · `add "<name>" "<template>"` · `edit <id|name> [--name N] [--template T]` ·
+  `delete <id|name>`. `\n` in a template is a new line; hashtags can be typed in beside `{hashtags}`.
 - Changing a clip's groups or extra tags (`djq bulk hashtags` / `extra-hashtags`) swaps the hashtags **inside** a
   written caption in place (no duplicates); template captions follow by themselves; per-platform captions stay as
   written.
@@ -148,6 +150,8 @@ djq bulk undo <batch> [--force]
 Actions: `make-ready` (confirm the default crop; reports how many go to the Queue and what's still missing) · `apply-defaults
 [--sections frame,trim,text,cover,caption,platforms]` (clear overrides) · `score <n|clear>` · `score-adjust <±n>` ·
 `kind <k>` · `exclude` · `include` · `caption-template <id|default>` (rewrites a written caption from the template) ·
+`caption [--template <id|default>] [--add a,b] [--remove c]` (template and several groups as one undo; `--add` keeps the clip's other
+groups and puts these after them in the order given; `--template` replaces a written caption; clips with scheduled or posted posts are skipped) ·
 `hashtags <group,group|default>` · `extra-hashtags "<#a #b>"|default` · `youtube-title-template <id|default>` ·
 `drop-hashtags <platform>` · `skip-platform <p>` · `unskip-platform <p>` ·
 `accept-title` · `title "<t>"|--clear` · `add-to-week <date>` · `pin-consecutive <date>` · `post-today` ·

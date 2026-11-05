@@ -149,6 +149,7 @@ private struct QueueBulkBar: View {
       Button("Back a stage (Scheduled → Queue, Queue → Edit)", systemImage: "chevron.left") { model.stageBack(ids) }
       Button("Forward a stage (Queue → Scheduled on open days)", systemImage: "chevron.right") { model.stageForward(ids) }
       Divider()
+      Button("Caption…", systemImage: "text.alignleft") { model.captionDialogIds = ids }
       Menu("Skip platform") {
         ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { setPlatform(p, skipped: true) } }
       }

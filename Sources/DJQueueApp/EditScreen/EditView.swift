@@ -23,7 +23,6 @@ struct EditView: View {
     let ids = list.map(\.id)
     let mode = model.viewMode(.edit)
     let sel = model.selectedIds(.edit)
-    let templates = model.captionTemplates
     let column = mode == .wide || mode == .list
     ScreenScaffold(model: model, screen: .edit, readingColumn: column) {
       ListHeader(page: .edit, title: "Edit", count: all.isEmpty ? nil : list.count, total: all.count,
@@ -63,12 +62,12 @@ struct EditView: View {
                        onOpen: { v in model.openEditor(v.id, in: ids) }) { v in
           EditClipActions(model: model, video: v, mode: mode, ids: ids)
         } contextMenu: { v in
-          EditClipMenu(model: model, video: v, ids: ids, templates: templates)
+          EditClipMenu(model: model, video: v, ids: ids)
         }
       }
     }
     .dsBulkBar(isPresented: !sel.isEmpty) {
-      EditBulkBar(model: model, ids: sel, templates: templates, hashtagSets: model.hashtagSets) { makeReady(sel) }
+      EditBulkBar(model: model, ids: sel) { makeReady(sel) }
     }
   }
 
@@ -110,14 +109,12 @@ struct EditView: View {
   }
 }
 
-/// Edit bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Top title · Caption ▾ (template + hashtags) · Kind ▾ ·
+/// Edit bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Top title · Caption (template + several hashtag groups) · Kind ▾ ·
 /// More (Back to Score, agent prompt, apply defaults per section, skip platform, re-render) ·
 /// **Send to Queue** (with defaults).
 private struct EditBulkBar: View {
   @Bindable var model: AppModel
   let ids: [String]
-  let templates: [CaptionTemplate]
-  let hashtagSets: [HashtagSet]
   let makeReady: () -> Void
 
   var body: some View {
@@ -136,19 +133,9 @@ private struct EditBulkBar: View {
       }
       .opacity(noSuggestions ? 0.45 : 1)
       .dsTooltip("Use each clip's top suggested title", disabledReason: noSuggestions ? noTitlesWhy : nil)
-      PipelineBulkMenu("Caption", tooltip: "Set caption template or hashtags") {
-        Section("Caption template") {
-          Button("Default template") { setTemplate(nil, "Default") }
-          ForEach(templates) { t in Button(t.name) { setTemplate(t.id, t.name) } }
-        }
-        Section("Hashtag group") {
-          Button("Default groups") { setHashtags(nil, "the default") }
-          ForEach(HashtagGroups.pickable(hashtagSets)) { s in
-            let name = HashtagGroups.label(s)
-            Button(name) { setHashtags([s.id], name) }
-          }
-        }
-      }
+      Button("Caption", systemImage: "text.alignleft") { model.captionDialogIds = ids }
+        .dsTooltip("Set a template and hashtag groups for the selected clips")
+        .background(ScriptAnchor("Caption"))
       PipelineBulkMenu("Kind", tooltip: "Set DJ vid or Talking") {
         ForEach(Kind.allCases, id: \.self) { k in
           Button(k.displayName) {
@@ -185,23 +172,6 @@ private struct EditBulkBar: View {
     } primary: {
       DSButton("Send to Queue", variant: .primary, size: .sm,
                tooltip: "Confirm default crop for \(n) selected", action: makeReady)
-    }
-  }
-
-  private func setTemplate(_ id: String?, _ name: String) {
-    let ids = ids
-    model.pipelineBulk("Use the \(name) caption template for \(AppModel.pipelineClips(ids.count))?", verb: "Set template", ids: ids,
-                       changes: [.init(field: "Caption", value: id == nil ? "Default template (written captions cleared)"
-                                   : "Template “\(name)” (written captions cleared)")]) { b, dry in
-      try b.setCaptionTemplate(ids, id, dryRun: dry)
-    }
-  }
-
-  private func setHashtags(_ setIds: [String]?, _ name: String) {
-    let ids = ids
-    model.pipelineBulk("Use \(name) hashtag group\(setIds == nil ? "s" : "") for \(AppModel.pipelineClips(ids.count))?", verb: "Set hashtags", ids: ids,
-                       changes: [.init(field: "Hashtags", value: setIds == nil ? "Default groups" : "“\(name)”")]) { b, dry in
-      try b.setHashtagSets(ids, setIds, dryRun: dry)
     }
   }
 }
