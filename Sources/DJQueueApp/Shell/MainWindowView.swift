@@ -71,9 +71,6 @@ struct MainWindowView: View {
   }
 
   @ViewBuilder private var overlays: some View {
-    if model.showPalette {
-      CommandPalette(model: model).transition(.opacity)
-    }
     if model.showSettings {
       ModalHost(onDismiss: { model.showSettings = false }) { SettingsModal(model: model) }
     }
@@ -95,6 +92,10 @@ struct MainWindowView: View {
     }
     if let v = model.longformTarget {
       ModalHost(onDismiss: { model.longformTarget = nil }) { LongformPostedSheet(model: model, video: v).id(v.id) }
+    }
+    // ⌘K works from anywhere, so it sits above every modal. A confirmation it asks for still goes on top.
+    if model.showPalette {
+      CommandPalette(model: model).transition(.opacity)
     }
     // F8: "Are you sure?" for destructive / plan-wide actions — above everything, the editor included.
     ConfirmDialogHost(model: model)
@@ -155,7 +156,7 @@ struct ShortcutButtons: View {
       ForEach(Screen.allCases) { s in
         Button("") { go(s) }.keyboardShortcut(s.key, modifiers: .command)
       }
-      Button("") { model.showPalette.toggle() }.keyboardShortcut("k", modifiers: .command)
+      Button("") { model.togglePalette() }.keyboardShortcut("k", modifiers: .command)
       Button("") { model.showShortcuts.toggle() }.keyboardShortcut("/", modifiers: .command)
       Button("") {
         if let v = model.focusedVideo { model.openEditor(v.id, in: model.selectedVideoIds) } else { model.show("Select one clip to open it in the editor") }
@@ -210,7 +211,7 @@ struct ShortcutSheet: View {
   @Bindable var model: AppModel
 
   private let groups: [(String, [(String, String)])] = [
-    ("Everywhere", [("⌘K", "Search clips and commands"), ("⌘/", "This cheat sheet"), ("⌘1 – ⌘8", "Score · Edit · Queue · Week · Today · Library · Posts · Health"),
+    ("Everywhere", [("⌘K", "Search everything"), ("⌘F", "Filter the list on screen"), ("⌘/", "This cheat sheet"), ("⌘1 – ⌘8", "Score · Edit · Queue · Week · Today · Library · Posts · Health"),
                     ("⌘,", "Settings"), ("⌘R", "Refresh"), ("⌘0", "Open the DJ Queue window (menu bar)"),
                     ("⌘Z", "Undo the most recent change (again for the one before)")]),
     ("Selecting clips", [("Click circle", "Select a clip"), ("⇧ Click", "Select a range"), ("⌘ Click", "Add or remove one"),

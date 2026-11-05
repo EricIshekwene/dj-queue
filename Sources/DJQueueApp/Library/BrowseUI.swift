@@ -96,6 +96,10 @@ final class BrowseUI {
   var paletteQuery = ""
   /// Clip whose actions the palette shows (second page), by id.
   var paletteClipId: String?
+  /// What was typed before a clip's page opened (Back returns to those results).
+  var paletteReturnQuery = ""
+  /// The type chip under the search field.
+  var paletteScope = SearchScope.all
 
   func reset() {
     quickLook = nil
@@ -104,6 +108,8 @@ final class BrowseUI {
     pendingPostBulk = nil
     paletteQuery = ""
     paletteClipId = nil
+    paletteReturnQuery = ""
+    paletteScope = .all
   }
 }
 

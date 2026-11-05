@@ -236,6 +236,7 @@ struct DSTypeTokens {
   /// 12/16 — counts, chip text, helper text.
   let caption = Font.system(size: 12)
   let captionMedium = Font.system(size: 12, weight: .medium)
+  let captionSemibold = Font.system(size: 12, weight: .semibold)
   /// 11/14 medium — badges, duration, eyebrow (sentence case, no all-caps).
   let micro = Font.system(size: 11, weight: .medium)
   /// 22/26 semibold rounded tabular — score on cards.
