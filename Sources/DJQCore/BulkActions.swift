@@ -483,16 +483,22 @@ public final class BulkActions: @unchecked Sendable {
     var result = BulkResult(batchId: nil, action: action, dryRun: false, videoIds: ids, changed: [], skipped: [:],
                             remainingIssues: [:], summary: "")
     try store.db.transaction {
-      let existing = try ids.filter { try store.video(id: $0) != nil }
-      let before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
+      var existing = try ids.filter { try store.video(id: $0) != nil }
+      var before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
                             plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil,
                             hashtagSets: hashtagGroups ? try store.hashtagSets() : nil)
       try body()
-      // Round 4 (S1): a settings change (limits, platforms, defaults) can make Queue clips invalid or Edit clips valid —
-      // re-derive every Edit/Queue clip's state now (states only; the engine's next tick refills draft days).
+      // Round 4 (S1): a settings change (limits, platforms, defaults) can make Queue clips invalid — re-derive every
+      // Edit/Queue clip's state now (states only). Clips it moves to Edit lose their sent flag, so the batch records
+      // that: undoing the change brings them back to the Queue.
       if revalidate, settings || hashtagGroups,
          try settingsSnapshot() != before.settings || (hashtagGroups && store.hashtagSets() != before.hashtagSets) {
-        try Revalidation(store: store).run(adjustPlan: false)
+        for id in try Revalidation(store: store).run(adjustPlan: false).movedToEdit.keys.sorted() where !existing.contains(id) {
+          var was = try clipSnapshot(id, renders: renders)
+          was.sent = true
+          before.clips.append(was)
+          existing.append(id)
+        }
       }
       let after = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
                            plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil,
@@ -692,7 +698,7 @@ public final class BulkActions: @unchecked Sendable {
             continue
           }
           restored.insert(b.id)
-          if Self.same(cur, b) { continue }
+          if cur == b { continue }
           try restore(b)
           result.changed.append(b.id)
         }

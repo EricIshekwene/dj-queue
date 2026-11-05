@@ -62,6 +62,11 @@ final class FakeRenderer: RenderService, @unchecked Sendable {
   }
 }
 
+extension Engine {
+  /// For a test about something other than scheduling: the plan stays exactly as the test set it up.
+  var planFrozen: Engine { autoSchedules = false; return self }
+}
+
 extension Fixture {
   /// `n` clips of 20 s, 21 s, … with tags "song<i> x mix<i>"; intake done.
   static func engine(_ n: Int = 8, ready: Int? = nil, scores: [Int]? = nil) throws -> Fixture {
@@ -72,7 +77,7 @@ extension Fixture {
     return f
   }
 
-  /// Crop + v1 text + caption template, and a score → state ready.
+  /// Crop + v1 text + caption template, a score, and sent to the Queue → state ready.
   func makeReady(_ id: String, score: Int?) throws {
     var e = Edit()
     e.crop = CropRect(x: 0, y: 0, w: 1215, h: 2160)
@@ -82,7 +87,7 @@ extension Fixture {
     v.captionTemplateId = "short"
     try store.save(v, videoId: id)
     try store.setScore(id, score)
-    try store.refreshState(videoId: id)
+    try store.setSentToQueue(id, true)
   }
 
   var dm: DayMath { DayMath(settings: Settings()) }

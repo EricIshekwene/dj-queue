@@ -89,8 +89,10 @@ public final class Store: @unchecked Sendable {
     if v < 3 { try migrateToV3(from: v) }
     if v < 4 { try migrateToV4(from: v) }
     if v < 5 { try migrateToV5(from: v) }
-    if v < 6 { try migrateToV6(from: v) }
+    // Before the v6 step: its journal entry snapshots clips, and those snapshots read the flag.
     if v < Self.sentToQueueVersion { try migrateSentToQueue(from: v) }
+    if v < 6 { try migrateToV6(from: v) }
+    if v < Self.sentToQueueVersion { try db.exec("PRAGMA user_version = \(Self.sentToQueueVersion)") }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -167,7 +169,7 @@ public final class Store: @unchecked Sendable {
   /// Round 13 (A11): the only way into the Queue is Eric's Send to Queue, so a clip now carries that as a fact. Additive
   /// and lossless: every clip that's already past Edit counts as sent, and no state changes. An unscored clip is in Score
   /// whatever its stored state says, so it starts unsent; scoring it must not put it in the Queue. A file database with
-  /// data is copied to `<app support>/backups/` first.
+  /// data is copied to `<app support>/backups/` first. `migrate` writes the version.
   private func migrateSentToQueue(from v: Int) throws {
     if v >= 1, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
       let dir = paths.appSupport.appendingPathComponent("backups")
@@ -184,8 +186,7 @@ public final class Store: @unchecked Sendable {
       }
       try db.exec("""
         UPDATE videos SET sent_to_queue=1 WHERE type='short-form'
-          AND (state IN ('planned','posting','posted','partial') OR (state='ready' AND score IS NOT NULL));
-        PRAGMA user_version = \(Self.sentToQueueVersion);
+          AND (state IN ('planned','posting','posted','partial') OR (state='ready' AND score IS NOT NULL))
         """)
     }
   }

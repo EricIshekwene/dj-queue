@@ -424,10 +424,10 @@ import Testing
     #expect(try Queue(store: f.store).ordered().map(\.id) == ["clip-0"])  // past draft day doesn't count
     let n = LogNotifier()
     let r = Engine(store: f.store, renderer: nil, publisher: nil, notifier: n).tick(reason: "t")
-    #expect(r.steps["plan"]?.contains("dropped 1 past draft day") == true)
+    #expect(r.steps["plan"]?.contains("dropped 1 past day") == true)
     #expect(try f.store.planSlots(where: "id=?", [slot.id]).isEmpty)
     let next = try planner.slots(week: "2026-11-09")
-    #expect(next.contains { $0.videoId == "clip-0" && $0.date >= "2026-11-10" })  // the new week proposes it
+    #expect(next.contains { $0.videoId == "clip-0" && $0.date >= "2026-11-10" })  // the scheduler gives it a new day
     #expect(try f.doublePosts().isEmpty)
   }
 
@@ -443,7 +443,7 @@ import Testing
     let mon = try #require(try f.store.planSlots(where: "date='2026-11-02'").first)
     f.setTime("2026-11-04", "09:00")
     #expect(try !f.store.stalePastDraftSlots(today: "2026-11-04").contains { $0.id == mon.id })  // Tuesday's re-proposal may go
-    Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier()).tick(reason: "t")
+    Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier()).planFrozen.tick(reason: "t")
     #expect(try f.store.planSlots(where: "id=?", [mon.id]).count == 1)
     #expect(try !Queue(store: f.store).ordered().contains { $0.id == mon.videoId })
     #expect(try f.doublePosts().isEmpty)
@@ -457,7 +457,7 @@ import Testing
     try f.store.save(s)
     f.setTime("2026-11-04", "09:00")
     #expect(try f.store.stalePastDraftSlots(today: "2026-11-04").isEmpty)
-    Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier()).tick(reason: "t")
+    Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier()).planFrozen.tick(reason: "t")
     #expect(try f.store.planSlots(where: "id='manual-slot'").count == 1)
   }
 
@@ -488,7 +488,7 @@ import Testing
     let stale = try f.store.stalePastDraftSlots(today: "2026-11-05")
     #expect(stale.contains { $0.videoId == "clip-2" && $0.pinned })
     #expect(stale.allSatisfy { $0.weekStart == "2026-11-02" })
-    Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier()).tick(reason: "t")
+    Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier()).planFrozen.tick(reason: "t")
     #expect(try f.store.planSlots(where: "date<? AND week_start='2026-11-02'", ["2026-11-05"]).isEmpty)
     #expect(try !f.store.planSlots(where: "week_start='2026-11-09'").isEmpty)
     #expect(try f.store.events(videoId: "clip-2").contains { $0.message.contains("pin removed") })

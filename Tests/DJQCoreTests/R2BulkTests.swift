@@ -18,6 +18,7 @@ import Testing
     var custom = Edit()
     custom.crop = CropRect(x: 0, y: 0, w: 1216, h: 2160)
     try f.store.save(custom, videoId: "clip-3")
+    try f.store.setScore("clip-0", 50)
     let r = try bulk(f).makeReadyWithDefaults(["clip-0", "clip-2", "clip-3", "long-0001", "nope"])
     #expect(Set(r.changed) == ["clip-0", "clip-2"])
     #expect(r.skipped["long-0001"] == "long-form" && r.skipped["nope"] == "no such video")

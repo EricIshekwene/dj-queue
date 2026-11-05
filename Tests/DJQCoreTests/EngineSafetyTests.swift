@@ -6,7 +6,7 @@ import Testing
 @Suite struct EngineSafetyTests {
   func engine(_ f: Fixture, renderer: RenderService? = nil) -> (Engine, LogNotifier) {
     let n = LogNotifier()
-    return (Engine(store: f.store, renderer: renderer, publisher: nil, notifier: n), n)
+    return (Engine(store: f.store, renderer: renderer, publisher: nil, notifier: n).planFrozen, n)
   }
 
   /// Reviewer probe A: Mac off over Saturday shifts Sunday's posts into Monday; approving next week must not
