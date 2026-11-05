@@ -44,8 +44,7 @@ struct QueueView: View {
         DSEmptyState(icon: "list.bullet", title: "The Queue is empty", message: "Clips arrive here when you send them from Edit.",
                      actionTitle: "Go to Edit") { model.screen = .edit }
       } else if list.isEmpty {
-        DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match",
-                     message: "Nothing in the Queue fits this search or these filters.", actionTitle: "Clear filters") {
+        ListNoMatches(model: model, page: .queue, title: "No clips match", message: "Nothing in the Queue fits this search or these filters.") {
           model.clearListFilters(.queue)
           prefs.setStatus(.queue, nil)
         }

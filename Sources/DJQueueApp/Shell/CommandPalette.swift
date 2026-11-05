@@ -15,6 +15,11 @@ struct PaletteCommand: Identifiable {
   var disabled: String? = nil
   /// Keeps the palette open (clip rows open the clip's action page).
   var keepsOpen = false
+  /// Remembered in Recents when run.
+  var isRecent = true
+  /// Character offsets of the search match, shown bold.
+  var titleMatches: [Range<Int>] = []
+  var subtitleMatches: [Range<Int>] = []
   let run: () -> Void
 }
 
@@ -25,9 +30,7 @@ extension AppModel {
   var paletteGoTo: [PaletteCommand] {
     Screen.allCases.map { s in
       PaletteCommand(id: "go.\(s.rawValue)", title: "Go to \(s.title)", symbol: s.symbol, hint: "⌘\(s.key.character)", group: "Go to") {
-        [weak self] in
-        self?.editor = nil
-        self?.screen = s
+        [weak self] in self?.leaveForScreen(s)
       }
     } + [PaletteCommand(id: "go.settings", title: "Open Settings", symbol: "gearshape", hint: "⌘,", group: "Go to") { [weak self] in
       self?.showSettings = true
@@ -73,7 +76,7 @@ extension AppModel {
       })
     }
 
-    c.append(.init(id: "calendar.open", title: "Open Calendar", symbol: "calendar") { [weak self] in
+    c.append(.init(id: "calendar.open", title: "Open Calendar", symbol: "calendar", subtitle: "See today, the week or the month going out") { [weak self] in
       self?.editor = nil
       self?.screen = .calendar
     })
@@ -143,19 +146,11 @@ extension AppModel {
     let meta = [sessionName(v), v.type == .long ? "Long-form" : v.score.map { "Score \($0)" }, chip].compactMap { $0 }.filter { !$0.isEmpty }
     return PaletteCommand(id: "clip.\(v.id)", title: title ?? displayName(v), symbol: v.type == .long ? "rectangle" : "rectangle.portrait",
                           hint: "Actions ›", group: "Clips", subtitle: meta.joined(separator: " · "), keepsOpen: true) {
-      BrowseUI.shared.paletteClipId = v.id
-      BrowseUI.shared.paletteQuery = ""
+      let ui = BrowseUI.shared
+      ui.paletteReturnQuery = ui.paletteQuery
+      ui.paletteClipId = v.id
+      ui.paletteQuery = ""
     }
-  }
-
-  /// Clips whose display name (or raw tag) contains `q`, best first: prefix matches, then the rest.
-  func paletteClips(matching q: String, limit: Int = 6) -> [Video] {
-    let q = q.trimmingCharacters(in: .whitespaces)
-    guard !q.isEmpty else { return [] }
-    let hits = videos.filter { displayName($0).localizedCaseInsensitiveContains(q) || $0.tag.localizedCaseInsensitiveContains(q) }
-    let prefix = hits.filter { displayName($0).lowercased().hasPrefix(q.lowercased()) }
-    let rest = hits.filter { !displayName($0).lowercased().hasPrefix(q.lowercased()) }
-    return Array((prefix + rest).prefix(limit))
   }
 
   /// One clip's actions (the palette's second page): open, score, pin, move, exclude, agent prompt, kind, render…
@@ -237,9 +232,15 @@ extension AppModel {
     }
   }
 
-  /// A recent command id back to its command (clip rows and clip actions included).
+  /// A recent command id back to its command (clip rows, clip actions and search results included). nil when what it
+  /// pointed at is gone: the row just leaves Recents.
   func paletteCommand(id: String) -> PaletteCommand? {
     if let c = (paletteActions + paletteGoTo).first(where: { $0.id == id }) { return c }
+    if id.hasPrefix("search.") { return searchCommand(id: id).map { c in
+      var c = c
+      c.group = "Recents"
+      return c
+    } }
     guard id.hasPrefix("clip.") else { return nil }
     let rest = id.dropFirst(5)
     if let v = video(String(rest)) { return paletteClipRow(v) }
@@ -289,60 +290,55 @@ extension AppModel {
 
 // MARK: - Palette
 
-/// ⌘K (DESIGN-v2 §3, ref APP.CMD Magnific): a 640 pt e2 surface with a capsule search field, Recents and Actions,
-/// shortcuts right-aligned in caption tertiary. Typing searches commands and clips (by display name); a clip opens
-/// its own action page (score, pin, move, exclude, open editor, agent prompt…). ↑/↓ move, ↩ runs, Esc goes back /
-/// closes, ⌫ on an empty field leaves a clip page.
+/// ⌘K (DESIGN-v2 §3, ref APP.CMD Magnific): a 640 pt e2 surface with a capsule search field. Empty field: Recents,
+/// Actions and Go to. Typing searches the whole app (`SearchSources.swift`): type chips under the field (Tab cycles
+/// them), result groups capped at five with a "Show all" row, the match in bold and, for a hit that isn't in the title,
+/// where it matched. A clip opens its own action page (score, pin, move, exclude, open editor, agent prompt…). ↑/↓
+/// move, ↩ runs, Esc goes back / closes, ⌫ on an empty field leaves a clip page.
 struct CommandPalette: View {
   @Bindable var model: AppModel
   @Bindable private var ui = BrowseUI.shared
   @State private var index = 0
+  @State private var memo = PaletteMemo()
   @FocusState private var focused: Bool
 
   private var clip: Video? { ui.paletteClipId.flatMap(model.video) }
 
-  private var sections: [(String, [PaletteCommand])] {
-    let q = ui.paletteQuery.trimmingCharacters(in: .whitespaces).lowercased()
-    func match(_ c: PaletteCommand) -> Bool { q.isEmpty || c.title.lowercased().contains(q) }
+  private var content: PaletteContent {
     if let v = clip {
-      let cmds = model.paletteClipCommands(v).filter(match)
-      return [(model.displayName(v), cmds)]
-    }
-    if q.isEmpty {
-      var out: [(String, [PaletteCommand])] = []
-      let recents = model.recentCommands.compactMap(model.paletteCommand(id:))
-      if !recents.isEmpty { out.append(("Recents", recents)) }
-      out.append(("Actions", model.paletteActions))
-      out.append(("Go to", model.paletteGoTo))
+      let q = ui.paletteQuery.trimmingCharacters(in: .whitespaces).lowercased()
+      var out = PaletteContent()
+      out.add(model.displayName(v), model.paletteClipCommands(v).filter { q.isEmpty || $0.title.lowercased().contains(q) })
       return out
     }
-    var out: [(String, [PaletteCommand])] = []
-    let clips = model.paletteClips(matching: q).map { model.paletteClipRow($0) }
-    if !clips.isEmpty { out.append(("Clips", clips)) }
-    let actions = model.paletteActions.filter(match)
-    if !actions.isEmpty { out.append(("Actions", actions)) }
-    let go = model.paletteGoTo.filter(match)
-    if !go.isEmpty { out.append(("Go to", go)) }
-    return out
+    return memo.content(model, text: ui.paletteQuery, scope: ui.paletteScope)
+  }
+
+  /// The chips on offer, in order. Tab walks these.
+  private func chips(_ c: PaletteContent) -> [SearchScope] {
+    SearchScope.allCases.filter { c.counts[$0] != nil }
   }
 
   var body: some View {
-    let secs = sections
-    let flat = secs.flatMap(\.1)
+    let c = content
     ZStack(alignment: .top) {
       DS.color.scrim.ignoresSafeArea().contentShape(Rectangle()).onTapGesture { close() }
       VStack(spacing: 0) {
-        searchRow(flat)
+        searchRow
           .padding(DS.space.sm)
+        if clip == nil, chips(c).count > 1 { chipRow(c) }
         DSSeparator()
-        list(secs, flat: flat)
+        list(c)
         DSSeparator()
         HStack(spacing: DS.space.md) {
           footer("↑ ↓", "Navigate")
           footer("↩", "Select")
+          if clip == nil, chips(c).count > 1 { footer("tab", "Filter") }
           footer("esc", clip == nil ? "Close" : "Back")
           Spacer()
-          if clip == nil { Text("Type a clip name to act on it").font(DS.type.caption).foregroundStyle(DS.color.textTertiary) }
+          if clip == nil {
+            Text(c.note ?? (c.isSearch ? "" : "Clips, posts, weeks, settings and actions")).font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+          }
         }
         .padding(.horizontal, DS.space.md)
         .frame(height: 36)
@@ -354,19 +350,26 @@ struct CommandPalette: View {
     .onAppear {
       focused = true
       index = 0
+      // A chip belongs to one search; text handed over by "Search everywhere" stays.
+      ui.paletteScope = .all
     }
-    .onChange(of: ui.paletteQuery) { index = 0 }
+    .onChange(of: ui.paletteQuery) {
+      index = 0
+      // A chip that lost its hits really goes back to All: deleting a letter doesn't jump to it again.
+      if clip == nil, ui.paletteScope != content.scope { ui.paletteScope = content.scope }
+    }
     .onChange(of: ui.paletteClipId) { index = 0 }
+    .onChange(of: ui.paletteScope) { index = 0 }
   }
 
   // MARK: Pieces
 
-  private func searchRow(_ flat: [PaletteCommand]) -> some View {
+  private var searchRow: some View {
     HStack(spacing: 8) {
       Image(systemName: "magnifyingglass").font(.system(size: 14, weight: .medium)).foregroundStyle(DS.color.textTertiary)
       if let v = clip {
         Button {
-          ui.paletteClipId = nil
+          back()
         } label: {
           HStack(spacing: 4) {
             Text(model.displayName(v)).lineLimit(1)
@@ -383,17 +386,29 @@ struct CommandPalette: View {
         .buttonStyle(.plain)
         .dsTooltip("Back to all commands", shortcut: "esc")
       }
-      TextField(clip == nil ? "Search clips and commands…" : "Filter actions…", text: $ui.paletteQuery)
+      TextField(clip == nil ? "Search everything…" : "Filter actions…", text: $ui.paletteQuery)
         .textFieldStyle(.plain)
         .font(Font.system(size: 15))
         .foregroundStyle(DS.color.text)
         .focused($focused)
-        .onSubmit { run(at: index, in: flat) }
+        // These read `content`, not a list from the render: AppKit's field can keep an older closure after a chip
+        // change, and ↩ would run a row that's no longer listed.
+        .onSubmit { run(at: index, in: content.flat) }
         .onKeyPress(.upArrow) { index = max(0, index - 1); return .handled }
-        .onKeyPress(.downArrow) { index = min(max(0, flat.count - 1), index + 1); return .handled }
+        .onKeyPress(.downArrow) { index = min(max(0, content.flat.count - 1), index + 1); return .handled }
         .onKeyPress(.delete) {
           guard ui.paletteQuery.isEmpty, clip != nil else { return .ignored }
-          ui.paletteClipId = nil
+          back()
+          return .handled
+        }
+        .onKeyPress(keys: [.tab, KeyEquivalent("\u{19}")]) { press in
+          // Handled either way: Tab never moves focus out of the field.
+          let now = content
+          let on = chips(now)
+          guard clip == nil, on.count > 1 else { return .handled }
+          let at = on.firstIndex(of: now.scope) ?? 0
+          let backward = press.modifiers.contains(.shift) || press.key == KeyEquivalent("\u{19}")
+          ui.paletteScope = on[(at + (backward ? on.count - 1 : 1)) % on.count]
           return .handled
         }
         .onExitCommand { back() }
@@ -404,27 +419,45 @@ struct CommandPalette: View {
     .modifier(DSFieldBox(focused: false, hovering: false, error: false, disabled: false, radius: DS.size.controlLg / 2))
   }
 
-  private func list(_ secs: [(String, [PaletteCommand])], flat: [PaletteCommand]) -> some View {
+  /// Type chips: only kinds with hits, each with its count.
+  private func chipRow(_ c: PaletteContent) -> some View {
+    let scopes = chips(c).filter { $0 != .all }
+    let options = scopes.map { s in
+      DSStatusChipOption(id: s.rawValue, title: s.title, count: c.counts[s], tooltip: "Show only \(s.title.lowercased())")
+    }
+    return HStack(spacing: 6) {
+      DSStatusChips(options: options, selection: Binding(
+        get: { c.scope == .all ? nil : c.scope.rawValue },
+        set: { ui.paletteScope = $0.flatMap(SearchScope.init(rawValue:)) ?? .all
+          focused = true }),
+                    allCount: c.counts[.all], allTooltip: "Show every kind of result", size: .sm)
+      Spacer(minLength: 0)
+    }
+    .padding(.horizontal, DS.space.sm)
+    .padding(.bottom, DS.space.xs)
+  }
+
+  private func list(_ c: PaletteContent) -> some View {
     ScrollViewReader { proxy in
       ScrollView {
         VStack(alignment: .leading, spacing: 1) {
-          let ids = flat.map(\.id)
-          ForEach(Array(secs.enumerated()), id: \.offset) { si, section in
-            Text(section.0).font(DS.type.micro).foregroundStyle(DS.color.textTertiary).lineLimit(1)
+          ForEach(Array(c.sections.enumerated()), id: \.offset) { si, section in
+            Text(section.title).font(DS.type.micro).foregroundStyle(DS.color.textTertiary).lineLimit(1)
               .padding(.horizontal, 10).padding(.top, si == 0 ? 6 : 12).padding(.bottom, 4)
-            ForEach(Array(section.1.enumerated()), id: \.offset) { _, cmd in
-              let i = ids.firstIndex(of: cmd.id) ?? -1
-              PaletteRow(command: cmd, selected: i == index)
-                .id("\(si).\(cmd.id)")
-                .onTapGesture { run(cmd) }
-                .onHover { if $0, i >= 0 { index = i } }
+            ForEach(section.rows) { row in
+              PaletteRow(command: row.command, selected: row.index == index)
+                .id(row.index)
+                .onTapGesture { run(row.command) }
+                .onHover { if $0 { index = row.index } }
             }
           }
-          if flat.isEmpty {
+          if c.flat.isEmpty {
             VStack(spacing: 4) {
-              Text(clip == nil ? "No clip or command matches “\(ui.paletteQuery)”" : "No action matches “\(ui.paletteQuery)”")
+              Text(clip == nil ? "Nothing matches “\(ui.paletteQuery)”" : "No action matches “\(ui.paletteQuery)”")
                 .font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
-              Text("Try part of a title or a raw tag").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+              if clip == nil {
+                Text("Try part of a title, a caption, a date or a setting").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+              }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, DS.space.xxl)
@@ -434,10 +467,7 @@ struct CommandPalette: View {
       }
       .frame(maxHeight: 420)
       .fixedSize(horizontal: false, vertical: true)
-      .onChange(of: index) { _, i in
-        guard flat.indices.contains(i), let s = secs.firstIndex(where: { $0.1.contains { $0.id == flat[i].id } }) else { return }
-        proxy.scrollTo("\(s).\(flat[i].id)")
-      }
+      .onChange(of: index) { _, i in proxy.scrollTo(i) }
     }
   }
 
@@ -457,25 +487,36 @@ struct CommandPalette: View {
 
   private func run(_ c: PaletteCommand) {
     if let why = c.disabled { model.show(why, error: true); return }
-    model.noteCommand(c.id)
+    if c.isRecent { model.noteCommand(c.id) }
     if c.keepsOpen {
       c.run()
       focused = true
       return
     }
     close()
+    let (screen, editor) = (model.screen, model.editor)
     c.run()
+    // Anything that went to another screen or opened a clip leaves what was covering it, however the action got there.
+    if model.screen != screen {
+      if model.editor == editor { model.editor = nil }
+      model.showSettings = false
+    } else if model.editor != editor {
+      model.showSettings = false
+    }
   }
 
   private func back() {
-    if clip != nil { ui.paletteClipId = nil; ui.paletteQuery = "" } else { close() }
+    if clip != nil {
+      ui.paletteClipId = nil
+      ui.paletteQuery = ui.paletteReturnQuery
+      ui.paletteReturnQuery = ""
+      focused = true
+    } else {
+      close()
+    }
   }
 
-  private func close() {
-    model.showPalette = false
-    ui.paletteQuery = ""
-    ui.paletteClipId = nil
-  }
+  private func close() { model.closePalette() }
 }
 
 /// A palette row: icon tile · title (+ subtitle / disabled reason) · right-aligned shortcut (caption tertiary).
@@ -492,9 +533,12 @@ private struct PaletteRow: View {
         .frame(width: 26, height: 26)
         .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
       VStack(alignment: .leading, spacing: 1) {
-        Text(command.title).font(DS.type.callout).foregroundStyle(enabled ? DS.color.text : DS.color.textTertiary).lineLimit(1)
+        PaletteMatchText(text: command.title, matches: command.titleMatches, font: DS.type.callout, strong: DS.type.calloutSemibold)
+          .foregroundStyle(enabled ? DS.color.text : DS.color.textTertiary).lineLimit(1)
         if let s = command.disabled ?? command.subtitle {
-          Text(s).font(DS.type.caption).foregroundStyle(DS.color.textTertiary).lineLimit(1)
+          PaletteMatchText(text: s, matches: command.disabled == nil ? command.subtitleMatches : [], font: DS.type.caption,
+                           strong: DS.type.captionSemibold)
+            .foregroundStyle(DS.color.textTertiary).lineLimit(1)
         }
       }
       Spacer(minLength: DS.space.sm)
@@ -509,6 +553,41 @@ private struct PaletteRow: View {
     .background(selected ? DS.color.selected : .clear, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
     .contentShape(Rectangle())
     .dsTooltip(command.disabled)
+  }
+}
+
+/// Text with the matched characters in a stronger weight.
+private struct PaletteMatchText: View {
+  let text: String
+  let matches: [Range<Int>]
+  let font: Font
+  let strong: Font
+
+  var body: some View {
+    if matches.isEmpty {
+      Text(text).font(font)
+    } else {
+      Text(attributed)
+    }
+  }
+
+  private var attributed: AttributedString {
+    let chars = Array(text)
+    var out = AttributedString()
+    func add(_ a: Int, _ b: Int, _ f: Font) {
+      guard a < b else { return }
+      var piece = AttributedString(String(chars[a..<b]))
+      piece.font = f
+      out += piece
+    }
+    var at = 0
+    for r in matches where r.lowerBound >= at && r.upperBound <= chars.count {
+      add(at, r.lowerBound, font)
+      add(r.lowerBound, r.upperBound, strong)
+      at = r.upperBound
+    }
+    add(at, chars.count, font)
+    return out
   }
 }
 

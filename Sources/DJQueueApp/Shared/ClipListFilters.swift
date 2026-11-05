@@ -204,6 +204,24 @@ extension AppModel {
   }
 }
 
+/// A list's "nothing fits" state (Score, Edit, Queue, Library, Posts). ⌘F only filters the page; when it holds text
+/// this also offers the same text in ⌘K, which looks through the whole app.
+struct ListNoMatches: View {
+  @Bindable var model: AppModel
+  let page: ListPage
+  let title: String
+  let message: String
+  let clear: () -> Void
+
+  var body: some View {
+    let q = ListPrefs.shared[page].search.trimmingCharacters(in: .whitespacesAndNewlines)
+    DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: title, message: message, actionTitle: "Clear filters",
+                 secondary: q.isEmpty ? nil : .init(title: "Search everywhere", icon: "magnifyingglass",
+                                                    tooltip: "Look for “\(q)” across the whole app", shortcut: "⌘K") { model.openSearch(q) },
+                 action: clear)
+  }
+}
+
 /// The sort menu for pages that use `ClipSort` (Score, Edit, Library).
 struct ListSortMenu: View {
   let page: ListPage

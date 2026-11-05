@@ -59,9 +59,17 @@ final class AppModel {
   var excluded: [Video] = []
   var upcomingSlots: [PlanSlot] = []
   var nextSlotByVideo: [String: PlanSlot] = [:]
+  /// Planned clips per week start (⌘K week rows).
+  var weekClips: [String: Int] = [:]
+  /// ⌘K: clips, posts, weeks, sessions, settings and Health, folded off the main actor in `load`.
+  var searchIndex = SearchIndex()
+  /// Moves when `searchIndex` does: results on screen are worked out again.
+  var searchGeneration = 0
   var posts: [PlatformPost] = []
   var postsByVideo: [String: [PlatformPost]] = [:]
   var postsBySlot: [String: [PlatformPost]] = [:]
+  /// Posts by id (a palette row looks its post up on every keystroke).
+  var postById: [String: PlatformPost] = [:]
   var problems: [PlatformPost] = []
   var dueToday: [PlatformPost] = []
   var runway = Runway(approvedDays: 0, readyDays: 0, totalDays: 0)
@@ -114,6 +122,8 @@ final class AppModel {
   // MARK: UI state
   var screen: Screen = .score
   var postsSelection: String? = nil
+  /// Post the Posts list scrolls to once it's on screen (⌘K; consumed once).
+  var postsScrollTarget: String? = nil
   var postsFilter: PostsFilter = .all
   /// Calendar view (remembered through `setCalendarMode`, default Week).
   var calendarMode: CalendarViewMode = .week { didSet { if oldValue != calendarMode { calendarViewChanged() } } }
@@ -135,7 +145,10 @@ final class AppModel {
   @ObservationIgnored lazy var undoRunner = UndoRunner(bulk: bulk)
   var showPalette = false
   /// In-window Settings modal (DESIGN-v2 §6.9), opened by the sidebar row, ⌘, and `WindowManager.showSettings`.
-  var showSettings = false
+  var showSettings = false {
+    // ⌘, while the palette is open: Settings opens under it and takes keyboard focus, so the palette goes.
+    didSet { if showSettings, !oldValue, showPalette { closePalette() } }
+  }
   /// Section the Settings modal shows (the Settings leaf owns the `SettingsSection` enum).
   var settingsSection: SettingsSection = .general
   /// Sidebar collapsed to icons by the user (it also collapses automatically under 1200 pt).
@@ -327,6 +340,8 @@ final class AppModel {
     var hashtagSets: [HashtagSet] = []
     var calendar = CalendarData()
     var schedulable: [Video] = []
+    var weekClips: [String: Int] = [:]
+    var searchIndex = SearchIndex()
     var postiz = PostizLoaded()
     var error: String?
   }
@@ -372,6 +387,13 @@ final class AppModel {
       for v in l.needsEdit where (try? store.edit(videoId: v.id))?.coverTime != nil { l.covers.insert(v.id) }
       l.captionTemplates = try store.captionTemplates()
       l.hashtagSets = try store.hashtagSets()
+      // ⌘K: read and folded here so a keystroke never touches the database.
+      l.weekClips = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT week_start, COUNT(DISTINCT video_id) AS n FROM plan_slots GROUP BY week_start")
+        .compactMap { r in r.string("week_start").map { ($0, r.int("n") ?? 0) } })
+      l.searchIndex = SearchCorpus.index(SearchInput(
+        settings: l.settings, sessions: l.sessions, videos: l.videos, posts: l.posts, weekStates: [:], weekClips: l.weekClips,
+        clipText: try store.searchClipText(videos: l.videos, settings: l.settings, sets: l.hashtagSets),
+        hashtagSets: l.hashtagSets, captionTemplates: l.captionTemplates, now: now))
       // S6 preview stamps: edit + text versions + New-clip defaults + clip row, per clip.
       l.previewTable = try store.previewStampTable()
       for v in l.videos {
@@ -401,6 +423,9 @@ final class AppModel {
     coverIds = l.covers
     captionTemplates = l.captionTemplates
     hashtagSets = l.hashtagSets
+    weekClips = l.weekClips
+    searchIndex = l.searchIndex
+    searchGeneration &+= 1
     var seenPlanned = Set<String>()
     let planned = l.upcomingSlots.sorted { ($0.date, $0.position) < ($1.date, $1.position) }
       .compactMap { s -> Video? in seenPlanned.insert(s.videoId).inserted ? videoById[s.videoId] : nil }
@@ -420,6 +445,7 @@ final class AppModel {
       preparedStamp[id] = nil
     }
     posts = l.posts
+    postById = byId
     postsByVideo = Dictionary(grouping: posts, by: \.videoId)
     postsBySlot = Dictionary(grouping: posts.filter { $0.planSlotId != nil }, by: { $0.planSlotId! })
     problems = l.problems

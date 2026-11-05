@@ -61,8 +61,7 @@ struct EditView: View {
                      message: "Scored clips that still need a crop, text or caption show up here.",
                      actionTitle: "Open Queue") { model.screen = .queue }
       } else if list.isEmpty {
-        DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match",
-                     message: "Nothing in Edit fits this search or these filters.", actionTitle: "Clear filters") {
+        ListNoMatches(model: model, page: .edit, title: "No clips match", message: "Nothing in Edit fits this search or these filters.") {
           model.clearListFilters(.edit)
           prefs.setStatus(.edit, nil)
         }

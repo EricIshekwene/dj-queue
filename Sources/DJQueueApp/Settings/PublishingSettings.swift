@@ -191,6 +191,7 @@ struct PublishingPlatformRow: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .overlay(alignment: .bottom) { DSSeparator() }
     .accessibilityElement(children: .contain)
+    .settingsAnchor(SettingsAnchor.row(platform.displayName))
   }
 
   private func summary(_ kind: PublisherKind) -> String {

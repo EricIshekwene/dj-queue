@@ -196,3 +196,10 @@ Eric's pipeline is Score → Edit → Queue → Posted. Decisions: `DECISIONS-R1
 - **Undo survives the scheduler:** `BulkActions.planConflict` treats unpinned new slots, untouched new regular posts and weeks that only flipped to approved as derived; `restorePlan` drops them and the next tick derives them again.
 - **Stages:** `.scheduled` stays as a case and a status word; back from it is "Back to Edit" (held). The Queue has no forward move.
 - **Runway:** `approvedDays` keeps its name and means days with slots; `scheduledThrough` and `Runway.isLow` feed the words `StageWording.scheduledThrough` and "Queue running low". `djq schedule [--dry-run]` runs the pass once; it is the only safe way to exercise scheduling on a DB copy.
+
+## Round 10 additions — whole-app search
+- `Sources/DJQCore/Search/`: `AppSearch.swift` (pure engine: `SearchIndex`, `SearchQuery`, tiers, snippets, no SwiftUI, no database), `SearchCorpus.swift` (clips, posts, weeks, sessions, settings and Health as `SearchItem`s; `Store.searchClipText`, one query for the latest version's text) and `SettingsSearchRegistry.swift` (every Settings row and header; `SettingsRegistryTests` scans the Settings views and fails on a missing label).
+- `AppModel.load` builds `searchIndex` off the main actor on every refresh, so a keystroke only scans folded bytes and never touches the database. Nothing is written and there is no schema change.
+- `Shell/SearchSources.swift` turns hits into palette rows, only for what's on screen, and holds the open paths (`openPost`, `openWeek`, `openSession`, `openSettings`, `leaveForScreen`). Actions and Go to follow the selection, so the palette indexes those itself. A search id rebuilds its row later, which is how Recents work; a stale id gives nil.
+- Settings deep links: `.settingsAnchor` marks a row, `SettingsUIState.scrollTarget` asks for it and `landOnTarget` scrolls and flashes.
+- Real-window proof: `DJQ_SEARCH_PROBE=1 DJQueueApp --snapshot <dir>` with the dev-root env (`Snapshot/SearchProbe.swift`). It drives real key events through the window in light and dark and exits 1 on a failed step. `DJQ_SEARCH_PROBE=sabotage` shows it can fail.

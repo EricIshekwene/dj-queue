@@ -2,7 +2,7 @@ import DJQCore
 import SwiftUI
 
 /// ChatGPT-style sidebar (DESIGN-v2 §3, `R2.NAV`): flat `DS.color.sidebar`, no List. Header (traffic lights ·
-/// "DJ Queue" · collapse), "Search clips ⌘K", the pipeline rows without a header, "Browse" rows, then the footer
+/// "DJ Queue" · collapse), "Search ⌘K", the pipeline rows without a header, "Browse" rows, then the footer
 /// engine line (menu) and Settings. `compact` = 76 pt icon rail (under 1200 pt or collapsed by Eric).
 struct AppSidebar: View {
   @Bindable var model: AppModel
@@ -13,7 +13,7 @@ struct AppSidebar: View {
     VStack(alignment: .leading, spacing: 0) {
       header
       VStack(alignment: .leading, spacing: 2) {
-        SidebarRow(title: "Search clips", icon: "magnifyingglass", hint: "⌘K", shortcut: "⌘K", tooltip: "Search clips and commands",
+        SidebarRow(title: "Search", icon: "magnifyingglass", hint: "⌘K", shortcut: "⌘K", tooltip: AppModel.searchHelp,
                    compact: compact) { model.showPalette = true }
           .padding(.bottom, DS.space.xs)
         ForEach(Screen.allCases.filter(\.isPipeline)) { s in row(s) }

@@ -66,7 +66,7 @@ States everywhere: default · hover · pressed · focused (accent ring) · disab
 | `DSAvatar` | initials or image | size | Avatar | — |
 | `DSStat` | big number · label · hint | sm/md/lg, tone | — | Use for runway and counts |
 | `DSSectionHeader` / `DSEyebrow` | title · count · description · action | — | — | Sentence case |
-| `DSEmptyState` | 40 pt sunken tile icon · title · line · one primary | — | Empty | One action only |
+| `DSEmptyState` | 40 pt sunken tile icon · title · line · one primary, optional outline second action | — | Empty | One primary action; the second is a quieter way out |
 | `DSPopoverSurface` / `.dsPopover` | r.lg e2 panel | — | Popover | — |
 | `DSMenuList` / `DSMenuItem` | label · item (icon, shortcut/check) · separator · destructive | hover, disabled reason | DropdownMenu | Context menus stay native |
 | `DSDialog` / `.dsSheet` / `DSChangeList` | icon · title · description · close · body · footer | width 480, e3 | Dialog / AlertDialog | A bulk action lists its changes, Cancel + primary |
@@ -98,4 +98,4 @@ States everywhere: default · hover · pressed · focused (accent ring) · disab
 - Map AppModel to `DSClip` in one helper per screen. Pass `isFocused` for the keyboard-focused card (it gets autoplay priority). Use `Lazy` stacks/grids so previews release when scrolled away.
 - Bulk flow: `.dsBulkBar(isPresented:)` → `DSDialog` + `DSChangeList` confirmation → `.dsToast` "Updated N clips · Undo".
 - Settings modal rows: `DSToggle` / `DSSelect` with descriptions. A "Default/Custom ↺" tag isn't a component yet: build it from a `DSBadge(.outline)` plus a `DSIconButton("arrow.uturn.backward")`.
-- Phone mocks, timeline and the ⌘K palette are screen/editor work. Build them from `DSPopoverSurface`, `DSMenuList`, `DSTextField(isSearch:)` and `DSKeyHint`.
+- Phone mocks, timeline and the ⌘K palette are screen/editor work. Build them from `DSPopoverSurface`, `DSMenuList`, `DSTextField(isSearch:)` and `DSKeyHint`. The palette's type chips are `DSStatusChips` at size `.sm`.

@@ -121,7 +121,7 @@ struct AutoUpdateSettings: View {
     if let err = updates.settingsError {
       SettingsNote(err, icon: "exclamationmark.circle")
     }
-    SettingsRow(installedLabel, description: statusLine) {
+    SettingsRow(installedLabel, description: statusLine, anchor: SettingsAnchor.row("Installed build")) {
       HStack(spacing: DS.space.xs) {
         statusBadges
         DSButton("Check now", variant: .outline, size: .sm, disabledReason: updates.checkBlockedReason,

@@ -34,6 +34,22 @@ extension AppModel {
     }
   }
 
+  /// This week's and the shown week's first day (`weekStartsOn`).
+  var thisWeek: String { planner.weekStart(for: now) }
+  var shownWeek: String { dm.weekStart(of: dm.date(calendarDay)) }
+
+  /// "Week of 2 Nov".
+  func weekTitle(_ ws: String) -> String { "Week of \(Fmt.day(dm.date(ws), tz: tz, style: "d MMM"))" }
+
+  /// "This week" / "Next week" / "Last week" / "26 Oct – 1 Nov".
+  func weekContext(_ ws: String) -> String {
+    let tw = thisWeek
+    if ws == tw { return "This week" }
+    if ws == dm.addDays(tw, 7) { return "Next week" }
+    if ws == dm.addDays(tw, -7) { return "Last week" }
+    return "\(Fmt.day(dm.date(ws), tz: tz, style: "d MMM")) – \(Fmt.day(dm.date(dm.addDays(ws, 6)), tz: tz, style: "d MMM"))"
+  }
+
   // MARK: Navigation
 
   /// A view switch by Eric: remembered across launches.
