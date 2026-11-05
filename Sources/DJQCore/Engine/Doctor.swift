@@ -182,33 +182,36 @@ public final class Doctor: @unchecked Sendable {
     }
     guard !w.isEmpty else { return [] }
     return [.init(id: "plan.notReady", severity: .error, title: "Planned clips with something missing", detail: "These can't render or post on their day (they stay on their day; fix them or swap them).",
-                  where_: w, fix: "Finish the edit in the app (crop, text or No text, caption), or remove/swap the slot in the Week view.")]
+                  where_: w, fix: "Finish the edit in the app (crop, text or No text, caption), or move it on the Calendar (`djq stage <video-id> back` takes it off).")]
   }
 
+  /// An open day with a clip waiting means the scheduler is stuck: every tick fills them. An open day with an empty
+  /// Queue is normal, and so is anything while posting is paused.
   func planGaps() throws -> [DoctorFinding] {
     let settings = try store.settings()
+    guard !settings.paused else { return [] }
     let dm = DayMath(settings: settings)
-    let today = store.today(dm)
-    let thisWeek = dm.weekStart(of: store.clock.now)
-    var w: [String] = []
-    for week in [thisWeek, dm.addDays(thisWeek, 7)] where try store.week(week)?.state == .approved {
-      for day in dm.weekDays(week) where day >= today {
-        let n = try store.planSlots(where: "date=?", [day]).count
-        if n < settings.postsPerDay { w.append("\(day): \(n)/\(settings.postsPerDay) posts") }
-      }
-    }
-    guard !w.isEmpty else { return [] }
-    return [.init(id: "plan.gaps", severity: .warning, title: "Gaps in the approved week", detail: "Days with fewer posts than posts/day.",
-                  where_: w, fix: "Pin a clip from the Queue to the day (Week view, or `djq pin <video-id> <YYYY-MM-DD>`), or Rebuild week and approve again.")]
+    let planner = Planner(store: store)
+    let waiting = try planner.schedulable(settings)
+    guard !waiting.isEmpty else { return [] }
+    let open = try planner.openPositions(now: store.clock.now, settings: settings, dm: dm).prefix(waiting.count)
+    guard !open.isEmpty else { return [] }
+    var seen = Set<String>()
+    let days = open.map(\.date).filter { seen.insert($0).inserted }
+    let w = try days.map { "\($0): \(try store.planSlots(where: "date=?", [$0]).count)/\(settings.postsPerDay) posts" }
+    return [.init(id: "plan.gaps", severity: .warning, title: "Open days with clips waiting in the Queue",
+                  detail: "\(waiting.count) clip\(waiting.count == 1 ? "" : "s") waiting and days still open: the scheduler should have filled them.",
+                  where_: w, fix: "Check the engine is running (`djq status`), then `djq schedule --dry-run` says what it would do and why not; `djq schedule` runs it once.")]
   }
 
   func runway() throws -> [DoctorFinding] {
     let s = try store.settings()
     let r = try Queue(store: store).runway()
     var out: [DoctorFinding] = []
-    if r.approvedDays < s.approvedRunwayAlertDays {
-      out.append(.init(id: "runway.approved", severity: .warning, title: "Approved runway \(r.approvedDays) day(s)", detail: "Below the \(s.approvedRunwayAlertDays)-day threshold.",
-                       where_: [], fix: "Approve next week (`djq week --approve <monday>`), after checking the proposal."))
+    if r.isLow(s) {
+      out.append(.init(id: "runway.queue", severity: .warning, title: StageWording.queueLowTitle,
+                       detail: "\(StageWording.scheduledThrough(r.scheduledThrough, settings: s)) (\(r.approvedDays) day\(r.approvedDays == 1 ? "" : "s"), below the \(s.approvedRunwayAlertDays)-day threshold) and the Queue is about out.",
+                       where_: [], fix: "Send clips to the Queue from Edit."))
     }
     if r.totalDays < s.totalRunwayAlertDays {
       out.append(.init(id: "runway.total", severity: .warning, title: "Total runway \(r.totalDays) day(s)", detail: "Below the \(s.totalRunwayAlertDays)-day threshold (Queue \(r.readyDays) d).",
@@ -246,7 +249,7 @@ public final class Doctor: @unchecked Sendable {
     let s = try store.settings()
     return [.init(id: "posts.overdue", severity: .error, title: "\(ps.count) overdue post(s)", detail: "A whole day passed without posting; that platform's plan was shifted so nothing double-posts.",
                   where_: ps.map { "post \($0.id) · \($0.platform.displayName) · \($0.videoId) · was \(Sched.shortTime($0.scheduledAt, s))" },
-                  fix: "In Today/notification: Post now, Shift plan (into today's slot) or Skip. If it was actually posted, `djq posted <post-id> <url>`.")]
+                  fix: "On the Calendar or in the notification: Post now, Shift plan (into today's slot) or Skip. If it was actually posted, `djq posted <post-id> <url>`.")]
   }
 
   func unresolved() throws -> [DoctorFinding] {
@@ -397,7 +400,7 @@ extension Doctor {
 
     guard !used.isEmpty || !open.isEmpty else {
       out.append(.init(id: "postiz.not_connected", severity: .info, title: "Postiz not in use",
-                       detail: "Every platform is set to Manual: posts go to Today and Eric marks them posted.", where_: [],
+                       detail: "Every platform is set to Manual: posts go to the Calendar and Eric marks them posted.", where_: [],
                        fix: "Nothing to do. To publish through Postiz, Eric adds the key and picks channels in Settings → Publishing."))
       return out
     }
@@ -427,7 +430,7 @@ extension Doctor {
 
     if !hasKey && !used.isEmpty {
       out.append(.init(id: "postiz.not_connected", severity: .warning, title: "Postiz isn't connected",
-                       detail: "\(names) \(used.count == 1 ? "is" : "are") set to Postiz but no API key is saved, so their posts go to Today (posted by hand).",
+                       detail: "\(names) \(used.count == 1 ? "is" : "are") set to Postiz but no API key is saved, so their posts go to the Calendar (posted by hand).",
                        where_: used.map(\.rawValue),
                        fix: "Eric adds the Postiz API key in Settings → Publishing (agents never handle the key)."))
     } else if let liveError {
@@ -438,7 +441,7 @@ extension Doctor {
 
     if let invalid {
       out.append(.init(id: "postiz.key_invalid", severity: .error, title: "Postiz refused the API key",
-                       detail: "Since \(Sched.shortTime(invalid.at, settings)): \(invalid.message.isEmpty ? "401" : invalid.message). Posts set to Postiz go to Today; DJ Queue re-checks the key hourly.",
+                       detail: "Since \(Sched.shortTime(invalid.at, settings)): \(invalid.message.isEmpty ? "401" : invalid.message). Posts set to Postiz go to the Calendar; DJ Queue re-checks the key hourly.",
                        where_: used.map(\.rawValue),
                        fix: "Eric saves a valid key again in Settings → Publishing (Postiz → Settings → Public API). Agents never handle the key."))
     }
@@ -455,7 +458,7 @@ extension Doctor {
       out.append(.init(id: "postiz.mapping_missing", severity: urgent ? .error : .warning,
                        title: "No Postiz channel for \(unmapped.map(\.0.displayName).joined(separator: ", "))",
                        detail: unmapped.map { "\($0.0.displayName): \($0.1)" }.joined(separator: " · ")
-                         + (urgent ? ". Posts in the next 48 h go to Today." : ". Their posts go to Today until a channel is picked."),
+                         + (urgent ? ". Posts in the next 48 h go to the Calendar." : ". Their posts go to the Calendar until a channel is picked."),
                        where_: unmapped.map(\.0.rawValue),
                        fix: "`djq postiz map --dry-run` shows the auto-mapping by provider; Eric runs `djq postiz map` (or picks the channel in Settings → Publishing)."))
     }
@@ -466,7 +469,7 @@ extension Doctor {
     }
     if !disabled.isEmpty {
       out.append(.init(id: "postiz.channel_disabled", severity: .error, title: "Postiz channel disabled or expired",
-                       detail: disabled.map { "\($0.0.displayName): \($0.1)" }.joined(separator: " · ") + ". Its posts go to Today until it's reconnected.",
+                       detail: disabled.map { "\($0.0.displayName): \($0.1)" }.joined(separator: " · ") + ". Its posts go to the Calendar until it's reconnected.",
                        where_: disabled.map(\.0.rawValue),
                        fix: "Eric reconnects the channel in Postiz (Postiz → the channel → Reconnect); then `djq postiz channels` refreshes the list."))
     }
@@ -477,7 +480,7 @@ extension Doctor {
                        detail: stuck.map { "\($0.platform.displayName) · \(tag($0.videoId ?? "")) · slot \(Sched.shortTime($0.remoteDate, settings))" }.joined(separator: " · ")
                          + ". Postiz still reports them QUEUE.",
                        where_: stuck.map(\.postId),
-                       fix: "`djq postiz sync` reads the states again. Then check the Postiz calendar: if Postiz can't post it, delete it there (DJ Queue then puts it on Today). Never post it by hand while Postiz still holds it (double post)."))
+                       fix: "`djq postiz sync` reads the states again. Then check the Postiz calendar: if Postiz can't post it, delete it there (DJ Queue then puts it on the Calendar). Never post it by hand while Postiz still holds it (double post)."))
     }
 
     let missing = try svc.linkMissingPosts()
@@ -499,7 +502,7 @@ extension Doctor {
                        where_: [], fix: "Nothing to do: calls resume by themselves (deletes first, then the soonest creates)."))
     }
 
-    // Posts set to Postiz that Postiz won't deliver: they go to Today.
+    // Posts set to Postiz that Postiz won't deliver: they go to the Calendar.
     let upcoming = try store.posts(where: "scheduled_at<=? AND state IN ('planned','rendering','rendered','due','overdue')",
                                    [now.addingTimeInterval(7 * 86400)]).filter { used.contains($0.platform) }
     let fallen = try upcoming.compactMap { p -> (id: String, line: String)? in
@@ -519,9 +522,9 @@ extension Doctor {
     }
     if !fallen.isEmpty {
       out.append(.init(id: "postiz.fallback", severity: .warning, title: "\(fallen.count) post\(s(fallen.count)) fell back to Manual",
-                       detail: "Set to Postiz, but these go to Today to post by hand (next 7 days): "
+                       detail: "Set to Postiz, but these go to the Calendar to post by hand (next 7 days): "
                          + fallen.map(\.line).joined(separator: " · "), where_: fallen.map(\.id),
-                       fix: "Fix the reason (key or channel: see the other postiz findings) and the next tick submits them. A refused, deleted or inbox post stays manual: post it from Today and `djq posted <post> <url>`; `djq reset <post>` lets Postiz try a refused or deleted one again (Eric's call)."))
+                       fix: "Fix the reason (key or channel: see the other postiz findings) and the next tick submits them. A refused, deleted or inbox post stays manual: post it from the Calendar and `djq posted <post> <url>`; `djq reset <post>` lets Postiz try a refused or deleted one again (Eric's call)."))
     }
 
     let unknown = open.filter(\.isUnconfirmed)
@@ -531,7 +534,7 @@ extension Doctor {
                        detail: unknown.map { "\($0.platform.displayName) · \(tag($0.videoId ?? "")) · slot \(Sched.shortTime($0.remoteDate, settings))" }.joined(separator: " · ")
                          + ". The request was sent but no answer came back, and the sync couldn't tell whether Postiz has it. Nothing new is sent for these until it's settled.",
                        where_: unknown.map(\.postId),
-                       fix: "Eric checks the Postiz calendar for that channel and time first, then answers: `djq postiz resolve <post-id> --in-postiz` (Postiz has it: never sent again) or `--not-in-postiz` (on Today to post by hand). Never guess, and never post it by hand before that (double post)."))
+                       fix: "Eric checks the Postiz calendar for that channel and time first, then answers: `djq postiz resolve <post-id> --in-postiz` (Postiz has it: never sent again) or `--not-in-postiz` (on the Calendar to post by hand). Never guess, and never post it by hand before that (double post)."))
     }
 
     let pending = open.filter { $0.phase == .deleting && $0.attempts >= 3 }

@@ -5,17 +5,18 @@ import Testing
 @Suite struct EngineTickTests {
   func engine(_ f: Fixture, renderer: RenderService? = nil) -> (Engine, LogNotifier) {
     let n = LogNotifier()
-    return (Engine(store: f.store, renderer: renderer, publisher: nil, notifier: n), n)
+    return (Engine(store: f.store, renderer: renderer, publisher: nil, notifier: n).planFrozen, n)
   }
 
   @Test func tickRunsEveryStepWithoutErrors() throws {
     let f = try Fixture.engine(8)
     let (e, _) = engine(f, renderer: FakeRenderer(store: f.store))
+    e.autoSchedules = true
     let r = e.tick(reason: "test")
     #expect(r.errors.isEmpty, "\(r.errors)")
     #expect(Set(r.steps.keys) == Set(TickReport.order))
-    #expect(r.steps["plan"]?.contains("proposed") == true)  // first tick proposes this and next week
-    #expect(try f.store.week(f.week)?.state == .draft)
+    #expect(r.steps["plan"]?.contains("scheduled 8") == true)  // the first tick puts the Queue on the calendar
+    #expect(try f.store.week(f.week)?.state == .approved)
     #expect(Backup.list(f.paths).count == 1)
   }
 
@@ -243,16 +244,30 @@ import Testing
     #expect(try f.store.post(id: wed.id)?.state == .skipped)
   }
 
-  @Test func alertsRunwayAndWeeklyReminderOnce() throws {
-    let f = try Fixture.engine(3)
+  @Test func alertsQueueLowAndRecordOnce() throws {
+    let f = try Fixture.engine(2)
     let (e, n) = engine(f)
+    e.autoSchedules = true
     e.tick(reason: "t")
     e.tick(reason: "t")
-    #expect(n.titles(containing: "Approve next week").count == 1)
+    let low = try #require(n.delivered.first { $0.key == "alert.queuelow:2026-11-02" })
+    #expect(low.title == "Queue running low" && low.body == "Scheduled through Tue 3 Nov. Send more clips from Edit.")
+    #expect(n.titles(containing: "Queue running low").count == 1)
     #expect(n.titles(containing: "Record a new set").count == 1)
-    f.setTime("2026-11-08", "18:05")  // Sunday 6 pm reminder (new day → approve alert again too)
+    f.setTime("2026-11-08", "18:05")  // the Sunday reminder is gone; a new day alerts about the Queue again
     e.tick(reason: "t")
-    #expect(n.delivered.contains { $0.key == "alert.weekly:2026-11-09" })
+    #expect(n.titles(containing: "Queue running low").count == 2)
+    #expect(!n.delivered.contains { $0.key.hasPrefix("alert.weekly") || $0.title.contains("Approve") })
+  }
+
+  /// Plenty waiting in the Queue is not "running low", whatever the calendar says (posting paused, say).
+  @Test func aFullQueueIsNotLow() throws {
+    let f = try Fixture.engine(5)
+    try f.updateSettings { $0.paused = true }
+    let (e, n) = engine(f)
+    e.autoSchedules = true
+    e.tick(reason: "t")
+    #expect(n.titles(containing: "Queue running low").isEmpty)
   }
 
   @Test func heartbeatGapGivesAwakePeriods() throws {

@@ -38,7 +38,7 @@ import Testing
         v.captionTemplateId = "short"
         try store.save(v, videoId: "clip-\(i)")
         try store.setScore("clip-\(i)", 50)
-        try store.refreshState(videoId: "clip-\(i)")
+        try store.setSentToQueue("clip-\(i)", true)
       }
       try store.setKV(PostizChannelCache.kvKey, PostizChannelCache(fetchedAt: Date(), integrations: channels))
     }
@@ -163,7 +163,7 @@ import Testing
   /// Review M1: undoing a settings batch must not switch real Postiz posting back on without Eric's --yes.
   @Test func bulkUndoThatGoesLiveNeedsYes() throws {
     let env = try Env()
-    // Waiting posts: an approved week (core's undoWouldGoLive counts only platforms with posts to send).
+    // Waiting posts: a scheduled week (core's undoWouldGoLive counts only platforms with posts to send).
     let planner = Planner(store: env.store)
     let dm = DayMath(settings: try env.store.settings())
     let week = dm.addDays(dm.weekStart(of: Date()), 7)
@@ -218,7 +218,7 @@ import Testing
     #expect(plain.status != 0)
     #expect(try env.store.livePostizJob(postId: a.id)?.isUnconfirmed == true)
     let no = try env.json("postiz", "resolve", a.id, "--not-in-postiz")
-    #expect((no["result"] as? String)?.contains("Today") == true)
+    #expect((no["result"] as? String)?.contains("the Calendar") == true)
     #expect(try env.store.livePostizJob(postId: a.id) == nil && env.store.post(id: a.id)?.publisher == "manual")
     let yes = try env.djq("postiz", "resolve", b.id, "--in-postiz")
     #expect(yes.status == 0 && yes.out.contains("recorded posted"), "\(yes.out)\(yes.err)")

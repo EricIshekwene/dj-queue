@@ -72,7 +72,7 @@ import Testing
     for vid in ["clip-0", "clip-1", "clip-2", "clip-3"] { beforeOut[vid] = try legacyOutputs(raw, vid) }
     // Migrate (open with this build).
     let s = try Store(paths: f2.paths, clock: f2.clock, path: file2)
-    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 6)
+    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == Store.schemaVersion)
     // Clips with posts in flight or posted: byte-identical captions on every platform, same YouTube tags and title.
     for vid in ["clip-0", "clip-2", "clip-3"] {
       #expect(try outputs(s, vid, legacy: false) == beforeOut[vid], "\(vid)")

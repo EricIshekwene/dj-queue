@@ -57,7 +57,7 @@ import Testing
     let f = try approved()
     let a = PostActions(store: f.store)
     let n = LogNotifier()
-    let e = Engine(store: f.store, renderer: nil, publisher: nil, notifier: n)
+    let e = Engine(store: f.store, renderer: nil, publisher: nil, notifier: n).planFrozen
     f.setTime("2026-11-02", "19:05")
     e.tick(reason: "t")
     let tt = try #require(try f.post(.tiktok, day: "2026-11-02"))
@@ -171,7 +171,7 @@ import Testing
   @Test func findsMissingFileAndOverduePost() throws {
     let f = try Fixture.engine(8)
     try Planner(store: f.store).approveWeek(f.week)
-    let e = Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier())
+    let e = Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier()).planFrozen
     e.tick(reason: "t")
     try FileManager.default.removeItem(at: f.sessionDir.appendingPathComponent("Clips/2026-10-23 – Afroween Jazz Piano – song7 x mix7.mp4"))
     try FileManager.default.createDirectory(at: f.sessionDir.appendingPathComponent("Clips"), withIntermediateDirectories: true)

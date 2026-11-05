@@ -28,6 +28,7 @@ public enum AgentAPI {
     public var issues: [String]
     /// Sent back to Edit from the Queue (`djq unqueue`); `djq requeue` clears it.
     public var held_in_edit: Bool = false
+    public var sent_to_queue: Bool = false
     /// Round 4: the clip's stage (`score`, `edit`, `queue`, `scheduled`, `posted`; null = none: long-form, excluded,
     /// or unscored with its file missing). Readiness IS the stage: Edit = not ready yet, Queue = ready.
     public var stage: String? = nil
@@ -117,7 +118,7 @@ public enum AgentAPI {
       state: v.state.rawValue, score: v.score, excluded: v.excluded, missing: v.missing, part: v.part, duration: v.duration,
       marked_start: v.markedStart, marked_end: v.markedEnd, audio: v.audio, file: (try? store.fileURL(for: v))??.path,
       suggestion_count: sugg.count, needs_title_help: AgentPrompts.needsTitleHelp(v, suggestions: sugg),
-      issues: issues.map(\.message), held_in_edit: v.heldInEdit, stage: ClipStage.of(v)?.rawValue,
+      issues: issues.map(\.message), held_in_edit: v.heldInEdit, sent_to_queue: v.sentToQueue, stage: ClipStage.of(v)?.rawValue,
       reasons: ClipStage.of(v) == .edit ? issues.sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText) : [],
       text_suggestion_count: try store.suggestionCount(.text, videoId: v.id))
   }

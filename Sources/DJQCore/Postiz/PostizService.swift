@@ -91,9 +91,9 @@ public final class PostizService: @unchecked Sendable {
         try store.logEvent("postiz", "Postiz rate limit (429): no calls for 15 min")
       case .unauthorized(let m):
         if try store.setPostizKeyInvalid(m) {
-          try store.logEvent("postiz", "Postiz refused the API key\(m.isEmpty ? "" : ": \(m)") — posts go to Today until it's saved again")
+          try store.logEvent("postiz", "Postiz refused the API key\(m.isEmpty ? "" : ": \(m)") — posts go to the Calendar until it's saved again")
           _ = notify(AppNotification(key: "postiz.keyInvalid:\(Int(now.timeIntervalSince1970))", title: "Postiz refused the API key",
-                                     body: "Posts set to Postiz go to Today until you save the key again in Settings → Publishing.",
+                                     body: "Posts set to Postiz go to the Calendar until you save the key again in Settings → Publishing.",
                                      critical: true, actions: [.open]))
         }
       default: break
@@ -143,19 +143,19 @@ public final class PostizService: @unchecked Sendable {
   public func holds(_ p: PlatformPost) throws -> Bool {
     let open = try store.openPostizJobs(lineage: PostizJob.lineage(p))
     guard !open.isEmpty else { return false }
-    // Only an unconfirmed create, and the platform doesn't go through Postiz any more: Today has it (with a
+    // Only an unconfirmed create, and the platform doesn't go through Postiz any more: the Calendar has it (with a
     // "check Postiz first" warning, `uncertainOnToday`) — it never wedges silently.
     if open.allSatisfy(\.isUnconfirmed), !Self.settingsAllow(p.platform, try store.settings()) { return false }
     return true
   }
 
-  /// An unconfirmed create of this clip + platform exists: Postiz may still post it. Today warns "check Postiz first".
+  /// An unconfirmed create of this clip + platform exists: Postiz may still post it. the Calendar warns "check Postiz first".
   public func uncertainOnToday(_ p: PlatformPost) throws -> Bool {
     try store.openPostizJobs(lineage: PostizJob.lineage(p)).contains(where: \.isUnconfirmed)
   }
 
   /// The post goes out through Postiz: Postiz holds it (`holds`), or its platform routes to Postiz, nothing ended
-  /// Postiz delivery for it, and it wasn't already handed to Today. Such a post gets no manual "due" notification.
+  /// Postiz delivery for it, and it wasn't already handed to the Calendar. Such a post gets no manual "due" notification.
   public func deliversThroughPostiz(_ p: PlatformPost, router: PostizRouter) throws -> Bool {
     if try holds(p) { return true }
     guard Self.settingsAllow(p.platform, router.settings), router.route(p.platform).isPostiz, !p.state.isTerminal else { return false }
@@ -171,7 +171,7 @@ public final class PostizService: @unchecked Sendable {
 
   /// What Postiz is doing with a post, for every screen (nil = a manual post, shown as before). Reads the post's
   /// newest job, an earlier copy of the same clip + platform that Postiz still holds, the route and whether the post
-  /// was already handed to Today — the same facts the engine acts on.
+  /// was already handed to the Calendar — the same facts the engine acts on.
   public func displayState(for p: PlatformPost, router: PostizRouter? = nil) throws -> PostizDisplayState? {
     let r = try router ?? self.router()
     var job = try store.postizJobs(postId: p.id).last { $0.kind == "post" }
@@ -196,9 +196,11 @@ public final class PostizService: @unchecked Sendable {
       && s.publishing.publisher(for: platform) == .postiz
   }
 
-  /// The manual "due" notice already went out for this post (Today has it): it stays Manual until Eric re-routes it.
+  /// The manual "due" notice already went out for this post (the Calendar has it): it stays Manual until Eric re-routes it.
   /// Decided from the post's history alone (sticky across re-renders and state changes) until Eric resets the post.
-  public func handedToToday(_ p: PlatformPost) throws -> Bool {
+  public func handedToToday(_ p: PlatformPost) throws -> Bool { try Self.handedToToday(p, store: store) }
+
+  static func handedToToday(_ p: PlatformPost, store: Store) throws -> Bool {
     let reset = try store.db.one("SELECT MAX(id) AS m FROM post_history WHERE post_id=? AND note='reset'", [p.id])?.int64("m") ?? 0
     return try store.db.one("""
       SELECT 1 AS x FROM post_history WHERE post_id=? AND id>? AND to_state IN ('due','overdue')
@@ -385,7 +387,7 @@ public final class PostizService: @unchecked Sendable {
     var parts: [String] = []
     if created > 0 { parts.append("scheduled \(created)") }
     if deleted > 0 { parts.append("removed \(deleted)") }
-    if rejected > 0 { parts.append("refused \(rejected) → Today") }
+    if rejected > 0 { parts.append("refused \(rejected) → the Calendar") }
     if held > 0 { parts.append("kept \(held) near the slot") }
     if settling > 0 { parts.append("waiting on edits for \(settling)") }
     if blocked > 0 { parts.append("waiting on \(blocked) earlier cop\(blocked == 1 ? "y" : "ies")") }
@@ -476,7 +478,7 @@ public final class PostizService: @unchecked Sendable {
   }
 
   /// Upload (reusing the render's media) and create the scheduled post. Once the create was sent, only a definite
-  /// refusal closes the claim: 400/413 → rejected (Today), 401/429 → released. Any other outcome (5xx, timeout, an
+  /// refusal closes the claim: 400/413 → rejected (the Calendar), 401/429 → released. Any other outcome (5xx, timeout, an
   /// unreadable 2xx, a database error while recording it) keeps the claim for the sync step to find in Postiz — it is
   /// never created again blindly.
   func submit(_ p: PlatformPost, integrationId: String, provider: String, settings: Settings) throws -> SubmitOutcome {
@@ -614,7 +616,7 @@ public final class PostizService: @unchecked Sendable {
     return m
   }
 
-  /// Postiz refused the post: close the job (final), the post goes to Today with the reason, notify.
+  /// Postiz refused the post: close the job (final), the post goes to the Calendar with the reason, notify.
   func reject(_ job: PostizJob, _ p: PlatformPost, _ message: String, _ settings: Settings) throws {
     try store.closePostizJob(id: job.id, reason: .rejected, note: message)
     if var post = try store.post(id: p.id) {
@@ -622,10 +624,10 @@ public final class PostizService: @unchecked Sendable {
       try store.save(post, note: "Postiz refused it — post by hand: \(message)")
     }
     let reason = PostizFallbackReason.createRejected(message)
-    try store.logEvent("postiz", "\(p.platform.displayName): \(reason.message) — it's on Today to post by hand", videoId: p.videoId, postId: p.id)
+    try store.logEvent("postiz", "\(p.platform.displayName): \(reason.message) — it's on the Calendar to post by hand", videoId: p.videoId, postId: p.id)
     let tag = try store.video(id: p.videoId)?.tag ?? p.videoId
     _ = notify(AppNotification(key: "postiz.rejected:\(job.id)", title: "Postiz refused \(p.platform.displayName) · \(tag)",
-                               body: "\(message). It's on Today to post by hand.", critical: false, actions: [.open],
+                               body: "\(message). It's on the Calendar to post by hand.", critical: false, actions: [.open],
                                postId: p.id, videoId: p.videoId))
   }
 
@@ -643,7 +645,7 @@ public final class PostizService: @unchecked Sendable {
     switch try adopt(j, list, &claimed) {
     case .found: return "found in Postiz — tracking it"
     case .none:
-      throw EngineError("Not found in Postiz's list. Check the Postiz calendar, then choose: in Postiz (`--in-postiz`) or not in Postiz (`--not-in-postiz`, goes to Today)")
+      throw EngineError("Not found in Postiz's list. Check the Postiz calendar, then choose: in Postiz (`--in-postiz`) or not in Postiz (`--not-in-postiz`, goes to the Calendar)")
     case .ambiguous(let n):
       throw EngineError("\(n) Postiz posts could be this one. Check the Postiz calendar, then choose `--in-postiz` or `--not-in-postiz`")
     }
@@ -665,7 +667,7 @@ public final class PostizService: @unchecked Sendable {
   /// or call needed.
   /// - `inPostiz: true`: Postiz has it — the job closes as Postiz's (the post is recorded posted without a link;
   ///   `djq postiz link` adds it), and nothing is ever sent again for that clip on that platform.
-  /// - `inPostiz: false`: not in Postiz — the post goes to Today to post by hand (final; it goes through Postiz again
+  /// - `inPostiz: false`: not in Postiz — the post goes to the Calendar to post by hand (final; it goes through Postiz again
   ///   only after an explicit reset).
   @discardableResult
   public func resolveUnconfirmed(postId: String, inPostiz: Bool) throws -> String {
@@ -683,11 +685,11 @@ public final class PostizService: @unchecked Sendable {
     try store.closePostizJob(id: j.id, reason: .rejected, note: "not in Postiz (checked by Eric) — post by hand")
     if var p = try store.post(id: postId), !p.state.isTerminal {
       p.publisher = "manual"
-      try store.save(p, note: "unconfirmed Postiz create released to Today (checked by Eric)")
+      try store.save(p, note: "unconfirmed Postiz create released to the Calendar (checked by Eric)")
     }
-    try store.logEvent("postiz", "\(j.platform.displayName): Eric confirmed it isn't in Postiz — on Today to post by hand",
+    try store.logEvent("postiz", "\(j.platform.displayName): Eric confirmed it isn't in Postiz — on the Calendar to post by hand",
                        videoId: j.videoId, postId: postId)
-    return "released to Today — post it by hand"
+    return "released to the Calendar — post it by hand"
   }
 
   // MARK: Sync step
@@ -822,7 +824,7 @@ public final class PostizService: @unchecked Sendable {
           let tag = try j.videoId.flatMap { try store.video(id: $0)?.tag } ?? ""
           _ = notify(AppNotification(key: "postiz.unknown:\(j.id):\(DayMath(settings: settings).key(now))",
                                      title: "\(j.platform.displayName) · \(tag) · check Postiz",
-                                     body: "A create wasn't confirmed. Look in the Postiz calendar, then tell DJ Queue: it's in Postiz, or it isn't (it goes to Today).",
+                                     body: "A create wasn't confirmed. Look in the Postiz calendar, then tell DJ Queue: it's in Postiz, or it isn't (it goes to the Calendar).",
                                      critical: true, actions: [.open], postId: j.postId, videoId: j.videoId))
         }
         n["unconfirmed", default: 0] += 1
@@ -939,11 +941,11 @@ public final class PostizService: @unchecked Sendable {
       p.publisher = "manual"
       try store.save(p, note: "deleted in Postiz — back to manual")
     }
-    try store.logEvent("postiz", "\(j.platform.displayName): \(PostizFallbackReason.vanished.message) — it's on Today to post by hand",
+    try store.logEvent("postiz", "\(j.platform.displayName): \(PostizFallbackReason.vanished.message) — it's on the Calendar to post by hand",
                        videoId: j.videoId, postId: j.postId)
     let tag = try j.videoId.flatMap { try store.video(id: $0)?.tag } ?? ""
     _ = notify(AppNotification(key: "postiz.vanished:\(j.id)", title: "\(j.platform.displayName) · \(tag) · deleted in Postiz",
-                               body: "DJ Queue won't send it again. It's on Today to post by hand.", critical: true,
+                               body: "DJ Queue won't send it again. It's on the Calendar to post by hand.", critical: true,
                                actions: [.open], postId: j.postId, videoId: j.videoId))
   }
 
@@ -1260,7 +1262,7 @@ public enum PostizDisplayState: Equatable, Sendable {
   case inbox
   case failed(String)
   case copyright(String)
-  /// Set to Postiz but back on Today (the sentence says why).
+  /// Set to Postiz but back on the Calendar (the sentence says why).
   case fellBack(String)
 
   public var text: String {
@@ -1279,7 +1281,7 @@ public enum PostizDisplayState: Equatable, Sendable {
     }
   }
 
-  /// Postiz holds it: nothing for Eric to do (no task on Today, no "due" count).
+  /// Postiz holds it: nothing for Eric to do (no task on the Calendar, no "due" count).
   public var isHeld: Bool {
     switch self {
     case .queued, .sending, .unconfirmed, .scheduled, .posting, .draft: true
@@ -1288,7 +1290,7 @@ public enum PostizDisplayState: Equatable, Sendable {
   }
 
   /// Pure: from the post's newest job (or an earlier copy Postiz holds), the platform's route and whether the post was
-  /// already handed to Today.
+  /// already handed to the Calendar.
   public static func of(post p: PlatformPost, job: PostizJob?, route: PublishRoute, handedToToday: Bool = false,
                         now: Date) -> PostizDisplayState? {
     if let j = job, j.kind == "post" {
@@ -1322,7 +1324,7 @@ public enum PostizDisplayState: Equatable, Sendable {
     switch route {
     case .manual: return nil
     case .postiz:
-      if handedToToday { return .fellBack("It was already on Today when Postiz came back — post it by hand") }
+      if handedToToday { return .fellBack("It was already on the Calendar when Postiz came back — post it by hand") }
       return p.state == .planned || p.state == .rendering ? .queued : .sending
     case .fallback(let r): return .fellBack(r.message)
     }

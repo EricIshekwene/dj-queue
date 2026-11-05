@@ -66,7 +66,7 @@ import Testing
 
   @Test func engineTickOnlyEnqueuesProxies() throws {
     let f = try Fixture.engine(5, ready: 2)
-    let e = Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier())
+    let e = Engine(store: f.store, renderer: nil, publisher: nil, notifier: LogNotifier()).planFrozen
     #expect(e.proxyService == nil && e.tick(reason: "t").steps["proxies"] == "off")  // off without the real renderer
     let ps = ProxyService(store: f.store)
     let made = Locked<[String]>([])
@@ -152,7 +152,7 @@ import Testing
   @Test func engineSkipsProxiesWhileRendersWait() throws {
     let f = try Fixture.engine(8)
     try Planner(store: f.store).approveWeek(f.week)
-    let e = Engine(store: f.store, renderer: FakeRenderer(store: f.store), publisher: nil, notifier: LogNotifier())
+    let e = Engine(store: f.store, renderer: FakeRenderer(store: f.store), publisher: nil, notifier: LogNotifier()).planFrozen
     let ps = ProxyService(store: f.store)
     ps.make = { _, _, _ in throw MediaError("should not run") }
     e.proxyService = ps

@@ -16,7 +16,10 @@ problems use the `dj-queue-doctor` skill.
 - Never modify, move or delete session source files (`Video/`, `Audio/`, `Other/`, `Clips/`, CapCut projects) or
   `videos.json` ids.
 - Suggestions are your default write. Set a **title** (`djq title`) only when Eric asks you to choose.
-- Don't post, approve weeks or change Settings unless Eric says so.
+- Don't post or change Settings unless Eric says so.
+- **Never send a clip to the Queue unless Eric says so in words.** A clip in the Queue is approved and posts by itself:
+  `djq stage <video> forward` from Edit, `djq requeue`, `djq bulk requeue` and `djq bulk make-ready` are Eric's Send to Queue.
+  Your edits never move a clip to the Queue, however complete they make it (`sent_to_queue` in `--json` says if Eric sent it).
 - **Postiz: never schedule or publish without Eric's explicit OK.** On your own you may only read
   (`djq postiz status`, `djq postiz channels`) and preview (`--dry-run`, `djq postiz test <video> --dry-run`) or make
   Postiz **drafts** (`djq postiz test <video> --draft`, nothing reaches a platform). Never read, print or ask for the
@@ -31,7 +34,7 @@ problems use the `dj-queue-doctor` skill.
 djq videos --json [--stage S] [--state S]   # stage: score edit queue scheduled posted
                                             # state (stored): needs_edit ready planned posting posted partial excluded missing_file | unscored scored needs-edit all
 djq video <id> --json           # everything about one clip
-djq week --json [YYYY-MM-DD]    # a week's plan: days → slots → posts
+djq week --json [YYYY-MM-DD]    # a week's plan: days → slots → posts (read-only)
 djq posts --json [--problems]   # last 7 days on (or unresolved problems)
 djq defaults --json             # Settings → New clip defaults
 djq bulk batches --json         # bulk journal (for undo)
@@ -96,44 +99,44 @@ Either list may be left out.
 ## Stages: move a clip back or forward
 
 A short clip's stage: **Score** (no score) → **Edit** (scored, something still missing, sent back, or its file is
-missing) → **Queue** (nothing missing; a day in a proposed week still counts) → **Scheduled** (in an approved week,
-not fully posted) → **Posted**. Readiness IS the stage: the Queue only ever holds clips with nothing missing. When a
-Queue clip stops being valid (crop cleared, a platform limit lowered, file missing) the engine moves it to Edit by
-itself on its next tick and after every `djq` write, logging "Moved to Edit: <reasons>"; it returns to the Queue
-when it's valid again (unless it was sent back by hand). A Scheduled or pinned clip that becomes invalid stays on its
-day and shows the problem (Doctor `plan.notReady`, "can't post" notification) — fix it or swap it. A draft-week day
-whose clip left the Queue is refilled from the Queue.
+missing, or nothing to fix but not sent yet) → **Queue** (Eric sent it; approved, waiting for a day) → **Posted**.
+**Scheduled** is a status, not a step: the clip has a day on the Calendar, not fully posted. The engine gives every Queue
+clip a day by itself, up to 30 days ahead, and creates its posts at once. Only Eric's Send to Queue moves a clip
+Edit → Queue: a clip with nothing to fix stays in Edit until then, with no reason chip. When a Queue clip stops
+being valid (crop cleared, a platform limit lowered, file missing) the engine moves it to Edit by itself on its next
+tick and after every `djq` write, logging "Moved to Edit: <reasons>"; it stays there until Eric sends it again. A
+Scheduled or pinned clip that becomes invalid stays on its day and shows the problem (Doctor `plan.notReady`, "can't
+post" notification) — fix it or take it off.
 
 ```sh
-djq stage <video…> [--json]                         # each clip's stage, its controls ("‹ Back to Edit" · "Schedule ›") or why not, and why it's in Edit
+djq stage <video…> [--json]                         # each clip's stage, its controls ("‹ Back to Score" · "Send to Queue ›") or why not, and why it's in Edit
 djq stage <video…> back|forward [--dry-run] [--json]
 ```
 
 `--json` rows: `id, display_name, stage, back, forward` ("→ Edit" or why not), plus `back_title`/`forward_title`
-(the app's button words: Edit "Back to Score"/"Send to Queue", Queue "Back to Edit"/"Schedule", Scheduled "Back to
-Queue"/"Mark posted…"), `back_blocked`/`forward_blocked` and `reasons[]` (Edit only).
+(the app's button words: Edit "Back to Score"/"Send to Queue", Queue "Back to Edit", Scheduled "Back to
+Edit"/"Mark posted…"), `back_blocked`/`forward_blocked` and `reasons[]` (Edit only).
 
-- back: Edit → Score ("Back to Score") clears the score · Queue → Edit ("Back to Edit") = `unqueue` (below) ·
-  Scheduled → Queue ("Back to Queue") removes its unposted days from the plan; it goes back to the Queue (refused once
-  any platform posted) · Posted: none (use `repost` / `reset`). A clip whose file is missing can't move ("File missing
-  — relink it first").
-- forward: Score: none (set a score with `djq score`) · Edit → Queue ("Send to Queue") clears "sent back" and confirms
-  the default crop (make-ready); if anything is still missing the clip stays in Edit and the result says exactly what · Queue →
-  Scheduled pins it to the next open day of this or next week (a draft week must still be approved — the note says
-  so) · Scheduled → Posted: only by marking its posts posted.
+- back: Edit → Score ("Back to Score") clears the score · Queue and Scheduled → Edit ("Back to Edit") = `unqueue` (below;
+  refused once any platform posted) · Posted: none (use `repost` / `reset`). A clip whose file is missing can't move
+  ("File missing — relink it first").
+- forward: Score: none (set a score with `djq score`) · Edit → Queue ("Send to Queue", Eric's word only) clears "sent
+  back" and confirms the default crop; if anything is still missing the clip stays in Edit, unsent, and the result says
+  exactly what · Queue: none ("Clips in the Queue schedule themselves") · Scheduled → Posted: only by marking its posts
+  posted.
 - One batch each (`moves{<video id>: {from, to, note}}`, plus `unplanned` for back); undo with `djq bulk undo`.
 
 ## Back to Edit / Send to Queue (formerly "Remove from queue")
 
 ```sh
 djq unqueue <video…> [--dry-run] [--json]   # Back to Edit (held there); its unposted slots/posts are removed
-djq requeue <video…> [--dry-run] [--json]   # Send to Queue: clears the hold; Queue if nothing is missing, else stays in Edit
+djq requeue <video…> [--dry-run] [--json]   # Send to Queue, any Edit clip (Eric's word only); if something's missing it stays in Edit
 ```
 
 `unqueue` sets the clip's `held_in_edit` flag and takes it out of the plan with the planner's own rules: its slots
 from today on that have nothing posted (a pinned slot loses its pin), and every post of it still in flight
 (planned/rendering/rendered/due/overdue, retries and reposts too) are removed. Posted/failed/skipped posts and
-history stay; other clips keep their days (nothing is reshuffled or backfilled). `--json` prints the bulk result
+history stay; other clips keep their days (nothing is reshuffled, and waiting clips fill the gap). `--json` prints the bulk result
 (`batchId, changed, skipped, summary…`, see below) plus `unplanned{<video id>: [{videoId, date, platforms[], pinned}]}`; undo it with
 `djq bulk undo <batch>` (flag, slots, weeks and posts come back exactly). Both are also `djq bulk unqueue|requeue`
 (with `--filter`). Only when Eric asks — `--dry-run` first and tell Eric which days would go.
@@ -145,12 +148,12 @@ djq bulk <action> [args] (--ids a,b,c | --filter F) [--dry-run] [--json]
 djq bulk undo <batch> [--force]
 ```
 
-Actions: `make-ready` (confirm the default crop; reports how many go to the Queue and what's still missing) · `apply-defaults
+Actions: `make-ready` (Send to Queue with defaults, Eric's word only: confirms the default crop, sends every clip with nothing left to fix, and reports what's still missing) · `apply-defaults
 [--sections frame,trim,text,cover,caption,platforms]` (clear overrides) · `score <n|clear>` · `score-adjust <±n>` ·
 `kind <k>` · `exclude` · `include` · `caption-template <id|default>` (rewrites a written caption from the template) ·
 `hashtags <group,group|default>` · `extra-hashtags "<#a #b>"|default` · `youtube-title-template <id|default>` ·
 `drop-hashtags <platform>` · `skip-platform <p>` · `unskip-platform <p>` ·
-`accept-title` · `title "<t>"|--clear` · `add-to-week <date>` · `pin-consecutive <date>` · `post-today` ·
+`accept-title` · `title "<t>"|--clear` · `pin-consecutive <date>` · `post-today` ·
 `re-render` · `unqueue` · `requeue`.
 
 Always `--dry-run` first on more than a few clips and show Eric the summary. Every result prints its batch id;
@@ -171,9 +174,9 @@ Low certainty → still suggest, with a low `confidence` and the reason in `sour
 
 ## Postiz (publishing, round 6)
 
-Each platform publishes **Manual** (the default: Eric posts from Today) or through **Postiz** (the engine schedules
+Each platform publishes **Manual** (the default: Eric posts from the Calendar) or through **Postiz** (the engine schedules
 the render in Postiz ahead of the slot and reads the live link back; any Postiz problem sends that platform's posts
-back to Today). Contract: `docs/postiz.md`. Every live call shares a budget of 25 per hour with the app, so don't
+back to the Calendar to post by hand). Contract: `docs/postiz.md`. Every live call shares a budget of 25 per hour with the app, so don't
 loop. Channel ids appear only with `--ids`; the key never appears anywhere.
 
 ```sh
@@ -204,9 +207,9 @@ djq postiz resolve <post> --in-postiz|--not-in-postiz   # Doctor postiz.create_u
                                                  # checking the Postiz calendar (plain `resolve` = one live look)
 ```
 
-A change that makes approved posts go out for real (a platform to Postiz with a channel, a new channel, test run
+A change that makes scheduled posts go out for real (a platform to Postiz with a channel, a new channel, test run
 off) is refused without `--yes`, and so is a `djq bulk undo` that would do the same (exit 2). `--yes` is Eric's word, not yours: ask first, quoting what the dry run printed.
-`djq postiz test` never schedules real posts (not even with `--yes`); real posts go out only from an approved week.
+`djq postiz test` never schedules real posts (not even with `--yes`); real posts go out only from clips in the Queue.
 Switching a platform back to Manual is always safe (the engine removes its waiting posts from Postiz).
 Problems show up in `djq doctor` as `postiz.*` findings (the `dj-queue-doctor` skill has the fix for each).
 

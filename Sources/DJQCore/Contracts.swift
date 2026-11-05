@@ -87,12 +87,19 @@ public final class LogNotifier: Notifier, @unchecked Sendable {
 // MARK: Shared value types for the UI
 
 public struct Runway: Sendable, Hashable, Codable {
-  public var approvedDays: Int  // days covered by the approved plan from today
-  public var readyDays: Int  // ready-but-unplanned videos ÷ posts per day
-  public var totalDays: Int  // approved + ready + needs-edit (scored) ÷ posts per day
-  public init(approvedDays: Int, readyDays: Int, totalDays: Int) {
+  public var approvedDays: Int  // days with a slot, in a row from today (the name is internal; Eric reads "days scheduled")
+  public var readyDays: Int  // clips waiting in the Queue ÷ posts per day
+  public var totalDays: Int  // scheduled + waiting + Edit (scored) ÷ posts per day
+  /// The last of those days, YYYY-MM-DD (nil: nothing scheduled). `StageWording.scheduledThrough` words it.
+  public var scheduledThrough: String?
+  public init(approvedDays: Int, readyDays: Int, totalDays: Int, scheduledThrough: String? = nil) {
     self.approvedDays = approvedDays; self.readyDays = readyDays; self.totalDays = totalDays
+    self.scheduledThrough = scheduledThrough
   }
+
+  /// "Queue running low": few days scheduled and not a day's worth of clips left to fill them. One rule for the
+  /// notification, Doctor and the Calendar's card.
+  public func isLow(_ s: Settings) -> Bool { approvedDays < s.approvedRunwayAlertDays && readyDays == 0 }
 }
 
 public enum Severity: String, Sendable, Codable, Comparable {

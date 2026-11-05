@@ -243,7 +243,7 @@ public final class PostActions: @unchecked Sendable {
     case .postNow: try postNow(postId: postId)
     case .shiftPlan: try shiftPlan(postId: postId)
     case .skip: try skip(postId: postId)
-    case .open, .markPosted: break  // UI: open Today / the Mark-posted sheet
+    case .open, .markPosted: break  // UI: open the Calendar / the Mark-posted sheet
     }
   }
 
@@ -318,7 +318,7 @@ public final class PostActions: @unchecked Sendable {
 
   // MARK: Lists
 
-  /// Today screen rows: everything scheduled today, plus anything still due/overdue from earlier days.
+  /// Calendar rows: everything scheduled today, plus anything still due/overdue from earlier days.
   public func dueToday(now: Date) throws -> [PlatformPost] {
     let dm = try store.dayMath()
     let day = dm.key(now)

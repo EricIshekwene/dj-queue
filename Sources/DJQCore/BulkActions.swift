@@ -112,16 +112,40 @@ public final class BulkActions: @unchecked Sendable {
 
   // MARK: Clip edits
 
-  /// Confirms the default crop (anchor) where none is set and returns what is still missing per clip.
-  /// Text, caption, cover and the rest already follow the defaults (clips store only overrides), so nothing
+  /// Edit's bulk "Send to Queue with defaults": `send` for each clip, so every clip with nothing left to fix goes to the
+  /// Queue. Text, caption, cover and the rest already follow the defaults (clips store only overrides), so nothing
   /// Eric customised is touched. `remainingIssues` / `outlook` cover every clip it looked at (changed or not), so
-  /// the UI can say truthfully how many end up ready and how many still need a title.
+  /// the UI can say truthfully how many end up ready and how many still need a title. It takes the plan in its journal
+  /// so undo also takes back the days the scheduler gave them.
   @discardableResult
   public func makeReadyWithDefaults(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
-    try run("make-ready", ids: ids, dryRun: dryRun, reportsAll: true) { _, v, s in try confirmDefaultCrop(v, s) }
+    try run("make-ready", ids: ids, dryRun: dryRun, plan: true, reportsAll: true) { _, v, s in try send(v, s) }
   }
 
-  /// Make-ready's per-clip step: confirms the default crop when none is set.
+  /// The one door Edit → Queue (round 13, A11): every Send to Queue, for one clip or many, comes here. Clears "sent back",
+  /// confirms the default crop, and sends the clip only when it has a score and nothing is left to fix. A clip that stays
+  /// in Edit stays unsent, so fixing it later doesn't promote it.
+  func send(_ v: Video, _ s: Settings) throws -> Outcome {
+    var changed = false
+    if v.heldInEdit {
+      try store.setHeldInEdit(v.id, false)
+      changed = true
+    }
+    let cur = try store.video(id: v.id) ?? v
+    switch try confirmDefaultCrop(cur, s) {
+    case .changed: changed = true
+    case .skipped(let why) where !changed: return .skipped(why)
+    default: break
+    }
+    let after = try store.video(id: v.id) ?? cur
+    if !after.sentToQueue, after.score != nil, try Validation.issues(video: after, store: store).isEmpty {
+      try store.setSentToQueue(v.id, true)
+      changed = true
+    }
+    return changed ? .changed : .unchanged
+  }
+
+  /// Confirms the default crop when none is set.
   func confirmDefaultCrop(_ v: Video, _ s: Settings) throws -> Outcome {
     guard v.type == .short else { return .skipped("long-form") }
     if v.missing { return .skipped("file missing") }
@@ -393,7 +417,7 @@ public final class BulkActions: @unchecked Sendable {
     return r
   }
 
-  /// Why a clip can't leave the plan (Remove from queue, Scheduled → Queue): something already posted, or every
+  /// Why a clip can't leave the plan (Back to Edit): something already posted, or every
   /// platform finished. nil = it can.
   public func postedBlocker(_ v: Video) throws -> String? {
     if let p = try store.posts(where: "video_id=? AND kind IN ('regular','retry') AND state='posted'", [v.id], order: "posted_at").first {
@@ -414,14 +438,20 @@ public final class BulkActions: @unchecked Sendable {
     return items
   }
 
-  /// "Send to queue": clears the "sent back" flag. A clip whose edit is valid becomes ready (the planner may pick it
-  /// again); otherwise it stays in Edit with its real issues. Clips that weren't sent back are left alone.
+  /// "Send to Queue" for any Edit clip, held or not (`send`): it goes to the Queue when nothing is left to fix, otherwise
+  /// it stays in Edit with its real issues. Clips past Edit are left alone. The plan is in the journal so undo also takes
+  /// back the day the scheduler gave it.
   @discardableResult
   public func sendToQueue(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
-    try run("requeue", ids: ids, dryRun: dryRun) { _, v, _ in
-      guard v.heldInEdit else { return .unchanged }
-      try store.setHeldInEdit(v.id, false)
-      return .changed
+    try run("requeue", ids: ids, dryRun: dryRun, plan: true) { _, v, s in
+      guard v.type == .short else { return .skipped("long-form — it's uploaded by hand, never queued") }
+      if v.excluded { return .skipped("excluded — include it first") }
+      if v.score == nil { return .skipped("not scored yet — give it a score first") }
+      guard ClipStage.of(v) == .edit else { return .unchanged }
+      let sent = try send(v, s)
+      guard case .unchanged = sent else { return sent }
+      let issues = try Validation.issues(video: try store.video(id: v.id) ?? v, store: store)
+      return issues.isEmpty ? .unchanged : .skipped(StageWording.stillInEdit(issues))
     }
   }
 
@@ -453,16 +483,22 @@ public final class BulkActions: @unchecked Sendable {
     var result = BulkResult(batchId: nil, action: action, dryRun: false, videoIds: ids, changed: [], skipped: [:],
                             remainingIssues: [:], summary: "")
     try store.db.transaction {
-      let existing = try ids.filter { try store.video(id: $0) != nil }
-      let before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
+      var existing = try ids.filter { try store.video(id: $0) != nil }
+      var before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
                             plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil,
                             hashtagSets: hashtagGroups ? try store.hashtagSets() : nil)
       try body()
-      // Round 4 (S1): a settings change (limits, platforms, defaults) can make Queue clips invalid or Edit clips valid —
-      // re-derive every Edit/Queue clip's state now (states only; the engine's next tick refills draft days).
+      // Round 4 (S1): a settings change (limits, platforms, defaults) can make Queue clips invalid — re-derive every
+      // Edit/Queue clip's state now (states only). Clips it moves to Edit lose their sent flag, so the batch records
+      // that: undoing the change brings them back to the Queue.
       if revalidate, settings || hashtagGroups,
          try settingsSnapshot() != before.settings || (hashtagGroups && store.hashtagSets() != before.hashtagSets) {
-        try Revalidation(store: store).run(adjustPlan: false)
+        for id in try Revalidation(store: store).run(adjustPlan: false).movedToEdit.keys.sorted() where !existing.contains(id) {
+          var was = try clipSnapshot(id, renders: renders)
+          was.sent = true
+          before.clips.append(was)
+          existing.append(id)
+        }
       }
       let after = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
                            plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil,
@@ -541,7 +577,7 @@ public final class BulkActions: @unchecked Sendable {
       // session takes their current values and its undo never reverts or double-counts them.
       let pairs = zip(e.before.clips, now).map { b, n -> (ClipSnap, ClipSnap) in
         var b = b
-        b.score = n.score; b.excluded = n.excluded; b.held = n.held
+        b.score = n.score; b.excluded = n.excluded; b.held = n.held; b.sent = n.sent
         return (b, n)
       }.filter { $0 != $1 }
       guard !pairs.isEmpty else { result.summary = "\(e.action): nothing changed"; return }
@@ -657,7 +693,7 @@ public final class BulkActions: @unchecked Sendable {
         var restored = Set(rec.restored)
         for b in before.clips where !restored.contains(b.id) {
           let cur = try clipSnapshot(b.id, renders: b.renders != nil)
-          if let a = afterById[b.id], cur != a, !force {
+          if let a = afterById[b.id], !Self.same(cur, a), !force {
             result.skipped[b.id] = "changed again since the batch (use force to overwrite)"
             continue
           }
@@ -669,11 +705,12 @@ public final class BulkActions: @unchecked Sendable {
         var touched = Set(result.changed)
         if let bp = before.plan, let ap = after.plan, !restored.contains(Self.planMarker) {
           let cp = try planSnapshot()
-          if !force, let why = planConflict(before: bp, after: ap, current: cp) {
+          if !force, let why = try planConflict(before: bp, after: ap, current: cp) {
             throw EngineError("Can't undo the plan part of \(rec.action): \(why). Use force to overwrite.")
           }
           try restorePlan(bp, current: cp, note: "undo \(rec.action) (batch \(id.prefix(8)))")
           touched.formUnion(bp.slots.map(\.videoId) + ap.slots.map(\.videoId) + bp.posts.map(\.videoId) + ap.posts.map(\.videoId))
+          touched.formUnion(cp.slots.map(\.videoId) + cp.posts.map(\.videoId))  // clips the scheduler had placed since
           result.changed = Array(Set(result.changed).union(rec.videoIds.filter { touched.contains($0) })).sorted()
           restored.insert(Self.planMarker)
         }
@@ -768,6 +805,16 @@ public final class BulkActions: @unchecked Sendable {
     var renders: [RenderSnap]?
     /// Sent back to Edit (schema v3). nil = not held, so journals written before v3 compare equal.
     var held: Bool? = nil
+    /// `Video.sentToQueue` (round 13). nil = a journal written before it: the flag is neither compared nor restored.
+    var sent: Bool? = nil
+  }
+
+  /// `cur` is still what snapshot `a` recorded. A sent flag that went from on to off isn't Eric's later work: the engine
+  /// clears it when a clip goes invalid (the batch may be why), and Back to Edit shows up in `held` anyway.
+  static func same(_ cur: ClipSnap, _ a: ClipSnap) -> Bool {
+    var c = cur
+    if a.sent != false { c.sent = a.sent }
+    return c == a
   }
 
   struct PlanSnap: Codable, Equatable {
@@ -901,7 +948,7 @@ public final class BulkActions: @unchecked Sendable {
   }
 
   func clipSnapshot(_ id: String, renders: Bool) throws -> ClipSnap {
-    let r = try store.db.one("SELECT score, kind, excluded, title, title_tracks, title_source, held_in_edit FROM videos WHERE id=?", [id])
+    let r = try store.db.one("SELECT score, kind, excluded, title, title_tracks, title_source, held_in_edit, sent_to_queue FROM videos WHERE id=?", [id])
     let edit = try store.db.one("SELECT json FROM edits WHERE video_id=?", [id])?.string("json")
     var versions: [String: String] = [:]
     for row in try store.db.query("SELECT number, json FROM versions WHERE video_id=?", [id]) {
@@ -914,13 +961,15 @@ public final class BulkActions: @unchecked Sendable {
     return ClipSnap(id: id, score: r?.int("score"), kind: r?.string("kind") ?? Kind.djVid.rawValue,
                     excluded: r?.bool("excluded") ?? false, title: r?.string("title"), titleTracks: r?.string("title_tracks"),
                     titleSource: r?.string("title_source"), edit: edit, versions: versions, renders: rs,
-                    held: r?.bool("held_in_edit") == true ? true : nil)
+                    held: r?.bool("held_in_edit") == true ? true : nil, sent: r?.bool("sent_to_queue") ?? false)
   }
 
   private func restore(_ c: ClipSnap) throws {
     let db = store.db
-    try db.run("UPDATE videos SET score=?, kind=?, excluded=?, title=?, title_tracks=?, title_source=?, held_in_edit=?, updated_at=? WHERE id=?",
-               [c.score, c.kind, c.excluded, c.title, c.titleTracks, c.titleSource, c.held ?? false, store.clock.now, c.id])
+    try db.run("""
+      UPDATE videos SET score=?, kind=?, excluded=?, title=?, title_tracks=?, title_source=?, held_in_edit=?,
+        sent_to_queue=COALESCE(?, sent_to_queue), updated_at=? WHERE id=?
+      """, [c.score, c.kind, c.excluded, c.title, c.titleTracks, c.titleSource, c.held ?? false, c.sent, store.clock.now, c.id])
     if let e = c.edit {
       try db.run("INSERT INTO edits(video_id,json,updated_at) VALUES(?,?,?) ON CONFLICT(video_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",
                  [c.id, e, store.clock.now])
@@ -950,12 +999,29 @@ public final class BulkActions: @unchecked Sendable {
   }
 
   /// Why restoring `before` would overwrite someone else's later change (nil = safe).
-  private func planConflict(before b: PlanSnap, after a: PlanSnap, current c: PlanSnap) -> String? {
-    if c.slots != a.slots { return "the plan's slots changed after the batch" }
-    if c.weeks != a.weeks { return "a week was proposed/approved after the batch" }
+  ///
+  /// Round 13 (A6): the scheduler runs within seconds of any write, so what it derived doesn't count: unpinned slots that
+  /// are new since the batch, new regular posts nobody touched (planned, rendering, rendered, no open Postiz job), and
+  /// weeks that only flipped to approved. `restorePlan` drops them and the engine derives them again. A slot of the
+  /// batch that moved or vanished, a pin, and any acted post still conflict.
+  private func planConflict(before b: PlanSnap, after a: PlanSnap, current c: PlanSnap) throws -> String? {
+    let slotsNow = Dictionary(uniqueKeysWithValues: c.slots.map { ($0.id, $0) })
+    if a.slots.contains(where: { slotsNow[$0.id] != $0 }) { return "the plan's slots changed after the batch" }
+    let slotsAfter = Set(a.slots.map(\.id))
+    if c.slots.contains(where: { !slotsAfter.contains($0.id) && $0.pinned }) { return "a clip was pinned after the batch" }
+    let weeksAfter = Dictionary(uniqueKeysWithValues: a.weeks.map { ($0.weekStart, $0) })
+    let weeksNow = Set(c.weeks.map(\.weekStart))
+    let weekKept = c.weeks.allSatisfy { w in
+      guard let was = weeksAfter[w.weekStart] else { return w.state == .approved }
+      return w == was || (was.state == .draft && w.state == .approved)
+    }
+    if !weekKept || a.weeks.contains(where: { !weeksNow.contains($0.weekStart) }) { return "a week changed after the batch" }
     let known = Set(b.posts.map(\.id) + a.posts.map(\.id))
-    if let extra = c.posts.first(where: { !known.contains($0.id) }) {
-      return "a new \(extra.platform.displayName) post was created after the batch"
+    let untouched: Set<PostState> = [.planned, .rendering, .rendered]
+    for p in c.posts where !known.contains(p.id) {
+      guard p.kind == .regular, untouched.contains(p.state), try store.livePostizJob(postId: p.id) == nil else {
+        return "a new \(p.platform.displayName) post was created after the batch"
+      }
     }
     let afterById = Dictionary(uniqueKeysWithValues: a.posts.map { ($0.id, $0) })
     let acted: Set<PostState> = [.posted, .failed, .copyrightBlocked, .copyrightMuted, .removed, .skipped]

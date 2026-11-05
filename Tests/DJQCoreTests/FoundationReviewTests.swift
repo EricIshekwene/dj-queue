@@ -12,6 +12,7 @@ import Testing
     v1.text = text
     v1.captionTemplateId = "set-link"
     try f.store.save(v1, videoId: id)
+    try f.store.setSentToQueue(id, true)
   }
 
   // D1

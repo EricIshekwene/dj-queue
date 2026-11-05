@@ -7,9 +7,9 @@ description: Diagnose and safely fix DJ Queue (Eric's local Mac app that plans a
 
 DJ Queue plans which DJ Lovd short-form videos post where and when, renders the final files and tracks every
 platform post (TikTok, Instagram, Facebook, YouTube Shorts, Threads, X). Each platform publishes either
-**Manual** (Eric posts from Today, then marks it posted with its URL; the default) or through **Postiz** (round 6:
+**Manual** (Eric posts from the Calendar, then marks it posted with its URL; the default) or through **Postiz** (round 6:
 the engine schedules the render in Postiz ahead of the slot and reads the live link back; a Postiz problem sends that
-platform's posts back to Today). Refer to Eric as they/them.
+platform's posts back to the Calendar to post by hand). Refer to Eric as they/them.
 
 ## Never
 
@@ -33,8 +33,9 @@ For reading/changing clips (titles, suggestions, text, captions, bulk edits, und
 ```sh
 djq doctor --json     # machine-readable; exit code 2 when there are errors
 djq doctor            # the same as Markdown (what Eric pastes)
-djq status            # runway, today's posts, problems, engine heartbeat
+djq status            # how far it's scheduled, today's posts, problems, engine heartbeat
 djq today | djq posts --problems | djq week [YYYY-MM-DD] | djq queue | djq health
+djq schedule --dry-run  # what the scheduler would do now (`djq schedule` runs it once)
 djq postiz status     # Postiz: key/connection, budget, test run, channel + route per platform
                       # (exit 0 = ready, 2 = not ready, 3 = --offline and not checked)
 djq doctor --live     # the same checks after one live Postiz call (refreshes channels and the key state)
@@ -69,8 +70,12 @@ Work through errors first. Re-run `djq doctor` after each fix.
 
 - Ticks every minute while the Mac is awake (and on wake / any `djq` write): intake → plan → missed →
   due → platform checks → alerts → render (one new render per tick) → move → heartbeat → backup. `djq tick` runs one by hand.
-- Only approved weeks have posts. One video per day goes to every enabled platform at staggered times
+- A clip in the Queue is approved: nothing else is asked. The plan step gives every Queue clip a day by itself, up to 30
+  days ahead, in Queue order, and creates its posts at once. A position today needs 30 minutes before its first platform.
+  Only Eric's Send to Queue moves a clip Edit → Queue, even when it has nothing to fix.
+- Each clip goes to every enabled platform at staggered times
   (FB 12:30, Threads 1:30, YT 3:00, X 5:00, IG 6:00, TikTok 7:00 pm, New York).
+- The plan re-lays only when posts/day or the Queue sort changes, once. Pinned days never move.
 - Late < 6 h (or still the same day) → stays due. A whole day missed → `overdue`, and that platform's
   remaining plan moves later by the days missed (never double-posts).
 - A fix, re-upload or repost creates a new attempt; history is never rewritten.
@@ -82,12 +87,12 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | `manifest.parse` | `videos.json` doesn't parse. Prefer re-running `_tools/export_clips.py <session> <part> <draft_info.json>` (rewrites it, keeps ids). If you hand-fix the JSON, change only the broken syntax. Then `djq intake`. |
 | `manifest.duplicateIds` | Two entries share an id. Keep the id on the entry that already has posts (`djq posts`); give the other a fresh UUID in `videos.json`; `djq intake`. |
 | `files.untracked` | A clip in `Clips/` isn't in any `videos.json`. Ask Eric: export it with `export_clips.py`, or leave it (ignored). Don't move or delete it. |
-| `files.missing` | Ask Eric to put the file back or undo the rename; `djq intake` relinks by fingerprint (any session). If it's gone for good: `djq exclude <video>` and, if it was planned, `djq remove-slot <slot>` or `djq skip-next <video>`. |
+| `files.missing` | Ask Eric to put the file back or undo the rename; `djq intake` relinks by fingerprint (any session). If it's gone for good: `djq exclude <video>` and, if it was planned, `djq stage <video> back`. |
 | `files.relinked` | Info only. |
 | `files.duration` | File length ≠ `videos.json`. Re-export that clip with `export_clips.py --only N`, `djq intake`; the engine re-renders automatically when the edit/hash changes. |
-| `plan.notReady` | A planned clip lost its crop/text/caption, its file, or was excluded (it stays on its day and shows the problem). Eric finishes it in the app, or take it out: `djq remove-slot <slot>` then `djq pin <queue-clip> <date>` (a clip from `djq queue`) (`skip-next` only defers it a slot). |
-| `plan.gaps` | An approved day has no post. `djq pin <queue-clip> <YYYY-MM-DD>` (a clip from `djq queue`), or `djq week --rebuild <monday>` then Eric approves. |
-| `runway.approved` | Show Eric `djq week <next-monday>` (propose with `--propose`); Eric approves (`--approve`). Don't approve on their behalf unless told. |
+| `plan.notReady` | A scheduled clip lost its crop/text/caption, its file, or was excluded (it stays on its day and shows the problem). Eric finishes it in the app, or takes it off the calendar: `djq stage <video> back` holds it in Edit, and the next waiting clip fills the day. |
+| `plan.gaps` | Open days with clips waiting in the Queue: the scheduler should have filled them, so it looks stuck. Check the engine (`djq status`), then `djq schedule --dry-run` says what it would do and why not; `djq schedule` runs it once. The avoid-overlap setting can also leave a day open. |
+| `runway.queue` | Queue running low: few days scheduled and the Queue is about out. Nothing to fix in data: Eric sends clips to the Queue from Edit. Never send them on Eric's behalf. |
 | `runway.total` | Eric needs to score videos (`djq queue` shows "in Score" / "in Edit"), finish edits, or record/export a new set. Nothing to fix in data. |
 | `renders.missing` | Normal if the Mac was asleep. `djq tick` (renders one per tick, due posts first) or `djq render <video> --version N [--platform P]`. |
 | `renders.failed` | Read `engine.log` for the ffmpeg error. Usual causes: crop outside the frame, trim outside the file, file missing. Eric fixes the edit; then `djq render <video> --version N`. |
@@ -109,16 +114,16 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | `autoupdate.failed` | Two cases (`djq autoupdate status` / `log` say which). The last run failed before installing anything: `djq autoupdate run` retries. Or a build failed its checks after install and is **still installed** (its database migration couldn't safely be undone): Eric decides between `djq autoupdate rollback --restore-db` (loses changes since that backup) and waiting for a fixed commit. Never run either yourself. |
 | `autoupdate.ready` | Info: an update has waited > 24 h for the main window to close. Eric clicks Restart & update in the banner (it waits for renders) or closes the window. |
 | `autoupdate.off` | Info: Eric turned auto-update off. Leave it; `djq autoupdate on` turns it back on only if Eric asks. |
-| `postiz.not_connected` | Info "Postiz not in use" while every platform is Manual: nothing to do. Warning when a platform is set to Postiz but no key is saved (its posts go to Today), or with `--live` when Postiz didn't answer: tell Eric; only Eric adds the key in Settings → Publishing. For "didn't answer", check the network and re-run `djq doctor --live` later; posts Postiz already holds still go out. |
-| `postiz.key_invalid` | Postiz refused the key (401/403); posts set to Postiz go to Today and DJ Queue re-checks hourly. Tell Eric to save a valid key in Settings → Publishing (Postiz → Settings → Public API). Never handle the key yourself. |
+| `postiz.not_connected` | Info "Postiz not in use" while every platform is Manual: nothing to do. Warning when a platform is set to Postiz but no key is saved (its posts go to the Calendar), or with `--live` when Postiz didn't answer: tell Eric; only Eric adds the key in Settings → Publishing. For "didn't answer", check the network and re-run `djq doctor --live` later; posts Postiz already holds still go out. |
+| `postiz.key_invalid` | Postiz refused the key (401/403); posts set to Postiz go to the Calendar and DJ Queue re-checks hourly. Tell Eric to save a valid key in Settings → Publishing (Postiz → Settings → Public API). Never handle the key yourself. |
 | `postiz.mapping_missing` | A platform set to Postiz has no channel, or its channel isn't in Postiz any more (error when it has posts in the next 48 h). Show Eric `djq postiz map --dry-run` (auto-maps by provider; ambiguous or missing providers are listed for Eric, never guessed). Eric runs `djq postiz map` or `djq postiz map <platform> "<channel>"`. |
-| `postiz.channel_disabled` | The mapped channel is disabled or its login expired in Postiz; its posts go to Today. Eric reconnects it in Postiz; then `djq postiz channels` refreshes the list and the error clears. |
-| `postiz.stuck` | Postiz still says QUEUE an hour after the slot. Run `djq postiz sync` (or wait for the engine's sync). If it stays, Eric checks the Postiz calendar: if Postiz can't post it, Eric deletes it there and DJ Queue puts it on Today. Never post it by hand while Postiz still holds it (double post). |
+| `postiz.channel_disabled` | The mapped channel is disabled or its login expired in Postiz; its posts go to the Calendar. Eric reconnects it in Postiz; then `djq postiz channels` refreshes the list and the error clears. |
+| `postiz.stuck` | Postiz still says QUEUE an hour after the slot. Run `djq postiz sync` (or wait for the engine's sync). If it stays, Eric checks the Postiz calendar: if Postiz can't post it, Eric deletes it there and DJ Queue puts it on the Calendar. Never post it by hand while Postiz still holds it (double post). |
 | `postiz.link_missing` | Postiz published but the platform's post id came back missing, so the post has no link. `djq postiz link <post>` lists the platform's recent posts; pick the right one with Eric and `djq postiz link <post> <url>`. |
 | `postiz.rate_limited` | Info: Postiz answered 429 (no calls for 15 min) or the 25-call hour is used up. Nothing to do; calls resume by themselves (deletes first, then the soonest creates). Don't loop `sync`. |
-| `postiz.fallback` | Posts set to Postiz that go to Today instead, each with its reason. Fix the reason first (key, channel: the other `postiz.*` findings). A post Postiz refused, one deleted in Postiz, or a test-run TikTok in the inbox stays manual: Eric posts it from Today and marks it posted (`djq posted <post> <url>`). `djq reset <post>` lets Postiz try a refused or deleted one again: Eric's call. |
+| `postiz.fallback` | Posts set to Postiz that go to the Calendar instead, each with its reason. Fix the reason first (key, channel: the other `postiz.*` findings). A post Postiz refused, one deleted in Postiz, or a test-run TikTok in the inbox stays manual: Eric posts it from the Calendar and marks it posted (`djq posted <post> <url>`). `djq reset <post>` lets Postiz try a refused or deleted one again: Eric's call. |
 | `postiz.test_mode` | Info: the test run is on (TikTok → inbox, YouTube → unlisted, others → Postiz drafts), or test posts are still in Postiz. Remind Eric when the test is done; turning it off is `djq postiz test-mode off --yes` (Eric only: posts sent from then on go out for real; posts already in Postiz keep their test-run form). |
-| `postiz.create_unknown` | A create was sent but no answer came back and the sync couldn't find it, so DJ Queue doesn't know whether Postiz has the post; nothing new is sent for it meanwhile. Ask Eric to check the Postiz calendar (that channel, that time) first. `djq postiz resolve <post>` makes one live look and adopts only an exact single match; otherwise it exits 2 and Eric answers: `djq postiz resolve <post> --in-postiz` (Postiz has it: recorded posted, never sent again; add the link with `djq postiz link`) or `--not-in-postiz` (on Today to post by hand). Never guess which, and never post it by hand before Eric answered. |
+| `postiz.create_unknown` | A create was sent but no answer came back and the sync couldn't find it, so DJ Queue doesn't know whether Postiz has the post; nothing new is sent for it meanwhile. Ask Eric to check the Postiz calendar (that channel, that time) first. `djq postiz resolve <post>` makes one live look and adopts only an exact single match; otherwise it exits 2 and Eric answers: `djq postiz resolve <post> --in-postiz` (Postiz has it: recorded posted, never sent again; add the link with `djq postiz link`) or `--not-in-postiz` (on the Calendar to post by hand). Never guess which, and never post it by hand before Eric answered. |
 | `postiz.delete_pending` | DJ Queue couldn't remove a post from Postiz after 3 tries; it keeps retrying and creates nothing new for that post. If the post must not go out, Eric deletes it in the Postiz calendar. |
 | `postiz.auto_retry` | Info: a temporary Postiz failure (quota, rate limit) is retrying by itself, at most twice per clip + platform. Nothing to do; never `djq fixed` it. After the second retry it stays Failed for Eric (`posts.failed`). |
 | `manifest`, `engine`, `db`, `runway`, `tools`, `posts.problems`, `autoupdate`, `postiz` | Group names that appear under "Passed". |

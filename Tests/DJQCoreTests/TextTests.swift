@@ -101,6 +101,8 @@ import Testing
     v1.text = "Yayo x Johnny"
     v1.captionTemplateId = "set-link"
     try f.store.save(v1, videoId: id)
+    #expect(try f.store.video(id: id)?.state == .needsEdit)  // nothing to fix, but only Send to Queue moves it
+    try f.store.setSentToQueue(id, true)
     #expect(try f.store.video(id: id)?.state == .ready)
   }
 
