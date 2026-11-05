@@ -79,7 +79,12 @@ extension AppModel {
   /// Platforms with a post (latest attempt), in Settings order. Empty when the clip isn't planned.
   func platformStates(_ videoId: String) -> [DSClipPlatform] {
     let latest = latestPosts(videoId)
-    return Platform.allCases.compactMap { p in latest[p].map { DSClipPlatform(platform: p, state: Self.platformState($0.state)) } }
+    return Platform.allCases.compactMap { p in latest[p].map { DSClipPlatform(platform: p, state: platformState($0)) } }
+  }
+
+  /// A failure with its automatic retry coming reads as planned, never as a problem.
+  func platformState(_ p: PlatformPost) -> DSPlatformState {
+    postizState(p)?.isRetrying == true ? .planned : Self.platformState(p.state)
   }
 
   static func platformState(_ s: PostState) -> DSPlatformState {

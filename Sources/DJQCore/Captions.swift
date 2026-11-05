@@ -86,7 +86,7 @@ public enum Captions {
 
   /// `text` with its first `cap` hashtags, in caption order, tags typed in the text included, and the ones it lost.
   public static func capped(_ text: String, to cap: Int?) -> (text: String, dropped: [String]) {
-    guard let cap, let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_#])#[\p{L}\p{N}_]+"#) else { return (text, []) }
+    guard let cap, let re = try? NSRegularExpression(pattern: tagPattern) else { return (text, []) }
     let ns = text as NSString
     let all = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { wholeToken(ns, $0.range) }
     guard all.count > max(cap, 0) else { return (text, []) }
@@ -111,10 +111,13 @@ public enum Captions {
     public var dropped: [String]
     /// The platform has its own caption: it's left as written, so nothing is dropped and it may go over.
     public var own: Bool
+    /// The clip has scheduled or posted posts, so an own caption may be one DJ Queue held, not one Eric wrote.
+    public var scheduled = false
     public var id: Platform { platform }
 
     public var message: String {
       let name = platform.displayName
+      if own, scheduled { return "\(name) keeps this clip's scheduled caption, with \(total) hashtags over its cap of \(cap)" }
       if own { return "\(name)'s own caption has \(total) hashtags and \(name) keeps \(cap). It's left as you wrote it" }
       let list = dropped.joined(separator: " ")
       return cap == 0 ? "\(name) keeps no hashtags: drops \(list)" : "\(name) keeps \(cap) of \(total): drops \(list)"
@@ -123,12 +126,12 @@ public enum Captions {
 
   /// One note per platform a cap reaches, for `platforms`.
   public static func capNotes(_ platforms: [Platform], version v: ResolvedVersion, video: Video, sessionName: String, sets: [HashtagSet],
-                              templates: [CaptionTemplate], settings: Settings) -> [CapNote] {
+                              templates: [CaptionTemplate], settings: Settings, scheduled: Bool = false) -> [CapNote] {
     platforms.compactMap { p in
       guard let cap = settings.limits[p]?.maxHashtags else { return nil }
       if let own = v.platformCaptions[p], !own.isEmpty {
         let n = tags(in: own).count
-        return n > cap ? CapNote(platform: p, cap: cap, total: n, dropped: [], own: true) : nil
+        return n > cap ? CapNote(platform: p, cap: cap, total: n, dropped: [], own: true, scheduled: scheduled) : nil
       }
       let full = onceEach(build(p, v, video, sessionName, hashtags(v, sets: sets), templates, settings), v)
       let dropped = capped(full, to: cap).dropped
@@ -140,7 +143,7 @@ public enum Captions {
   /// written caption without `{hashtags}` is literal, and adding tags to it already skips any it has (`replaceHashtags`).
   static func onceEach(_ text: String, _ v: ResolvedVersion) -> String {
     guard v.caption.isEmpty || v.caption.contains("{hashtags}"),
-          let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_#])#[\p{L}\p{N}_]+"#) else { return text }
+          let re = try? NSRegularExpression(pattern: tagPattern) else { return text }
     var seen = Set<String>(), out = text
     let ns = text as NSString
     let repeats = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { wholeToken(ns, $0.range) }.filter {
@@ -227,8 +230,11 @@ public enum Captions {
   // MARK: Editing hashtags inside a written caption (round 7)
 
   /// The hashtag tokens in `text`, in order, normalised ("#Amapiano" → "#amapiano").
+  /// A hashtag in text: `#` then letters, digits or `_`, with a letter among them, so "Track #1" isn't one.
+  static let tagPattern = #"(?<![\p{L}\p{N}_#])#(?=[\p{N}_]*\p{L})[\p{L}\p{N}_]+"#
+
   public static func tags(in text: String) -> [String] {
-    guard let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_#])#[\p{L}\p{N}_]+"#) else { return [] }
+    guard let re = try? NSRegularExpression(pattern: tagPattern) else { return [] }
     let ns = text as NSString
     return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { normalizeTag(ns.substring(with: $0.range)) }
   }
@@ -283,7 +289,7 @@ public enum Captions {
   /// True when the line holds only hashtags (and spaces).
   static func isHashtagLine(_ line: String) -> Bool {
     let words = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
-    return !words.isEmpty && words.allSatisfy { $0.hasPrefix("#") && $0.count > 1 }
+    return !words.isEmpty && words.allSatisfy { !tags(in: String($0)).isEmpty }
   }
 
   static func isTagBoundary(_ ns: NSString, _ r: NSRange) -> Bool {

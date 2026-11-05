@@ -41,6 +41,31 @@ enum Sched {
     return up < end ? up : base.addingTimeInterval(-gap)
   }
 
+  /// When an automatic retry due at `target` goes out: `target`, or the nearest time at least `retryStaggerHours` from
+  /// every other post on the platform that went out or still will (a failed or skipped post went nowhere, and a retry
+  /// must not keep its distance from its own failure). With `earliest` it looks earlier first, down to that time, then
+  /// later.
+  static func retrySlot(store: Store, platform p: Platform, target: Date, earliest: Date? = nil, settings: Settings,
+                        excluding: Set<String> = []) throws -> Date {
+    let gap = max(1, settings.retryStaggerHours) * 3600
+    let others = try store.posts(where: "platform=? AND state NOT IN ('skipped','failed','copyright_blocked','copyright_muted','removed')",
+                                 [p.rawValue])
+      .filter { !excluding.contains($0.id) }.map { $0.postedAt ?? $0.scheduledAt }.sorted()
+    func clash(_ t: Date) -> Date? { others.first { abs($0.timeIntervalSince(t)) < gap - 1 } }
+    guard clash(target) != nil else { return target }
+    if let earliest {
+      var t = target
+      while let c = clash(t) {
+        t = c.addingTimeInterval(-gap)
+        if t < earliest { break }
+      }
+      if t >= earliest, clash(t) == nil { return t }
+    }
+    var t = target
+    for o in others where abs(o.timeIntervalSince(t)) < gap - 1 { t = o.addingTimeInterval(gap) }
+    return t
+  }
+
   /// "2 h late" / "40 min late".
   static func lateText(_ seconds: TimeInterval) -> String {
     let m = Int(seconds / 60)
@@ -52,6 +77,17 @@ enum Sched {
     f.locale = Locale(identifier: "en_US_POSIX")
     f.timeZone = settings.tz
     f.dateFormat = "EEE d MMM h:mm a"
+    return f.string(from: d)
+  }
+
+  /// "Thu 8:00 am".
+  static func retryDay(_ d: Date, _ settings: Settings) -> String {
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.timeZone = settings.tz
+    f.amSymbol = "am"
+    f.pmSymbol = "pm"
+    f.dateFormat = "EEE h:mm a"
     return f.string(from: d)
   }
 

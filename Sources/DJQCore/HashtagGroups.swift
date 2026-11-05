@@ -130,6 +130,12 @@ public enum HashtagGroups {
   public struct Change: Sendable {
     public var result: BulkResult
     public var kept: [String]
+
+    /// What a toast adds when clips with posts were held.
+    public var keptNote: String {
+      kept.isEmpty ? "" : kept.count == 1 ? ". 1 clip with scheduled or posted posts keeps its caption"
+        : ". \(kept.count) clips with scheduled or posted posts keep their captions"
+    }
   }
 
   private static func usage(of id: String, store: Store) throws -> (kept: [String], others: [String]) {
@@ -151,7 +157,7 @@ public enum HashtagGroups {
 
   /// As the schema-6 migration: every version's resolved hashtags go into its extra hashtags and ALL its group ids are
   /// cleared (moving only this group's tags would reorder them, and the order is part of the caption and the hash).
-  private static func freeze(_ ids: [String], store: Store) throws {
+  static func freeze(_ ids: [String], store: Store) throws {
     let settings = try store.settings(), sets = try store.hashtagSets()
     for id in ids {
       guard let v = try store.video(id: id) else { continue }
@@ -191,22 +197,35 @@ public enum HashtagGroups {
     return Change(result: r, kept: kept)
   }
 
-  /// Moves a group one place up (`by` -1) or down (+1) in the order chips show and `setGroup` writes tags in. Nothing else changes:
-  /// a clip keeps its order until its groups are toggled, so a move reaches no caption. Journaled.
+  public static let moveAction = "hashtag-group-move"
+
+  /// Moves a group one place up (`by` -1) or down (+1) in the order chips show and `setGroup` writes tags in. Crossing into the next
+  /// category takes that category, since the list sorts by category first. The default groups follow, so new clips list
+  /// tags in the new order; a clip with posts that follows them keeps what it has. A clip's own groups keep their order
+  /// until they're toggled. One journaled batch.
   @discardableResult
-  public static func move(_ id: String, by: Int, store: Store, bulk: BulkActions) throws -> BulkResult {
-    var all = try store.hashtagSets()
+  public static func move(_ id: String, by: Int, store: Store, bulk: BulkActions) throws -> Change {
+    let before = try CaptionHold.Sources(store)
+    var all = before.sets
     guard let i = all.firstIndex(where: { $0.id == id }), all.indices.contains(i + by) else {
-      return BulkResult(batchId: nil, action: "hashtag-group-move", dryRun: false, videoIds: [], changed: [], skipped: [:], remainingIssues: [:],
-                        summary: "hashtag-group-move: nothing changed")
+      return Change(result: BulkResult(batchId: nil, action: moveAction, dryRun: false, videoIds: [], changed: [], skipped: [:], remainingIssues: [:],
+                                       summary: "\(moveAction): nothing changed"), kept: [])
     }
+    all[i].category = all[i + by].category
     all.swapAt(i, i + by)
-    return try bulk.record("hashtag-group-move", hashtagGroups: true, revalidate: false) {
-      for (n, var g) in all.enumerated() where g.sort != n {
+    var after = before
+    after.settings.defaults.hashtagSetIds = all.map(\.id).filter { before.settings.defaults.hashtagSetIds.contains($0) }
+      + before.settings.defaults.hashtagSetIds.filter { id in !all.contains { $0.id == id } }
+    let kept = try CaptionHold.affected(from: before, to: after, store: store)
+    let r = try bulk.record(moveAction, ids: kept.map(\.id), settings: true, hashtagGroups: true, revalidate: false) {
+      try freeze(kept.map(\.id), store: store)
+      for (n, var g) in all.enumerated() where g != before.sets.first(where: { $0.id == g.id }) || g.sort != n {
         g.sort = n
         try store.save(g)
       }
+      if after.settings != before.settings { try store.save(after.settings) }
     }
+    return Change(result: r, kept: kept.map(\.id))
   }
 
   /// Why going back from `current` to `saved` groups would change a clip with scheduled or posted posts that isn't being
@@ -228,11 +247,33 @@ public enum HashtagGroups {
   /// What the editor's unsaved `memory` should hold after a freeze landed underneath it (`saved`): each frozen version
   /// takes its groups and extra tags from the store and keeps everything else Eric has in progress. Nil = nothing was
   /// frozen, so unsaved changes stand. Saving `memory` as it was would write the group back and change a scheduled clip.
-  public static func keepingFreeze(memory: [Version], saved: [Version]) -> [Version]? {
+  ///
+  /// v0.8.3: the same goes for what a hold writes (`caption`, `captionTemplateId`, `platformCaptions`). `base` is what the store
+  /// held when the memory last matched it, which tells a hold from Eric's own unsaved edit: a field the store changed comes
+  /// across unless Eric changed it too, since his edit counts like any other typing. Without `base` the store wins.
+  public static func keepingFreeze(memory: [Version], saved: [Version], base: [Version]? = nil) -> [Version]? {
     let byNumber = Dictionary(saved.map { ($0.number, $0) }, uniquingKeysWith: { a, _ in a })
+    let baseByNumber = base.map { Dictionary($0.map { ($0.number, $0) }, uniquingKeysWith: { a, _ in a }) }
     var out = memory, changed = false
+    func take<T: Equatable>(_ path: WritableKeyPath<Version, T>, _ i: Int, from s: Version, base b: Version?) {
+      guard s[keyPath: path] != out[i][keyPath: path] else { return }
+      if let b, s[keyPath: path] == b[keyPath: path] || out[i][keyPath: path] != b[keyPath: path] { return }
+      out[i][keyPath: path] = s[keyPath: path]
+      changed = true
+    }
     for i in out.indices {
-      guard let s = byNumber[out[i].number], s.hashtagSetIds == [], s.extraHashtags != nil, out[i].hashtagSetIds != [],
+      guard let s = byNumber[out[i].number] else { continue }
+      let b = baseByNumber?[out[i].number]
+      take(\.caption, i, from: s, base: b)
+      take(\.captionTemplateId, i, from: s, base: b)
+      take(\.platformCaptions, i, from: s, base: b)
+      take(\.youtubeTitle, i, from: s, base: b)
+      if let b {
+        take(\.hashtagSetIds, i, from: s, base: b)
+        take(\.extraHashtags, i, from: s, base: b)
+        continue
+      }
+      guard s.hashtagSetIds == [], s.extraHashtags != nil, out[i].hashtagSetIds != [],
             s.extraHashtags != out[i].extraHashtags || out[i].hashtagSetIds != nil else { continue }
       out[i].hashtagSetIds = []
       out[i].extraHashtags = s.extraHashtags

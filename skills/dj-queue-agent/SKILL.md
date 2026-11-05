@@ -80,7 +80,7 @@ Either list may be left out.
 ### Captions, hashtag groups, YouTube titles (round 7)
 
 - A written caption (`djq caption`) is posted **exactly as written** — nothing is appended. Put the hashtags in it, or
-  write `{hashtags}` where the clip's hashtags (its groups + extra tags) should go. Caption templates can also use `{title}` and `{link}`. `--default` goes back to the
+  write `{hashtags}` where the clip's hashtags (its groups + extra tags) should go. Caption templates can also use `{title}` and `{link}`. Each platform has a hashtag cap (Settings → Platforms): over it, that platform keeps the first tags in caption order, so put the tags that matter first. A template can hold typed tags too, a tag appears once, and `#1` isn't a hashtag. `--default` goes back to the
   template. `djq video <id>` prints the caption as it posts.
 - Hashtag groups are **Eric's own** (Settings → Captions & titles); none ship and new clips get none unless Eric sets
   default groups. Don't create, edit or delete groups unless Eric asks:

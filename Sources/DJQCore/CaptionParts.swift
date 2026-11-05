@@ -53,16 +53,47 @@ public enum CaptionParts {
     }
   }
 
+  /// Why parts can't be changed on this clip (nil = they can). A post that went out is the record of what was posted; a clicked
+  /// chip on a clip that's only scheduled is an edit like typing, and Postiz replaces the post after the settle.
+  public static func lockReason(posts: [PlatformPost]) -> String? {
+    posts.contains { $0.state.wentOut } ? "This clip has gone out, so its caption is the record of what was posted" : nil
+  }
+
+  /// The clip's caption with `part` toggled, or nil if nothing changes. The one write bulk and the editor share.
+  public static func toggling(_ part: CaptionPart, version r: ResolvedVersion, video: Video, sessionName: String, sets: [HashtagSet],
+                              templates: [CaptionTemplate], settings: Settings) -> String? {
+    let values = Values(version: r, video: video, sessionName: sessionName, link: settings.captionLink)
+    let caption = Captions.sharedCaption(version: r, video: video, sessionName: sessionName, sets: sets, templates: templates, settings: settings)
+    let next = toggled(part, in: caption, values)
+    return next == caption ? nil : next
+  }
+
+  /// One word is often just a word ("pure fire"), so a one-word part counts only as written and standing alone in its line: nothing
+  /// but marks before it or after a separator, and the line's end, a separator or a hashtag after it.
+  private static func standsAlone(_ range: NSRange, in caption: NSString, value: String) -> Bool {
+    guard caption.substring(with: range) == value else { return false }
+    let line = caption.lineRange(for: range)
+    func word(_ s: String) -> Bool { s.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) } }
+    let before = caption.substring(with: NSRange(location: line.location, length: range.location - line.location))
+    let after = caption.substring(with: NSRange(location: range.upperBound, length: line.upperBound - range.upperBound))
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let opens = !word(before) || before.trimmingCharacters(in: .whitespaces).last.map { "—–-·|:,".contains($0) } == true
+    let closes = !word(after) || after.first.map { "—–-·|:,#".contains($0) } == true
+    return opens && closes
+  }
+
   /// Where each part is in `caption`, whole words, in any case. The longest goes first, so a title inside the overlay text
-  /// doesn't count as the title; parts that read the same share a place.
+  /// doesn't count as the title; parts that read the same share a place. A one-word part must stand alone.
   static func places(in caption: String, _ values: Values) -> [CaptionPart: NSRange] {
     var out: [CaptionPart: NSRange] = [:]
     var masked = caption as NSString
     let groups = Dictionary(grouping: CaptionPart.allCases.filter { !values.value($0).isEmpty }) { values.value($0).lowercased() }
     for (value, parts) in groups.sorted(by: { ($0.key.count, $0.key) > ($1.key.count, $1.key) }) {
       let pattern = #"(?<![\p{L}\p{N}#])"# + NSRegularExpression.escapedPattern(for: value) + #"(?![\p{L}\p{N}])"#
-      guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-            let m = re.firstMatch(in: masked as String, range: NSRange(location: 0, length: masked.length)) else { continue }
+      guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+      let oneWord = !value.contains { $0.isWhitespace }, written = parts.first.map { values.value($0) } ?? value
+      let all = re.matches(in: masked as String, range: NSRange(location: 0, length: masked.length))
+      guard let m = all.first(where: { !oneWord || standsAlone($0.range, in: masked, value: written) }) else { continue }
       for p in parts { out[p] = m.range }
       masked = masked.replacingCharacters(in: m.range, with: String(repeating: "\u{1}", count: m.range.length)) as NSString
     }

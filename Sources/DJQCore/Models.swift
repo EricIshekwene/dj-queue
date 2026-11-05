@@ -108,6 +108,12 @@ public enum PostState: String, Codable, Sendable, CaseIterable {
   case copyrightMuted = "copyright_muted"
   case removed, skipped, overdue
 
+  /// The post is in flight or went out, so its caption is held (only failed and skipped aren't).
+  public var holdsCaption: Bool { self != .failed && self != .skipped }
+
+  /// The post went out: its caption is the record of what was posted.
+  public var wentOut: Bool { [.posted, .copyrightBlocked, .copyrightMuted, .removed].contains(self) }
+
   /// Terminal states end a platform post; everything else is still in flight.
   public var isTerminal: Bool {
     switch self {

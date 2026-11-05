@@ -40,10 +40,40 @@ enum CaptionHold {
     outputs(video, try store.versions(videoId: video.id), from, session: try store.sessionName(for: video), legacy: legacy)
   }
 
-  /// Clips with scheduled or posted posts whose captions differ between two sets of sources.
+  /// Everything in a Postiz hash that depends on these sources: the captions, and the YouTube tags and title.
+  struct Signature: Equatable {
+    var captions: Outputs
+    var tags: [Int: [String]]
+    var titles: [Int: String]
+  }
+
+  static func signature(_ video: Video, _ from: Sources, store: Store) throws -> Signature {
+    let vs = withFirst(try store.versions(videoId: video.id))
+    var tags: [Int: [String]] = [:], titles: [Int: String] = [:]
+    for number in vs.map(\.number) {
+      let r = VersionResolver.resolve(vs, number: number, settings: from.settings, video: video)
+      tags[number] = Captions.hashtags(r, sets: from.sets)
+      titles[number] = Captions.youtubeTitle(r, video: video, settings: from.settings)
+    }
+    return Signature(captions: try outputs(video, from, store: store), tags: tags, titles: titles)
+  }
+
+  /// Clips with scheduled or posted posts that would post something else between two sets of sources.
   static func affected(from before: Sources, to after: Sources, store: Store, except: Set<String> = []) throws -> [Video] {
     try HashtagGroupsMigration.clipsWithPosts(store).subtracting(except).sorted().compactMap { try store.video(id: $0) }
-      .filter { try outputs($0, before, store: store) != outputs($0, after, store: store) }
+      .filter { try signature($0, before, store: store) != signature($0, after, store: store) }
+  }
+
+  /// Keeps `video`'s YouTube tags and title as `before` gives them, ahead of a change to `after`: its tags go into each version
+  /// (`HashtagGroups.freeze`), and a title that would move is written out. Call it before the change.
+  static func pinTagsAndTitle(_ video: Video, from before: Sources, to after: Sources, store: Store) throws {
+    let was = try signature(video, before, store: store), will = try signature(video, after, store: store)
+    if was.tags != will.tags { try HashtagGroups.freeze([video.id], store: store) }
+    guard was.titles != will.titles else { return }
+    for var version in withFirst(try store.versions(videoId: video.id)) where was.titles[version.number] != will.titles[version.number] {
+      version.youtubeTitle = was.titles[version.number]
+      try store.save(version, videoId: video.id)
+    }
   }
 
   /// Makes `video` post `before` again under the current data: a platform that reads differently keeps its old caption as

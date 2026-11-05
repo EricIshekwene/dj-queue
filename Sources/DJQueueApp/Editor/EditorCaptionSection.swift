@@ -129,7 +129,7 @@ struct EditorCaptionSection: View {
                      icon: "info.circle")
         }
         ForEach(model.capNotes) { n in
-          if n.own {
+          if n.own, !n.scheduled {
             EditorHint(n.message, icon: "exclamationmark.triangle.fill", tone: .warning)
           } else {
             Text(n.message).font(DS.type.caption).foregroundStyle(DS.color.textTertiary).fixedSize(horizontal: false, vertical: true)
@@ -215,7 +215,7 @@ struct EditorCaptionSection: View {
         DSFlowLayout(spacing: 5) {
           ForEach(CaptionPart.allCases) { p in
             let on = CaptionParts.isOn(p, in: model.mainCaption, values), value = values.value(p)
-            let why = model.readOnly ? EditorView.readOnlyReason : on ? nil : CaptionParts.offReason(p, values)
+            let why = model.partsOffReason ?? (on ? nil : CaptionParts.offReason(p, values))
             DSChip(p.label, isSelected: on, disabledReason: why, size: .sm,
                    tooltip: on ? "Take “\(value)” out of the caption" : "Add “\(value)” to the caption") { model.togglePart(p) }
           }
@@ -607,6 +607,8 @@ struct EditorTemplateFormView: View {
       DSTextArea("Template", placeholder: "{text}\n\n{hashtags}", text: $template, hint: CaptionTemplates.hashtagHint, minHeight: 88, maxHeight: 180)
       if let reach = form.impact {
         EditorHint(reach.templateEditSummary, icon: "info.circle")
+      } else if isNew, model.clipHasPosts {
+        EditorHint("This clip keeps its caption: it has scheduled or posted posts", icon: "info.circle")
       }
       HStack(spacing: DS.space.xxs) {
         DSXMenuButton(icon: "curlybraces", tooltip: "Add a token to the template", size: .sm) {
@@ -620,7 +622,7 @@ struct EditorTemplateFormView: View {
         }
         .keyboardShortcut(.cancelAction)
         DSButton(isNew ? "Save template" : "Save changes", variant: .outline, size: .sm, disabledReason: problem?.message,
-                 tooltip: isNew ? "Saved for every clip, and on for this one" : nil, action: save)
+                 tooltip: !isNew ? nil : model.clipHasPosts ? "Saved for every clip" : "Saved for every clip, and on for this one", action: save)
       }
     }
     .padding(DS.space.sm)

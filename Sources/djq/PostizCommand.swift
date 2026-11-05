@@ -132,6 +132,7 @@ enum PostizCommand {
     var stuck: [String]
     var linkMissing: [String]
     var autoRetries: [String]
+    var retries: [PostizStatus.Retry]
     var platforms: [Row]
   }
 
@@ -186,7 +187,7 @@ enum PostizCommand {
                         connected: st.connected, checkError: st.checkError, rateLimited: paused, pausedUntil: st.pausedUntil,
                         budgetUsed: st.budgetUsed, budgetLimit: st.budgetLimit, testMode: st.testMode, apiBase: st.apiBase,
                         lastSync: st.lastSync, channelsFetchedAt: st.channelsFetchedAt, openJobs: st.openJobs, stuck: st.stuck,
-                        linkMissing: st.linkMissing, autoRetries: st.autoRetries, platforms: rows)
+                        linkMissing: st.linkMissing, autoRetries: st.autoRetries, retries: st.retries, platforms: rows)
     if json { try printJSON(out); return code }
 
     let conn: String
@@ -219,7 +220,7 @@ enum PostizCommand {
     }
     if !st.stuck.isEmpty { print("\nStuck      \(st.stuck.count) post(s) still QUEUE an hour after the slot (djq doctor: postiz.stuck)") }
     if !st.linkMissing.isEmpty { print("No link    " + st.linkMissing.map { short($0) }.joined(separator: " ") + " (djq postiz link <post>)") }
-    if !st.autoRetries.isEmpty { print("Retrying   \(st.autoRetries.count) post(s) after a temporary failure, by themselves (djq doctor: postiz.auto_retry)") }
+    for r in st.retries { print("Retry      \(short(r.post))  \(r.platform.displayName): \(r.text)") }
     print("")
     if ready {
       print("Ready: connected, all six channels mapped.")

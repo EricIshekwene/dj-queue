@@ -43,8 +43,9 @@ public enum PostGrouping {
   }
 
   /// One status word per post, as the Posts pills say it.
-  public static func bucket(_ p: PlatformPost) -> String {
-    switch p.state {
+  public static func bucket(_ p: PlatformPost, retrying: Set<String> = []) -> String {
+    if retrying.contains(p.id) { return "retrying" }
+    return switch p.state {
     case .planned: "planned"
     case .rendering: "rendering"
     case .rendered: "rendered"
@@ -58,12 +59,13 @@ public enum PostGrouping {
   }
 
   /// "6 platforms · all rendered" / "4 posted · 1 failed · 1 due now", plus " · 1 retry" / " · 1 repost" for extras.
-  public static func summary(_ posts: [PlatformPost]) -> String {
+  /// `retrying`: posts with an automatic retry coming, which aren't failed for anyone reading the card.
+  public static func summary(_ posts: [PlatformPost], retrying: Set<String> = []) -> String {
     guard !posts.isEmpty else { return "No posts" }
-    let order = ["posted", "failed", "copyright", "missed", "due now", "rendered", "rendering", "planned", "retried",
+    let order = ["posted", "failed", "copyright", "missed", "due now", "retrying", "rendered", "rendering", "planned", "retried",
                  "handled", "skipped"]
     var counts: [String: Int] = [:]
-    for p in posts { counts[bucket(p), default: 0] += 1 }
+    for p in posts { counts[bucket(p, retrying: retrying), default: 0] += 1 }
     let platforms = Set(posts.map(\.platform)).count
     var out: String
     if counts.count == 1, let only = counts.keys.first {

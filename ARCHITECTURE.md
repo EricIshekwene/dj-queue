@@ -101,7 +101,7 @@ public final class PostActions {
   public func setMetrics(postId: String, _ m: PostMetrics) throws
   public func markLongformPosted(videoId: String, url: String) throws             // moves file Ready to Post/Longform → Posted/Longform
   public func dueToday(now: Date) throws -> [PlatformPost]                        // Today screen rows
-  public func problems() throws -> [PlatformPost]                                 // failed / copyright / overdue, unresolved
+  public func problems() throws -> [PlatformPost]                                 // failed / copyright / overdue, unresolved, no retry coming
 }
 public final class ManualPublisher: Publisher { public init(store: Store, renderer: RenderService) }
 public struct TickReport: Sendable { public var started: Date; public var steps: [String: String]; public var errors: [String] }
@@ -144,7 +144,7 @@ SwiftUI app per `design/DESIGN.md`. Talks only to the APIs above and `Store`. Ru
 - **Contract:** `docs/postiz.md` (endpoints, payload per provider, lifecycle, test run, auth). Decisions: `DECISIONS-R6.md`.
 - **Core (`DJQCore/Postiz/`):** `PostizClient` over an injectable `PostizTransport` (URLSession in the app, fakes in tests; multipart streamed from a temp file), `PostizKeyStore` (Keychain service "DJ Queue Postiz", read through `/usr/bin/security`, key on stdin only), `PostizRouter` (Manual | Postiz | fallback reason per platform), `PostizService` (publish, sync, analytics, status, channels, test payloads, link/resolve/release), `PostizPublisher: Publisher`, a shared 25-per-hour request budget in kv.
 - **Schema v5:** `postiz_jobs` (one row per Postiz post DJ Queue made; survives planner deletes so it can be cancelled) and `postiz_media` (render → uploaded media). Additive; the migration backs up the DB first.
-- **Engine:** tick order `… alerts, retry, render, publish, sync, proxies …`. `retry` re-queues temporary Postiz failures by itself (`PostizRetry.swift`, DECISIONS-R8.md). `publish` reconciles every open job (cancel/replace, delete confirmed before any create) and submits Postiz-routed approved posts once their render exists (closes the old `Engine.due()` gap). `sync` maps Postiz states back onto the post state machine. Never double-post is enforced per clip + platform inside the claim transaction; a create with an unknown outcome is never resent (Doctor `postiz.create_unknown`). Posts with a live job are never overdue/shifted; posts Postiz can't take fall back to Today.
+- **Engine:** tick order `… alerts, retry, render, publish, sync, proxies …`. `retry` picks up a failed post whose automatic retry waited; `sync` makes the attempt as soon as it reads the failure (`PostizRetry.swift`, DECISIONS-R9.md). `publish` reconciles every open job (cancel/replace, delete confirmed before any create) and submits Postiz-routed approved posts once their render exists (closes the old `Engine.due()` gap). `sync` maps Postiz states back onto the post state machine. Never double-post is enforced per clip + platform inside the claim transaction; a create with an unknown outcome is never resent (Doctor `postiz.create_unknown`). Posts with a live job are never overdue/shifted; posts Postiz can't take fall back to Today.
 - **Settings:** `Settings.publishing` (per-platform publisher, channel ids — local only —, Test run, per-provider options). Scratch `DJQ_HOME`/`DJQ_ROOT` runs never touch the Keychain or the network unless `DJQ_POSTIZ_LIVE=1`.
 - **CLI/Doctor:** `djq postiz status|channels|map|publisher|test-mode|test|link|release|resolve|sync`; Doctor `postiz.*` checks (offline unless `--live`).
 - **App:** Settings → Platforms → Publishing (key, connection, channels, Manual | Postiz, Test run), confirms before anything can go public, Postiz state and live links on Today, Posts, Week and the menu bar, editor cover meaning per platform, YouTube/TikTok title limits, Trim/Skip for platforms a clip is too long for.
@@ -167,3 +167,19 @@ SwiftUI app per `design/DESIGN.md`. Talks only to the APIs above and `Store`. Ru
   250 ms; `fieldRevision` re-syncs it after any other change). `DSTextArea` grows to `maxHeight`, then scrolls.
   `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption NSTextView (typing cost, mid-text edits, chips in place).
 - **djq:** `hashtag-groups`, `title-templates`, `youtube-title`, `bulk youtube-title-template`.
+
+## v0.8.3 additions (schema v7) — captions you control
+
+Decisions: `DECISIONS-R7.md`, "v0.8.3".
+
+- **`CaptionHold` is the one guarantee:** anything that changes what a caption is built from (default template, New clip defaults, a template's
+  text, the link line, a hashtag cap, a group move) lists the clips with scheduled or posted posts that would change, then proves captions, YouTube tags and
+  titles identical inside one journaled batch. It pins, freezes or writes a platform's own caption as needed, and rolls back rather than let one move.
+- **`CaptionTemplates`** is the write path for templates, the default, New clip defaults, the link line and caps; the editor and Settings both call it.
+  `batchActions` lists what writes clips on its own, so an open editor session moves past it and undo checks for conflicts.
+- **`CaptionParts`** is pure text (`toggled`, `isOn`); `BulkActions.togglePart` applies it by clip id.
+- **`Captions.caption(for:)`** now also writes each tag once where a clip's tags are filled in and applies the platform's cap, so the preview,
+  validation and Postiz all read one result. `sharedCaption`, the editor's field, stays uncapped.
+- **Schema 7 (`CaptionRulesMigration`)** holds clips with posts against those rules at install, journaled. Undoing it needs `--force`.
+- **Editor merge:** `HashtagGroups.keepingFreeze(memory:saved:base:)` brings a hold in under unsaved work.
+

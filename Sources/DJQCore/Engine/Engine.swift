@@ -19,7 +19,7 @@ public struct TickReport: Sendable {
 /// overlaps another tick. The app runs it on a background queue via `start()`; the CLI calls `tick` once.
 ///
 /// Tick order: intake → stages (invalid Queue clips → Edit) → plan housekeeping → missed/overdue → due → platform checks → alerts →
-/// automatic retries (after alerts, so a temporary failure is loud first) → render-ahead → publish → sync → move/cleanup → heartbeat → backup. Missed runs before due so a post that is about to be shifted never gets a
+/// automatic retries (a failure that waited for a pause or a held clip) → render-ahead → publish → sync → move/cleanup → heartbeat → backup. Missed runs before due so a post that is about to be shifted never gets a
 /// "due" notification first; rendering (slow) runs after every notification step so it never delays one, and at
 /// most one new render happens per tick (due posts first). Every step catches its own errors into the report.
 public final class Engine: @unchecked Sendable {
@@ -151,8 +151,8 @@ public final class Engine: @unchecked Sendable {
     step("due", &r) { try due() }
     step("platform", &r) { try platformChecks() }
     step("alerts", &r) { try alerts() }
-    // Round 8: temporary Postiz failures re-queue by themselves, once their alert went out, in time for this tick's publish.
-    step("retry", &r) { try postiz?.retryTemporary() ?? "off" }
+    // Round 9: the sync step makes a failure's attempt as soon as it reads it; this picks up one that waited.
+    step("retry", &r) { try postiz?.retryFailures() ?? "off" }
     step("render", &r) { try renderAhead(&ctx) }
     // Round 6: submit ahead / replace / cancel in Postiz (after render-ahead attached renders), then read back states.
     step("publish", &r) { try postiz?.publish() ?? "off" }
@@ -308,6 +308,8 @@ public final class Engine: @unchecked Sendable {
         if try postiz?.holds(p) == true { return }
         // Test-run TikTok waiting in the TikTok inbox: Eric finishes it there — never "missed".
         if try postiz?.isInTikTokInbox(p) == true { return }
+        // An automatic retry is never "missed": it goes out as soon as it can, or waits for a pause to end.
+        if try postiz?.isRetryAttempt(p) == true { return }
         let again = try store.history(postId: p.id).contains { $0.toState == PostState.overdue.rawValue }
         let days = max(1, dm.days(from: dm.key(p.scheduledAt), to: today))
         p.state = .overdue
@@ -350,6 +352,7 @@ public final class Engine: @unchecked Sendable {
       guard var p = try store.post(id: c.id), ["planned", "rendering", "rendered"].contains(p.state.rawValue),
             !settings.pausedPlatforms.contains(p.platform), !isOverdue(p, now: now, settings: settings, dm: dm) else { continue }
       guard let v = try store.video(id: p.videoId) else { continue }
+      if let postiz, let router, try postiz.retryAttemptWaits(p, router: router) { continue }
       p.state = .due
       // Postiz delivers it (open job, or routed with its render still to come — the publish step submits it as soon
       // as the render lands): no manual "Open Today" notification and no manual publisher.

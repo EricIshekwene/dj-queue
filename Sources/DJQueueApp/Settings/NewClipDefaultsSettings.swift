@@ -224,7 +224,7 @@ struct NewClipDefaultsSettings: View {
         DSButton("Discard changes", variant: .outline, disabledReason: dirty ? nil : "No unsaved changes",
                  tooltip: "Throw away the unsaved default changes") { ui.draft = nil }
         DSButton("Save", variant: .primary, disabledReason: dirty ? nil : "No unsaved changes",
-                 tooltip: "Save defaults (clips that follow them change)", shortcut: "⌘S") { save() }
+                 tooltip: "Save defaults (clips that follow them change; clips with scheduled or posted posts keep their captions)", shortcut: "⌘S") { save() }
           .keyboardShortcut("s", modifiers: .command)
       }
       .padding(.vertical, DS.space.sm)
@@ -241,12 +241,8 @@ struct NewClipDefaultsSettings: View {
 
   private func save() {
     guard let draft = ui.draft else { return }
-    // Undoable (toast · Undo, ⌘Z): every clip that follows a default changes with it.
-    if model.undoable("New clip defaults saved", "settings", settings: true, {
-      var s = model.settings
-      s.defaults = draft
-      try model.store.save(s)
-    }) {
+    // Undoable (toast · Undo, ⌘Z): every clip that follows a default changes with it, except clips with posts.
+    if model.saveDefaults(draft, label: "New clip defaults saved") {
       ui.draft = nil
       model.revalidateStages()
     }
@@ -255,13 +251,9 @@ struct NewClipDefaultsSettings: View {
   private func confirmReset() {
     ui.confirm = SettingsConfirm(
       title: "Reset new clip defaults?",
-      message: "Every default goes back to the built-in value and is saved now. Clips that follow a default change with it; their own changes stay. Undo (⌘Z) puts your defaults back.",
+      message: "Every default goes back to the built-in value and is saved now. Clips that follow a default change with it; their own changes stay, and clips with scheduled or posted posts keep their captions. Undo (⌘Z) puts your defaults back.",
       confirmTitle: "Reset defaults", destructive: true, icon: "arrow.counterclockwise") {
-        if model.undoable("New clip defaults reset", "settings", settings: true, {
-          var s = model.settings
-          s.defaults = NewClipDefaults()
-          try model.store.save(s)
-        }) {
+        if model.saveDefaults(NewClipDefaults(), label: "New clip defaults reset") {
           ui.draft = nil
           model.revalidateStages()
         }

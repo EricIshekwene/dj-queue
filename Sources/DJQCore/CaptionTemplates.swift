@@ -11,9 +11,10 @@ public enum CaptionTemplates {
   public static let deleteAction = "caption-template-delete"
   public static let linkAction = "caption-link"
   public static let capAction = "hashtag-cap"
+  public static let defaultsAction = "new-clip-defaults"
 
   /// Journaled changes that write clips on their own: an open editor session moves past them (`rebasedOntoGroupChanges`).
-  static let batchActions = [setDefaultAction, editAction, deleteAction, linkAction, capAction]
+  static let batchActions = [setDefaultAction, editAction, deleteAction, linkAction, capAction, defaultsAction, HashtagGroups.moveAction]
 
   /// What the editor's form and Settings say beside a template.
   public static let hashtagHint = "You can type hashtags here too; {hashtags} adds the clip's groups"
@@ -52,6 +53,13 @@ public enum CaptionTemplates {
     if template.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .noText }
     let same = existing.first { $0.id != id && HashtagGroups.cleanName($0.name).lowercased() == clean }
     return same.map { .duplicateName($0.name) }
+  }
+
+  /// `name`, or `name 2`, `name 3` … when it's taken.
+  public static func uniqueName(_ name: String, existing: [CaptionTemplate]) -> String {
+    let taken = Set(existing.map { HashtagGroups.cleanName($0.name).lowercased() })
+    guard taken.contains(name.lowercased()) else { return name }
+    return (2...).lazy.map { "\(name) \($0)" }.first { !taken.contains($0.lowercased()) } ?? name
   }
 
   /// A new template placed after the existing ones (the caller saves it).
@@ -187,6 +195,33 @@ public enum CaptionTemplates {
       }
       try store.deleteCaptionTemplate(t.id)
       for (v, outputs) in saved { try CaptionHold.keep(v, as: outputs, store: store) }
+    }
+    return HashtagGroups.Change(result: r, kept: kept.map(\.id))
+  }
+
+  /// Saves New clip defaults (Settings' Save and Reset). Clips with scheduled or posted posts keep what they'd post: followers of the
+  /// default template stay on the old one, their tags and YouTube title are written out, and a platform that still reads
+  /// differently keeps its old caption as its own. Every other clip follows. Text, crop and cover defaults aren't captions and
+  /// reach clips as they always have.
+  @discardableResult
+  public static func saveDefaults(_ defaults: NewClipDefaults, store: Store, bulk: BulkActions) throws -> HashtagGroups.Change {
+    let before = try CaptionHold.Sources(store), old = before.settings.defaults.captionTemplateId
+    var after = before
+    after.settings.defaults = defaults
+    let pinned = old == defaults.captionTemplateId ? [] : try followers(before.settings, store: store)
+    let moved = try CaptionHold.affected(from: before, to: after, store: store)
+    let kept = pinned + moved.filter { v in !pinned.contains { $0.id == v.id } }
+    let r = try bulk.record(defaultsAction, ids: kept.map(\.id), settings: true) {
+      let saved = try kept.map { ($0, try CaptionHold.outputs($0, before, store: store), try CaptionHold.signature($0, before, store: store)) }
+      for v in pinned { try pin(v, to: old, settings: before.settings, store: store) }
+      for v in kept { try CaptionHold.pinTagsAndTitle(v, from: before, to: after, store: store) }
+      try store.save(after.settings)
+      for (v, outputs, signature) in saved {
+        try CaptionHold.keep(v, as: outputs, store: store)
+        guard try CaptionHold.signature(v, after, store: store) == signature else {
+          throw EngineError("What \(v.displayName) posts would change, so nothing was changed")
+        }
+      }
     }
     return HashtagGroups.Change(result: r, kept: kept.map(\.id))
   }

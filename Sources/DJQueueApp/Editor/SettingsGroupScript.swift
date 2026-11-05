@@ -141,6 +141,23 @@ enum SettingsGroupScript {
     check("the up arrow moves the group", groups().map(\.id) == moved)
     await shot("group-moved-up")
 
+    // Undo reaches the rows, and Add makes a saved, journaled template with its own name.
+    func templateRows() -> Int { EditorGroupScript.fields(in: host).filter { $0.placeholderString == "Template name" }.count }
+    let rows = templateRows()
+    let doomed = CaptionTemplates.make(name: "Doomed", template: "{text}", existing: (try? store.captionTemplates()) ?? [])
+    _ = app.addTemplate(doomed)
+    await wait(1000)
+    check("a template added elsewhere shows up", templateRows() == rows + 1)
+    app.confirmDeleteTemplate(doomed, undoHint: "")
+    let go = app.pendingConfirm?.action
+    app.pendingConfirm = nil
+    go?()
+    await wait(1000)
+    check("delete takes the row", templateRows() == rows)
+    if let b = app.undoHistory.top?.batchId { app.undo(batch: b) }
+    await wait(1500)
+    check("Undo brings the row back", templateRows() == rows + 1)
+
     // Settings → Platforms: the Hashtags column.
     let platforms = Platform.allCases.sorted()
     host = NSHostingView(rootView: AnyView(ScrollView { PlatformsSettings(model: app).padding(DS.space.xl) }.frame(width: 760, height: 620).background(DS.color.background)))

@@ -10,8 +10,8 @@ import Foundation
 /// - a replaced or cancelled job is deleted in Postiz first — nothing new is created for that post until the DELETE
 ///   returned OK or 404 (the open job blocks it);
 /// - a job Postiz reports PUBLISHED is never deleted or sent again;
-/// - an ERROR mentioning copyright is `copyright_blocked` and never retried by itself; one that clearly says "not
-///   now" (a quota, a rate limit) retries by itself (`PostizRetry.swift`).
+/// - an ERROR mentioning copyright is `copyright_blocked` and never retried by itself; any other retries by itself
+///   unless a retry can't help (`PostizRetry.swift`).
 public final class PostizService: @unchecked Sendable {
   public let store: Store
   public let keyStore: PostizKeyStore
@@ -180,7 +180,8 @@ public final class PostizService: @unchecked Sendable {
       job = earlier  // re-planned: Postiz still holds the earlier copy
     }
     let route = Self.settingsAllow(p.platform, r.settings) ? r.route(p.platform) : .manual
-    return PostizDisplayState.of(post: p, job: job, route: route, handedToToday: try handedToToday(p), now: now)
+    let base = PostizDisplayState.of(post: p, job: job, route: route, handedToToday: try handedToToday(p), now: now)
+    return try retryDisplay(p, base: base, router: r) ?? base
   }
 
   /// nil when calls can be made; otherwise why not (no key / key refused). Asks the Keychain only for presence.
@@ -371,6 +372,7 @@ public final class PostizService: @unchecked Sendable {
         if try !store.openPostizJobs(lineage: lineage).isEmpty { blocked += 1; continue }  // earlier copy not confirmed gone
         if stopped != nil { waiting += 1; continue }
         do {
+          guard let p = try retimeRetry(p, settings: settings) else { continue }
           switch try submit(p, integrationId: integration, provider: provider, settings: settings) {
           case .created: created += 1
           case .rejected: rejected += 1
@@ -922,15 +924,42 @@ public final class PostizService: @unchecked Sendable {
     return ["copyright", "rights", "music", "audio", "claim"].contains { m.contains($0) }
   }
 
+  /// The failure and what follows it, in one transaction: a retryable failure never exists without its next-retry time,
+  /// and its new attempt goes to Postiz ahead of that time. The failure happened when Postiz was to send it, however
+  /// late the Mac noticed. Re-read inside, so two processes reading the same ERROR act once.
+  /// An ERROR with a release link or id means the platform has the post (a later step failed): it counts as published
+  /// and is never sent again, on any platform. Copyright stays copyright.
   func errored(_ j: PostizJob, _ r: PostizRemotePost) throws {
     let msg = (r.error?.isEmpty == false ? r.error! : "Postiz reported an error (no details)")
     let copyright = Self.isCopyright(msg)
-    if let p = try store.post(id: j.postId), !p.state.isTerminal {
-      try PostActions(store: store).reportProblem(postId: p.id, type: copyright ? .copyrightBlocked : .uploadFailed,
-                                                  message: msg + (try retryNote(msg, p)), raw: "postiz:\(r.id)")
+    let settings = try store.settings()
+    let router = try router(settings)  // outside the transaction: it can ask the Keychain
+    try store.db.transaction {
+      guard try store.postizJob(id: j.id)?.isOpen == true else { return }
+      if !copyright, r.hasRelease {
+        try published(j, r, settings)
+        try store.logEvent("postiz", "\(j.platform.displayName): Postiz reported an error after the platform took the post (\(msg)), so it counts as posted and isn't sent again",
+                           videoId: j.videoId, postId: j.postId)
+        return
+      }
+      var failed: PlatformPost?
+      if let p = try store.post(id: j.postId), !p.state.isTerminal {
+        let note = copyright ? "" : try retryNote(msg, p)
+        let promised = try !copyright && retryPromised(msg, p)
+        try PostActions(store: store).reportProblem(postId: p.id, type: copyright ? .copyrightBlocked : .uploadFailed,
+                                                    message: msg + note, raw: "postiz:\(r.id)")
+        if promised {
+          try recordFailure(p, at: min(j.remoteDate, now))
+          failed = p
+        }
+      }
+      try store.closePostizJob(id: j.id, reason: copyright ? .copyright : .error, note: msg)
+      try store.logEvent("postiz", "\(j.platform.displayName) failed in Postiz: \(msg)", videoId: j.videoId, postId: j.postId)
+      if let failed {
+        _ = try retryOne(failed.id, settings: settings, router: router)
+        try store.refreshState(videoId: failed.videoId)  // the job is closed now, so a waiting retry counts
+      }
     }
-    try store.closePostizJob(id: j.id, reason: copyright ? .copyright : .error, note: msg)
-    try store.logEvent("postiz", "\(j.platform.displayName) failed in Postiz: \(msg)", videoId: j.videoId, postId: j.postId)
   }
 
   func vanished(_ j: PostizJob) throws {
@@ -1012,6 +1041,7 @@ public final class PostizService: @unchecked Sendable {
       do { connected = try checkConnection() } catch { connected = false; checkError = "\(error)" }
     }
     let budget = try store.postizBudget()
+    let retries = try pendingAutoRetries()
     let platforms = Platform.allCases.sorted().map { p -> PostizStatus.PlatformRow in
       let route = router.route(p)
       let id = settings.publishing.channels[p]
@@ -1028,7 +1058,9 @@ public final class PostizService: @unchecked Sendable {
       budgetUsed: budget.used(now: now), budgetLimit: settings.publishing.hourlyBudget,
       pausedUntil: budget.isPaused(now: now) ? budget.pausedUntil : nil, openJobs: open.count,
       stuck: try stuckJobs().map(\.id), linkMissing: try linkMissingPosts().map(\.id),
-      autoRetries: try pendingAutoRetries().map(\.post.id), lastSync: try store.kv(Self.syncKey), channelsFetchedAt: cache?.fetchedAt)
+      autoRetries: retries.map(\.post.id),
+      retries: retries.map { .init(post: $0.post.id, platform: $0.post.platform, number: $0.number, at: $0.at, waiting: $0.waiting, text: $0.text) },
+      lastSync: try store.kv(Self.syncKey), channelsFetchedAt: cache?.fetchedAt)
   }
 
   /// Open jobs Postiz still holds as QUEUE more than an hour after their slot.
@@ -1188,6 +1220,15 @@ public struct PostizStatus: Codable, Sendable {
     public var fallbackCode: String?
     public var openJobs: Int
   }
+  public struct Retry: Codable, Sendable {
+    public var post: String
+    public var platform: Platform
+    public var number: Int
+    public var at: Date?
+    public var waiting: String?
+    /// "Retrying Thu 8:00 am (try 2 of 5)".
+    public var text: String
+  }
   public var hasKey: Bool
   public var keyInvalid: String?
   /// nil = not checked.
@@ -1202,8 +1243,10 @@ public struct PostizStatus: Codable, Sendable {
   public var openJobs: Int
   public var stuck: [String]
   public var linkMissing: [String]
-  /// Posts with an automatic retry still to come (the attempt, or the failure about to be re-queued).
+  /// Posts with an automatic retry still to come (the attempt, or the failure whose attempt is still to be made).
   public var autoRetries: [String]
+  /// The same posts, each with when it goes out or what it waits for.
+  public var retries: [Retry]
   public var lastSync: Date?
   public var channelsFetchedAt: Date?
 }
@@ -1259,6 +1302,9 @@ public enum PostizDisplayState: Equatable, Sendable {
   /// Test-run TikTok: in the TikTok app's inbox; finish it there, then Mark posted.
   case inbox
   case failed(String)
+  /// A failure with an automatic retry coming, or that attempt on its way: nothing for Eric to do. The chip is whole
+  /// ("Retrying Thu 8:00 am (try 2 of 5)"); one that waits says why in `line`.
+  case retrying(String, line: String? = nil)
   case copyright(String)
   /// Set to Postiz but back on Today (the sentence says why).
   case fellBack(String)
@@ -1274,6 +1320,7 @@ public enum PostizDisplayState: Equatable, Sendable {
     case .posted: "Posted"
     case .inbox: "In TikTok inbox"
     case .failed: "Failed"
+    case .retrying(let s, _): s
     case .copyright: "© Blocked"
     case .fellBack: "Fell back to manual"
     }
@@ -1282,7 +1329,7 @@ public enum PostizDisplayState: Equatable, Sendable {
   /// Postiz holds it: nothing for Eric to do (no task on Today, no "due" count).
   public var isHeld: Bool {
     switch self {
-    case .queued, .sending, .unconfirmed, .scheduled, .posting, .draft: true
+    case .queued, .sending, .unconfirmed, .scheduled, .posting, .draft, .retrying: true
     default: false
     }
   }

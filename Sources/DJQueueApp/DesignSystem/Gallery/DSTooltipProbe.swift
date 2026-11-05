@@ -325,6 +325,13 @@ enum DSTooltipProbe {
         try await probeOne("r6-publishing", { $0.content.label?.hasPrefix("Show ") == true && $0.content.label?.hasSuffix("Postiz options") == true },
                            "platform detail chevron")
         model.showSettings = false
+        // Round 9: the retry chip and the Week chip that carries its whole line.
+        model.screen = .today
+        try await settle(1600)
+        try await probeOne("r9-today", { $0.content.label?.hasSuffix("nothing to do") == true }, "Retrying chip")
+        model.screen = .week
+        try await settle(1600)
+        try await probeOne("r9-week", { $0.content.label?.contains("Retrying") == true }, "Week chip of a retry")
         if var st = try? model.store.settings() {
           st.publishing.testMode = false
           try? model.store.save(st)
