@@ -38,8 +38,13 @@ public enum Captions {
     return out
   }
 
-  public static func fill(_ template: String, text: String, tag: String, set: String, hashtags: [String]) -> String {
-    template
+  /// `title` and `link` are nil only for captions built the old way, where those words aren't tokens (`CaptionRulesMigration`).
+  public static func fill(_ template: String, text: String, tag: String, set: String, hashtags: [String], title: String? = "",
+                          link: String? = "") -> String {
+    var out = template
+    if let title { out = out.replacingOccurrences(of: "{title}", with: oneLine(title)) }
+    if let link { out = out.replacingOccurrences(of: "{link}", with: oneLine(link)) }
+    return out
       .replacingOccurrences(of: "{text}", with: oneLine(text))
       .replacingOccurrences(of: "{tag}", with: tag)
       .replacingOccurrences(of: "{set}", with: set)
@@ -68,8 +73,77 @@ public enum Captions {
   /// per-platform caption.
   public static func caption(for platform: Platform, version v: ResolvedVersion, video: Video, sessionName: String,
                              sets: [HashtagSet], templates: [CaptionTemplate], settings: Settings) -> String {
+    output(platform, v, video, sessionName, sets, templates, settings)
+  }
+
+  /// `caption(for:)`, or with `legacy` the caption exactly as v0.8.2 built it.
+  static func output(_ platform: Platform, _ v: ResolvedVersion, _ video: Video, _ sessionName: String, _ sets: [HashtagSet],
+                     _ templates: [CaptionTemplate], _ settings: Settings, legacy: Bool = false) -> String {
     if let o = v.platformCaptions[platform], !o.isEmpty { return o }
-    return build(platform, v, video, sessionName, hashtags(v, sets: sets), templates, settings)
+    let s = build(platform, v, video, sessionName, hashtags(v, sets: sets), templates, settings, legacy: legacy)
+    return legacy ? s : capped(onceEach(s, v), to: settings.limits[platform]?.maxHashtags).text
+  }
+
+  /// `text` with its first `cap` hashtags, in caption order, tags typed in the text included, and the ones it lost.
+  public static func capped(_ text: String, to cap: Int?) -> (text: String, dropped: [String]) {
+    guard let cap, let re = try? NSRegularExpression(pattern: tagPattern) else { return (text, []) }
+    let ns = text as NSString
+    let all = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map(\.range)
+    guard all.count > max(cap, 0) else { return (text, []) }
+    let extra = all[max(cap, 0)...]
+    var out = text
+    for r in extra.reversed() { out = removeRange(out as NSString, r) }
+    return (out, extra.map { ns.substring(with: $0) })
+  }
+
+  /// What a platform's hashtag cap does to one clip's caption, for the line under the caption.
+  public struct CapNote: Equatable, Sendable, Identifiable {
+    public var platform: Platform
+    public var cap: Int
+    public var total: Int
+    public var dropped: [String]
+    /// The platform has its own caption: it's left as written, so nothing is dropped and it may go over.
+    public var own: Bool
+    /// The clip has scheduled or posted posts, so an own caption may be one DJ Queue held, not one Eric wrote.
+    public var scheduled = false
+    public var id: Platform { platform }
+
+    public var message: String {
+      let name = platform.displayName
+      if own, scheduled { return "\(name) keeps this clip's scheduled caption, with \(total) hashtags over its cap of \(cap)" }
+      if own { return "\(name)'s own caption has \(total) hashtags and \(name) keeps \(cap). It's left as you wrote it" }
+      let list = dropped.joined(separator: " ")
+      return cap == 0 ? "\(name) keeps no hashtags: drops \(list)" : "\(name) keeps \(cap) of \(total): drops \(list)"
+    }
+  }
+
+  /// One note per platform a cap reaches, for `platforms`.
+  public static func capNotes(_ platforms: [Platform], version v: ResolvedVersion, video: Video, sessionName: String, sets: [HashtagSet],
+                              templates: [CaptionTemplate], settings: Settings, scheduled: Bool = false) -> [CapNote] {
+    platforms.compactMap { p in
+      guard let cap = settings.limits[p]?.maxHashtags else { return nil }
+      if let own = v.platformCaptions[p], !own.isEmpty {
+        let n = tags(in: own).count
+        return n > cap ? CapNote(platform: p, cap: cap, total: n, dropped: [], own: true, scheduled: scheduled) : nil
+      }
+      let full = onceEach(build(p, v, video, sessionName, hashtags(v, sets: sets), templates, settings), v)
+      let dropped = capped(full, to: cap).dropped
+      return dropped.isEmpty ? nil : CapNote(platform: p, cap: cap, total: cap + dropped.count, dropped: dropped, own: false)
+    }
+  }
+
+  /// Each tag once, at its first position, where the clip's tags are filled in beside tags typed in a template or caption. A
+  /// written caption without `{hashtags}` is literal, and adding tags to it already skips any it has (`replaceHashtags`).
+  static func onceEach(_ text: String, _ v: ResolvedVersion) -> String {
+    guard v.caption.isEmpty || v.caption.contains("{hashtags}"),
+          let re = try? NSRegularExpression(pattern: tagPattern) else { return text }
+    var seen = Set<String>(), out = text
+    let ns = text as NSString
+    let repeats = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map(\.range).filter {
+      !seen.insert(normalizeTag(ns.substring(with: $0))).inserted
+    }
+    for r in repeats.reversed() { out = removeRange(out as NSString, r) }
+    return out
   }
 
   /// The caption every platform without its own caption (and without a per-platform default template) posts — what
@@ -79,7 +153,7 @@ public enum Captions {
                                    templates: [CaptionTemplate], settings: Settings) -> String {
     var s = settings
     s.defaults.platformCaptionTemplates = [:]
-    return build(.tiktok, v, video, sessionName, hashtags(v, sets: sets), templates, s)
+    return onceEach(build(.tiktok, v, video, sessionName, hashtags(v, sets: sets), templates, s), v)
   }
 
   /// What template `id` fills to for this clip (the editor's template picker rewrites the caption field with it).
@@ -122,7 +196,7 @@ public enum Captions {
   /// captions, and every caption the schema-6 migration found without one, which got "\n{hashtags}") is filled with
   /// the clip's hashtags.
   static func build(_ platform: Platform, _ v: ResolvedVersion, _ video: Video, _ sessionName: String, _ tags: [String],
-                    _ templates: [CaptionTemplate], _ settings: Settings) -> String {
+                    _ templates: [CaptionTemplate], _ settings: Settings, legacy: Bool = false) -> String {
     let joined = tags.joined(separator: " ")
     if !v.caption.isEmpty {
       if v.caption.contains("{hashtags}") {
@@ -138,7 +212,8 @@ public enum Captions {
     }
     let tid = templateId(for: platform, version: v, settings: settings)
     let tpl = templates.first { $0.id == tid }?.template ?? Defaults.captionTemplates[0].template
-    return fill(tpl, text: textValue(v, video: video), tag: video.tag, set: setName(sessionName), hashtags: tags)
+    return fill(tpl, text: textValue(v, video: video), tag: video.tag, set: setName(sessionName), hashtags: tags,
+                title: legacy ? nil : video.titleText ?? "", link: legacy ? nil : settings.captionLink)
   }
 
   /// What the schema-6 migration appends to a written caption that had no `{hashtags}` (rounds 1–6 added the hashtags
@@ -148,8 +223,11 @@ public enum Captions {
   // MARK: Editing hashtags inside a written caption (round 7)
 
   /// The hashtag tokens in `text`, in order, normalised ("#Amapiano" → "#amapiano").
+  /// A hashtag in text: `#` then letters, digits or `_`, with a letter among them, so "Track #1" isn't one.
+  static let tagPattern = #"(?<![\p{L}\p{N}_#])#(?=[\p{N}_]*\p{L})[\p{L}\p{N}_]+"#
+
   public static func tags(in text: String) -> [String] {
-    guard let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_#])#[\p{L}\p{N}_]+"#) else { return [] }
+    guard let re = try? NSRegularExpression(pattern: tagPattern) else { return [] }
     let ns = text as NSString
     return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { normalizeTag(ns.substring(with: $0.range)) }
   }
@@ -204,7 +282,7 @@ public enum Captions {
   /// True when the line holds only hashtags (and spaces).
   static func isHashtagLine(_ line: String) -> Bool {
     let words = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
-    return !words.isEmpty && words.allSatisfy { $0.hasPrefix("#") && $0.count > 1 }
+    return !words.isEmpty && words.allSatisfy { !tags(in: String($0)).isEmpty }
   }
 
   static func isTagBoundary(_ ns: NSString, _ r: NSRange) -> Bool {

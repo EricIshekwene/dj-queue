@@ -112,6 +112,9 @@ window shows the text.
 
 ### Platform limits (re-verified; DJ Queue defaults)
 
+Hashtag caps (v0.8.3, editable in Settings → Platforms): Threads 1, YouTube 60, Instagram 30, others none. The caption Postiz
+receives is already capped; sources are in `DECISIONS-R7.md`.
+
 | | Length | Size | Caption | Title | Source |
 |---|---|---|---|---|---|
 | TikTok | 600 s (all creators: 3 min; some 5 or 10 min; per-account cap `max_video_post_duration_sec`) | 4 GB | **2200** (was 4000 in DJ Queue) | 90 | TikTok Content Posting API; Postiz schema |
