@@ -191,6 +191,24 @@ public enum HashtagGroups {
     return Change(result: r, kept: kept)
   }
 
+  /// Moves a group one place up (`by` -1) or down (+1) in the order chips show and `setGroup` writes tags in. Nothing else changes:
+  /// a clip keeps its order until its groups are toggled, so a move reaches no caption. Journaled.
+  @discardableResult
+  public static func move(_ id: String, by: Int, store: Store, bulk: BulkActions) throws -> BulkResult {
+    var all = try store.hashtagSets()
+    guard let i = all.firstIndex(where: { $0.id == id }), all.indices.contains(i + by) else {
+      return BulkResult(batchId: nil, action: "hashtag-group-move", dryRun: false, videoIds: [], changed: [], skipped: [:], remainingIssues: [:],
+                        summary: "hashtag-group-move: nothing changed")
+    }
+    all.swapAt(i, i + by)
+    return try bulk.record("hashtag-group-move", hashtagGroups: true, revalidate: false) {
+      for (n, var g) in all.enumerated() where g.sort != n {
+        g.sort = n
+        try store.save(g)
+      }
+    }
+  }
+
   /// Why going back from `current` to `saved` groups would change a clip with scheduled or posted posts that isn't being
   /// restored by the same undo (nil = it wouldn't): such a clip took up the group after the batch.
   static func undoConflict(from current: [HashtagSet], to saved: [HashtagSet], restoring: Set<String>, store: Store) throws -> String? {

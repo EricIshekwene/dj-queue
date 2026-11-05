@@ -648,6 +648,9 @@ public final class BulkActions: @unchecked Sendable {
           let after = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(asx.utf8)) else {
       throw EngineError("Batch \(id.prefix(8)) journal is unreadable")
     }
+    if !force, rec.action == CaptionRulesMigration.action {
+      throw EngineError("Can't undo \(rec.action): clips with scheduled or posted posts would change. Use force to overwrite.")
+    }
     if !dryRun, !confirmGoLive, let json = before.settings?.json {
       let live = try goLive(from: try store.settings(), to: Store.decodeSettings(json))
       if !live.isEmpty {

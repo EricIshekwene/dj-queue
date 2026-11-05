@@ -322,7 +322,7 @@ enum EditorGroupScript {
     return out
   }
 
-  private static func anchor(in v: NSView) -> EditorGroupsAnchorView? {
+  static func anchor(in v: NSView) -> EditorGroupsAnchorView? {
     if let a = v as? EditorGroupsAnchorView { return a }
     for s in v.subviews { if let a = anchor(in: s) { return a } }
     return nil

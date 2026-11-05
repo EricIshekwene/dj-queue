@@ -241,6 +241,86 @@ enum EditorTemplateScript {
     await shot("template-save-as")
     model.templateForm = nil
 
+    // Part chips, on the caption from Eric's screenshot.
+    model.resetCaptionToTemplate()
+    model.typeCaption("#djlovd #afrobeats #amapiano")
+    model.commitCaptionDraft()
+    model.setText("Amarider blend")
+    await wait(800)
+    func field() -> String { captionView()?.string ?? "?" }
+    func values() -> CaptionParts.Values { model.partValues ?? .init(text: "", set: "", link: "", title: nil) }
+    func on(_ p: CaptionPart) -> Bool { CaptionParts.isOn(p, in: field(), values()) }
+    /// The chips sit in their own row just above the Hashtag groups label.
+    func chip(_ p: CaptionPart) async {
+      guard let a = EditorGroupScript.anchor(in: host) else { note("no anchor"); return }
+      let f = a.convert(a.bounds, to: nil)
+      let x: CGFloat = [.text: 24, .set: 76, .link: 128, .title: 184][p] ?? 24
+      await click(NSPoint(x: f.minX + x, y: f.maxY + 54))
+      await wait(500)
+    }
+    await shot("parts-eric-caption")
+    let start = field()
+    await chip(.text)
+    check("Text goes above the hashtags", field() == "Amarider blend\n\n#djlovd #afrobeats #amapiano")
+    await chip(.link)
+    check("Link follows it", field() == "Amarider blend\n\(Defaults.captionLink)\n\n#djlovd #afrobeats #amapiano")
+    await chip(.set)
+    check("Set lands between them", field().components(separatedBy: "\n")[1] == values().set && on(.link) && on(.text))
+    await shot("parts-three-on")
+    await chip(.set)
+    await chip(.link)
+    await chip(.text)
+    check("off again restores the exact text", field() == start)
+    await shot("parts-all-off")
+    await chip(.title)
+    check("no title yet: the chip does nothing", field() == start)
+    await type("Typed by hand Amarider blend #djlovd #afrobeats #amapiano", into: captionView())
+    await wait(600)
+    check("a chip follows a hand edit", on(.text))
+    check("hand typing stays written", model.captionIsWritten)
+    await shot("parts-hand-edit")
+    model.resetCaptionToTemplate()
+    await wait(500)
+    check("↺ goes back to the template", !model.captionIsWritten)
+    await shot("parts-on-template")
+    await chip(.link)
+    check("a chip makes a template caption written", model.captionIsWritten)
+
+    // Hashtag caps: order in the caption is the priority.
+    model.flushAndWait()
+    app.saveHashtagCap(1, for: .threads)
+    await wait(1200)
+    await type("Love #amapiano tonight\n\n#djlovd #afrobeats #piano", into: captionView())
+    await wait(700)
+    check("the field stays whole", model.mainCaption == "Love #amapiano tonight\n\n#djlovd #afrobeats #piano")
+    check("Threads keeps the first tag, in the text", model.caption(for: .threads) == "Love #amapiano tonight")
+    check("TikTok keeps them all", model.caption(for: .tiktok) == model.mainCaption)
+    check("the line says what's dropped", model.capNotes.map(\.message) == ["Threads keeps 1 of 4: drops #djlovd #afrobeats #piano"])
+    model.previewPlatform = .threads
+    await wait(600)
+    await shot("cap-threads-keeps-1-of-4")
+    await type("Love tonight\n\n#piano #djlovd #afrobeats", into: captionView())
+    await wait(700)
+    check("hand edits set the order", model.caption(for: .threads) == "Love tonight\n\n#piano")
+    await shot("cap-hand-reorder")
+    model.setPlatformCaption(.threads, "Own words #a #b #c")
+    model.flushAndWait()
+    await wait(600)
+    check("an own caption is left as written", model.caption(for: .threads) == "Own words #a #b #c")
+    check("and warned about", model.capNotes.first?.own == true)
+    model.openPlatformCaption = .threads
+    await wait(600)
+    await shot("cap-own-caption-warned")
+    model.setPlatformCaption(.threads, "")
+    model.openPlatformCaption = nil
+    model.flushAndWait()
+    let capPosted = posted()
+    app.saveHashtagCap(0, for: .tiktok)
+    await wait(1000)
+    check("a cap doesn't move a scheduled caption", posted() == capPosted)
+    app.saveHashtagCap(nil, for: .tiktok)
+    await wait(600)
+
     note(failed == 0 ? "all passed" : "\(failed) failed")
     try? log.joined(separator: "\n").write(to: out.appendingPathComponent("tpl-checks-\(appearance).txt"), atomically: true, encoding: .utf8)
     model.flushAndWait()

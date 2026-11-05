@@ -21,6 +21,7 @@ struct EditorCaptionSection: View {
       VStack(alignment: .leading, spacing: DS.space.md) {
         template(r)
         caption(r)
+        parts
         hashtags(r)
         youtube(r)
         ownCaptions(r)
@@ -129,6 +130,7 @@ struct EditorCaptionSection: View {
           EditorHint("\(other.map(\.editorShortName).joined(separator: ", ")) post\(other.count == 1 ? "s" : "") a different caption — see Captions for one platform below",
                      icon: "info.circle")
         }
+        ForEach(model.capNotes) { n in EditorHint(n.message, icon: "number", tone: n.own ? .warning : nil) }
         ForEach(model.captionWarnings) { w in warning(w) }
       }
     }
@@ -196,6 +198,24 @@ struct EditorCaptionSection: View {
     .padding(.horizontal, DS.space.sm).padding(.vertical, DS.space.xs)
     .background(w.over ? DS.color.warningTint : DS.color.surfaceSunken,
                 in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+  }
+
+  // MARK: Parts
+
+  /// Chips like the hashtag groups, but they change the text: on means it's in the caption right now.
+  @ViewBuilder private var parts: some View {
+    if let values = model.partValues {
+      EditorField(label: "Parts", help: "Add or remove a part of the caption, in the text itself. You can still edit it freely") {
+        DSFlowLayout(spacing: 5) {
+          ForEach(CaptionPart.allCases) { p in
+            let on = CaptionParts.isOn(p, in: model.mainCaption, values), value = values.value(p)
+            let why = model.readOnly ? EditorView.readOnlyReason : on ? nil : CaptionParts.offReason(p, values)
+            DSChip(p.label, isSelected: on, disabledReason: why, size: .sm,
+                   tooltip: on ? "Take “\(value)” out of the caption" : "Add “\(value)” to the caption") { model.togglePart(p) }
+          }
+        }
+      }
+    }
   }
 
   // MARK: Hashtag groups + extra hashtags

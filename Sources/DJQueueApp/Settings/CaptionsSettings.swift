@@ -15,6 +15,8 @@ struct CaptionsSettings: View {
   @State private var titles: [TitleTemplate] = []
   /// Each template's save waiting for typing to pause.
   @State private var templateSaves: [String: Task<Void, Never>] = [:]
+  @State private var link = ""
+  @State private var linkSave: Task<Void, Never>?
 
   private var defaults: NewClipDefaults { model.settings.defaults }
 
@@ -26,7 +28,8 @@ struct CaptionsSettings: View {
           .padding(.top, DS.space.sm)
       }
       ForEach($sets) { $s in
-        HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), reach: reach[s.id], onSave: save, onDelete: deleteSet)
+        HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), reach: reach[s.id], canMoveUp: canMove(s, -1),
+                      canMoveDown: canMove(s, 1), onMove: moveSet, onSave: save, onDelete: deleteSet)
       }
       DSButton("Add hashtag group", icon: "plus", variant: .ghost, size: .sm, tooltip: "Make a new hashtag group: a name and its hashtags") { addSet() }
         .padding(.top, DS.space.xs)
@@ -42,6 +45,18 @@ struct CaptionsSettings: View {
       }
       DSButton("Add template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add an empty caption template") { addTemplate() }
         .padding(.top, DS.space.xs)
+      SettingsRow("Link line", description: "What {link} fills in and the editor's Link chip adds. Clips with scheduled or posted posts keep their captions.", stacked: true) {
+        DSTextField(placeholder: Defaults.captionLink, text: $link, size: .sm)
+          .accessibilityLabel("Link line")
+          .onChange(of: link) { _, l in
+            linkSave?.cancel()
+            linkSave = Task { @MainActor in
+              try? await Task.sleep(for: .milliseconds(600))
+              guard !Task.isCancelled else { return }
+              model.saveCaptionLink(l)
+            }
+          }
+      }
 
       SettingsGroupHeader("Titles")
       SettingsRow("Where titles come from", description: "videos.json (title, title_suggestions) or an agent running djq title / djq suggest. The app never makes titles up.") {
@@ -129,6 +144,17 @@ struct CaptionsSettings: View {
     sets.append(s)
   }
 
+  /// Saved groups move past each other; a draft stays at the end until it's saved.
+  private func canMove(_ s: HashtagSet, _ by: Int) -> Bool {
+    let saved = sets.filter { !drafts.contains($0.id) }
+    return saved.firstIndex { $0.id == s.id }.map { saved.indices.contains($0 + by) } ?? false
+  }
+
+  private func moveSet(_ s: HashtagSet, _ by: Int) {
+    guard model.moveGroup(s, by: by), let stored = try? model.store.hashtagSets() else { return }
+    sets = stored + sets.filter { drafts.contains($0.id) }
+  }
+
   private func deleteSet(_ s: HashtagSet) {
     if drafts.remove(s.id) != nil {
       sets.removeAll { $0.id == s.id }
@@ -195,6 +221,7 @@ struct CaptionsSettings: View {
     drafts = []
     measureReach()
     titles = (try? model.store.settings().youtubeTitleTemplates) ?? []
+    link = (try? model.store.settings().captionLink) ?? Defaults.captionLink
   }
 }
 
@@ -203,6 +230,9 @@ private struct HashtagSetRow: View {
   @Binding var set: HashtagSet
   let isDefault: Bool
   var reach: HashtagGroups.Impact?
+  var canMoveUp = false
+  var canMoveDown = false
+  var onMove: (HashtagSet, Int) -> Void = { _, _ in }
   let onSave: (HashtagSet) -> Void
   let onDelete: (HashtagSet) -> Void
   @State private var tags = ""
@@ -243,6 +273,10 @@ private struct HashtagSetRow: View {
       }), size: .sm)
       .accessibilityLabel("Hashtags")
       if isDefault { DSBadge("Default", style: .soft(.neutral), help: "New clips get this group") }
+      DSIconButton("chevron.up", tooltip: "Move up: its tags come earlier when groups are turned on", size: .sm,
+                   disabledReason: canMoveUp ? nil : "Already first") { onMove(set, -1) }
+      DSIconButton("chevron.down", tooltip: "Move down: its tags come later when groups are turned on", size: .sm,
+                   disabledReason: canMoveDown ? nil : "Already last") { onMove(set, 1) }
       DSIconButton("trash", tooltip: "Delete this hashtag group…", size: .sm) {
         onDelete(set)
       }
