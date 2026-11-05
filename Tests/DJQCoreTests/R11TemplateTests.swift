@@ -248,6 +248,21 @@ import Testing
 
   // MARK: Tokens and the install hold
 
+  @Test func everyTokenInTheMenuFills() throws {
+    let f = try Fixture.planned()
+    try f.store.setTitle("clip-1", "Song")
+    let t = try mine(f, CaptionTemplates.tokens.map(\.token).joined(separator: "\n"))
+    try chose(f, "clip-1", t.id)
+    #expect(try !caption(f, "clip-1").contains("{"))
+  }
+
+  @Test func aTokenAddsCleanly() {
+    #expect(CaptionTemplates.adding("{text}", to: "") == "{text}")
+    #expect(CaptionTemplates.adding("{set}", to: "{text}") == "{text} {set}")
+    #expect(CaptionTemplates.adding("{set}", to: "{text}\n") == "{text}\n{set}")
+    #expect(CaptionTemplates.adding("{hashtags}", to: "{text}") == "{text}\n{hashtags}")
+  }
+
   @Test func titleAndLinkAreTokens() throws {
     let f = try Fixture.planned()
     try f.store.setTitle("clip-1", "Song")

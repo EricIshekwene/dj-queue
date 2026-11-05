@@ -299,3 +299,21 @@ Eric: "allow me to create hashtags groups from within the editor".
     errors, and 1 clip held (it has 4 tags, so Threads would have cut it), its Threads caption now its own.
 39. **Group order:** move arrows in Settings, journaled (`HashtagGroups.move`). A move reaches no caption, because a clip keeps its stored order
     until its groups are toggled, and then they follow Eric's order. A group's tags keep the order typed; a test covers it.
+
+### Caption section layout (Mobbin references)
+
+40. **Field as the hero, count quiet at its bottom right:** [Buffer composer](https://mobbin.com/screens/63299fa6-69cd-429e-9ad8-6295d05f888b). One
+    field holds the caption and hashtags, with its tools directly under it. Parts now sits closer to the field than the rest of the section.
+    The length line reads "From the template … 67 characters" in the quietest text color, and cap notes match it.
+41. **Template actions in one ⋯ beside the dropdown:** Buffer again, where Templates is a secondary action and not a large control. This replaces the
+    button row from decision 19. Set as default, New template, Save caption as template, Edit, Delete and Manage in Settings are its items; Set as
+    default still shows only when decision 7's rule says so, and on a read-only clip the ⋯ tooltip gives the reason.
+42. **Parts as on/off chips with the result beside them:** [incident.io template builder](https://mobbin.com/screens/d69ed5ce-178e-402c-b529-5f7b060cbcd4).
+    The caption field is the live result.
+43. **Chips with one label per value:** [Klaviyo audience picker](https://mobbin.com/screens/26156f96-376b-4882-93a3-b264514aa968). Parts and Hashtag groups stay the same chip.
+44. **Template form is Name, body, the hashtags hint and one Save:** [Quo create snippet](https://mobbin.com/screens/a3fe5ebd-73a0-415f-9fdb-6cbcaf8e35dd).
+    The "Saved for every clip" line moved to Save's tooltip.
+45. **A small `{}` token menu in the form:** [Calendly email template](https://mobbin.com/screens/c736ec25-6a4c-4e2d-93ca-c105da8cb14a). It replaces the printed
+    token list. A token goes on the end of the text: SwiftUI's text area doesn't give the cursor position. Save stays the only strong action.
+46. **Warnings stay as they were:** captions near a limit still warn at 90%, because the pass was layout only. The references suggest warning only when
+    over, which would be a behavior change.

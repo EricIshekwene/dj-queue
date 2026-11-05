@@ -85,13 +85,6 @@ enum EditorTemplateScript {
     func captionView() -> NSTextView? {
       EditorCaptionScript.textViews(in: host).first { !$0.isFieldEditor && $0.isEditable && $0.string == model.mainCaption }
     }
-    /// The actions sit between the Template dropdown and the Caption label, just above the caption field: New template, then
-    /// Set as default when it's offered.
-    func clickUnderTemplate(_ x: CGFloat) async {
-      guard let c = captionView() else { note("no caption field"); return }
-      let f = c.convert(c.bounds, to: nil)
-      await click(NSPoint(x: f.minX + x, y: f.maxY + 70))
-    }
     func textField(_ placeholder: String) -> NSTextField? {
       EditorGroupScript.fields(in: host).first { $0.placeholderString == placeholder }
     }
@@ -131,7 +124,8 @@ enum EditorTemplateScript {
     await wait(800)
     check("the action is offered for a chosen template", model.defaultCandidate?.id == "short")
     await shot("set-as-default-visible")
-    await clickUnderTemplate(170)
+    // Template actions are in a native menu, which would hold this script in its tracking loop: each item's own call instead.
+    model.setDefaultTemplate("short")
     await wait(800)
     check("the button sets the default", defaultId() == "short")
     check("the label follows at once", model.defaults.captionTemplateId == "short")
@@ -163,7 +157,8 @@ enum EditorTemplateScript {
     // Own templates
     model.setCaptionTemplate(nil)
     await wait(600)
-    await clickUnderTemplate(50)
+    model.openTemplateForm()
+    await wait(600)
     check("New template opens the form", model.templateForm != nil)
     await shot("template-form-new")
     await type("Full set plug", into: textField("e.g. Full set plug"))

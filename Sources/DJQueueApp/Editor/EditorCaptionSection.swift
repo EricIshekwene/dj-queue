@@ -20,8 +20,11 @@ struct EditorCaptionSection: View {
     EditorSectionView(.caption) {
       VStack(alignment: .leading, spacing: DS.space.md) {
         template(r)
-        caption(r)
-        parts
+        // The field is the hero; the chips that change it sit directly under it.
+        VStack(alignment: .leading, spacing: DS.space.sm) {
+          caption(r)
+          parts
+        }
         hashtags(r)
         youtube(r)
         ownCaptions(r)
@@ -63,51 +66,46 @@ struct EditorCaptionSection: View {
                        inheritedFrom: model.source(of: "captionTemplateId"), resetHelp: "Back to the default template",
                        onReset: model.ownsField(["captionTemplateId"]) ? { model.setCaptionTemplate(nil) } : nil) {
       VStack(alignment: .leading, spacing: DS.space.xxs) {
-        DSSelect(selection: Binding(get: { written ? Self.customValue : (r.captionTemplateId ?? "") },
-                                    set: { id in if id != Self.customValue { model.setCaptionTemplate(id) } }),
-                 options: options,
-                 hint: written && inherited == nil ? "The caption is your own text. Picking a template rewrites it." : nil,
-                 size: .sm,
-                 disabledReason: inherited.map { "v\($0)'s written caption is used — edit it below; v\($0) can go back to a template" })
+        HStack(alignment: .top, spacing: DS.space.xxs) {
+          DSSelect(selection: Binding(get: { written ? Self.customValue : (r.captionTemplateId ?? "") },
+                                      set: { id in if id != Self.customValue { model.setCaptionTemplate(id) } }),
+                   options: options,
+                   hint: written && inherited == nil ? "The caption is your own text. Picking a template rewrites it." : nil,
+                   size: .sm,
+                   disabledReason: inherited.map { "v\($0)'s written caption is used — edit it below; v\($0) can go back to a template" })
+          if model.templateForm == nil { templateMenu }
+        }
         if let form = model.templateForm {
           EditorTemplateFormView(model: model, form: form).id(form.id)
-        } else {
-          templateActions
         }
       }
     }
   }
 
-  /// New template is the main path; the rest stays in the menu so the section reads as one job.
-  private var templateActions: some View {
+  /// Everything you can do with templates, in one place beside the field. A read-only clip says why on hover.
+  private var templateMenu: some View {
     let selected = model.selectedTemplate, off = model.groupsOffReason
-    return HStack(spacing: DS.space.xxs) {
-      DSButton("New template", icon: "plus", variant: .ghost, size: .sm, disabledReason: off,
-               tooltip: "Make a template and turn it on for this clip") {
-        dsWithAnimation { model.openTemplateForm() }
-      }
+    return DSXMenuButton(tooltip: off ?? "Template actions", size: .sm) {
       if let t = model.defaultCandidate {
-        DSButton("Set as default", variant: .ghost, size: .sm, disabledReason: off,
-                 tooltip: "New clips start from “\(t.name)”. Clips with scheduled or posted posts keep their captions") {
-          model.setDefaultTemplate(t.id)
-        }
-      }
-      Spacer(minLength: 0)
-      DSXMenuButton(tooltip: "More template actions", size: .sm) {
-        Button("Save caption as template…") { dsWithAnimation { model.openSaveAsTemplate() } }
+        Button("Set “\(t.name)” as default") { model.setDefaultTemplate(t.id) }
           .disabled(off != nil)
-        if let selected {
-          Button("Edit “\(selected.name)”…") { dsWithAnimation { model.openTemplateForm(selected) } }
-            .disabled(off != nil)
-          let blocked = CaptionTemplates.blocker(of: selected.id, settings: model.settings)
-          Button(blocked == nil ? "Delete “\(selected.name)”…" : "Delete “\(selected.name)”: it's a default template", role: .destructive) {
-            model.onDeleteTemplate?(selected)
-          }
-          .disabled(off != nil || blocked != nil || model.onDeleteTemplate == nil)
-        }
-        Divider()
-        Button("Manage in Settings") { WindowManager.shared.showSettings(section: .captions) }
       }
+      Button("New template…") { dsWithAnimation { model.openTemplateForm() } }
+        .disabled(off != nil)
+      Button("Save caption as template…") { dsWithAnimation { model.openSaveAsTemplate() } }
+        .disabled(off != nil)
+      if let selected {
+        Divider()
+        Button("Edit “\(selected.name)”…") { dsWithAnimation { model.openTemplateForm(selected) } }
+          .disabled(off != nil)
+        let blocked = CaptionTemplates.blocker(of: selected.id, settings: model.settings)
+        Button(blocked == nil ? "Delete “\(selected.name)”…" : "Delete “\(selected.name)”: it's a default template", role: .destructive) {
+          model.onDeleteTemplate?(selected)
+        }
+        .disabled(off != nil || blocked != nil || model.onDeleteTemplate == nil)
+      }
+      Divider()
+      Button("Manage in Settings") { WindowManager.shared.showSettings(section: .captions) }
     }
   }
 
@@ -130,7 +128,13 @@ struct EditorCaptionSection: View {
           EditorHint("\(other.map(\.editorShortName).joined(separator: ", ")) post\(other.count == 1 ? "s" : "") a different caption — see Captions for one platform below",
                      icon: "info.circle")
         }
-        ForEach(model.capNotes) { n in EditorHint(n.message, icon: "number", tone: n.own ? .warning : nil) }
+        ForEach(model.capNotes) { n in
+          if n.own {
+            EditorHint(n.message, icon: "exclamationmark.triangle.fill", tone: .warning)
+          } else {
+            Text(n.message).font(DS.type.caption).foregroundStyle(DS.color.textTertiary).fixedSize(horizontal: false, vertical: true)
+          }
+        }
         ForEach(model.captionWarnings) { w in warning(w) }
       }
     }
@@ -139,11 +143,13 @@ struct EditorCaptionSection: View {
   private func lengthLine(_ r: ResolvedVersion) -> some View {
     let n = model.mainCaption.count
     return HStack(spacing: 5) {
-      Text("\(n) characters").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
-      Text(model.captionIsWritten ? "· your own text" : "· from the template").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
-      Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(DS.color.textTertiary)
+      Text(model.captionIsWritten ? "Your own text" : "From the template")
       Spacer(minLength: 0)
+      Text("\(n) characters").monospacedDigit()
+      Image(systemName: "info.circle").font(.system(size: 11))
     }
+    .font(DS.type.caption)
+    .foregroundStyle(DS.color.textTertiary)
     .contentShape(Rectangle())
     .dsTooltip(breakdownShort)
     .accessibilityElement(children: .combine)
@@ -599,19 +605,22 @@ struct EditorTemplateFormView: View {
     VStack(alignment: .leading, spacing: DS.space.xs) {
       DSTextField("Name", placeholder: "e.g. Full set plug", text: $name, error: duplicate, size: .sm, autoFocus: true, onSubmit: save)
       DSTextArea("Template", placeholder: "{text}\n\n{hashtags}", text: $template, hint: CaptionTemplates.hashtagHint, minHeight: 88, maxHeight: 180)
-      EditorHint("{text} · {title} · {set} · {link} · {tag} · {hashtags}")
       if let reach = form.impact {
         EditorHint(reach.templateEditSummary, icon: "info.circle")
-      } else {
-        EditorHint("Saved for every clip, and on for this one.")
       }
       HStack(spacing: DS.space.xxs) {
+        DSXMenuButton(icon: "curlybraces", tooltip: "Add a token to the template", size: .sm) {
+          ForEach(CaptionTemplates.tokens, id: \.token) { t in
+            Button("\(t.label)  \(t.token)") { template = CaptionTemplates.adding(t.token, to: template) }
+          }
+        }
         Spacer(minLength: 0)
         DSButton("Cancel", variant: .ghost, size: .sm, tooltip: "Close without saving", shortcut: "esc") {
           dsWithAnimation { model.templateForm = nil }
         }
         .keyboardShortcut(.cancelAction)
-        DSButton(isNew ? "Save template" : "Save changes", variant: .outline, size: .sm, disabledReason: problem?.message, action: save)
+        DSButton(isNew ? "Save template" : "Save changes", variant: .outline, size: .sm, disabledReason: problem?.message,
+                 tooltip: isNew ? "Saved for every clip, and on for this one" : nil, action: save)
       }
     }
     .padding(DS.space.sm)
