@@ -152,8 +152,7 @@ struct PostsView: View {
           DSEmptyState(icon: "checkmark.circle", title: "No problems", message: "Every post went out or is on schedule.",
                        actionTitle: "Show all posts") { prefs.setStatus(.posts, nil) }
         } else {
-          DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No posts match",
-                       message: "Nothing in \(tab.title) fits this search or these filters.", actionTitle: "Clear filters") {
+          ListNoMatches(model: model, page: .posts, title: "No posts match", message: "Nothing in \(tab.title) fits this search or these filters.") {
             model.clearListFilters(.posts)
           }
         }
@@ -161,19 +160,33 @@ struct PostsView: View {
         let groups = PostGrouping.group(list, day: { model.dm.key($0) })
         let ordered = list.map(\.id)
         let primaryId = tab == .problems ? list.first { PostFixes(model: model, post: $0).fixReason == nil }?.id : nil
-        ScrollView {
-          LazyVStack(spacing: DS.space.xs) {
-            ForEach(groups) { g in
-              PostGroupCard(model: model, group: g, ordered: ordered, compact: compact, problems: tab == .problems,
-                            primaryProblemId: primaryId)
+        ScrollViewReader { proxy in
+          ScrollView {
+            LazyVStack(spacing: DS.space.xs) {
+              ForEach(groups) { g in
+                PostGroupCard(model: model, group: g, ordered: ordered, compact: compact, problems: tab == .problems,
+                              primaryProblemId: primaryId)
+                  .id(g.id)
+              }
             }
+            .padding(.vertical, DS.space.xxs)
+            .padding(.bottom, ScreenMetrics.bulkBarInset)
           }
-          .padding(.vertical, DS.space.xxs)
-          .padding(.bottom, ScreenMetrics.bulkBarInset)
+          .scrollIndicators(.automatic)
+          .onAppear { landOnPost(proxy) }
+          .onChange(of: model.postsScrollTarget) { landOnPost(proxy) }
         }
-        .scrollIndicators(.automatic)
       }
     }
+  }
+
+  /// ⌘K opened a post: bring its card into view (a lazy list only knows its row once the card is near), then the row.
+  private func landOnPost(_ proxy: ScrollViewProxy) {
+    guard let id = model.postsScrollTarget, let p = model.postById[id] else { return }
+    model.postsScrollTarget = nil
+    let card = "\(p.videoId)|\(model.dm.key(p.scheduledAt))"
+    for delay in [0, 0.1] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { proxy.scrollTo(card, anchor: .center) } }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { proxy.scrollTo(id, anchor: .center) }
   }
 
   // MARK: Bulk (reset / skip / retry)
@@ -326,22 +339,16 @@ extension PostsTab {
 /// Shared wording for posts.
 enum PostText {
   static func pill(_ p: PlatformPost) -> (text: String, style: DSBadgeStyle, icon: String?) {
+    let text = p.stateLabel
     switch p.state {
-    case .posted: return ("Posted", .soft(.success), nil)
-    case .failed:
-      return p.resolution == nil ? (p.errorType?.displayName ?? "Failed", .soft(.danger), nil) : ("Retried", .outline, nil)
+    case .posted: return (text, .soft(.success), nil)
+    case .failed: return (text, p.resolution == nil ? .soft(.danger) : .outline, nil)
     case .copyrightBlocked, .copyrightMuted, .removed:
-      switch p.resolution {
-      case "accepted": return ("Accepted", .outline, "c.circle")
-      case "reuploaded": return ("Re-uploaded", .outline, "c.circle")
-      default: return (p.state == .removed ? "Removed" : p.state == .copyrightMuted ? "Muted" : "Blocked", .soft(.danger), "c.circle")
-      }
-    case .overdue: return ("Missed", .soft(.warning), nil)
-    case .due: return ("Due now", .solid, nil)
-    case .planned: return ("Planned", .soft(.info), nil)
-    case .rendering: return ("Rendering", .soft(.info), nil)
-    case .rendered: return ("Rendered", .soft(.info), nil)
-    case .skipped: return ("Skipped", .outline, nil)
+      return (text, p.resolution == "accepted" || p.resolution == "reuploaded" ? .outline : .soft(.danger), "c.circle")
+    case .overdue: return (text, .soft(.warning), nil)
+    case .due: return (text, .solid, nil)
+    case .planned, .rendering, .rendered: return (text, .soft(.info), nil)
+    case .skipped: return (text, .outline, nil)
     }
   }
 

@@ -252,6 +252,8 @@ struct PostGroupRow: View {
     .onTapGesture { tap() }
     .contextMenu { PostContextMenu(model: model, post: post) }
     .dsTooltip("Click for details · ⌘-click to select")
+    .probeFrame("post:\(post.id)")
+    .id(post.id)
   }
 
   private func tap() {

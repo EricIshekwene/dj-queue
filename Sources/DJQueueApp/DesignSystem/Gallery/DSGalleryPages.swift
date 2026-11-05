@@ -436,6 +436,12 @@ struct GalleryStatus: View {
                        actionTitle: "Go to Edit", action: {})
             .frame(width: 400, height: 210)
             .dsSurface(DS.color.background, radius: DS.radius.lg, border: DS.color.border)
+          DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match", message: "Nothing fits this search.",
+                       actionTitle: "Clear filters",
+                       secondary: .init(title: "Search everywhere", icon: "magnifyingglass", tooltip: "Look across the whole app", shortcut: "⌘K", action: {}),
+                       action: {})
+            .frame(width: 400, height: 210)
+            .dsSurface(DS.color.background, radius: DS.radius.lg, border: DS.color.border)
         }
       }
     }

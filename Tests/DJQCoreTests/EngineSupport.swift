@@ -158,3 +158,7 @@ extension Fixture {
     }
   }
 }
+
+/// CPU seconds this thread has used. Timing tests read this rather than a wall clock, which measures the machine's
+/// load: the update gate runs the suite while other work is going on. Synchronous code only (a thread hop loses it).
+func threadCPUSeconds() -> Double { Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)) / 1_000_000_000 }

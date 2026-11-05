@@ -183,3 +183,9 @@ Decisions: `DECISIONS-R7.md`, "v0.8.3".
 - **Schema 7 (`CaptionRulesMigration`)** holds clips with posts against those rules at install, journaled. Undoing it needs `--force`.
 - **Editor merge:** `HashtagGroups.keepingFreeze(memory:saved:base:)` brings a hold in under unsaved work.
 
+## Round 10 additions — whole-app search
+- `Sources/DJQCore/Search/`: `AppSearch.swift` (pure engine: `SearchIndex`, `SearchQuery`, tiers, snippets, no SwiftUI, no database), `SearchCorpus.swift` (clips, posts, weeks, sessions, settings and Health as `SearchItem`s; `Store.searchClipText`, one query for the latest version's text) and `SettingsSearchRegistry.swift` (every Settings row and header; `SettingsRegistryTests` scans the Settings views and fails on a missing label).
+- `AppModel.load` builds `searchIndex` off the main actor on every refresh, so a keystroke only scans folded bytes and never touches the database. Nothing is written and there is no schema change.
+- `Shell/SearchSources.swift` turns hits into palette rows, only for what's on screen, and holds the open paths (`openPost`, `openWeek`, `openSession`, `openSettings`, `leaveForScreen`). Actions and Go to follow the selection, so the palette indexes those itself. A search id rebuilds its row later, which is how Recents work; a stale id gives nil.
+- Settings deep links: `.settingsAnchor` marks a row, `SettingsUIState.scrollTarget` asks for it and `landOnTarget` scrolls and flashes.
+- Real-window proof: `DJQ_SEARCH_PROBE=1 DJQueueApp --snapshot <dir>` with the dev-root env (`Snapshot/SearchProbe.swift`). It drives real key events through the window in light and dark and exits 1 on a failed step. `DJQ_SEARCH_PROBE=sabotage` shows it can fail.

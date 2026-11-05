@@ -190,7 +190,17 @@ struct DSEmptyState: View {
   var message: String? = nil
   var actionTitle: String? = nil
   var actionIcon: String? = nil
+  /// A quieter second way out, beside the primary action.
+  var secondary: Secondary? = nil
   var action: (() -> Void)? = nil
+
+  struct Secondary {
+    var title: String
+    var icon: String? = nil
+    var tooltip: String? = nil
+    var shortcut: String? = nil
+    var action: () -> Void
+  }
 
   var body: some View {
     VStack(spacing: DS.space.sm) {
@@ -206,9 +216,16 @@ struct DSEmptyState: View {
             .frame(maxWidth: 320)
         }
       }
-      if let actionTitle, let action {
-        DSButton(actionTitle, icon: actionIcon, variant: .primary, action: action).padding(.top, 4)
+      HStack(spacing: DS.space.xs) {
+        if let actionTitle, let action {
+          DSButton(actionTitle, icon: actionIcon, variant: .primary, action: action)
+        }
+        if let secondary {
+          DSButton(secondary.title, icon: secondary.icon, variant: .outline, tooltip: secondary.tooltip, shortcut: secondary.shortcut,
+                   action: secondary.action)
+        }
       }
+      .padding(.top, 4)
     }
     .padding(DS.space.xxxl)
     .frame(maxWidth: .infinity, maxHeight: .infinity)

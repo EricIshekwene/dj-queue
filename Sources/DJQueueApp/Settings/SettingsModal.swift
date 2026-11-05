@@ -8,21 +8,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
   case general, platforms, publishing, schedule, queue, newClipDefaults, captions, rendering, playback, alerts, engine
   var id: String { rawValue }
 
-  var title: String {
-    switch self {
-    case .general: "General"
-    case .platforms: "Platforms"
-    case .publishing: "Publishing"
-    case .schedule: "Schedule"
-    case .queue: "Queue"
-    case .newClipDefaults: "New clip defaults"
-    case .captions: "Captions & titles"
-    case .rendering: "Rendering"
-    case .playback: "Playback & autoplay"
-    case .alerts: "Alerts"
-    case .engine: "Engine"
-    }
-  }
+  /// The pane's name, shared with search (`SettingsSearchRegistry`).
+  var title: String { SettingsPane(rawValue: rawValue)?.title ?? rawValue }
 
   var symbol: String {
     switch self {
@@ -49,17 +36,41 @@ final class SettingsUIState {
   /// nil = no edits (the pane shows the saved defaults).
   var draft: NewClipDefaults?
   var confirm: SettingsConfirm?
-  /// Anchor id the New clip defaults pane scrolls to when it appears (consumed once).
+  /// Anchor the open pane scrolls to (consumed once). A row or header anchor also flashes (⌘K).
   var scrollTarget: String?
+  /// The row flashing after a search result opened it.
+  var flashAnchor: String?
+  @ObservationIgnored private var flashSerial = 0
   /// Publishing rows open when the pane appears (snapshots).
   var publishingExpanded: Set<Platform> = []
   /// Publishing opens with the key field in Replace mode (snapshots).
   var publishingReplacingKey = false
 
+  /// Scrolls the pane to `scrollTarget` and flashes it. Panes that fill in after appearing (Captions & titles) get
+  /// the repeat, and the row is scrolled to the centre so it never sits under the sticky footer.
+  func landOnTarget(_ proxy: ScrollViewProxy) {
+    guard let t = scrollTarget else { return }
+    scrollTarget = nil
+    let isRow = t.contains(":")
+    for delay in isRow ? [0, 0.08, 0.3] : [0] {
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay) { proxy.scrollTo(t, anchor: isRow ? .center : .top) }
+    }
+    guard isRow else { return }
+    flashSerial += 1
+    let serial = flashSerial
+    flashAnchor = t
+    Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .seconds(1.8))
+      guard let self, self.flashSerial == serial else { return }
+      self.flashAnchor = nil
+    }
+  }
+
   func reset() {
     draft = nil
     confirm = nil
     scrollTarget = nil
+    flashAnchor = nil
     publishingExpanded = []
     publishingReplacingKey = false
   }
@@ -227,15 +238,53 @@ private struct SettingsFocusParker: NSViewRepresentable {
   final class Coordinator { var token: String? }
 }
 
-/// The scrolling body of an immediate-apply section.
+/// The scrolling body of an immediate-apply section. Goes to `SettingsUIState.scrollTarget` when it's set. The
+/// horizontal padding pair leaves room for the row flash inside the scroll view's clip.
 struct SettingsScroll<Content: View>: View {
   @ViewBuilder var content: Content
+  private var ui: SettingsUIState { .shared }
+
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 0) { content }
-        .padding(.bottom, DS.space.xl)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    ScrollViewReader { proxy in
+      ScrollView {
+        VStack(alignment: .leading, spacing: 0) { content }
+          .padding(.bottom, DS.space.xl)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, DS.space.xs)
+      }
+      .scrollIndicators(.automatic)
+      .padding(.horizontal, -DS.space.xs)
+      .onAppear { ui.landOnTarget(proxy) }
+      .onChange(of: ui.scrollTarget) { ui.landOnTarget(proxy) }
     }
-    .scrollIndicators(.automatic)
   }
+}
+
+/// Marks a row as a place search can land on: `scrollTo` finds it and it flashes `DS.color.selected` when it does. The
+/// id sits on an empty view of the row's size, not the row: `scrollTo` does nothing for a row that holds a text area, whose
+/// own scroll view gets in the way.
+struct SettingsAnchorModifier: ViewModifier {
+  let anchor: String
+  private var ui: SettingsUIState { .shared }
+
+  func body(content: Content) -> some View {
+    let on = ui.flashAnchor == anchor
+    content
+      .background {
+        ZStack {
+          Color.clear.id(anchor)
+          if on {
+            RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous).fill(DS.color.selected)
+              .padding(.horizontal, -DS.space.xs)
+              .transition(.opacity)
+              .probeFrame("setting:\(anchor)")
+          }
+        }
+      }
+      .dsAnimation(DS.motion.hover, value: on)
+  }
+}
+
+extension View {
+  func settingsAnchor(_ anchor: String) -> some View { modifier(SettingsAnchorModifier(anchor: anchor)) }
 }

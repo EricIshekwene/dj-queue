@@ -42,12 +42,11 @@ struct NewClipDefaultsSettings: View {
           }
           .padding(.bottom, DS.space.xl)
           .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, DS.space.xs)
         }
-        .onAppear {
-          guard let t = ui.scrollTarget else { return }
-          ui.scrollTarget = nil
-          DispatchQueue.main.async { proxy.scrollTo(t, anchor: .top) }
-        }
+        .padding(.horizontal, -DS.space.xs)
+        .onAppear { ui.landOnTarget(proxy) }
+        .onChange(of: ui.scrollTarget) { ui.landOnTarget(proxy) }
       }
       footer
     }
