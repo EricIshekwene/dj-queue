@@ -880,7 +880,7 @@ public final class BulkActions: @unchecked Sendable {
   }
 
   /// `updateV1` for a hashtag change: a written v1 caption gets its hashtags swapped in place (round 7, WYSIWYG).
-  private func updateV1Retagged(_ v: Video, _ s: Settings, _ change: (inout Version) -> Void) throws -> Outcome {
+  func updateV1Retagged(_ v: Video, _ s: Settings, _ change: (inout Version) -> Void) throws -> Outcome {
     let all = try store.versions(videoId: v.id)
     var v1 = all.first { $0.number == 1 } ?? Version(number: 1)
     let o = v1

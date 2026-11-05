@@ -33,6 +33,7 @@ usage: djq <command> [args]
   bulk <action> [args] (--ids a,b,c | --filter F) [--dry-run] [--json]
        actions: make-ready | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
        | score-adjust <±n> | kind <k> | exclude | include | caption-template <id|default> | hashtags <group ids a,b|default>
+       | caption [--template <id|default>] [--add a,b] [--remove c]   template and groups together, one undo; --add keeps the clip's other groups
        | extra-hashtags "<#a #b>"|default | youtube-title-template <id|default> | drop-hashtags <P>
        | skip-platform <P> | unskip-platform <P>
        | accept-title | title-raw-tag | title "<t>"|--clear | add-to-week <YYYY-MM-DD> | pin-consecutive <YYYY-MM-DD>
@@ -906,6 +907,12 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   case "hashtags":
     let t = try arg(0, "set ids|default")
     r = try bulk.setHashtagSets(ids, t == "default" ? nil : t.split(separator: ",").map(String.init), dryRun: dry)
+  case "caption":
+    func list(_ name: String) -> [String] { option(name)?.split(separator: ",").map(String.init) ?? [] }
+    var change = CaptionChange(addGroups: list("--add"), removeGroups: list("--remove"))
+    if let t = option("--template") { change.template = t == "default" ? .useDefault : .use(t) }
+    guard !change.isEmpty else { throw CLIError("bulk caption needs --template, --add or --remove") }
+    r = try bulk.setCaption(ids, change, dryRun: dry)
   case "extra-hashtags":
     let t = try arg(0, "\"#a #b\"|default")
     r = try bulk.setExtraHashtags(ids, t == "default" ? nil : t.split(separator: " ").map(String.init), dryRun: dry)

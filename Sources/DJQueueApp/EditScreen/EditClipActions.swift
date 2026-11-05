@@ -118,7 +118,7 @@ struct EditClipActions: View {
           StageControl(model: model, video: video)
           DSButton("Open editor", variant: .ghost, size: .sm, tooltip: Self.openHelp) { open() }
           PipelineMoreMenu(tooltip: Self.moreHelp) {
-            EditClipMenu(model: model, video: video, ids: ids, templates: model.captionTemplates, extraFixes: Array(fixes.dropFirst(needs.addTitle || needs.askAgent ? 2 : Self.visibleFixes(fixes))))
+            EditClipMenu(model: model, video: video, ids: ids, extraFixes: Array(fixes.dropFirst(needs.addTitle || needs.askAgent ? 2 : Self.visibleFixes(fixes))))
           }
         }
       }
@@ -138,7 +138,7 @@ struct EditClipActions: View {
       StageControl(model: model, video: video, compact: true)
       DSIconButton("slider.horizontal.below.rectangle", tooltip: Self.openHelp, size: .sm) { open() }
       PipelineMoreMenu(tooltip: "Show fixes, kind, defaults and more") {
-        EditClipMenu(model: model, video: video, ids: ids, templates: model.captionTemplates, extraFixes: fixes)
+        EditClipMenu(model: model, video: video, ids: ids, extraFixes: fixes)
       }
     case .single:
       VStack(alignment: .leading, spacing: DS.space.sm) {
@@ -148,7 +148,7 @@ struct EditClipActions: View {
         StageControl(model: model, video: video, size: .md)
         HStack(spacing: 4) {
           DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .outline, tooltip: Self.openHelp) { open() }
-          PipelineMoreMenu(tooltip: Self.moreHelp) { EditClipMenu(model: model, video: video, ids: ids, templates: model.captionTemplates) }
+          PipelineMoreMenu(tooltip: Self.moreHelp) { EditClipMenu(model: model, video: video, ids: ids) }
         }
       }
     }
@@ -240,13 +240,12 @@ struct EditAddTitleField: View {
   }
 }
 
-/// ⋯ and right-click menu of an Edit card (native items): Open editor · Back to Score / Send to queue · fixes · Kind ▸ · Caption template ▸ ·
+/// ⋯ and right-click menu of an Edit card (native items): Open editor · Back to Score / Send to queue · fixes · Kind ▸ · Caption… ·
 /// Copy agent prompt · Reset to New clip defaults ▸ · Exclude. Acts on the selection when the clip is part of it.
 struct EditClipMenu: View {
   @Bindable var model: AppModel
   let video: Video
   let ids: [String]
-  var templates: [CaptionTemplate]
   var extraFixes: [EditFix] = []
 
   var body: some View {
@@ -274,18 +273,7 @@ struct EditClipMenu: View {
         }
       }
     }
-    if !templates.isEmpty {
-      Menu("Caption template") {
-        ForEach(templates) { t in
-          Button(t.name) {
-            model.pipelineBulk("Use “\(t.name)” for \(n)?", verb: "Set template", ids: targets,
-                               changes: [.init(field: "Caption", value: "Template “\(t.name)”")]) { b, dry in
-              try b.setCaptionTemplate(targets, t.id, dryRun: dry)
-            }
-          }
-        }
-      }
-    }
+    Button("Caption…", systemImage: "text.alignleft") { model.captionDialogIds = targets }
     Button(targets.count == 1 ? "Copy agent prompt" : "Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") {
       model.copyAgentPrompt(targets)
     }

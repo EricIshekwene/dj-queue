@@ -85,6 +85,9 @@ struct MainWindowView: View {
     if let p = model.pendingBulk {
       ModalHost(onDismiss: { model.cancelPendingBulk() }) { BulkConfirmSheet(model: model, pending: p) }
     }
+    if let ids = model.captionDialogIds {
+      ModalHost(onDismiss: { model.captionDialogIds = nil }) { BulkCaptionDialog(model: model, ids: ids) }
+    }
     // PLANNING: post dialogs in-window (DSDialog over the scrim; they also render in snapshots).
     if let p = model.markPostedTarget {
       ModalHost(onDismiss: { model.markPostedTarget = nil }) { MarkPostedSheet(model: model, post: p).id(p.id) }

@@ -19,9 +19,12 @@ struct DSChip: View {
 
   /// What the chip does when the title alone doesn't say (shown on hover; the reason replaces it when disabled).
   var tooltip: String? = nil
+  /// On for some of the selected items only (a dash instead of the check).
+  var isMixed = false
 
-  init(_ title: String, icon: String? = nil, isSelected: Bool, tone: DSTone? = nil, count: Int? = nil, showsCheck: Bool = true,
+  init(_ title: String, icon: String? = nil, isSelected: Bool, isMixed: Bool = false, tone: DSTone? = nil, count: Int? = nil, showsCheck: Bool = true,
        disabledReason: String? = nil, size: DSButtonSize = .md, tooltip: String? = nil, action: @escaping () -> Void) {
+    self.isMixed = isMixed
     self.tooltip = tooltip
     self.title = title
     self.icon = icon
@@ -46,6 +49,8 @@ struct DSChip: View {
       HStack(spacing: 5) {
         if isSelected && showsCheck && tone == nil {
           Image(systemName: "checkmark").font(.system(size: 9.5, weight: .bold))
+        } else if isMixed {
+          Image(systemName: "minus").font(.system(size: 9.5, weight: .bold))
         }
         if let icon {
           Image(systemName: icon).font(.system(size: size == .sm ? 10.5 : 11.5, weight: .medium))
