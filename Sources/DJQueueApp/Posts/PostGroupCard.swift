@@ -156,7 +156,7 @@ struct PostGroupCard: View {
           HStack(spacing: 6) {
             Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).rotationEffect(.degrees(shown ? 90 : 0))
             Text(shown ? "Hide \(others.count) fine" : "+\(others.count) fine").font(DS.type.captionMedium)
-            if !shown { DSPlatformRow(items: others.map { ($0.platform, AppModel.platformState($0.state)) }, size: 18) }
+            if !shown { DSPlatformRow(items: others.map { ($0.platform, model.platformState($0)) }, size: 18) }
           }
           .foregroundStyle(DS.color.textSecondary)
           .contentShape(Rectangle())
@@ -178,7 +178,7 @@ struct PostPlatformChip: View {
 
   var body: some View {
     let s = PostText.pill(post)
-    let pz = post.resolution == nil ? model.postizState(post) : nil
+    let pz = model.postizRowState(post)
     let label = post.platform.shortName + (showsKind && post.kind != .regular ? " · \(post.kind == .retry ? "retry" : "repost")" : "")
     DSBadge(label, style: pz?.badgeStyle ?? s.style, icon: post.platform.dsSymbol)
       .contentShape(Capsule())
@@ -223,7 +223,7 @@ struct PostGroupRow: View {
       }
       Spacer(minLength: DS.space.xs)
       if model.isTestRun(post) { TestRunBadge() }
-      if post.resolution == nil, let pz = model.postizState(post) {
+      if let pz = model.postizRowState(post) {
         if pz == .draft {
           DSButton("Release", icon: "paperplane", variant: .ghost, size: .sm, tooltip: "Let Postiz post this draft at its time") {
             model.releaseDraft(post)

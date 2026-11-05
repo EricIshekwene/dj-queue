@@ -271,6 +271,7 @@ extension PostizDisplayState {
   var badgeStyle: DSBadgeStyle {
     switch self {
     case .queued, .sending, .scheduled, .draft: .outline
+    case .retrying: .soft(.info)
     case .unconfirmed: .soft(.warning)
     case .posting: .soft(.info)
     case .posted: .soft(.success)
@@ -282,6 +283,7 @@ extension PostizDisplayState {
   var badgeIcon: String? {
     switch self {
     case .queued, .sending, .scheduled: "paperplane"
+    case .retrying: "arrow.clockwise"
     case .unconfirmed: "questionmark.circle"
     case .posting: "arrow.up.circle"
     case .draft: "doc"
@@ -300,11 +302,22 @@ extension PostizDisplayState {
     default: false
     }
   }
+
+  var isRetrying: Bool {
+    if case .retrying = self { return true }
+    return false
+  }
 }
 
 extension AppModel {
   /// The Postiz side of `p` (nil = manual), as core computed it in the last load.
   func postizState(_ p: PlatformPost) -> PostizPostState? { postiz.states[p.id] }
+
+  /// What a post's row says about Postiz: a handled post shows its own state, unless its automatic retry is still coming.
+  func postizRowState(_ p: PlatformPost) -> PostizPostState? {
+    let s = postizState(p)
+    return p.resolution == nil || s?.isRetrying == true ? s : nil
+  }
 
   /// A test-run post: its job was made in test mode, or it will be (Test run on, not yet sent).
   func isTestRun(_ p: PlatformPost) -> Bool {
@@ -327,6 +340,7 @@ extension AppModel {
     case .posted: return "Posted by \(via)"
     case .inbox: return "In your TikTok inbox — finish it there, then Mark posted"
     case .failed(let m), .copyright(let m): return m
+    case .retrying: return "\(via) · goes out by itself, nothing to do"
     case .fellBack(let why): return why
     }
   }

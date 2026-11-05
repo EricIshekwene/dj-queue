@@ -409,6 +409,7 @@ public final class BulkActions: @unchecked Sendable {
 
   /// Remove-from-queue's per-clip step: out of the plan, then held in Edit.
   func hold(_ v: Video, planner: Planner) throws -> [Planner.UnplanItem] {
+    try store.takeBackAutoRetries(videoId: v.id)
     let items = try planner.unplan(videoId: v.id)
     try store.setHeldInEdit(v.id, true)
     return items

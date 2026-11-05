@@ -2,15 +2,17 @@ import Foundation
 import Testing
 @testable import DJQCore
 
-/// Round 8: a temporary Postiz failure (quota, rate limit) stays Failed and loud, then re-queues by itself through
-/// `PostActions.fixed`, at most twice per clip + platform, never for copyright, a held clip, a platform off Postiz or
-/// while anything else of the clip + platform is open or published. A retry of a test run never goes public.
+/// Rounds 8 and 9: a failed Postiz post retries by itself through `PostActions.fixed`, never for copyright, a held clip,
+/// a platform off Postiz or while anything else of the clip + platform is open or published. A retry of a test run never
+/// goes public. The times, the veto table and the quiet display are in `R9PostizRetryTests`.
 @Suite struct R8PostizRetryTests {
   typealias Rig = R6PostizLifecycleTests.Rig
 
   static let quota = "YouTube's daily upload quota is exhausted for today, please reschedule this post for a later time."
   static let monday = "2026-11-02"
   static let noRetry = " — no automatic retry for this one, mark Fixed when it's ready"
+  static let retrying = " — retrying automatically"
+  static let youTubeStays = " — " + PostizService.youTubeStaysNote
 
   /// One YouTube post scheduled in Postiz on Monday.
   func ytRig(_ change: ((inout Settings) -> Void)? = nil) throws -> (Rig, PlatformPost) {
@@ -44,19 +46,11 @@ import Testing
 
   @Test(arguments: [quota, "Quota exceeded", "exceeded your quotas", "Rate limit reached", "rate-limited by the platform",
                     "HTTP 429: Too Many Requests"])
-  func clearWordingIsTemporary(_ m: String) { #expect(PostizService.isTemporary(m)) }
-
-  @Test(arguments: ["Upload failed at the platform", "Postiz reported an error (no details)", "Account suspended", "Invalid token",
-                    "Invalid quotation mark in title", "try again", "unavailable", "limit", "video too long", "",
-                    "Please try again later.", "Service temporarily unavailable", "Something went wrong, try again later",
-                    "Matched third party content. Try again later.", "Your account has been locked. Try again later.",
-                    "Account deactivated, try again later", "This content isn't allowed here. Try again later.",
-                    "Lyrics match, try again later"])
-  func anythingElseIsNormal(_ m: String) { #expect(!PostizService.isTemporary(m)) }
+  func clearWordingRetries(_ m: String) { #expect(PostizService.retriesByItself(m, on: .x)) }
 
   @Test(arguments: ["Copyright claim, try again later", "Music rights quota exceeded", "audio rate limit", "Rights holder: too many requests"])
   func copyrightAlwaysWins(_ m: String) {
-    #expect(PostizService.isCopyright(m) && !PostizService.isTemporary(m))
+    #expect(PostizService.isCopyright(m) && PostizService.isVetoed(m))
   }
 
   /// A veto word anywhere beats a temporary word (these are test strings, not captured Postiz errors).
@@ -83,7 +77,7 @@ import Testing
                     "Matched third party content, quota", "Your account has been locked, rate limit",
                     "Account deactivated, too many requests", "This content isn't allowed here, quota",
                     "Lyrics match, rate limit"])
-  func aVetoWordBeatsATemporaryWord(_ m: String) { #expect(!PostizService.isTemporary(m)) }
+  func aVetoWordBeatsATemporaryWord(_ m: String) { #expect(PostizService.isVetoed(m)) }
 
   @Test func aPolicyErrorIsAPlainFailureAndNeverRetries() throws {
     let (rig, yt) = try ytRig()
@@ -114,7 +108,7 @@ import Testing
     try fail(rig, yt, m)
     rig.tick(3)
     let p = try #require(try rig.store.post(id: yt.id))
-    #expect(p.state == .failed && p.resolution == nil && p.errorMessage == m)
+    #expect(p.state == .failed && p.resolution == nil && p.errorMessage == m + Self.youTubeStays)
     #expect(try attempts(rig, yt).count == 1 && problems(rig) == [yt.id])
   }
 
@@ -129,28 +123,19 @@ import Testing
 
   // MARK: The retry
 
-  @Test func quotaFailureStaysFailedAndLoudThenRetriesTheNextDay() throws {
+  /// No alert, no Problem, no audit: the attempt exists as soon as the failure is known, and Postiz holds it.
+  @Test func aQuotaFailureRetriesWithoutEric() throws {
     let (rig, yt) = try ytRig()
     let creates = rig.fake.createCount
     try fail(rig, yt)
-    // Failed, with the message and the promise, on every screen; nothing moved yet.
-    var failed = try #require(try rig.store.post(id: yt.id))
-    #expect(failed.state == .failed && failed.errorType == .uploadFailed && failed.resolution == nil)
-    #expect(failed.errorMessage == Self.quota + " — retries tomorrow automatically")
-    #expect(try rig.service.displayState(for: failed) == .failed(failed.errorMessage!))
-    #expect(try attempts(rig, yt).count == 1)
-
-    rig.tick()  // alert, then re-queue, then publish
-    let alert = try #require(rig.notifier.delivered.first { $0.key == "problem:\(yt.id)" })
-    #expect(alert.title == "Failed on \(Platform.youtube.displayName)" && alert.body.contains(Self.quota) && alert.body.contains("retries tomorrow automatically"))
-    failed = try #require(try rig.store.post(id: yt.id))
-    #expect(failed.state == .failed && failed.resolution == "retried")
+    let failed = try #require(try rig.store.post(id: yt.id))
+    #expect(failed.state == .failed && failed.errorType == .uploadFailed && failed.resolution == "retried")
+    #expect(failed.errorMessage == Self.quota + Self.retrying)
     #expect(try rig.store.history(postId: yt.id).contains { $0.note == "auto-retry → attempt 2" })
     let list = try attempts(rig, yt)
     #expect(list.count == 2)
     let retry = list[1]
     #expect(retry.kind == .retry && retry.attemptNo == 2 && retry.publisher == "postiz")
-    #expect(rig.f.dm.key(retry.scheduledAt) == "2026-11-03")
     #expect(try problems(rig).isEmpty)
 
     // The publish step submits the new attempt with no manual action; the failed one is never resent.
@@ -159,54 +144,18 @@ import Testing
     #expect(rig.fake.createCount == creates + 1)
     #expect(try rig.job(failed) == nil)
     #expect(try rig.invariants().isEmpty)
-    #expect(try events(rig, "automatic retry 1 of 2") == 1)
-    #expect(rig.notifier.delivered.filter { $0.key == "problem:\(yt.id)" }.count == 1)
+    #expect(try events(rig, "automatic retry 1 of 5") == 1)
+    #expect(!rig.notifier.delivered.contains { $0.key == "problem:\(yt.id)" })
   }
 
-  @Test func theAlertAlwaysGoesOutBeforeTheRetry() throws {
-    let (rig, yt) = try ytRig()
-    try fail(rig, yt)
-    // Another process's retry step, before any alert step: nothing happens, so `problems()` still has it for the alert.
-    #expect(try rig.service.retryTemporary() == "none")
-    #expect(try attempts(rig, yt).count == 1 && problems(rig) == [yt.id])
-    rig.tick()
-    #expect(rig.notifier.delivered.contains { $0.key == "problem:\(yt.id)" })
-    #expect(try attempts(rig, yt).count == 2)
-  }
-
-  @Test func aNormalFailureWaitsForEric() throws {
+  /// YouTube says so and stays with Eric: this error may come after the video exists.
+  @Test func aPlainFailureOnYouTubeWaitsForEric() throws {
     let (rig, yt) = try ytRig()
     try fail(rig, yt, "Upload failed at the platform")
     rig.tick(3)
     let p = try #require(try rig.store.post(id: yt.id))
-    #expect(p.state == .failed && p.resolution == nil && p.errorMessage == "Upload failed at the platform")
+    #expect(p.state == .failed && p.resolution == nil && p.errorMessage == "Upload failed at the platform" + Self.youTubeStays)
     #expect(try attempts(rig, yt).count == 1 && problems(rig) == [yt.id])
-  }
-
-  @Test func twoRetriesThenItStaysFailedForEric() throws {
-    let (rig, yt) = try ytRig()
-    var post = yt
-    for n in 1...2 {
-      try fail(rig, post)
-      rig.tick(3)
-      let list = try attempts(rig, yt)
-      #expect(list.count == n + 1)
-      post = list[n]
-      #expect(try events(rig, "automatic retry \(n) of 2") == 1)
-    }
-    let third = try fail(rig, post)
-    rig.tick(3)
-    #expect(try attempts(rig, yt).count == 3)
-    let last = try #require(try rig.store.post(id: third.postId))
-    #expect(last.state == .failed && last.resolution == nil)
-    #expect(try problems(rig) == [last.id])
-    #expect(last.errorMessage == Self.quota + " — automatic retries used up, mark Fixed when it's ready")
-    #expect(!last.errorMessage!.contains("retries tomorrow"))
-    #expect(rig.notifier.delivered.contains { $0.key == "problem:\(last.id)" })
-    #expect(try rig.service.pendingAutoRetries().isEmpty)
-    // Eric's Fixed still works.
-    #expect(try PostActions(store: rig.store).fixed(postId: last.id).attemptNo == 4)
-    #expect(try rig.invariants().isEmpty)
   }
 
   @Test func copyrightIsNeverRetried() throws {
@@ -237,22 +186,30 @@ import Testing
   @Test(arguments: [PostState.skipped, .removed])
   func aSkippedOrRemovedPostIsLeftAlone(_ state: PostState) throws {
     let (rig, yt) = try ytRig()
+    try rig.store.setHeldInEdit(yt.videoId, true)  // so its retry is still waiting
     try fail(rig, yt)
     var p = try #require(try rig.store.post(id: yt.id))
     p.state = state
     try rig.store.save(p, note: "test")
+    try rig.store.setHeldInEdit(yt.videoId, false)
     rig.tick(3)
     #expect(try attempts(rig, yt).count == 1)
   }
 
+  /// The promise can't be kept any more: it goes back to Eric, loud.
   @Test func aPlatformSkippedInTheEditorIsLeftAlone() throws {
     let (rig, yt) = try ytRig()
+    try rig.store.setHeldInEdit(yt.videoId, true)
     try fail(rig, yt)
+    #expect(try problems(rig).isEmpty)
     var e = try rig.store.edit(videoId: yt.videoId)
     e.skippedPlatforms = [.youtube]
     try rig.store.save(e, videoId: yt.videoId)
+    try rig.store.setHeldInEdit(yt.videoId, false)
     rig.tick(3)
-    #expect(try attempts(rig, yt).count == 1)
+    #expect(try attempts(rig, yt).count == 1 && problems(rig) == [yt.id])
+    #expect(try rig.store.post(id: yt.id)?.errorMessage == Self.quota + Self.noRetry)
+    #expect(rig.notifier.delivered.contains { $0.key == "problem:\(yt.id)" })
   }
 
   @Test func aSkippedPlatformGetsNoPromise() throws {
@@ -266,32 +223,32 @@ import Testing
   @Test func aHeldClipKeepsThePromiseBecauseItOnlyWaits() throws {
     let (rig, yt) = try ytRig()
     try rig.store.setHeldInEdit(yt.videoId, true)
-    #expect(try rig.service.retryNote(Self.quota, yt) == " — retries tomorrow automatically")
+    #expect(try rig.service.retryNote(Self.quota, yt) == Self.retrying)
   }
 
-  @Test func aRetryAfterResetHasItsOwnAlert() throws {
+  @Test func aFailureAfterResetHasItsOwnAlert() throws {
     let (rig, yt) = try ytRig()
-    try fail(rig, yt, "Upload failed at the platform")
+    let m = "Upload failed at the platform"
+    try fail(rig, yt, m)
     rig.tick()
     let key = "problem:\(yt.id)"
     #expect(rig.notifier.delivered.filter { $0.key == key }.count == 1)
     try PostActions(store: rig.store).reset(postId: yt.id)
     rig.tick(2)
     let j = try #require(try rig.job(yt))
-    rig.fake.fail(j.postizId!, error: Self.quota)
+    rig.fake.fail(j.postizId!, error: "Video too long")
     rig.f.clock.advance(3600)
     rig.tick()
     #expect(try rig.store.post(id: yt.id)?.state == .failed)
     rig.tick()
     let alerts = rig.notifier.delivered.filter { $0.key == key }
-    #expect(alerts.count == 2 && alerts.last?.body.contains(Self.quota) == true)
-    #expect(try attempts(rig, yt).count == 2)
+    #expect(alerts.count == 2 && alerts.last?.body.contains("Video too long") == true)
   }
 
   @Test func aHeldClipWaitsAndAReleasedOneRetries() throws {
     let (rig, yt) = try ytRig()
-    try fail(rig, yt)
     try rig.store.setHeldInEdit(yt.videoId, true)
+    try fail(rig, yt)
     let r = rig.tick(3)
     #expect(try attempts(rig, yt).count == 1)
     #expect(r.errors.isEmpty)  // not a refused `fixed` on every tick
@@ -303,8 +260,10 @@ import Testing
   @Test(arguments: ["manual", "paused", "pausedAll", "off", "noChannel"])
   func aPlatformNoLongerOnPostizWaits(_ how: String) throws {
     let (rig, yt) = try ytRig()
-    try fail(rig, yt)
     let before = try rig.store.settings()
+    let j = try #require(try rig.job(yt))
+    rig.fake.fail(j.postizId!, error: Self.quota)
+    rig.f.setTime(rig.f.dm.key(j.remoteDate), "23:30")
     try rig.f.updateSettings { s in
       switch how {
       case "manual": s.publishing.publishers[.youtube] = .manual
@@ -315,7 +274,9 @@ import Testing
       }
     }
     rig.tick(3)
-    #expect(try attempts(rig, yt).count == 1 && problems(rig) == [yt.id])
+    #expect(try rig.store.post(id: yt.id)?.state == .failed)
+    #expect(try attempts(rig, yt).count == 1 && problems(rig).isEmpty)
+    #expect(!rig.notifier.delivered.contains { $0.key == "problem:\(yt.id)" })
     try rig.f.updateSettings { $0 = before }
     rig.tick()
     #expect(try attempts(rig, yt).count == 2)
@@ -330,15 +291,20 @@ import Testing
                       remoteDate: p.scheduledAt, testMode: false, postType: "schedule", remoteState: PostizJob.unconfirmed,
                       submittedAt: rig.f.clock.now, createdAt: rig.f.clock.now, updatedAt: rig.f.clock.now)
     j.lineage = PostizJob.lineage(p)
-    #expect(try rig.store.claimPostizJob(j))
+    try rig.store.save(j)
     return j
+  }
+
+  /// Postiz fails the post while `paused`, so its retry waits; `paused(rig, false)` lets it go.
+  func paused(_ rig: Rig, _ on: Bool) throws {
+    try rig.f.updateSettings { s in if on { s.pausedPlatforms.insert(.youtube) } else { s.pausedPlatforms.remove(.youtube) } }
   }
 
   @Test func anOpenJobOfTheClipBlocksTheRetryUntilItIsGone() throws {
     let (rig, yt) = try ytRig()
-    try fail(rig, yt)
     let j = try otherJob(rig, yt)
-    #expect(try rig.service.retryableJob(rig.store.post(id: yt.id)!, settings: rig.store.settings(), router: rig.service.router()) == nil)
+    try fail(rig, yt)
+    #expect(try rig.service.retryDecision(rig.store.post(id: yt.id)!, settings: rig.store.settings(), router: rig.service.router()) == .wait)
     rig.tick(2)
     #expect(try attempts(rig, yt).count == 1)
     try rig.store.closePostizJob(id: j.id, reason: .cancelled)
@@ -349,17 +315,20 @@ import Testing
   @Test(arguments: [PostizCloseReason.published, .inbox])
   func aPublishedJobOfTheClipBlocksTheRetryForGood(_ reason: PostizCloseReason) throws {
     let (rig, yt) = try ytRig()
-    try fail(rig, yt)
     try rig.store.closePostizJob(id: try otherJob(rig, yt).id, reason: reason)
+    try fail(rig, yt)
     rig.tick(3)
     #expect(try attempts(rig, yt).count == 1 && problems(rig) == [yt.id])
+    #expect(try rig.store.post(id: yt.id)?.errorMessage == Self.quota + Self.noRetry)
   }
 
   @Test func aLiveOrPostedAttemptBlocksTheRetry() throws {
     let (rig, yt) = try ytRig()
+    try paused(rig, true)
     try fail(rig, yt)
     // Eric got there first: Fixed, then that attempt is posted by hand; a reset of the failure doesn't retry it either.
     let n = try PostActions(store: rig.store).fixed(postId: yt.id)
+    try paused(rig, false)
     rig.tick(3)
     #expect(try attempts(rig, yt).count == 2)
     #expect(try rig.job(n) != nil)
@@ -375,20 +344,21 @@ import Testing
   @Test(arguments: [PostState.planned, .posted, .copyrightBlocked])
   func anotherPostOfTheClipBlocksTheRetry(_ state: PostState) throws {
     let (rig, yt) = try ytRig()
+    try paused(rig, true)
     try fail(rig, yt)
-    #expect(try rig.store.markNotified(PostActions.problemKey(yt.id)))
     var n = try PostActions(store: rig.store).fixed(postId: yt.id)
     n.state = state
     try rig.store.save(n, note: "test")
     var failed = try #require(try rig.store.post(id: yt.id))
     failed.resolution = nil
     try rig.store.save(failed, note: "test")
-    #expect(try rig.service.retryTemporary() == "none")
+    try paused(rig, false)
+    #expect(try rig.service.retryFailures() == "none")
     #expect(try attempts(rig, yt).count == 2)
     // The failed attempt alone (the other one failed too, or was skipped) does qualify: the guard isn't always on.
     n.state = .skipped
     try rig.store.save(n, note: "test")
-    #expect(try rig.service.retryTemporary() == "re-queued 1")
+    #expect(try rig.service.retryFailures() == "scheduled 1")
   }
 
   /// A repost carries the clip's published original: `fixed` would put it on the original's lineage.
@@ -526,8 +496,9 @@ import Testing
   @Test func twoConnectionsRacingRetryOnce() throws {
     for _ in 0..<6 {
       let (rig, yt) = try ytRig()
+      try rig.store.setHeldInEdit(yt.videoId, true)
       try fail(rig, yt)
-      #expect(try rig.store.markNotified(PostActions.problemKey(yt.id)))
+      try rig.store.setHeldInEdit(yt.videoId, false)
       let file = FileManager.default.temporaryDirectory.appendingPathComponent("djq-race-\(UUID().uuidString).sqlite").path
       defer { try? FileManager.default.removeItem(atPath: file) }
       try rig.store.db.backup(to: file)
@@ -535,7 +506,7 @@ import Testing
       let services = stores.map { PostizService(store: $0, transport: rig.fake, keyStore: rig.keys) }
       let errors = Box()
       DispatchQueue.concurrentPerform(iterations: services.count) { i in
-        do { _ = try services[i].retryTemporary() } catch { errors.add("\(error)") }
+        do { _ = try services[i].retryFailures() } catch { errors.add("\(error)") }
       }
       #expect(errors.list.isEmpty)
       let s = stores[0]
@@ -555,11 +526,12 @@ import Testing
   /// Today's real case: a quota failure Eric already fixed by hand, its alert long sent. The retry leaves it alone.
   @Test func aFailureEricAlreadyFixedIsLeftAlone() throws {
     let (rig, yt) = try ytRig()
+    try paused(rig, true)
     try fail(rig, yt)
-    #expect(try rig.store.markNotified(PostActions.problemKey(yt.id)))
+    try paused(rig, false)
     let n = try PostActions(store: rig.store).fixed(postId: yt.id)
     #expect(n.attemptNo == 2)
-    #expect(try rig.service.retryTemporary() == "none")
+    #expect(try rig.service.retryFailures() == "none")
     rig.tick(3)
     rig.f.setTime(rig.f.dm.key(n.scheduledAt), "08:00")
     rig.tick(3)
@@ -640,16 +612,14 @@ import Testing
     let (rig, yt) = try ytRig()
     #expect(try rig.service.pendingAutoRetries().isEmpty)
     try fail(rig, yt)
-    var pending = try rig.service.pendingAutoRetries()
-    #expect(pending.map(\.post.id) == [yt.id] && pending[0].number == 1 && !pending[0].queued)
-    rig.tick(3)
-    pending = try rig.service.pendingAutoRetries()
+    let pending = try rig.service.pendingAutoRetries()
     let retry = try #require(try attempts(rig, yt).last)
     #expect(pending.map(\.post.id) == [retry.id] && pending[0].number == 1 && pending[0].queued)
     #expect(try rig.service.status().autoRetries == [retry.id])
     let finding = try #require(DoctorPostizTests.postiz(DoctorPostizTests.doctor(rig.store, keys: rig.keys).run())["postiz.auto_retry"])
-    #expect(finding.severity == .info && finding.where_ == [retry.id] && finding.detail.contains("retry 1 of 2"))
+    #expect(finding.severity == .info && finding.where_ == [retry.id] && finding.detail.contains("(try 1 of 5)"))
     // Once the attempt has gone out nothing is pending.
+    rig.tick(2)
     rig.fake.publishDue(now: retry.scheduledAt.addingTimeInterval(60))
     rig.f.clock.set(retry.scheduledAt.addingTimeInterval(3600))
     rig.tick()

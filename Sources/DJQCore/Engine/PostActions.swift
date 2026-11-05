@@ -131,9 +131,10 @@ public final class PostActions: @unchecked Sendable {
 
   /// The cause of a (non-copyright) failure is fixed: new attempt on the next day's slot, ≥ 3 h from that day's
   /// regular post on the platform. A failure found before its day keeps its original time. Runs in one transaction,
-  /// so Eric's Fixed and an automatic retry (`by: "auto-retry"`, the word in the post's history) make one attempt.
+  /// so Eric's Fixed and an automatic retry (`by: "auto-retry"`, the word in the post's history, with its own time `at`)
+  /// make one attempt.
   @discardableResult
-  public func fixed(postId: String, by who: String = "fixed") throws -> PlatformPost {
+  public func fixed(postId: String, by who: String = "fixed", at: Date? = nil) throws -> PlatformPost {
     try store.db.transaction {
       var p = try post(postId)
       try ensureNotHeld(p.videoId)
@@ -142,7 +143,7 @@ public final class PostActions: @unchecked Sendable {
       }
       guard p.state == .failed else { throw EngineError("Only a failed post can be marked fixed (this one is \(p.state.displayName))") }
       guard p.resolution == nil else { throw EngineError("Already handled (\(p.resolution!))") }
-      let n = try newAttempt(from: p, kind: .retry, versionNo: p.versionNo, note: "\(who): \(p.errorType?.rawValue ?? "failed")")
+      let n = try newAttempt(from: p, kind: .retry, versionNo: p.versionNo, note: "\(who): \(p.errorType?.rawValue ?? "failed")", at: at)
       p.resolution = "retried"
       try store.save(p, note: "\(who) → attempt \(n.attemptNo)")
       try store.refreshState(videoId: p.videoId)
@@ -330,9 +331,10 @@ public final class PostActions: @unchecked Sendable {
   /// The once-only key of a post's "Failed on …" alert.
   public static func problemKey(_ postId: String) -> String { "problem:\(postId)" }
 
-  /// Failed / copyright / overdue posts nobody has handled yet.
+  /// Failed / copyright / overdue posts nobody has handled yet. A failure with an automatic retry coming isn't one.
   public func problems() throws -> [PlatformPost] {
     try store.posts(where: "state IN ('failed','copyright_blocked','copyright_muted','removed','overdue') AND resolution IS NULL")
+      .filter { try !store.retryIsComing($0) }
   }
 
   // MARK: Internals
@@ -342,15 +344,18 @@ public final class PostActions: @unchecked Sendable {
     return p
   }
 
-  /// New attempt for the same platform: next day (staggered), or the original time when that is still ahead. An
-  /// attempt at a repost stays a repost: as a `.retry` it would join the clip's main lineage, and Postiz having
-  /// published the original would record this attempt as posted with the original's link, never sending it.
-  func newAttempt(from p: PlatformPost, kind: PostKind, versionNo: Int, note: String) throws -> PlatformPost {
+  /// New attempt for the same platform: at `time` when the caller has one (an automatic retry), else next day
+  /// (staggered), or the original time when that is still ahead. An attempt at a repost stays a repost: as a `.retry` it
+  /// would join the clip's main lineage, and Postiz having published the original would record this attempt as posted
+  /// with the original's link, never sending it.
+  func newAttempt(from p: PlatformPost, kind: PostKind, versionNo: Int, note: String, at time: Date? = nil) throws -> PlatformPost {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     let today = store.today(dm)
     let at: Date
-    if dm.key(p.scheduledAt) > today {
+    if let time {
+      at = time
+    } else if dm.key(p.scheduledAt) > today {
       at = p.scheduledAt
     } else {
       at = try Sched.staggered(store: store, platform: p.platform, day: dm.addDays(today, 1), settings: settings, dm: dm)

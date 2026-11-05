@@ -385,7 +385,7 @@ struct WeekDayCard: View {
                             tz: model.tz)
     let status: DSXPostStatus = post.map { model.postStatus($0) } ?? (approved ? .planned : .draft)
     return DSXSlotChip(platform: pl, time: time, status: status, paused: model.settings.pausedPlatforms.contains(pl), hasActions: post != nil,
-                       postiz: post.flatMap { $0.resolution == nil ? model.postizState($0) : nil },
+                       postiz: post.flatMap { model.postizRowState($0) },
                        testRun: post.map(model.isTestRun) ?? false)
       .contextMenu { if let post { PostContextMenu(model: model, post: post) } }
   }
