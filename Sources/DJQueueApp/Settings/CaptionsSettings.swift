@@ -80,6 +80,7 @@ struct CaptionsSettings: View {
     }
     .padding(.vertical, DS.space.md)
     .overlay(alignment: .bottom) { DSSeparator() }
+    .settingsAnchor(SettingsAnchor.captionTemplate(id))
     .onChange(of: t.wrappedValue) { _, nt in try? model.store.save(nt) }
   }
 
@@ -154,6 +155,7 @@ struct CaptionsSettings: View {
     }
     .padding(.vertical, DS.space.md)
     .overlay(alignment: .bottom) { DSSeparator() }
+    .settingsAnchor(SettingsAnchor.titleTemplate(id))
     .onChange(of: t.wrappedValue) { _, _ in saveTitles() }
   }
 
@@ -211,6 +213,7 @@ private struct HashtagSetRow: View {
       }
     }
     .padding(.vertical, DS.space.xs)
+    .settingsAnchor(SettingsAnchor.hashtagGroup(set.id))
     .onAppear { tags = set.tags.joined(separator: " ") }
     // Saved once typing pauses: each save is a journaled change that can freeze clips.
     .onChange(of: set) { _, s in

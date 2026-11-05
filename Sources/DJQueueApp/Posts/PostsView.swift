@@ -152,8 +152,7 @@ struct PostsView: View {
           DSEmptyState(icon: "checkmark.circle", title: "No problems", message: "Every post went out or is on schedule.",
                        actionTitle: "Show all posts") { prefs.setStatus(.posts, nil) }
         } else {
-          DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No posts match",
-                       message: "Nothing in \(tab.title) fits this search or these filters.", actionTitle: "Clear filters") {
+          ListNoMatches(model: model, page: .posts, title: "No posts match", message: "Nothing in \(tab.title) fits this search or these filters.") {
             model.clearListFilters(.posts)
           }
         }
@@ -161,19 +160,33 @@ struct PostsView: View {
         let groups = PostGrouping.group(list, day: { model.dm.key($0) })
         let ordered = list.map(\.id)
         let primaryId = tab == .problems ? list.first { PostFixes(model: model, post: $0).fixReason == nil }?.id : nil
-        ScrollView {
-          LazyVStack(spacing: DS.space.xs) {
-            ForEach(groups) { g in
-              PostGroupCard(model: model, group: g, ordered: ordered, compact: compact, problems: tab == .problems,
-                            primaryProblemId: primaryId)
+        ScrollViewReader { proxy in
+          ScrollView {
+            LazyVStack(spacing: DS.space.xs) {
+              ForEach(groups) { g in
+                PostGroupCard(model: model, group: g, ordered: ordered, compact: compact, problems: tab == .problems,
+                              primaryProblemId: primaryId)
+                  .id(g.id)
+              }
             }
+            .padding(.vertical, DS.space.xxs)
+            .padding(.bottom, ScreenMetrics.bulkBarInset)
           }
-          .padding(.vertical, DS.space.xxs)
-          .padding(.bottom, ScreenMetrics.bulkBarInset)
+          .scrollIndicators(.automatic)
+          .onAppear { landOnPost(proxy) }
+          .onChange(of: model.postsScrollTarget) { landOnPost(proxy) }
         }
-        .scrollIndicators(.automatic)
       }
     }
+  }
+
+  /// ⌘K opened a post: bring its card into view (a lazy list only knows its row once the card is near), then the row.
+  private func landOnPost(_ proxy: ScrollViewProxy) {
+    guard let id = model.postsScrollTarget, let p = model.postById[id] else { return }
+    model.postsScrollTarget = nil
+    let card = "\(p.videoId)|\(model.dm.key(p.scheduledAt))"
+    for delay in [0, 0.1] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { proxy.scrollTo(card, anchor: .center) } }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { proxy.scrollTo(id, anchor: .center) }
   }
 
   // MARK: Bulk (reset / skip / retry)

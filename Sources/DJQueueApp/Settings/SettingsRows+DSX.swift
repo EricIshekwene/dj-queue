@@ -29,11 +29,14 @@ struct SettingsRow<Control: View>: View {
   var platform: Platform? = nil
   /// Description is a file path: one line, truncated in the middle.
   var isPath = false
+  /// Where search lands (default: the label). Rows with a computed label pass a fixed one.
+  var anchor: String? = nil
   @ViewBuilder var control: Control
 
   init(_ label: String, description: String? = nil, disabledReason: String? = nil, stacked: Bool = false,
-       platform: Platform? = nil, isPath: Bool = false, @ViewBuilder control: () -> Control) {
+       platform: Platform? = nil, isPath: Bool = false, anchor: String? = nil, @ViewBuilder control: () -> Control) {
     self.isPath = isPath
+    self.anchor = anchor
     self.label = label
     self.description = description
     self.disabledReason = disabledReason
@@ -68,6 +71,7 @@ struct SettingsRow<Control: View>: View {
     .overlay(alignment: .bottom) { DSSeparator() }
     .dsTooltip(disabledReason)
     .accessibilityElement(children: .contain)
+    .settingsAnchor(anchor ?? SettingsAnchor.row(label))
   }
 
   private var text: some View {
@@ -103,6 +107,7 @@ struct SettingsGroupHeader: View {
     }
     .padding(.top, first ? DS.space.lg : DS.space.xxl)
     .padding(.bottom, DS.space.xxs)
+    .settingsAnchor(SettingsAnchor.group(title))
   }
 }
 

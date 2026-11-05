@@ -42,8 +42,7 @@ struct ScoreView: View {
         DSEmptyState(icon: "checkmark.circle", title: "Everything is scored", message: "New clips land here after intake.",
                      actionTitle: "Go to Edit") { model.screen = .edit }
       } else if list.isEmpty {
-        DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match",
-                     message: "Nothing to score fits this search or these filters.", actionTitle: "Clear filters") {
+        ListNoMatches(model: model, page: .score, title: "No clips match", message: "Nothing to score fits this search or these filters.") {
           model.clearListFilters(.score)
           prefs.setStatus(.score, nil)
         }

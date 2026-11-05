@@ -18,6 +18,7 @@ enum SnapshotRunner {
   static func run(outputDir: String) async -> Int32 {
     // Every snapshot and scripted run: a throwaway database must never make the installed app reload or tick.
     setenv("DJQ_NO_SIGNAL", "1", 1)
+    if ProcessInfo.processInfo.environment["DJQ_SEARCH_PROBE"] != nil { return await SearchProbe.run(outputDir: outputDir) }
     if ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_GALLERY"] != nil { return await DSGallerySnapshot.run(outputDir: outputDir) }
     if ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_EDITOR"] != nil { return await EditorSnapshot.run(outputDir: outputDir) }
     let out = URL(fileURLWithPath: outputDir)
@@ -93,6 +94,7 @@ enum SnapshotRunner {
         + SnapshotShots.r3posts(ctx)
         + SnapshotShots.r4previews(ctx)
         + SnapshotShots.r6postiz(ctx)
+        + SnapshotShots.r10search(ctx)
       if let only = ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_ONLY"] {
         shots = shots.filter { $0.name.contains(only) }
       }

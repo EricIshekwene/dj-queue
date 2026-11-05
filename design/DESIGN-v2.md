@@ -110,7 +110,7 @@ Locked: `R2.NAV` ChatGPT web sidebar (alt: ChatGPT iOS drawer). Menus follow `R2
 ```
 ┌ sidebar 260 ─────────┬ toolbar 52 (title · context · view toggle · primary) ─────────────┐
 │ DJ Queue        [⇤]  │ [attention card, only when something failed]                       │
-│ ⌕ Search clips   ⌘K  │                                                                    │
+│ ⌕ Search         ⌘K  │                                                                    │
 │                      │                     content (gutters 24/32)                        │
 │ ◎ Score          12  │                                                                    │
 │ ✎ Edit            9  │                                                                    │
@@ -131,7 +131,11 @@ Locked: `R2.NAV` ChatGPT web sidebar (alt: ChatGPT iOS drawer). Menus follow `R2
 - **Sidebar footer** (the slot ChatGPT uses for its account row) shows the engine line (`● Running · next 7:00 PM TikTok`, or an amber `Paused` / red `Engine stopped` dot) and Settings. Clicking the engine line opens a small menu: Pause all posting, Pause one platform ▸, Open Health.
 - **Toolbar (52 pt, transparent, unified)**: left has the screen title (`title`) and a secondary context line (`callout`, e.g. "41 ready · next Thu 5 Nov"). Right has the view-mode segmented control when the screen has one, a ⋯ menu, and the screen's single primary capsule. The runway appears as a quiet chip on Queue and Week (`Runway 5 d approved · 21 d ready`, amber below threshold); its popover lists all three numbers.
 - **Attention card** replaces the round-1 red bar. It is a 16-radius card at the top of the content, `tint.danger` background, with an icon, "2 posts need attention · Instagram copyright, X failed" and a **Review** button that opens Posts → Problems. It can't be dismissed while unresolved. The amber version (low runway, engine off) can be dismissed for 24 h. **Why:** this keeps loud-error visibility (§0.3) without a full-bleed red stripe that breaks the calm.
-- ⌘K palette: a 640 pt `e2` popover with a capsule search field, Recents and Actions, and shortcuts right-aligned in `caption` tertiary.
+- ⌘K palette: a 640 pt `e2` popover with a capsule search field ("Search everything…"), and shortcuts right-aligned in `caption` tertiary. It's the one door to the whole app. It sits above every modal (only a confirmation goes on top), so it works from the editor and from Settings.
+  - **Empty field:** Recents, Actions, Go to.
+  - **Typing:** literal, case- and diacritic-insensitive; every word must hit. Type chips under the field (All · Clips · Posts · Weeks · Sessions · Settings · Actions, only those with hits, with counts; Tab and ⇧Tab cycle them). Groups stop at five rows with a "Show all N …" row. Sections order by best match (exact, word start, inside the title, another field), then the fixed order. The match is bold. A hit outside the title says where it matched ("Caption: …snippet…").
+  - **Where a result goes:** a clip opens its action page. A post opens Posts with what hid it cleared, its row in view and the inspector open. A week opens Week. A session opens Library filtered to it. A setting opens its section, scrolls to the row and flashes it in `DS.color.selected`. Results that leave the current view close the editor and Settings the way Go to does; a setting opens over them.
+  - ⌘F stays a page filter. A list with nothing to show offers "Search everywhere", which opens ⌘K with the same text.
 - Window: minimum 1100×700, default 1440×900. The sidebar collapses to icons under 1200 pt.
 
 ---

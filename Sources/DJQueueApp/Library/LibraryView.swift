@@ -114,9 +114,8 @@ struct LibraryView: View {
                    message: "Add a session folder with a videos.json. New clips show here after the next check.",
                    actionTitle: "Check for new clips", actionIcon: "arrow.clockwise") { model.runTick() }
     } else if shorts.isEmpty && longs.isEmpty {
-      DSEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No clips match",
-                   message: "Nothing fits these filters\(prefs[.library].search.isEmpty ? "" : " and “\(prefs[.library].search)”").",
-                   actionTitle: "Clear filters") { clearFilters() }
+      ListNoMatches(model: model, page: .library, title: "No clips match",
+                    message: "Nothing fits these filters\(prefs[.library].search.isEmpty ? "" : " and “\(prefs[.library].search)”").") { clearFilters() }
     } else if shorts.isEmpty {
       // Only long-form clips: their own section in every view mode.
       ScrollView {
