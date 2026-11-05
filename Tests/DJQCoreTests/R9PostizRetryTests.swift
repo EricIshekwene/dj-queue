@@ -696,6 +696,18 @@ import Testing
     try rig.store.setKV(PostizService.autoRetryKey(x), r)
     try PostActions(store: rig.store).reportProblem(postId: x.id, type: .uploadFailed, message: "Failed by hand")
     #expect(try r8.problems(rig) == [x.id])
+
+    // And a row beside a vetoed failure from Postiz.
+    let (rig2, y) = try xRig()
+    try fail(rig2, y, "Video longer than 2:20")
+    try rig2.store.setKV(PostizService.autoRetryKey(y), r2(y))
+    #expect(try r8.problems(rig2) == [y.id])
+  }
+
+  func r2(_ p: PlatformPost) -> PostizAutoRetries {
+    var r = PostizAutoRetries()
+    r.failedPostId = p.id
+    return r
   }
 
   /// Excluded after its attempt exists: it can't render, so it can't go. A day late it comes back to Eric with a reason.
