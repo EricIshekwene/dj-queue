@@ -6,7 +6,8 @@ import Foundation
 
 /// What a result is. The order of the cases is the fixed section order.
 public enum SearchKind: String, CaseIterable, Sendable {
-  case clip, post, week, session, setting, health, action, goTo
+  // Week before post: every scheduled day has posts now, and a date should lead to its week, not to six post rows.
+  case clip, week, post, session, setting, health, action, goTo
 
   /// Section heading in the palette.
   public var title: String {

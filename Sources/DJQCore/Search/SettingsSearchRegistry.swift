@@ -89,7 +89,7 @@ public enum SettingsSearchRegistry {
     .row(.schedule, "Retry stagger", group: "Posting", description: "Re-queued failures post this long after the day's slot."),
     .row(.schedule, "Repost cooldown", group: "Posting", description: "Days before the same clip can post again on a platform."),
     // queue
-    .row(.queue, "Order", description: "Orders the unplanned backlog by score. Planned days don't move."),
+    .row(.queue, "Order", description: "Orders the Queue by score. A change re-lays the calendar; pinned days stay."),
     .row(.queue, "Ties", description: "Equal scores: older session first, then the night's order (part, start)."),
     .group(.queue, "Order per platform", description: "Give one platform its own order."),
     .group(.queue, "Spacing"),

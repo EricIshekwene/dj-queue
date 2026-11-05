@@ -113,3 +113,5 @@ Reviewed and corrected once; these are the final calls.
 - **"Pin to this day" hides when the day shown isn't the slot's.** Otherwise it would pin a different day from the one on screen.
 - **A failed post stays on its own day while its retry waits, and says when (`CalendarClip.dayPosts`).** Day shows r9's badge, 3 Day the chip, Week a line on the card; the attempt itself is a chip on the day it goes out.
 - **Going back from Scheduled drops waiting retries (r9) on the way to Edit.** The merge kept both rules: the clip lands in Edit, and no retry fires for a clip taken off the calendar.
+- **⌘K lands on the Calendar: a week row opens Week view on that week, and "today" finds Open Calendar.** Search keeps its Week rows without a state, since no week has one Eric can see.
+- **Weeks rank above Posts when a date matches both.** Every scheduled day has posts now, so a date would otherwise open six post rows.
