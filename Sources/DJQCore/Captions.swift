@@ -38,8 +38,13 @@ public enum Captions {
     return out
   }
 
-  public static func fill(_ template: String, text: String, tag: String, set: String, hashtags: [String]) -> String {
-    template
+  /// `title` and `link` are nil only for captions built the old way, where those words aren't tokens (`CaptionRulesMigration`).
+  public static func fill(_ template: String, text: String, tag: String, set: String, hashtags: [String], title: String? = "",
+                          link: String? = "") -> String {
+    var out = template
+    if let title { out = out.replacingOccurrences(of: "{title}", with: oneLine(title)) }
+    if let link { out = out.replacingOccurrences(of: "{link}", with: oneLine(link)) }
+    return out
       .replacingOccurrences(of: "{text}", with: oneLine(text))
       .replacingOccurrences(of: "{tag}", with: tag)
       .replacingOccurrences(of: "{set}", with: set)
@@ -68,8 +73,29 @@ public enum Captions {
   /// per-platform caption.
   public static func caption(for platform: Platform, version v: ResolvedVersion, video: Video, sessionName: String,
                              sets: [HashtagSet], templates: [CaptionTemplate], settings: Settings) -> String {
+    output(platform, v, video, sessionName, sets, templates, settings)
+  }
+
+  /// `caption(for:)`, or with `legacy` the caption exactly as v0.8.2 built it.
+  static func output(_ platform: Platform, _ v: ResolvedVersion, _ video: Video, _ sessionName: String, _ sets: [HashtagSet],
+                     _ templates: [CaptionTemplate], _ settings: Settings, legacy: Bool = false) -> String {
     if let o = v.platformCaptions[platform], !o.isEmpty { return o }
-    return build(platform, v, video, sessionName, hashtags(v, sets: sets), templates, settings)
+    let s = build(platform, v, video, sessionName, hashtags(v, sets: sets), templates, settings, legacy: legacy)
+    return legacy ? s : onceEach(s, v)
+  }
+
+  /// Each tag once, at its first position, where the clip's tags are filled in beside tags typed in a template or caption. A
+  /// written caption without `{hashtags}` is literal, and adding tags to it already skips any it has (`replaceHashtags`).
+  static func onceEach(_ text: String, _ v: ResolvedVersion) -> String {
+    guard v.caption.isEmpty || v.caption.contains("{hashtags}"),
+          let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_#])#[\p{L}\p{N}_]+"#) else { return text }
+    var seen = Set<String>(), out = text
+    let ns = text as NSString
+    let repeats = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map(\.range).filter {
+      !seen.insert(normalizeTag(ns.substring(with: $0))).inserted
+    }
+    for r in repeats.reversed() { out = removeRange(out as NSString, r) }
+    return out
   }
 
   /// The caption every platform without its own caption (and without a per-platform default template) posts — what
@@ -79,7 +105,7 @@ public enum Captions {
                                    templates: [CaptionTemplate], settings: Settings) -> String {
     var s = settings
     s.defaults.platformCaptionTemplates = [:]
-    return build(.tiktok, v, video, sessionName, hashtags(v, sets: sets), templates, s)
+    return onceEach(build(.tiktok, v, video, sessionName, hashtags(v, sets: sets), templates, s), v)
   }
 
   /// What template `id` fills to for this clip (the editor's template picker rewrites the caption field with it).
@@ -122,7 +148,7 @@ public enum Captions {
   /// captions, and every caption the schema-6 migration found without one, which got "\n{hashtags}") is filled with
   /// the clip's hashtags.
   static func build(_ platform: Platform, _ v: ResolvedVersion, _ video: Video, _ sessionName: String, _ tags: [String],
-                    _ templates: [CaptionTemplate], _ settings: Settings) -> String {
+                    _ templates: [CaptionTemplate], _ settings: Settings, legacy: Bool = false) -> String {
     let joined = tags.joined(separator: " ")
     if !v.caption.isEmpty {
       if v.caption.contains("{hashtags}") {
@@ -138,7 +164,8 @@ public enum Captions {
     }
     let tid = templateId(for: platform, version: v, settings: settings)
     let tpl = templates.first { $0.id == tid }?.template ?? Defaults.captionTemplates[0].template
-    return fill(tpl, text: textValue(v, video: video), tag: video.tag, set: setName(sessionName), hashtags: tags)
+    return fill(tpl, text: textValue(v, video: video), tag: video.tag, set: setName(sessionName), hashtags: tags,
+                title: legacy ? nil : video.titleText ?? "", link: legacy ? nil : settings.captionLink)
   }
 
   /// What the schema-6 migration appends to a written caption that had no `{hashtags}` (rounds 1–6 added the hashtags

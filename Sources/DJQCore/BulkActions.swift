@@ -446,7 +446,8 @@ public final class BulkActions: @unchecked Sendable {
   /// undoes the most recent one (round 3, F8).
   @discardableResult
   public func record(_ action: String, ids raw: [String] = [], params: [String: String] = [:], plan: Bool = false,
-                     settings: Bool = false, renders: Bool = false, hashtagGroups: Bool = false, revalidate: Bool = true,
+                     settings: Bool = false, renders: Bool = false, hashtagGroups: Bool = false, captionTemplates: Bool = false,
+                     revalidate: Bool = true,
                      _ body: () throws -> Void) throws -> BulkResult {
     var seen = Set<String>()
     let ids = raw.filter { !$0.isEmpty && seen.insert($0).inserted }
@@ -456,17 +457,20 @@ public final class BulkActions: @unchecked Sendable {
       let existing = try ids.filter { try store.video(id: $0) != nil }
       let before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
                             plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil,
-                            hashtagSets: hashtagGroups ? try store.hashtagSets() : nil)
+                            hashtagSets: hashtagGroups ? try store.hashtagSets() : nil,
+                            captionTemplates: captionTemplates ? try store.captionTemplates() : nil)
       try body()
       // Round 4 (S1): a settings change (limits, platforms, defaults) can make Queue clips invalid or Edit clips valid —
       // re-derive every Edit/Queue clip's state now (states only; the engine's next tick refills draft days).
-      if revalidate, settings || hashtagGroups,
-         try settingsSnapshot() != before.settings || (hashtagGroups && store.hashtagSets() != before.hashtagSets) {
+      if revalidate, settings || hashtagGroups || captionTemplates,
+         try settingsSnapshot() != before.settings || (hashtagGroups && store.hashtagSets() != before.hashtagSets)
+          || (captionTemplates && store.captionTemplates() != before.captionTemplates) {
         try Revalidation(store: store).run(adjustPlan: false)
       }
       let after = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
                            plan: plan ? try planSnapshot() : nil, settings: settings ? try settingsSnapshot() : nil,
-                           hashtagSets: hashtagGroups ? try store.hashtagSets() : nil)
+                           hashtagSets: hashtagGroups ? try store.hashtagSets() : nil,
+                           captionTemplates: captionTemplates ? try store.captionTemplates() : nil)
       var changed = Set(zip(before.clips, after.clips).filter { $0 != $1 }.map(\.0.id))
       if let b = before.plan, let a = after.plan, b != a {
         let bs = Dictionary(uniqueKeysWithValues: b.slots.map { ($0.id, $0) }), asl = Dictionary(uniqueKeysWithValues: a.slots.map { ($0.id, $0) })
@@ -476,6 +480,7 @@ public final class BulkActions: @unchecked Sendable {
         if changed.isEmpty { changed.insert("") }  // weeks only (approve/propose): still a change
       }
       let settingsChanged = before.settings != after.settings || before.hashtagSets != after.hashtagSets
+        || before.captionTemplates != after.captionTemplates
       guard !changed.isEmpty || settingsChanged else {
         result.summary = "\(action): nothing changed"
         return
@@ -485,6 +490,7 @@ public final class BulkActions: @unchecked Sendable {
       result.summary = "\(action): \(result.changed.count) clip\(result.changed.count == 1 ? "" : "s")"
         + (before.plan != nil && before.plan != after.plan ? " · plan" : "")
         + (before.settings != after.settings ? " · settings" : "") + (before.hashtagSets != after.hashtagSets ? " · hashtag groups" : "")
+        + (before.captionTemplates != after.captionTemplates ? " · caption templates" : "")
       let batchId = newId()
       try store.db.run("""
         INSERT INTO batches(id,action,params,video_ids,before,after,summary,created_at) VALUES(?,?,?,?,?,?,?,?)
@@ -711,6 +717,26 @@ public final class BulkActions: @unchecked Sendable {
           }
           restored.insert(Self.hashtagGroupsMarker)
         }
+        if let bt = before.captionTemplates, let at = after.captionTemplates, !restored.contains(Self.captionTemplatesMarker) {
+          let cur = try store.captionTemplates()
+          if !force, cur != at {
+            throw EngineError("Can't undo the template part of \(rec.action): caption templates changed after it. Use force to overwrite.")
+          }
+          if !force {
+            let now = try CaptionHold.Sources(store)
+            var then = now
+            then.templates = bt
+            if let why = try CaptionHold.undoConflict(from: now, to: then, restoring: Set(before.clips.map(\.id)), store: store) {
+              throw EngineError("Can't undo \(rec.action): \(why). Use force to overwrite.")
+            }
+          }
+          if cur != bt {
+            try store.db.run("DELETE FROM caption_templates")
+            for t in bt { try store.save(t) }
+            try Revalidation(store: store).run(adjustPlan: false)
+          }
+          restored.insert(Self.captionTemplatesMarker)
+        }
         for v in touched { try store.refreshState(videoId: v) }
         for v in result.changed {
           try store.logEvent("bulk", "Undid \(rec.action) (batch \(id.prefix(8)))", videoId: v)
@@ -794,10 +820,13 @@ public final class BulkActions: @unchecked Sendable {
     var settings: SettingsSnap? = nil
     /// Round 7: the whole hashtag group table, for actions that change groups (nil = not journaled).
     var hashtagSets: [HashtagSet]? = nil
+    /// v0.8.3: the whole caption template table, for actions that change templates (nil = not journaled).
+    var captionTemplates: [CaptionTemplate]? = nil
   }
 
   static let settingsMarker = "#settings"
   static let hashtagGroupsMarker = "#hashtag-groups"
+  static let captionTemplatesMarker = "#caption-templates"
 
   private func restoreHashtagSets(_ sets: [HashtagSet]) throws {
     try store.db.run("DELETE FROM hashtag_sets")

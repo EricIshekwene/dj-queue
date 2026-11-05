@@ -690,6 +690,26 @@ final class AppModel {
     journaled("Hashtag group “\(HashtagGroups.label(group))” saved") { try HashtagGroups.update(group, store: store, bulk: bulk).result }
   }
 
+  /// Deletes a caption template after asking (Settings and the editor), through the core path: clips with scheduled or posted
+  /// posts keep their captions, others that chose it go back to the default. Undoable.
+  func confirmDeleteTemplate(_ t: CaptionTemplate, undoHint: String, then done: @escaping () -> Void = {}) {
+    if let why = CaptionTemplates.blocker(of: t.id, settings: settings) { return show(why, error: true) }
+    let reach = (try? CaptionTemplates.impact(of: t.id, store: store))?.templateDeleteSummary ?? "Clips with scheduled or posted posts keep their captions."
+    confirm(ConfirmRequest(
+      title: "Delete “\(t.name)”?", message: "\(reach) \(undoHint)", verb: "Delete template", icon: "trash", destructive: true) { [self] in
+        if journaled("Template “\(t.name)” deleted", { try CaptionTemplates.delete(t, store: store, bulk: bulk).result }) {
+          done()
+        }
+      })
+  }
+
+  /// Saves a caption template edited in Settings through the core path. A blank name or text waits for more typing.
+  func saveTemplateEdit(_ t: CaptionTemplate) {
+    guard let old = (try? store.captionTemplates())?.first(where: { $0.id == t.id }), old != t,
+          !HashtagGroups.cleanName(t.name).isEmpty, !t.template.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    journaled("Template “\(t.name)” saved") { try CaptionTemplates.update(t, store: store, bulk: bulk).result }
+  }
+
   /// Saves a group added in Settings, the first time Eric changes it.
   func saveNewGroup(_ s: HashtagSet) -> Bool {
     journaled("Hashtag group “\(s.name)” saved") { try HashtagGroups.create(s, store: store, bulk: bulk).result }

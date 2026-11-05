@@ -102,6 +102,21 @@ public enum HashtagGroups {
       return parts.isEmpty ? "No active clip uses this group." : parts.joined(separator: " ")
     }
 
+    /// The same counts for a caption template. The edit form and Settings say the first, the delete confirm the second.
+    public var templateEditSummary: String {
+      var parts: [String] = []
+      if kept > 0 { parts.append("\(withPosts("keep")) the current caption.") }
+      if others > 0 { parts.append("\(clips(others, "other clip", "follow")) the change.") }
+      return parts.isEmpty ? "No active clip uses this template." : parts.joined(separator: " ")
+    }
+
+    public var templateDeleteSummary: String {
+      var parts: [String] = []
+      if kept > 0 { parts.append("\(withPosts("keep")) the current caption.") }
+      if others > 0 { parts.append("\(others == 1 ? "1 other clip goes" : "\(others) other clips go") back to the default template.") }
+      return parts.isEmpty ? "No active clip uses this template." : parts.joined(separator: " ")
+    }
+
     /// The edit form and Settings say this.
     public var editSummary: String {
       var parts: [String] = []

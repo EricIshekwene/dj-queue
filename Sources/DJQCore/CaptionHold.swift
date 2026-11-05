@@ -24,21 +24,20 @@ enum CaptionHold {
     versions.contains { $0.number == 1 } ? versions : [Version(number: 1)] + versions
   }
 
-  static func outputs(_ video: Video, _ versions: [Version], _ from: Sources, session: String) -> Outputs {
+  static func outputs(_ video: Video, _ versions: [Version], _ from: Sources, session: String, legacy: Bool = false) -> Outputs {
     var out: Outputs = [:]
     let vs = withFirst(versions)
     for number in vs.map(\.number) {
       let r = VersionResolver.resolve(vs, number: number, settings: from.settings, video: video)
       out[number] = Dictionary(uniqueKeysWithValues: Platform.allCases.map {
-        ($0, Captions.caption(for: $0, version: r, video: video, sessionName: session, sets: from.sets, templates: from.templates,
-                              settings: from.settings))
+        ($0, Captions.output($0, r, video, session, from.sets, from.templates, from.settings, legacy: legacy))
       })
     }
     return out
   }
 
-  static func outputs(_ video: Video, _ from: Sources, store: Store) throws -> Outputs {
-    outputs(video, try store.versions(videoId: video.id), from, session: try store.sessionName(for: video))
+  static func outputs(_ video: Video, _ from: Sources, store: Store, legacy: Bool = false) throws -> Outputs {
+    outputs(video, try store.versions(videoId: video.id), from, session: try store.sessionName(for: video), legacy: legacy)
   }
 
   /// Clips with scheduled or posted posts whose captions differ between two sets of sources.

@@ -13,6 +13,8 @@ struct CaptionsSettings: View {
   /// Groups added here and not changed yet. They aren't saved, so one Eric never fills in goes away with the screen.
   @State private var drafts: Set<String> = []
   @State private var titles: [TitleTemplate] = []
+  /// Each template's save waiting for typing to pause.
+  @State private var templateSaves: [String: Task<Void, Never>] = [:]
 
   private var defaults: NewClipDefaults { model.settings.defaults }
 
@@ -34,7 +36,7 @@ struct CaptionsSettings: View {
       DSButton("Add title template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add a YouTube title template") { addTitle() }
         .padding(.top, DS.space.xs)
 
-      SettingsGroupHeader("Caption templates", description: "{text} overlay text on one line · {tag} raw marker tag · {set} session name · {hashtags} the clip's hashtags")
+      SettingsGroupHeader("Caption templates", description: "{text} overlay text on one line · {title} the clip's title · {set} session name · {link} the link line · {tag} raw marker tag · {hashtags} the clip's hashtags. \(CaptionTemplates.hashtagHint).")
       ForEach($templates) { $t in
         templateRow($t)
       }
@@ -65,30 +67,31 @@ struct CaptionsSettings: View {
 
   private func templateRow(_ t: Binding<CaptionTemplate>) -> some View {
     let id = t.wrappedValue.id
-    let usedBy = templateUse(id)
+    let usedBy = CaptionTemplates.blocker(of: id, settings: model.settings)
     return VStack(alignment: .leading, spacing: DS.space.xs) {
       HStack(spacing: DS.space.xs) {
         DSTextField(placeholder: "Template name", text: t.name, size: .sm).frame(width: 240)
           .accessibilityLabel("Template name")
         if id == defaults.captionTemplateId { DSBadge("Default", style: .soft(.neutral), help: "New clips use this template") }
         Spacer(minLength: 0)
-        DSIconButton("trash", tooltip: "Delete this template…", size: .sm,
-                     disabledReason: usedBy.map { "Used by New clip defaults (\($0)) — choose another template there first" }) {
+        DSIconButton("trash", tooltip: "Delete this template…", size: .sm, disabledReason: usedBy) {
           deleteTemplate(t.wrappedValue)
         }
       }
-      DSTextArea(placeholder: "{text}\n\n{hashtags}", text: t.template, minHeight: 104, maxHeight: 180)
+      DSTextArea(placeholder: "{text}\n\n{hashtags}", text: t.template, hint: CaptionTemplates.hashtagHint, minHeight: 104, maxHeight: 180)
         .accessibilityLabel("Template")
     }
     .padding(.vertical, DS.space.md)
     .overlay(alignment: .bottom) { DSSeparator() }
-    .onChange(of: t.wrappedValue) { _, nt in try? model.store.save(nt) }
-  }
-
-  private func templateUse(_ id: String) -> String? {
-    if defaults.captionTemplateId == id { return "caption template" }
-    if let p = defaults.platformCaptionTemplates.first(where: { $0.value == id })?.key { return p.displayName }
-    return nil
+    // Saved once typing pauses: each save is a journaled change that can freeze clips with posts.
+    .onChange(of: t.wrappedValue) { _, nt in
+      templateSaves[id]?.cancel()
+      templateSaves[id] = Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(600))
+        guard !Task.isCancelled else { return }
+        model.saveTemplateEdit(nt)
+      }
+    }
   }
 
   private func addTemplate() {
@@ -97,17 +100,9 @@ struct CaptionsSettings: View {
     templates.append(t)
   }
 
-  /// Asks first: templates aren't in the undo history, and clips that chose this one lose it.
   private func deleteTemplate(_ t: CaptionTemplate) {
-    model.confirm(ConfirmRequest(
-      title: "Delete “\(t.name)”?",
-      message: "Clips that chose this template show “Missing template” until you pick another. You can't undo this.",
-      verb: "Delete template", icon: "trash", destructive: true) {
-        if model.perform("Template “\(t.name)” deleted", { try model.store.deleteCaptionTemplate(t.id) }) {
-          templates.removeAll { $0.id == t.id }
-          model.revalidateStages()
-        }
-      })
+    templateSaves[t.id]?.cancel()
+    model.confirmDeleteTemplate(t, undoHint: "Undo (⌘Z) brings it back.") { templates.removeAll { $0.id == t.id } }
   }
 
   // MARK: Hashtag groups

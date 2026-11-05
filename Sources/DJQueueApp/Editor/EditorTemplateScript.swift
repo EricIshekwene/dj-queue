@@ -85,11 +85,42 @@ enum EditorTemplateScript {
     func captionView() -> NSTextView? {
       EditorCaptionScript.textViews(in: host).first { !$0.isFieldEditor && $0.isEditable && $0.string == model.mainCaption }
     }
-    /// The action sits between the Template dropdown and the Caption label, just above the caption field.
-    func clickUnderTemplate() async {
+    /// The actions sit between the Template dropdown and the Caption label, just above the caption field: New template, then
+    /// Set as default when it's offered.
+    func clickUnderTemplate(_ x: CGFloat) async {
       guard let c = captionView() else { note("no caption field"); return }
       let f = c.convert(c.bounds, to: nil)
-      await click(NSPoint(x: f.minX + 40, y: f.maxY + 70))
+      await click(NSPoint(x: f.minX + x, y: f.maxY + 70))
+    }
+    func textField(_ placeholder: String) -> NSTextField? {
+      EditorGroupScript.fields(in: host).first { $0.placeholderString == placeholder }
+    }
+    func type(_ text: String, into e: NSTextView?) async {
+      guard let e else { note("no text view"); return }
+      window.makeFirstResponder(e)
+      e.selectAll(nil)
+      e.insertText(text, replacementRange: e.selectedRange())
+      await wait(300)
+    }
+    func type(_ text: String, into f: NSTextField?) async {
+      guard let f else { note("no field"); return }
+      window.makeFirstResponder(f)
+      await wait(100)
+      guard let e = f.currentEditor() as? NSTextView else { note("no field editor"); return }
+      e.selectAll(nil)
+      for ch in text { e.insertText(String(ch), replacementRange: e.selectedRange()) }
+      await wait(300)
+    }
+    func press(return _: Void) async {
+      if let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                  windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+                                  isARepeat: false, keyCode: 36) {
+        window.sendEvent(e)
+      }
+      await wait(800)
+    }
+    func templateBody() -> NSTextView? {
+      EditorCaptionScript.textViews(in: host).first { !$0.isFieldEditor && $0.isEditable && $0.string == model.templateForm?.template }
     }
 
     // Set as default
@@ -100,7 +131,7 @@ enum EditorTemplateScript {
     await wait(800)
     check("the action is offered for a chosen template", model.defaultCandidate?.id == "short")
     await shot("set-as-default-visible")
-    await clickUnderTemplate()
+    await clickUnderTemplate(170)
     await wait(800)
     check("the button sets the default", defaultId() == "short")
     check("the label follows at once", model.defaults.captionTemplateId == "short")
@@ -128,6 +159,87 @@ enum EditorTemplateScript {
     check("Undo puts the default back", defaultId() == "set-link" && model.defaults.captionTemplateId == "set-link")
     check("Undo unpins the scheduled clip", (try? store.versions(videoId: scheduled))?.first?.captionTemplateId == nil && posted() == postedBefore)
     await shot("after-undo")
+
+    // Own templates
+    model.setCaptionTemplate(nil)
+    await wait(600)
+    await clickUnderTemplate(50)
+    check("New template opens the form", model.templateForm != nil)
+    await shot("template-form-new")
+    await type("Full set plug", into: textField("e.g. Full set plug"))
+    await type("{text} #mine\n\n{link}\n{hashtags}", into: templateBody())
+    await shot("template-form-filled")
+    await type("Short", into: textField("e.g. Full set plug"))
+    await wait(300)
+    await shot("template-form-duplicate-name")
+    await type("Full set plug", into: textField("e.g. Full set plug"))
+    await press(return: ())
+    let made = ((try? store.captionTemplates()) ?? []).first { $0.name == "Full set plug" }
+    check("Return saves the template", made?.template == "{text} #mine\n\n{link}\n{hashtags}")
+    check("the form closes", model.templateForm == nil)
+    check("it goes on for this clip", model.resolved.captionTemplateId == made?.id)
+    check("the field shows it, tag and link", model.mainCaption.contains("#mine") && model.mainCaption.contains(Defaults.captionLink))
+    await shot("template-saved-on")
+
+    model.flushAndWait()
+    let chosen = ids.first { $0 != video && $0 != scheduled && $0 != fresh } ?? fresh
+    var pin = Version(number: 1)
+    pin.captionTemplateId = made?.id
+    pin.text = "Scheduled words"
+    try? store.save(pin, videoId: chosen)
+    _ = try? store.db.run("""
+      INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+      VALUES('tpl-post-2',?,'instagram',1,1,'regular',0,'planned','manual',0,0)
+      """, [chosen])
+    func scheduledCaption() -> String {
+      guard let v = try? store.video(id: chosen), let r = try? store.resolvedVersion(videoId: chosen, number: 1),
+            let name = try? store.session(id: v.sessionId)?.name, let sets = try? store.hashtagSets(),
+            let templates = try? store.captionTemplates(), let settings = try? store.settings() else { return "?" }
+      return Captions.caption(for: .instagram, version: r, video: v, sessionName: name, sets: sets, templates: templates, settings: settings)
+    }
+    let frozenBefore = scheduledCaption()
+    model.openTemplateForm(model.selectedTemplate)
+    check("edit counts the scheduled clip", model.templateForm?.impact?.kept == 1)
+    await wait(600)
+    await shot("template-form-edit")
+    await type("Edited {text}\n{hashtags}", into: templateBody())
+    if let f = model.templateForm { check("edit saves", model.saveTemplate(name: f.name, template: "Edited {text}\n{hashtags}")) }
+    await wait(800)
+    check("this clip follows the edit", model.mainCaption.hasPrefix("Edited"))
+    check("the scheduled caption didn't move", scheduledCaption() == frozenBefore)
+    await shot("template-edited")
+    if let t = made {
+      var edited = t
+      edited.template = "Edited {text}\n{hashtags}"
+      app.confirmDeleteTemplate(edited, undoHint: "Undo on the message that follows brings it back.")
+      note("confirm says: \(app.pendingConfirm?.message ?? "nothing")")
+      // The edit above froze the scheduled clip, so it no longer builds from this template.
+      check("delete asks first, with the count", app.pendingConfirm?.message.contains("1 other clip goes back to the default template") == true)
+      let confirm = app.pendingConfirm?.action
+      app.pendingConfirm = nil
+      confirm?()
+      await wait(1500)
+      check("delete removes it", ((try? store.captionTemplates()) ?? []).first { $0.id == t.id } == nil)
+      check("the scheduled caption survives the delete", scheduledCaption() == frozenBefore)
+      check("this clip goes back to the default", model.resolved.captionTemplateId == nil && !model.captionIsWritten)
+      await shot("template-deleted")
+      if let b = app.undoHistory.top?.batchId { app.undo(batch: b) }
+      await wait(1500)
+      check("Undo brings it back and on", model.resolved.captionTemplateId == t.id && model.templates.contains { $0.id == t.id })
+      check("the scheduled caption still reads the same", scheduledCaption() == frozenBefore)
+    }
+    if let def = model.templates.first(where: { $0.id == model.defaults.captionTemplateId }) {
+      check("the default can't be deleted", CaptionTemplates.blocker(of: def.id, settings: model.settings) != nil)
+      app.confirmDeleteTemplate(def, undoHint: "")
+      check("deleting it is refused, no dialog", app.pendingConfirm == nil && ((try? store.captionTemplates()) ?? []).contains { $0.id == def.id })
+    }
+    model.typeCaption("Hand words #typed")
+    model.commitCaptionDraft()
+    await wait(400)
+    model.openSaveAsTemplate()
+    check("Save as keeps hand-typed tags", model.templateForm?.template == "Hand words #typed\n\n{hashtags}")
+    await shot("template-save-as")
+    model.templateForm = nil
 
     note(failed == 0 ? "all passed" : "\(failed) failed")
     try? log.joined(separator: "\n").write(to: out.appendingPathComponent("tpl-checks-\(appearance).txt"), atomically: true, encoding: .utf8)
