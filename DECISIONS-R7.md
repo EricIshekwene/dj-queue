@@ -101,3 +101,88 @@ groups" copy) are D2–D6 in the session record. Routine ones, one line each wit
 - YouTube title: only a placeholder, the template editable only in New clip defaults as raw text → picker + real
   editable title, templates in Settings (C5).
 - Typing a long caption redrew the whole editor and the overlay → fixed (15).
+
+## v0.8.1 — make hashtag groups from the editor
+
+Eric: "allow me to create hashtags groups from within the editor".
+
+1. **Inline form under the chips, not a popover.** The caption stays in view and updates in place, and a typed caption keeps
+   its place. A native popover is a separate window that would take the key window away from the field.
+2. **New group is the main path, also in the empty state;** "Manage in Settings" stays beside it. The form replaces both while
+   it's open, so Esc never has two meanings.
+3. **Same table as Settings and `djq` (`hashtag_sets`).** Rules live in core `HashtagGroups` (shared with `djq hashtag-groups
+   add`): tags split on spaces, commas and new lines, each through `Captions.normalizeTag`, duplicates dropped.
+4. **Duplicate name (ignoring case and outer spaces): Save is refused, with the reason on the field and the button.** Merging
+   would silently change a group other clips use, and two chips with one name can't be told apart (and `djq` can't address
+   them). Editing a group may keep its name, even one another group shares. `djq` refuses too (review F4); Settings' rows still
+   allow duplicates.
+5. **Saving a new group is journaled (`hashtag-group-add`, `djq bulk undo` can take it back) but isn't in the clip's ⌘Z.** ⌘Z
+   takes the group off this clip and keeps the group. The UI doesn't mention it: the chip stays there, off.
+6. **Focus: Save leaves the keyboard nowhere; Cancel/Esc goes back to the caption if Eric was typing there.** After Save a focused
+   text field would take ⌘Z for its own typing instead of taking the group off; with nothing focused ⌘Z undoes the toggle and
+   Space plays. ↩ in Name goes to Hashtags (or saves when tags are already there); ↩ in Hashtags saves.
+7. **Edit and delete are on the chip's context menu (cheap, so done).** Edit reuses the form. Delete is Settings' code moved to
+   `AppModel.confirmDeleteGroup`: same confirm, same journal, Undo on the toast. The editor's confirm doesn't promise ⌘Z, because
+   ⌘Z in the editor belongs to the clip. In the snapshot harnesses (no `AppModel`) the Delete item is absent.
+8. **Editing a group swaps its tags in this clip's written caption (one undo step); other clips without posts follow decision 32.**
+   The clip on screen would otherwise visibly disagree with the group just saved. Clips with posts are decision 16. Edits
+   revalidate (tags can push a clip over a limit); a new group doesn't (no clip uses it yet).
+9. **The editor re-reads groups on ChangeSignal,** so Settings over the editor, `djq` and Undo on a delete toast reach the chips.
+   Before this a group made in Settings didn't appear until the clip reloaded.
+10. **The form opens below the fold when New group sits at the bottom edge,** so the inspector's `ScrollViewReader` brings it in
+    (`NSView.scrollToVisible` does nothing in a SwiftUI scroll view).
+11. **Save is `outline`:** the editor's one primary is Done, and `secondary` disappears on the form's sunken fill.
+12. **`DSTextField` gained `focusToken` and `autoFocus`,** the same contract as `DSSearchField`. No new components.
+13. **Bug found on the way, fixed: ⌘Z could run Redo.** The live script showed a plain ⌘Z firing the hidden ⇧⌘Z button on about half
+    the launches (two SwiftUI shortcuts sharing "z"; which one won changed per launch), leaving the change in place. Undo/redo is now
+    read from the key event in the editor's key monitor (`EditorUndoKeys`), matched on the character so other keyboard layouts work.
+14. **Model checks live in `DJQ_EDITOR_SELFTEST` and `DJQ_EDITOR_GROUP_SCRIPT`,** not `swift test`: the test target imports only
+    DJQCore. Core tests cover the rules; the script drives the real fields, a mouse event through the window's hit testing, and
+    keys through AppKit, all handed to this process only.
+15. **Not verified by machine (Eric to try by hand):** ⌘Z and ⇧⌘Z in Caption and in the form's Name field (the decision is tested,
+    `sendAction` needs a real key window); the disabled Save tooltip on hover; the chip's right-click menu (macOS blocks synthetic
+    pointer input into a real menu; its actions are covered by the self-test and script).
+
+### v0.8.1 review fixes
+
+16. **One core path for group edit and delete: `HashtagGroups.update` / `.delete`, used by the editor, Settings and `djq` (F1, F2).**
+    Clips with scheduled or posted posts (`clipsWithPosts`) that use the group are frozen first, as schema 6 did: every version's
+    resolved hashtags go into its extra hashtags and ALL its group ids are cleared, in the same `record` with `ids:`, so undo
+    restores them. All ids, not just this group's: moving one group's tags would reorder them, and order is part of the caption and
+    the hash. Captions, YouTube tags and Postiz content hashes stay byte-identical; the test covers template, `{hashtags}`, literal and
+    default-group clips for both edit and delete, and fails on all of them with the freeze off. A rename reaches nothing and freezes nothing.
+17. **The dialog, edit form and Settings give the counts** ("N clips with scheduled or posted posts keep these tags"), and the false
+    "captions you wrote keep their text" is gone: tags typed into a caption stay, nothing wider is promised.
+18. **Settings' group rows save 600 ms after typing stops,** through the same path: each save is now a journaled change that can
+    freeze clips. A pending save for a group deleted meanwhile leaves it deleted.
+19. **A frozen clip on screen reloads its versions and its ⌘Z history starts over** (the steps refer to versions that changed under
+    them). Tags saved on such a clip say so in the toast.
+20. **While an overlay covers the editor, ⌘Z belongs to the app (F3),** so Settings' "Undo (⌘Z) brings it back" is true over the editor
+    too. `EditorLogic.undoKey` makes that call and has `swift test` coverage (F10).
+21. **`djq hashtag-groups add` and `edit` apply `HashtagGroups.problem` (F4):** blank names, no tags and duplicate names are refused, and
+    the cleaned name is printed. This reverses part of decision 4.
+22. **An edit form closes when its group goes away, and Save never recreates it (F6).** After an edit that swapped this clip's caption,
+    the toast says ⌘Z restores only the caption (F7): the group edit is journaled separately.
+23. **`DJQ_NO_SIGNAL=1` now lives in `ChangeSignal` (F8).** Every `--snapshot` run sets it, as does the test fixture; the signal then stays
+    inside the process, so the scripts still exercise the editor's reload and a dev run can't nudge the installed app.
+    The local post runs off the main queue: an observer on `.main` makes the poster wait for it, which deadlocked a live run from the
+    main actor. A main-queue `async` wouldn't help (that block would wait on the same queue). A test posts from the main actor.
+
+### v0.8.1 re-review fixes
+
+24. **An editor session never claims a group change (R1).** `BulkActions.commit` moves the session past every `hashtag-group-edit` or
+    `-delete` batch since it opened, wherever it came from (the app, or `djq` in another process), so closing the editor journals no
+    "Edits to X" for a freeze and that Undo can't un-freeze a scheduled clip. Done in core rather than only in the app so `djq` is covered.
+25. **Group edits from the editor and Settings go into the app's history (R1, R4):** toast with Undo, ⌘Z after the editor closes. Settings
+    now shows that toast after each typing pause.
+26. **Unsaved changes merge with a freeze made underneath them (R2).** `HashtagGroups.keepingFreeze` takes each frozen version's groups and
+    extra tags from the store and keeps the rest of the unsaved work; the clip's ⌘Z history starts over. Known limit: a `djq bulk undo` of
+    a freeze while the editor has unsaved changes on that clip isn't merged back; the next save keeps the freeze, which is the safe side.
+27. **Undoing an older group batch is refused when it would change a clip with posts outside that batch (R3):** such a clip took up the group
+    later. `--force` still overrides, as for every other undo conflict.
+28. **⌘Z over an overlay stops at edits to the clip open behind it (R5):** "Close the editor to undo…". Those batches are split from the open
+    session, so the editor's memory sits on top of them and an undo would be overwritten by the next save.
+29. **Known, not changed:** Undo of a group edit leaves a caption already swapped by decision 8 as it is ("⌘Z restores only this caption" says
+    which step undoes it). Fixing it would tie one clip's text to a shared group's undo.
+30. **Copy (R6):** "No active clip uses this group" (excluded and long-form clips without posts aren't counted); if the count can't be read the
+    dialog gives the rule without a number.

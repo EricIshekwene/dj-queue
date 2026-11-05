@@ -91,6 +91,10 @@ struct DSTextField: View {
   var isSearch = false
   /// Secure entry (API keys): the typed characters show as dots and never come back as text.
   var isSecure = false
+  /// Changing it moves the keyboard here (same contract as `DSSearchField.focusToken`).
+  var focusToken = 0
+  /// Takes the keyboard when it appears (an inline form's first field).
+  var autoFocus = false
   var onSubmit: (() -> Void)? = nil
   @FocusState private var focused: Bool
   @State private var hovering = false
@@ -98,7 +102,9 @@ struct DSTextField: View {
 
   init(_ label: String? = nil, placeholder: String, text: Binding<String>, icon: String? = nil, hint: String? = nil,
        error: String? = nil, limit: Int? = nil, disabledReason: String? = nil, size: DSButtonSize = .md, isSearch: Bool = false,
-       isSecure: Bool = false, onSubmit: (() -> Void)? = nil) {
+       isSecure: Bool = false, focusToken: Int = 0, autoFocus: Bool = false, onSubmit: (() -> Void)? = nil) {
+    self.focusToken = focusToken
+    self.autoFocus = autoFocus
     self.isSecure = isSecure
     self.label = label
     self.placeholder = placeholder
@@ -143,6 +149,8 @@ struct DSTextField: View {
       .onHover { hovering = $0 }
       .dsTooltip(disabledReason)
       .dsAnimation(DS.motion.hover, value: isFocused)
+      .onChange(of: focusToken) { _, _ in focused = true }
+      .onAppear { if autoFocus { focused = true } }
     }
   }
 }

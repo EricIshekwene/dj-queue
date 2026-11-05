@@ -23,8 +23,12 @@ struct EditorView: View {
   private var trimPlatform: Platform?
 
   init(store: Store, videoId: String, videoIds: [String], onDone: @escaping () -> Void, trimPlatform: Platform? = nil,
-       headerAccessory: ((String) -> AnyView)? = nil) {
-    _model = StateObject(wrappedValue: EditorModel(store: store, videoId: videoId))
+       appHooks: EditorAppHooks = EditorAppHooks(), headerAccessory: ((String) -> AnyView)? = nil) {
+    _model = StateObject(wrappedValue: {
+      let m = EditorModel(store: store, videoId: videoId)
+      m.appHooks = appHooks
+      return m
+    }())
     self.videoIds = videoIds
     self.onDone = onDone
     self.trimPlatform = trimPlatform
@@ -41,7 +45,6 @@ struct EditorView: View {
   var body: some View {
     VStack(spacing: 0) {
       EditorHeader(model: model, videoIds: videoIds, done: done, accessory: headerAccessory)
-        .background(EditorUndoShortcuts(model: model))
       DSSeparator()
       HStack(alignment: .top, spacing: 0) {
         VStack(spacing: DS.space.sm) {
@@ -99,8 +102,10 @@ struct EditorView: View {
     onDone()
   }
 
-  /// Space play/pause · I / O trim at playhead · ←/→ step a frame (⇧ ten). Ignored while typing.
+  /// ⌘Z / ⇧⌘Z (`EditorUndoKeys`) · Space play/pause · I / O trim at playhead · ←/→ step a frame (⇧ ten). The rest is
+  /// ignored while typing.
   private func handleKey(_ e: NSEvent) -> Bool {
+    if EditorUndoKeys.handle(e, model: model) { return true }
     if e.window?.firstResponder is NSTextView { return false }
     let mods = e.modifierFlags.intersection([.command, .option, .control])
     guard mods.isEmpty, !model.fileMissing, model.video != nil else { return false }

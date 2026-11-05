@@ -19,6 +19,7 @@ final class Fixture {
   init(clips: [(tag: String, duration: Double)] = Fixture.defaultClips, longform: Bool = true,
        sessionName: String = "2026-10-23 – Afroween Jazz Piano") throws {
     PostizLive.disabled = true  // tests never reach Postiz or the real Keychain
+    setenv("DJQ_NO_SIGNAL", "1", 1)  // nor the installed app
     dir = FileManager.default.temporaryDirectory.appendingPathComponent("djq-test-\(UUID().uuidString)")
     let root = dir.appendingPathComponent("DJ Video")
     paths = Paths(root: root, appSupport: dir.appendingPathComponent("support"), logs: dir.appendingPathComponent("logs"),

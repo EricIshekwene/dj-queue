@@ -74,12 +74,8 @@ struct CLIError: Error, CustomStringConvertible {
   init(_ s: String) { description = s }
 }
 
-/// Tells the app (and its engine) the database changed. `DJQ_NO_SIGNAL=1` turns it off, so tests that run this binary
-/// against a throwaway database never make the installed DJ Queue reload or tick.
-func postChangeSignal() {
-  guard ProcessInfo.processInfo.environment["DJQ_NO_SIGNAL"] != "1" else { return }
-  ChangeSignal.post()
-}
+/// Tells the app (and its engine) the database changed (`DJQ_NO_SIGNAL=1`: see `ChangeSignal`).
+func postChangeSignal() { ChangeSignal.post() }
 
 final class PrintNotifier: Notifier, @unchecked Sendable {
   func deliver(_ n: AppNotification) { print("  notify  \(n.title) — \(n.body)") }
@@ -437,7 +433,7 @@ func run() throws -> Int32 {
       return 0
     }
     args.removeFirst()
-    func tags(_ raw: String) -> [String] { raw.split(whereSeparator: { $0 == " " || $0 == "," }).map { Captions.normalizeTag(String($0)) }.filter { !$0.isEmpty } }
+    func tags(_ raw: String) -> [String] { HashtagGroups.parseTags(raw) }
     func group(_ id: String) throws -> HashtagSet {
       let m = try store.hashtagSets().filter { $0.id.hasPrefix(id) || $0.name.lowercased() == id.lowercased() }
       guard m.count == 1 else { throw CLIError(m.isEmpty ? "no hashtag group \(id)" : "\(id) matches \(m.count) groups") }
@@ -446,26 +442,25 @@ func run() throws -> Int32 {
     let r: BulkResult
     switch sub {
     case "add":
-      let name = try arg(0, "group name"), t = tags(try arg(1, "\"#a #b\""))
-      let g = HashtagSet(id: newId(), name: name, category: "My groups", tags: t,
-                         sort: (try store.hashtagSets().map(\.sort).max() ?? -1) + 1)
-      r = try bulk.record("hashtag-group-add", hashtagGroups: true) { try store.save(g) }
-      print("added hashtag group \(g.id) “\(name)”: \(t.joined(separator: " "))")
+      let name = try arg(0, "group name"), t = tags(try arg(1, "\"#a #b\"")), all = try store.hashtagSets()
+      if let p = HashtagGroups.problem(name: name, tags: t, existing: all) { throw CLIError(p.message) }
+      let g = HashtagGroups.make(name: name, tags: t, existing: all)
+      r = try HashtagGroups.create(g, store: store, bulk: bulk).result
+      print("added hashtag group \(g.id) “\(g.name)”: \(t.joined(separator: " "))")
     case "edit":
       var g = try group(try arg(0, "group id"))
-      if let n = option("--name") { g.name = n }
+      if let n = option("--name") { g.name = HashtagGroups.cleanName(n) }
       if let t = option("--tags") { g.tags = tags(t) }
-      let gg = g
-      r = try bulk.record("hashtag-group-edit", hashtagGroups: true) { try store.save(gg) }
+      if let p = HashtagGroups.problem(name: g.name, tags: g.tags, existing: try store.hashtagSets(), editing: g.id) { throw CLIError(p.message) }
+      let change = try HashtagGroups.update(g, store: store, bulk: bulk)
+      r = change.result
       print("hashtag group \(g.id) “\(g.name)”: \(g.tags.joined(separator: " "))")
+      if !change.kept.isEmpty { print("\(change.kept.count) clip(s) with scheduled or posted posts keep the old tags") }
     case "delete":
       let g = try group(try arg(0, "group id"))
-      r = try bulk.record("hashtag-group-delete", settings: true, hashtagGroups: true) {
-        try store.deleteHashtagSet(g.id)
-        var st = try store.settings()
-        if st.defaults.hashtagSetIds.contains(g.id) { st.defaults.hashtagSetIds.removeAll { $0 == g.id }; try store.save(st) }
-      }
-      print("deleted hashtag group “\(g.name)” (clips using it lose its tags; written captions keep their text)")
+      let change = try HashtagGroups.delete(g, store: store, bulk: bulk)
+      r = change.result
+      print("deleted hashtag group “\(g.name)” (\(change.kept.count) clip(s) with scheduled or posted posts keep its tags; other clips lose them, except tags typed into a caption)")
     default: throw CLIError("hashtag-groups: list | add | edit | delete")
     }
     if let b = r.batchId { print("  undo: djq bulk undo \(short(b))") }

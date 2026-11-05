@@ -6,6 +6,19 @@ import Foundation
 public enum EditorLogic {
   public static let maxZoom = 4.0
 
+  // MARK: ⌘Z / ⇧⌘Z
+
+  public enum UndoKey: Equatable, Sendable { case ignore, fieldUndo, fieldRedo, undo, redo }
+
+  /// What a key press means in the editor. `covered`: an overlay (Settings, a dialog) is over the editor, so the key is
+  /// the overlay's and the hidden clip's history stays put. Matched on the character so other keyboard layouts work.
+  public static func undoKey(characters: String?, command: Bool, shift: Bool, option: Bool, control: Bool,
+                             textEditing: Bool, covered: Bool) -> UndoKey {
+    guard !covered, command, !option, !control, characters?.lowercased() == "z" else { return .ignore }
+    if textEditing { return shift ? .fieldRedo : .fieldUndo }
+    return shift ? .redo : .undo
+  }
+
   // MARK: Crop (source pixels, always the renderer's even-pixel rect)
 
   /// The rect the export crops with (`Media.pixelCrop`), as a CropRect.

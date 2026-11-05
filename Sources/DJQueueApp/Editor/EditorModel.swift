@@ -22,6 +22,29 @@ enum EditorPlatforms {
   static let order: [Platform] = [.tiktok, .instagram, .facebook, .youtube, .threads, .x]
 }
 
+/// The Caption section's inline hashtag group form: `id` nil = a new group, else the group being edited. `name` and
+/// `tags` only seed the form (it owns the text while Eric types, so keystrokes don't redraw the editor).
+struct EditorGroupForm: Identifiable, Equatable {
+  var editing: String?
+  var name = ""
+  var tags = ""
+  /// What saving an edit reaches, from when the form opened.
+  var impact: HashtagGroups.Impact?
+  var id: String { "\(editing ?? "new")|\(name)|\(tags)" }
+}
+
+/// What the app gives the editor (nil in the snapshot harnesses, which have no `AppModel`).
+struct EditorAppHooks {
+  /// Asks the app to delete a group (its confirm + journaled undo, same as Settings).
+  var deleteGroup: ((HashtagSet) -> Void)?
+  /// Journals the editor session so far, so a group change sits after it in the history (`splitEditorSession`).
+  var beforeGroupWrite: (() -> Void)?
+  /// A group edit landed: into the app's history (the session moves past it) with its Undo, saying `message`.
+  var afterGroupEdit: ((BulkResult, String) -> Void)?
+  /// True while an overlay covers the editor.
+  var isCovered: (() -> Bool)?
+}
+
 /// A caption length problem for one platform (live, from the in-memory version).
 struct EditorCaptionWarning: Identifiable, Hashable {
   var platform: Platform
@@ -76,6 +99,11 @@ final class EditorModel: ObservableObject {
   @Published var scrollTarget: EditorSection?
   /// Platform whose own caption field should open (Write an X caption).
   @Published var openPlatformCaption: Platform?
+  /// The hashtag group form, when it's open.
+  @Published var groupForm: EditorGroupForm?
+  var appHooks = EditorAppHooks()
+  var onDeleteGroup: ((HashtagSet) -> Void)? { appHooks.deleteGroup }
+  var isCovered: (() -> Bool)? { appHooks.isCovered }
   @Published var toast: String?
   /// Bumped when Title should take keyboard focus (header title click).
   @Published var focusTitle = 0
@@ -96,6 +124,7 @@ final class EditorModel: ObservableObject {
   private var overlayTask: Task<Void, Never>?
   private var overlayKey: OverlayKey?
   private var toastTask: Task<Void, Never>?
+  nonisolated(unsafe) private var groupObserver: (center: NotificationCenter, token: NSObjectProtocol)?
   private static let saveQueue = DispatchQueue(label: "com.djlovd.queue.editor.save", qos: .userInitiated)
 
   /// Blocks until every queued editor write has landed (the app journals the session after it).
@@ -116,6 +145,16 @@ final class EditorModel: ObservableObject {
     canvasMode = Self.defaults.string(forKey: "editor.canvasMode").flatMap(EditorCanvasMode.init) ?? .zones
     if !snapshotMode { Self.live = self }
     load(videoId)
+    // Groups changed elsewhere (Settings over the editor, `djq`, Undo on a delete toast) show up in the chips.
+    if !snapshotMode {
+      groupObserver = ChangeSignal.observe { [weak self] in
+        MainActor.assumeIsolated { self?.reloadGroups() }
+      }
+    }
+  }
+
+  deinit {
+    if let groupObserver { groupObserver.center.removeObserver(groupObserver.token) }
   }
 
   // MARK: Loading
@@ -181,6 +220,7 @@ final class EditorModel: ObservableObject {
     textSuggestions = []
     fileURL = nil
     openPlatformCaption = nil
+    groupForm = nil
     titleDraft = nil
     loading = true
     clearUndo()
@@ -706,6 +746,145 @@ final class EditorModel: ObservableObject {
   func setHashtagSets(_ ids: [String]) {
     let fb = fallback(\.hashtagSetIds, \.hashtagSetIds)
     retagging(coalesce: false) { $0.hashtagSetIds = Set(ids) == Set(fb) ? nil : ids }
+  }
+
+  /// One group on or off for this clip (a chip tap, or a group just made): one undo step.
+  func setGroup(_ id: String, on: Bool) {
+    var ids = sets.map(\.id).filter { resolved.hashtagSetIds.contains($0) }
+    ids.removeAll { $0 == id }
+    if on { ids.append(id) }
+    setHashtagSets(ids)
+  }
+
+  /// Why groups can't be made or changed here right now (nil = they can).
+  var groupsOffReason: String? {
+    if readOnly { return EditorView.readOnlyReason }
+    return video == nil ? "The clip is still loading" : nil
+  }
+
+  /// The form opens empty for a new group, or filled in for `group`.
+  func openGroupForm(_ group: HashtagSet? = nil) {
+    guard groupsOffReason == nil else { return }
+    guard let group else { groupForm = EditorGroupForm(); return }
+    let store = store
+    let impact = Self.saveQueue.sync { try? HashtagGroups.impact(of: group.id, store: store) }
+    groupForm = EditorGroupForm(editing: group.id, name: group.name, tags: group.tags.joined(separator: " "), impact: impact)
+  }
+
+  /// Saves the form into the same table Settings and `djq` use. A new group is available to every clip and goes on for
+  /// this one (its own undo step; the group itself stays after ⌘Z). A typed caption is applied first, so its text is kept.
+  @discardableResult
+  func saveGroup(name: String, tags raw: String) -> Bool {
+    guard groupsOffReason == nil else { return false }
+    let tags = HashtagGroups.parseTags(raw), editing = groupForm?.editing
+    guard HashtagGroups.problem(name: name, tags: tags, existing: sets, editing: editing) == nil else { return false }
+    commitCaptionDraft()
+    if let editing {
+      guard let old = sets.first(where: { $0.id == editing }) else {  // deleted while the form was open
+        groupForm = nil
+        show("That group was deleted")
+        return false
+      }
+      return updateGroup(old, name: name, tags: tags)
+    }
+    return createGroup(name: name, tags: tags)
+  }
+
+  private func createGroup(name: String, tags: [String]) -> Bool {
+    let group = HashtagGroups.make(name: name, tags: tags, existing: sets)
+    guard writeGroup({ try HashtagGroups.create(group, store: $0, bulk: $1) }) != nil else { return false }
+    groupForm = nil
+    setGroup(group.id, on: true)
+    show("“\(group.name)” saved and on for this clip")
+    return true
+  }
+
+  /// A clip with scheduled or posted posts was frozen by the core path, so it keeps what it has. Any other clip: its
+  /// written caption, on screen right now, gets the group's tags swapped in place (other clips' written captions are
+  /// their own text).
+  private func updateGroup(_ old: HashtagSet, name: String, tags: [String]) -> Bool {
+    var group = old
+    group.name = HashtagGroups.cleanName(name)
+    group.tags = tags
+    let written = resolved.caption, before = hashtags
+    let saved = group
+    guard let change = writeGroup({ try HashtagGroups.update(saved, store: $0, bulk: $1) }) else { return false }
+    groupForm = nil
+    guard sets.contains(where: { $0.id == saved.id }) else {  // deleted just before Save; the core path left it deleted
+      fieldRevision &+= 1
+      show("That group was deleted")
+      return false
+    }
+    let after = hashtags
+    let swap = !change.kept.contains(videoId) && !written.isEmpty && !written.contains("{hashtags}") && before != after
+    let message = change.kept.contains(videoId) ? "“\(group.name)” saved. This clip keeps its tags: it has scheduled or posted posts"
+      : swap ? "“\(group.name)” saved. ⌘Z restores only this caption" : "“\(group.name)” saved"
+    // Before this clip's own change below: the session moves past the group batch, then owns that change.
+    if let journal = appHooks.afterGroupEdit { journal(change.result, message) } else { show(message) }
+    if change.kept.contains(videoId) {
+      replaceVersions((try? store.versions(videoId: videoId)) ?? versions)
+    } else if swap {
+      updateVersion(coalesce: false) { $0.caption = Captions.replaceHashtags(in: written, old: before, new: after) }
+    } else {
+      fieldRevision &+= 1
+    }
+    return true
+  }
+
+  /// Versions changed under the editor (a freeze, or Undo of one): the history no longer applies to them.
+  private func replaceVersions(_ fresh: [Version]) {
+    versions = fresh
+    clearUndo()
+    fieldRevision &+= 1
+    refreshOverlay()
+  }
+
+  /// One journaled write through the core path, after the session so far and any pending editor saves; the chips re-read
+  /// the table.
+  private func writeGroup(_ write: @escaping @Sendable (Store, BulkActions) throws -> HashtagGroups.Change) -> HashtagGroups.Change? {
+    appHooks.beforeGroupWrite?()
+    flush()
+    let store = store
+    do {
+      let (change, fresh) = try Self.saveQueue.sync {
+        (try write(store, BulkActions(store: store)), try store.hashtagSets())
+      }
+      sets = fresh
+      if !snapshotMode { ChangeSignal.post() }
+      return change
+    } catch {
+      show("Couldn't save the group: \(error.localizedDescription)")
+      return nil
+    }
+  }
+
+  /// Picks up groups changed outside the editor, and what that did to this clip (frozen, or Undo of it). A typed caption
+  /// is applied first (the field re-reads the model after). An edit form for a group that's gone closes.
+  func reloadGroups() {
+    let store = store, id = videoId
+    Self.saveQueue.async { [weak self] in
+      guard let fresh = try? store.hashtagSets(), let saved = try? store.versions(videoId: id) else { return }
+      DispatchQueue.main.async {
+        guard let self, self.videoId == id, fresh != self.sets else { return }
+        self.commitCaptionDraft()
+        self.sets = fresh
+        if let e = self.groupForm?.editing, !fresh.contains(where: { $0.id == e }) {
+          self.groupForm = nil
+          self.show("That group was deleted")
+        }
+        if saved == self.versions {
+          self.fieldRevision &+= 1
+        } else if !self.pendingEdit, self.pendingVersions.isEmpty {
+          self.replaceVersions(saved)
+        } else if let merged = HashtagGroups.keepingFreeze(memory: self.versions, saved: saved) {
+          // Unsaved changes on a clip frozen underneath them: the next save keeps the freeze and Eric's work.
+          self.replaceVersions(merged)
+          self.pendingVersions.formUnion(merged.map(\.number))
+        } else {
+          self.fieldRevision &+= 1
+        }
+      }
+    }
   }
 
   func setExtraHashtags(_ tags: [String]) {
