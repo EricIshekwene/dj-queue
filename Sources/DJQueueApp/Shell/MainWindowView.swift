@@ -16,6 +16,7 @@ struct MainWindowView: View {
                    appHooks: EditorAppHooks(
                      deleteGroup: { model.confirmDeleteGroup($0, undoHint: "Undo on the message that follows brings it back.") },
                      beforeGroupWrite: { model.splitEditorSession() },
+                     afterGroupEdit: { model.groupEdited($0, message: $1) },
                      isCovered: { model.overlayCoversEditor }),
                    headerAccessory: { id in AnyView(EditorStageControl(model: model, videoId: id)) })
           .transition(.opacity)

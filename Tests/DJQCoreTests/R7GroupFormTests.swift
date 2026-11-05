@@ -195,6 +195,109 @@ import Testing
     #expect(try outputs(f, posts) == before)
   }
 
+  // MARK: The editor's session (re-review R1)
+
+  /// Reproduces the reviewer's sequence: nothing edited in the clip, so closing journals nothing and nothing can un-freeze it.
+  @Test(arguments: Row.allCases) func sessionNeverClaimsAFreeze(row: Row) throws {
+    let (f, posts, _) = try fixture(row)
+    let bulk = BulkActions(store: f.store), before = try outputs(f, posts)
+    let open = try bulk.begin("editor", ids: ["clip-0", "clip-1"])
+    let (first, next) = try bulk.split(open)
+    #expect(first.batchId == nil)
+    var edited = Self.group
+    edited.tags = ["#amapiano", "#new"]
+    let change = try HashtagGroups.update(edited, store: f.store, bulk: bulk)
+    #expect(change.kept == ["clip-0"])
+    #expect(try outputs(f, posts) == before)
+    let closed = try bulk.commit(next)
+    #expect(closed.batchId == nil, "closing the editor journals no “Edits to X”")
+    #expect(closed.changed.isEmpty)
+    #expect(try outputs(f, posts) == before)
+    // The group batch's own undo is the only way back, and it leaves the hash alone too.
+    _ = try bulk.undo(try #require(change.result.batchId))
+    #expect(try outputs(f, posts) == before)
+  }
+
+  /// Same for a session that was open when `djq` froze the clip from another process (no split, no history push).
+  @Test func sessionMovesPastAGroupChangeFromElsewhere() throws {
+    let (f, posts, _) = try fixture(.template)
+    let bulk = BulkActions(store: f.store), before = try outputs(f, posts)
+    let open = try bulk.begin("editor", ids: ["clip-0"])
+    try HashtagGroups.delete(Self.group, store: f.store, bulk: BulkActions(store: f.store))
+    #expect(try bulk.commit(open).batchId == nil)
+    #expect(try outputs(f, posts) == before)
+  }
+
+  /// Eric's own edits to the frozen clip are still the session's, and undoing them keeps the freeze.
+  @Test func sessionKeepsEricsOwnEditsOnTopOfAFreeze() throws {
+    let (f, posts, _) = try fixture(.template)
+    let bulk = BulkActions(store: f.store), before = try outputs(f, posts)
+    let open = try bulk.begin("editor", ids: ["clip-0"])
+    let change = try HashtagGroups.delete(Self.group, store: f.store, bulk: bulk)
+    #expect(change.kept == ["clip-0"])
+    var v = try #require(try f.store.versions(videoId: "clip-0").first)
+    v.text = "Eric's change"
+    try f.store.save(v, videoId: "clip-0")
+    let closed = try bulk.commit(open)
+    #expect(closed.changed == ["clip-0"])
+    _ = try bulk.undo(try #require(closed.batchId))
+    #expect(try outputs(f, posts) == before)
+    #expect(try f.store.versions(videoId: "clip-0").first?.hashtagSetIds == [])
+  }
+
+  // MARK: Unsaved editor changes (re-review R2)
+
+  /// The saved version is the freeze; the memory is what the open editor would have written over it.
+  @Test func unsavedEditsKeepAFreezeMadeElsewhere() throws {
+    let (f, posts, _) = try fixture(.template)
+    let before = try outputs(f, posts)
+    var memory = try f.store.versions(videoId: "clip-0")
+    memory[0].text = "Typed, not saved yet"
+    try HashtagGroups.delete(Self.group, store: f.store, bulk: BulkActions(store: f.store))
+    let merged = try #require(HashtagGroups.keepingFreeze(memory: memory, saved: try f.store.versions(videoId: "clip-0")))
+    #expect(merged[0].text == "Typed, not saved yet")
+    #expect(merged[0].hashtagSetIds == [])
+    for v in merged { try f.store.save(v, videoId: "clip-0") }
+    var restored = merged
+    restored[0].text = nil
+    for v in restored { try f.store.save(v, videoId: "clip-0") }
+    #expect(try outputs(f, posts) == before)
+  }
+
+  @Test func unsavedEditsStandWhenNothingWasFrozen() {
+    var saved = Version(number: 1), memory = Version(number: 1)
+    saved.hashtagSetIds = ["a"]
+    memory.hashtagSetIds = ["a", "b"]
+    #expect(HashtagGroups.keepingFreeze(memory: [memory], saved: [saved]) == nil)
+    memory.hashtagSetIds = []  // Eric turned everything off himself
+    saved.hashtagSetIds = []
+    saved.extraHashtags = ["#x"]
+    #expect(HashtagGroups.keepingFreeze(memory: [memory], saved: [saved]) == nil)
+  }
+
+  // MARK: Undo of an older group batch (re-review R3)
+
+  @Test func undoingAnAddCantTakeTagsOffAScheduledClip() throws {
+    let f = try Fixture()
+    try f.intake()
+    let bulk = BulkActions(store: f.store)
+    let g = HashtagGroups.make(name: "Later", tags: ["#later"], existing: [])
+    let add = try HashtagGroups.create(g, store: f.store, bulk: bulk)
+    var v = Version(number: 1)
+    v.hashtagSetIds = [g.id]
+    try f.store.save(v, videoId: "clip-0")
+    let now = f.clock.now.timeIntervalSince1970
+    try f.store.db.run("""
+      INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+      VALUES('p',?,'x',1,1,'regular',?,'planned','manual',?,?)
+      """, ["clip-0", now + 86400, now, now])
+    let id = try #require(add.result.batchId)
+    #expect(throws: (any Error).self) { try bulk.undo(id) }
+    #expect(try f.store.hashtagSets().contains { $0.id == g.id })
+    _ = try bulk.undo(id, force: true)
+    #expect(try !f.store.hashtagSets().contains { $0.id == g.id })
+  }
+
   @Test func finishedPostsWithoutOutputDontFreeze() throws {
     let (f, _, _) = try fixture(.template)
     try f.store.db.run("UPDATE platform_posts SET state='failed' WHERE video_id='clip-0'")
@@ -217,7 +320,7 @@ import Testing
       == "1 clip with scheduled or posted posts keeps these tags. 1 other clip loses them, except tags typed into a caption.")
     #expect(I(kept: 2, others: 0).editSummary == "2 clips with scheduled or posted posts keep the current tags.")
     #expect(I(kept: 0, others: 1).editSummary == "1 other clip follows the change, except tags typed into a caption.")
-    #expect(I(kept: 0, others: 0).deleteSummary == "No clip uses this group.")
+    #expect(I(kept: 0, others: 0).deleteSummary == "No active clip uses this group.")
   }
 
   @Test func editingAGroupThatAlreadySharesItsNameIsAllowed() {

@@ -167,3 +167,22 @@ Eric: "allow me to create hashtags groups from within the editor".
     inside the process, so the scripts still exercise the editor's reload and a dev run can't nudge the installed app.
     The local post runs off the main queue: an observer on `.main` makes the poster wait for it, which deadlocked a live run from the
     main actor. A main-queue `async` wouldn't help (that block would wait on the same queue). A test posts from the main actor.
+
+### v0.8.1 re-review fixes
+
+24. **An editor session never claims a group change (R1).** `BulkActions.commit` moves the session past every `hashtag-group-edit` or
+    `-delete` batch since it opened, wherever it came from (the app, or `djq` in another process), so closing the editor journals no
+    "Edits to X" for a freeze and that Undo can't un-freeze a scheduled clip. Done in core rather than only in the app so `djq` is covered.
+25. **Group edits from the editor and Settings go into the app's history (R1, R4):** toast with Undo, ⌘Z after the editor closes. Settings
+    now shows that toast after each typing pause.
+26. **Unsaved changes merge with a freeze made underneath them (R2).** `HashtagGroups.keepingFreeze` takes each frozen version's groups and
+    extra tags from the store and keeps the rest of the unsaved work; the clip's ⌘Z history starts over. Known limit: a `djq bulk undo` of
+    a freeze while the editor has unsaved changes on that clip isn't merged back; the next save keeps the freeze, which is the safe side.
+27. **Undoing an older group batch is refused when it would change a clip with posts outside that batch (R3):** such a clip took up the group
+    later. `--force` still overrides, as for every other undo conflict.
+28. **⌘Z over an overlay stops at edits to the clip open behind it (R5):** "Close the editor to undo…". Those batches are split from the open
+    session, so the editor's memory sits on top of them and an undo would be overwritten by the next save.
+29. **Known, not changed:** Undo of a group edit leaves a caption already swapped by decision 8 as it is ("⌘Z restores only this caption" says
+    which step undoes it). Fixing it would tie one clip's text to a shared group's undo.
+30. **Copy (R6):** "No active clip uses this group" (excluded and long-form clips without posts aren't counted); if the count can't be read the
+    dialog gives the rule without a number.

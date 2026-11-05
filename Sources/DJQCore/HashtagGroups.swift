@@ -76,7 +76,7 @@ public enum HashtagGroups {
       var parts: [String] = []
       if kept > 0 { parts.append("\(withPosts("keep")) these tags.") }
       if others > 0 { parts.append("\(clips(others, "other clip", "lose")) them, except tags typed into a caption.") }
-      return parts.isEmpty ? "No clip uses this group." : parts.joined(separator: " ")
+      return parts.isEmpty ? "No active clip uses this group." : parts.joined(separator: " ")
     }
 
     /// The edit form and Settings say this.
@@ -84,7 +84,7 @@ public enum HashtagGroups {
       var parts: [String] = []
       if kept > 0 { parts.append("\(withPosts("keep")) the current tags.") }
       if others > 0 { parts.append("\(clips(others, "other clip", "follow")) the change, except tags typed into a caption.") }
-      return parts.isEmpty ? "No clip uses this group." : parts.joined(separator: " ")
+      return parts.isEmpty ? "No active clip uses this group." : parts.joined(separator: " ")
     }
   }
 
@@ -151,6 +151,42 @@ public enum HashtagGroups {
       try store.save(group)
     }
     return Change(result: r, kept: kept)
+  }
+
+  /// Why going back from `current` to `saved` groups would change a clip with scheduled or posted posts that isn't being
+  /// restored by the same undo (nil = it wouldn't): such a clip took up the group after the batch.
+  static func undoConflict(from current: [HashtagSet], to saved: [HashtagSet], restoring: Set<String>, store: Store) throws -> String? {
+    func tags(_ list: [HashtagSet]) -> [String: [String]] {
+      Dictionary(list.map { ($0.id, $0.tags.map(Captions.normalizeTag)) }, uniquingKeysWith: { a, _ in a })
+    }
+    let now = tags(current), then = tags(saved)
+    for id in Set(now.keys).union(then.keys) where now[id] != then[id] {
+      let hit = try usage(of: id, store: store).kept.filter { !restoring.contains($0) }
+      guard !hit.isEmpty else { continue }
+      let name = (current + saved).first { $0.id == id }?.name ?? id
+      return "\(hit.count) clip\(hit.count == 1 ? "" : "s") with scheduled or posted posts use\(hit.count == 1 ? "s" : "") “\(name)”"
+    }
+    return nil
+  }
+
+  /// What the editor's unsaved `memory` should hold after a freeze landed underneath it (`saved`): each frozen version
+  /// takes its groups and extra tags from the store and keeps everything else Eric has in progress. Nil = nothing was
+  /// frozen, so unsaved changes stand. Saving `memory` as it was would write the group back and change a scheduled clip.
+  public static func keepingFreeze(memory: [Version], saved: [Version]) -> [Version]? {
+    let byNumber = Dictionary(saved.map { ($0.number, $0) }, uniquingKeysWith: { a, _ in a })
+    var out = memory, changed = false
+    for i in out.indices {
+      guard let s = byNumber[out[i].number], s.hashtagSetIds == [], s.extraHashtags != nil, out[i].hashtagSetIds != [],
+            s.extraHashtags != out[i].extraHashtags || out[i].hashtagSetIds != nil else { continue }
+      out[i].hashtagSetIds = []
+      out[i].extraHashtags = s.extraHashtags
+      changed = true
+    }
+    for s in saved where !out.contains(where: { $0.number == s.number }) {
+      out.append(s)
+      changed = true
+    }
+    return changed ? out.sorted { $0.number < $1.number } : nil
   }
 
   /// Deletes the group and takes it out of the default groups.

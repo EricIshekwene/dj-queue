@@ -39,6 +39,8 @@ struct EditorAppHooks {
   var deleteGroup: ((HashtagSet) -> Void)?
   /// Journals the editor session so far, so a group change sits after it in the history (`splitEditorSession`).
   var beforeGroupWrite: (() -> Void)?
+  /// A group edit landed: into the app's history (the session moves past it) with its Undo, saying `message`.
+  var afterGroupEdit: ((BulkResult, String) -> Void)?
   /// True while an overlay covers the editor.
   var isCovered: (() -> Bool)?
 }
@@ -813,18 +815,18 @@ final class EditorModel: ObservableObject {
       show("That group was deleted")
       return false
     }
+    let after = hashtags
+    let swap = !change.kept.contains(videoId) && !written.isEmpty && !written.contains("{hashtags}") && before != after
+    let message = change.kept.contains(videoId) ? "“\(group.name)” saved. This clip keeps its tags: it has scheduled or posted posts"
+      : swap ? "“\(group.name)” saved. ⌘Z restores only this caption" : "“\(group.name)” saved"
+    // Before this clip's own change below: the session moves past the group batch, then owns that change.
+    if let journal = appHooks.afterGroupEdit { journal(change.result, message) } else { show(message) }
     if change.kept.contains(videoId) {
       replaceVersions((try? store.versions(videoId: videoId)) ?? versions)
-      show("“\(group.name)” saved. This clip keeps its tags: it has scheduled or posted posts")
-      return true
-    }
-    let after = hashtags
-    if !written.isEmpty, !written.contains("{hashtags}"), before != after {
+    } else if swap {
       updateVersion(coalesce: false) { $0.caption = Captions.replaceHashtags(in: written, old: before, new: after) }
-      show("“\(group.name)” saved. ⌘Z restores only this caption")
     } else {
       fieldRevision &+= 1
-      show("“\(group.name)” saved")
     }
     return true
   }
@@ -870,8 +872,14 @@ final class EditorModel: ObservableObject {
           self.groupForm = nil
           self.show("That group was deleted")
         }
-        if saved != self.versions, !self.pendingEdit, self.pendingVersions.isEmpty {
+        if saved == self.versions {
+          self.fieldRevision &+= 1
+        } else if !self.pendingEdit, self.pendingVersions.isEmpty {
           self.replaceVersions(saved)
+        } else if let merged = HashtagGroups.keepingFreeze(memory: self.versions, saved: saved) {
+          // Unsaved changes on a clip frozen underneath them: the next save keeps the freeze and Eric's work.
+          self.replaceVersions(merged)
+          self.pendingVersions.formUnion(merged.map(\.number))
         } else {
           self.fieldRevision &+= 1
         }

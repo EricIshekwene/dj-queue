@@ -263,6 +263,47 @@ enum EditorGroupScript {
       }
       check("Undo brings it back, chips too", groups().count == 1 && model.sets.count == 1)
       check("Undo puts the group back on the clip", model.resolved.hashtagSetIds == [made.id] && model.mainCaption == scheduled)
+
+      // Re-review R1: an edit from the editor with the app's session open. Nothing in the clip was edited, so closing the
+      // session journals nothing, the edit has its Undo, and the scheduled caption doesn't move.
+      app.editorSession = try? app.bulk.begin("editor", ids: [video])
+      model.appHooks.beforeGroupWrite = { app.splitEditorSession() }
+      model.appHooks.afterGroupEdit = { app.groupEdited($0, message: $1) }
+      if let g = groups().first {
+        model.openGroupForm(g)
+        check("edit form counts this clip", model.groupForm?.impact?.kept == 1)
+        check("edit saves", model.saveGroup(name: g.name, tags: "#amapiano #changed"))
+      }
+      await wait(800)
+      check("the scheduled caption didn't move", model.mainCaption == scheduled)
+      check("the edit is in the app's history", app.undoHistory.top?.label.contains("saved") == true)
+      if let s = app.editorSession {
+        check("closing the session journals no “Edits to …”", (try? app.bulk.commit(s))?.batchId == nil)
+      }
+      app.editorSession = nil
+      model.appHooks.beforeGroupWrite = nil
+      model.appHooks.afterGroupEdit = nil
+
+      // Re-review R2: unsaved changes on the clip while something else freezes it (`djq` from another process).
+      let other = HashtagGroups.make(name: "Other", tags: ["#other"], existing: groups())
+      _ = try? HashtagGroups.create(other, store: store, bulk: BulkActions(store: store))
+      ChangeSignal.post()  // as `djq` does after a write
+      await wait(800)
+      model.setGroup(other.id, on: true)
+      model.flushAndWait()
+      let frozenCaption = model.mainCaption
+      model.setText("Unsaved words")
+      check("the change is unsaved", model.saving)
+      _ = try? HashtagGroups.delete(other, store: store, bulk: BulkActions(store: store))
+      ChangeSignal.post()
+      await wait(1500)
+      model.flushAndWait()
+      let stored = (try? store.versions(videoId: video))?.first
+      check("the freeze survives the editor's save", stored?.hashtagSetIds == [] && stored?.extraHashtags?.contains("#other") == true)
+      check("Eric's unsaved change survives too", stored?.text == "Unsaved words")
+      let tagsBefore = Captions.tags(in: frozenCaption), tagsAfter = Captions.tags(in: model.mainCaption)
+      note("tags before the freeze \(tagsBefore), after \(tagsAfter)")
+      check("the caption keeps the same tags in the same order", tagsBefore == tagsAfter && tagsAfter.contains("#other"))
     }
     return finish()
 

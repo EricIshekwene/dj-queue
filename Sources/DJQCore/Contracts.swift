@@ -134,8 +134,8 @@ public enum CopyrightResolution: Sendable, Hashable {
 /// Posted by any process after it changes the database, so the app/engine refresh promptly.
 public enum ChangeSignal {
   public static let name = "com.djlovd.queue.changed"
-  /// `DJQ_NO_SIGNAL=1` (tests, snapshots and scripted runs): the signal stays inside this process, so a dev run can never
-  /// make the installed DJ Queue reload or tick, and doesn't hear it either.
+  /// `DJQ_NO_SIGNAL=1` (tests, snapshots and scripted runs): `post` and `observe` stay inside this process, so a dev run can
+  /// never make the installed DJ Queue reload or tick. The app's and engine's own observers aren't part of those runs.
   public static var isLocal: Bool { ProcessInfo.processInfo.environment["DJQ_NO_SIGNAL"] == "1" }
 
   public static func post() {
