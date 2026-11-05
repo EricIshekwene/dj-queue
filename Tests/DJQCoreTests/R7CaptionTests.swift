@@ -72,7 +72,7 @@ import Testing
     for vid in ["clip-0", "clip-1", "clip-2", "clip-3"] { beforeOut[vid] = try legacyOutputs(raw, vid) }
     // Migrate (open with this build).
     let s = try Store(paths: f2.paths, clock: f2.clock, path: file2)
-    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 6)
+    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == Store.schemaVersion)
     // Clips with posts in flight or posted: byte-identical captions on every platform, same YouTube tags and title.
     for vid in ["clip-0", "clip-2", "clip-3"] {
       #expect(try outputs(s, vid, legacy: false) == beforeOut[vid], "\(vid)")
@@ -94,13 +94,17 @@ import Testing
     } == beforeRows)
     // One journaled batch; undo restores the groups, the defaults and the versions (outputs as before).
     let b = BulkActions(store: s)
+    // Schema 7's hold sits on top of this batch, so it goes first; these are the old captions, from before any cap.
+    if let rules = try b.batches().first(where: { $0.action == CaptionRulesMigration.action }) { try b.undo(rules.id, force: true) }
     let batch = try #require(try b.batches().first { $0.action == "hashtag-groups-migration" })
     let u = try b.undo(batch.id)
     #expect(u.skipped.isEmpty)
     #expect(Set(try s.hashtagSets().map(\.id)) == Set(Defaults.legacyHashtagSets.map(\.id) + ["mine"]))
     #expect(try s.settings().defaults.hashtagSetIds == Defaults.legacyDefaultHashtagSetIds)
+    var uncapped = try s.settings()
+    for p in Platform.allCases { uncapped.limits[p]?.maxHashtags = nil }
     for vid in ["clip-0", "clip-1", "clip-2", "clip-3"] {
-      #expect(try outputs(s, vid, legacy: false) == beforeOut[vid], "undo \(vid)")
+      #expect(try outputs(s, vid, legacy: false, settings: uncapped) == beforeOut[vid], "undo \(vid)")
     }
     #expect(beforeOut["clip-0"]?.first?.captions.first?.hasSuffix("#amapiano #amapianomix #afrohouse #djlovd #dj #djlife #djmix #transition") == true)
     let backups = try FileManager.default.contentsOfDirectory(atPath: f2.paths.appSupport.appendingPathComponent("backups").path)

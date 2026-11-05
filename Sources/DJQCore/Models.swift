@@ -108,6 +108,12 @@ public enum PostState: String, Codable, Sendable, CaseIterable {
   case copyrightMuted = "copyright_muted"
   case removed, skipped, overdue
 
+  /// The post is in flight or went out, so its caption is held (only failed and skipped aren't).
+  public var holdsCaption: Bool { self != .failed && self != .skipped }
+
+  /// The post went out: its caption is the record of what was posted.
+  public var wentOut: Bool { [.posted, .copyrightBlocked, .copyrightMuted, .removed].contains(self) }
+
   /// Terminal states end a platform post; everything else is still in flight.
   public var isTerminal: Bool {
     switch self {
@@ -718,6 +724,8 @@ public struct Settings: Codable, Sendable, Hashable {
   /// Round 7: YouTube title templates (Settings → Captions & titles). New clip defaults picks the default one
   /// (`defaults.youtubeTitleTemplateId`); a clip can pick another in the editor.
   public var youtubeTitleTemplates: [TitleTemplate] = Defaults.youtubeTitleTemplates
+  /// v0.8.3: what `{link}` fills in and what the Link chip adds.
+  public var captionLink: String = Defaults.captionLink
 
   public init() {}
 
@@ -749,17 +757,19 @@ public struct PlatformLimits: Codable, Sendable, Hashable {
   public var maxBytes: Int64
   public var captionLimit: Int
   public var titleLimit: Int?
+  /// v0.8.3: most hashtags a caption posts here (nil = no cap). The first ones in the caption stay (`Captions.capped`).
+  public var maxHashtags: Int? = nil
 
   /// Bumped whenever `defaults` changes; see `Settings.limitsRevision` and `migrateStored(_:from:)`.
-  public static let revision = 2
+  public static let revision = 3
 
   /// Round 6 (docs/postiz.md §3, re-verified): TikTok caption 2200 (was 4000) and title 90; Instagram 300 MB (was 4 GB).
   public static let defaults: [Platform: PlatformLimits] = [
     .tiktok: .init(maxDuration: 600, maxBytes: 4_000_000_000, captionLimit: 2200, titleLimit: 90),
-    .instagram: .init(maxDuration: 180, maxBytes: 300_000_000, captionLimit: 2200, titleLimit: nil),
+    .instagram: .init(maxDuration: 180, maxBytes: 300_000_000, captionLimit: 2200, titleLimit: nil, maxHashtags: 30),
     .facebook: .init(maxDuration: 90, maxBytes: 4_000_000_000, captionLimit: 2200, titleLimit: nil),
-    .youtube: .init(maxDuration: 180, maxBytes: 4_000_000_000, captionLimit: 5000, titleLimit: 100),
-    .threads: .init(maxDuration: 300, maxBytes: 1_000_000_000, captionLimit: 500, titleLimit: nil),
+    .youtube: .init(maxDuration: 180, maxBytes: 4_000_000_000, captionLimit: 5000, titleLimit: 100, maxHashtags: 60),
+    .threads: .init(maxDuration: 300, maxBytes: 1_000_000_000, captionLimit: 500, titleLimit: nil, maxHashtags: 1),
     .x: .init(maxDuration: 140, maxBytes: 512_000_000, captionLimit: 280, titleLimit: nil),
   ]
 
@@ -773,6 +783,9 @@ public struct PlatformLimits: Codable, Sendable, Hashable {
   /// only when it still equals the old default (Eric's own edits stay).
   public static func migrateStored(_ stored: [Platform: PlatformLimits], from: Int) -> [Platform: PlatformLimits] {
     var out = stored
+    if from < 3 {
+      for (p, new) in defaults where out[p]?.maxHashtags == nil { out[p]?.maxHashtags = new.maxHashtags }
+    }
     guard from < 2 else { return out }
     for (p, old) in revision1 {
       guard var cur = out[p], let new = defaults[p] else { continue }

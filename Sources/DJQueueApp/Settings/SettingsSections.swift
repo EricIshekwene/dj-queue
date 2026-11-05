@@ -100,6 +100,8 @@ struct PlatformsSettings: View {
         Text("Length (s)").frame(width: 76, alignment: .trailing)
         Text("Size (MB)").frame(width: 76, alignment: .trailing)
         Text("Caption").frame(width: 76, alignment: .trailing)
+        Text("Hashtags").frame(width: 76, alignment: .trailing)
+          .dsTooltip("Most hashtags a caption posts there. The first ones in the caption stay. Blank = no cap")
         Text("Title").frame(width: 76, alignment: .trailing)
       }
       .font(DS.type.captionMedium)
@@ -121,6 +123,11 @@ struct PlatformsSettings: View {
                 limit(p)?.captionLimit) { v in
             setLimit(p, "\(p.displayName) caption limit set to \(v)") { $0.captionLimit = v }
           }
+          SettingsOptionalNumberField(label: "\(p.displayName) hashtag cap", value: limit(p)?.maxHashtags,
+                                      tooltip: "Set how many hashtags \(p.displayName) keeps, first ones first. Blank = no cap") { v in
+            model.saveHashtagCap(v, for: p)
+          }
+          .frame(width: 76)
           if p == .youtube || p == .tiktok {
             field("\(p.displayName) title characters", "Set the \(p.displayName) title limit (at most \(titleMax(p)))", limit(p)?.titleLimit) { v in
               // The platform's own cap is the ceiling (YouTube 100, TikTok 90): a higher value would let a title pass
