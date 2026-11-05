@@ -671,20 +671,50 @@ final class AppModel {
   /// posts keep their tags. Undoable: the group, its place in the default groups and those clips come back.
   func confirmDeleteGroup(_ s: HashtagSet, undoHint: String, then done: @escaping () -> Void = {}) {
     let reach = (try? HashtagGroups.impact(of: s.id, store: store))?.deleteSummary ?? "Clips with scheduled or posted posts keep these tags."
-    let holds = s.tags.isEmpty ? "“\(s.name)” has no hashtags." : "“\(s.name)” holds \(s.tags.joined(separator: " "))."
+    let name = HashtagGroups.label(s)
+    let holds = s.tags.isEmpty ? "“\(name)” has no hashtags." : "“\(name)” holds \(s.tags.joined(separator: " "))."
     confirm(ConfirmRequest(
-      title: "Delete “\(s.name)”?",
+      title: "Delete “\(name)”?",
       message: "\(holds) \(reach) \(undoHint)",
       verb: "Delete group", icon: "trash", destructive: true) { [self] in
-        if journaled("Hashtag group “\(s.name)” deleted", { try HashtagGroups.delete(s, store: store, bulk: bulk).result }) {
+        if journaled("Hashtag group “\(name)” deleted", { try HashtagGroups.delete(s, store: store, bulk: bulk).result }) {
           done()
         }
       })
   }
 
-  /// Saves a group edited in Settings through the core path.
+  /// Saves a group edited in Settings through the core path. A cleared name keeps the stored one, so clearing it and
+  /// changing nothing else saves nothing; a group deleted while the save waited stays deleted.
   func saveGroupEdit(_ s: HashtagSet) {
-    journaled("Hashtag group “\(s.name)” saved") { try HashtagGroups.update(s, store: store, bulk: bulk).result }
+    guard let old = (try? store.hashtagSets())?.first(where: { $0.id == s.id }) else { return }
+    let group = HashtagGroups.keepingName(s, old: old)
+    guard group != old else { return }
+    journaled("Hashtag group “\(HashtagGroups.label(group))” saved") { try HashtagGroups.update(group, store: store, bulk: bulk).result }
+  }
+
+  /// Deletes a caption template after asking (Settings and the editor), through the core path: clips with scheduled or posted
+  /// posts keep their captions, others that chose it go back to the default. Undoable.
+  func confirmDeleteTemplate(_ t: CaptionTemplate, undoHint: String, then done: @escaping () -> Void = {}) {
+    if let why = CaptionTemplates.blocker(of: t.id, settings: settings) { return show(why, error: true) }
+    let reach = (try? CaptionTemplates.impact(of: t.id, store: store))?.templateDeleteSummary ?? "Clips with scheduled or posted posts keep their captions."
+    confirm(ConfirmRequest(
+      title: "Delete “\(t.name)”?", message: "\(reach) \(undoHint)", verb: "Delete template", icon: "trash", destructive: true) { [self] in
+        if journaled("Template “\(t.name)” deleted", { try CaptionTemplates.delete(t, store: store, bulk: bulk).result }) {
+          done()
+        }
+      })
+  }
+
+  /// Saves a caption template edited in Settings through the core path. A blank name or text waits for more typing.
+  func saveTemplateEdit(_ t: CaptionTemplate) {
+    guard let old = (try? store.captionTemplates())?.first(where: { $0.id == t.id }), old != t,
+          !HashtagGroups.cleanName(t.name).isEmpty, !t.template.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    journaled("Template “\(t.name)” saved") { try CaptionTemplates.update(t, store: store, bulk: bulk).result }
+  }
+
+  /// Saves a group added in Settings, the first time Eric changes it.
+  func saveNewGroup(_ s: HashtagSet) -> Bool {
+    journaled("Hashtag group “\(s.name)” saved") { try HashtagGroups.create(s, store: store, bulk: bulk).result }
   }
 
   /// One-line toast. Errors use the danger tone and stay 6 s (others 3 s); snapshot mode keeps it on screen.

@@ -186,3 +186,72 @@ Eric: "allow me to create hashtags groups from within the editor".
     which step undoes it). Fixing it would tie one clip's text to a shared group's undo.
 30. **Copy (R6):** "No active clip uses this group" (excluded and long-form clips without posts aren't counted); if the count can't be read the
     dialog gives the rule without a number.
+
+## v0.8.3
+
+### Blank hashtag groups
+
+1. **`HashtagGroups.pickable` and `label` are the one rule.** A group with a blank name and no real tag (whitespace and a bare `#` count as
+   nothing) is left out of every chip row and menu, and doesn't count towards "No hashtag groups yet". A blank name with tags shows as
+   "Untitled group". The stored row isn't changed, so captions and Postiz content read exactly what they did.
+2. **A cleared name keeps the previous one (`keepingName`, inside `HashtagGroups.update`), and the row says "Needs a name".** Both, because
+   Settings saves as you type: restoring the old name in the field would snap it back mid-typing, so the field stays empty and only the
+   store keeps the old name. Tag edits made meanwhile still save. Clearing a name and nothing else saves nothing (no toast, no journal entry).
+3. **Add hashtag group is a draft until Eric changes it.** It stays out of the database until the first edit with a name, then saves
+   through `HashtagGroups.create` (journaled, so it has Undo). A row left untouched goes when Settings reloads, and a draft deletes
+   without asking. A name with no tags still saves, as a named group always could.
+4. **Settings shows every stored row, blank ones included,** so they can be fixed or deleted. The same goes for `djq hashtag-groups`.
+5. **New clip defaults filters only what it shows,** so a hidden group already in the default list isn't dropped by an unrelated edit.
+6. **The Edit screen's bulk menu follows the same rule,** so it can't offer an empty item. Not in the brief, same bug.
+
+### Set as default (editor)
+
+7. **`CaptionTemplates.setDefault` is one journaled batch ("default-caption-template").** Versions with no chosen template and no written
+   caption, on clips with scheduled or posted posts (`clipsWithPosts`), are pinned to the old default; every other clip follows the new
+   one. Failed and skipped posts don't count, the same as the freeze for groups.
+8. **Pinning alone isn't byte-identical when a platform has its own default template.** A pin wins over that platform's template, so
+   `CaptionHold.keep` writes that platform's old caption as its own and then proves every platform and version unchanged. If it can't, the
+   whole batch rolls back. The per-platform defaults themselves aren't touched. `CaptionHold` is the one guarantee behind all the caption
+   changes in this release.
+9. **An editor session never claims the pin:** the action is in `CaptionTemplates.batchActions`, which `rebasedOntoGroupChanges` reads, the
+   same fix as decision 24.
+10. **Undo is refused when a clip scheduled after the change would move** (like decision 27); `--force` still overrides. Undo restores the
+    settings row and each pinned version exactly.
+11. **Editor label follows at once, Undo included:** `reloadGroups` now also re-reads settings and templates. So a change made in Settings
+    over the editor also reaches it, which it didn't before.
+12. **No `djq` change:** `djq defaults` only reads and no command sets the default caption template, so this is Core only.
+13. **Known, not changed:** Settings → New clip defaults still saves the default template without pinning, as it always has, so changing it
+    there can still move a scheduled caption. Out of scope here and worth its own fix.
+14. **A template's text is not part of a clip's render:** the real `Renderer` hash covers what's in the file, so a pin starts no new render
+    (`renderHashIgnoresTheCaption`). The tests' `FakeRenderer` hashes the whole version, so they reuse one render.
+
+### Own caption templates
+
+15. **One write path, `CaptionTemplates` in Core, for the editor and Settings.** Settings used to write templates straight to the store on
+    every keystroke and delete them unjournaled, which could move a scheduled caption. It now saves after a 600 ms typing pause, like
+    group rows, and delete has Undo. A blank name or text waits for more typing. No `djq` command manages caption templates, so this is
+    Core only; a bulk caller can use the same functions.
+16. **Editing or deleting a template freezes clips with posts first:** each version built from it gets that caption as its written
+    caption with `{hashtags}` kept. A template's other readers go through `CaptionHold.keep`, so a platform on another template (or one the
+    written form can't match exactly, such as a template with a tag mid-line and no tags on the clip) keeps its old caption as its own. A
+    rename reaches nothing.
+17. **Delete sends other clips that chose the template to the default, and refuses a default in use, here or for a platform** (the same
+    reason Settings gives). Undo restores the template table, the chosen ids and every frozen version. The journal gained a
+    `captionTemplates` snapshot, and an undo is refused when templates changed since or a clip scheduled later would move (decision 10).
+18. **After a freeze the scheduled clip no longer counts as using the template.** The delete dialog's count is of clips still built from it.
+19. **The Template field keeps one main action:** New template and, when offered, Set as default are buttons; Save caption as template,
+    Edit, Delete and Manage in Settings are in the ⋯ menu. Delete of a default stays visible there, disabled, and says why.
+20. **A new template goes on for this clip,** and like a new group it has a toast but no app-level Undo; `djq bulk undo` can still reach it.
+21. **Save as template matches tokens exactly and whole words only;** tags match in any case. Matching the link in any case turned "full set"
+    into `{link}`, which fills back with a capital F. The longest value goes first, so a title inside a set name isn't taken. A caption
+    with none of the clip's tags gets `{hashtags}` at the end, or the template would silently drop every clip's groups. Tags typed by hand stay
+    literal; the clip's extra hashtags count as its own tags, since `{hashtags}` fills them too.
+22. **Templates can hold typed tags, `{hashtags}`, or both, and the hint says so** in the editor's form and Settings.
+23. **A tag appears once, at its first position, wherever the clip's tags are filled in** (templates and written captions with `{hashtags}`).
+    A written caption without the token stays literal, typed repeats included: adding tags to it already skips any it has, and nothing is
+    filled in, so there's nothing to collapse. Literal tags aren't the group's, so removing a group leaves them; Drop hashtags strips all.
+24. **`{title}` and `{link}` are new template tokens,** and `Settings.captionLink` holds the link line (default "Full set on YouTube (link in
+    bio)").
+25. **Schema 7, `CaptionRulesMigration`:** those two rules could change a caption at install, so any clip with posts that would read differently
+    keeps its old caption as that platform's own, in a journaled batch. No clip's data changes otherwise, and no batch is written when
+    nothing applies. The newest backup has no template with these tokens or with typed tags, so no clip is expected to change.

@@ -33,8 +33,20 @@ struct EditorGroupForm: Identifiable, Equatable {
   var id: String { "\(editing ?? "new")|\(name)|\(tags)" }
 }
 
+/// The caption template form, open for a new template (`editing` nil) or one being edited.
+struct EditorTemplateForm: Identifiable {
+  var editing: String?
+  var name = ""
+  var template = ""
+  /// What saving an edit reaches, from when the form opened.
+  var impact: HashtagGroups.Impact?
+  var id: String { "\(editing ?? "new")|\(name)|\(template)" }
+}
+
 /// What the app gives the editor (nil in the snapshot harnesses, which have no `AppModel`).
 struct EditorAppHooks {
+  /// Asks the app to delete a template (its confirm + journaled undo, same as Settings).
+  var deleteTemplate: ((CaptionTemplate) -> Void)?
   /// Asks the app to delete a group (its confirm + journaled undo, same as Settings).
   var deleteGroup: ((HashtagSet) -> Void)?
   /// Journals the editor session so far, so a group change sits after it in the history (`splitEditorSession`).
@@ -76,6 +88,8 @@ final class EditorModel: ObservableObject {
   @Published private(set) var settings = Settings() { didSet { resolvedCache = nil } }
   @Published private(set) var sets: [HashtagSet] = []
   @Published private(set) var templates: [CaptionTemplate] = []
+  /// The template form under the Template field (nil = closed).
+  @Published var templateForm: EditorTemplateForm?
   @Published private(set) var posts: [PlatformPost] = []
   @Published private(set) var issues: [ValidationIssue] = []
   @Published private(set) var suggestions: [TitleSuggestion] = []
@@ -103,6 +117,7 @@ final class EditorModel: ObservableObject {
   @Published var groupForm: EditorGroupForm?
   var appHooks = EditorAppHooks()
   var onDeleteGroup: ((HashtagSet) -> Void)? { appHooks.deleteGroup }
+  var onDeleteTemplate: ((CaptionTemplate) -> Void)? { appHooks.deleteTemplate }
   var isCovered: (() -> Bool)? { appHooks.isCovered }
   @Published var toast: String?
   /// Bumped when Title should take keyboard focus (header title click).
@@ -841,21 +856,98 @@ final class EditorModel: ObservableObject {
 
   /// One journaled write through the core path, after the session so far and any pending editor saves; the chips re-read
   /// the table.
-  private func writeGroup(_ write: @escaping @Sendable (Store, BulkActions) throws -> HashtagGroups.Change) -> HashtagGroups.Change? {
+  private func writeGroup(failure: String = "Couldn't save the group", _ write: @escaping @Sendable (Store, BulkActions) throws -> HashtagGroups.Change) -> HashtagGroups.Change? {
     appHooks.beforeGroupWrite?()
     flush()
     let store = store
     do {
-      let (change, fresh) = try Self.saveQueue.sync {
-        (try write(store, BulkActions(store: store)), try store.hashtagSets())
+      let (change, fresh, st, tpl) = try Self.saveQueue.sync {
+        (try write(store, BulkActions(store: store)), try store.hashtagSets(), try store.settings(), try store.captionTemplates())
       }
       sets = fresh
+      settings = st
+      templates = tpl
       if !snapshotMode { ChangeSignal.post() }
       return change
     } catch {
-      show("Couldn't save the group: \(error.localizedDescription)")
+      show("\(failure): \(error.localizedDescription)")
       return nil
     }
+  }
+
+  /// Makes `id` the default template, through the core path: this clip's own choice stays, and the Default label follows.
+  func setDefaultTemplate(_ id: String) {
+    guard groupsOffReason == nil, let name = templates.first(where: { $0.id == id })?.name else { return }
+    commitCaptionDraft()
+    guard let change = writeGroup(failure: "Couldn't set the default template", { try CaptionTemplates.setDefault(id, store: $0, bulk: $1) }) else { return }
+    let n = change.kept.count
+    let message = "“\(name)” is the default template" + (n == 0 ? "" : ". \(n) clip\(n == 1 ? "" : "s") with scheduled or posted posts keep\(n == 1 ? "s" : "") its caption")
+    if let journal = appHooks.afterGroupEdit { journal(change.result, message) } else { show(message) }
+    if change.kept.contains(videoId) { replaceVersions((try? store.versions(videoId: videoId)) ?? versions) } else { fieldRevision &+= 1 }
+  }
+
+  /// The template the field is on (nil = the clip's own text, or a template that no longer exists).
+  var selectedTemplate: CaptionTemplate? {
+    guard !captionIsWritten else { return nil }
+    let id = resolved.captionTemplateId ?? defaults.captionTemplateId
+    return templates.first { $0.id == id }
+  }
+
+  /// The form opens empty for a new template, or filled in for `template`.
+  func openTemplateForm(_ template: CaptionTemplate? = nil) {
+    guard groupsOffReason == nil else { return }
+    guard let template else { templateForm = EditorTemplateForm(template: "{text}\n\n{hashtags}"); return }
+    let store = store
+    let impact = Self.saveQueue.sync { try? CaptionTemplates.impact(of: template.id, store: store) }
+    templateForm = EditorTemplateForm(editing: template.id, name: template.name, template: template.template, impact: impact)
+  }
+
+  /// The form opens on a template made from the caption in the field.
+  func openSaveAsTemplate() {
+    guard groupsOffReason == nil, let v = video else { return }
+    commitCaptionDraft()
+    templateForm = EditorTemplateForm(template: CaptionTemplates.template(
+      fromCaption: mainCaption, version: resolved, video: v, sessionName: sessionName, sets: sets, link: settings.captionLink))
+  }
+
+  /// Saves the form through the core path. A new template goes on for this clip; an edit reaches every clip built from it
+  /// except those with scheduled or posted posts.
+  @discardableResult
+  func saveTemplate(name: String, template: String) -> Bool {
+    guard groupsOffReason == nil else { return false }
+    let editing = templateForm?.editing
+    guard CaptionTemplates.problem(name: name, template: template, existing: templates, editing: editing) == nil else { return false }
+    commitCaptionDraft()
+    let failure = "Couldn't save the template"
+    guard let editing else {
+      let t = CaptionTemplates.make(name: name, template: template, existing: templates)
+      guard writeGroup(failure: failure, { try CaptionTemplates.create(t, store: $0, bulk: $1) }) != nil else { return false }
+      templateForm = nil
+      setCaptionTemplate(t.id)
+      show("“\(t.name)” saved and on for this clip")
+      return true
+    }
+    guard var t = templates.first(where: { $0.id == editing }) else {  // deleted while the form was open
+      templateForm = nil
+      show("That template was deleted")
+      return false
+    }
+    t.name = HashtagGroups.cleanName(name)
+    t.template = template
+    let saved = t
+    guard let change = writeGroup(failure: failure, { try CaptionTemplates.update(saved, store: $0, bulk: $1) }) else { return false }
+    templateForm = nil
+    let kept = change.kept.contains(videoId)
+    let message = kept ? "“\(t.name)” saved. This clip keeps its caption: it has scheduled or posted posts" : "“\(t.name)” saved"
+    if let journal = appHooks.afterGroupEdit { journal(change.result, message) } else { show(message) }
+    if kept { replaceVersions((try? store.versions(videoId: videoId)) ?? versions) } else { fieldRevision &+= 1 }
+    return true
+  }
+
+  /// The chosen template this clip could make the default (nil = its own text, the default already, or a missing template).
+  var defaultCandidate: CaptionTemplate? {
+    guard !captionIsWritten, let id = resolved.captionTemplateId, id != defaults.captionTemplateId else { return nil }
+    return templates.first { $0.id == id }
   }
 
   /// Picks up groups changed outside the editor, and what that did to this clip (frozen, or Undo of it). A typed caption
@@ -863,11 +955,14 @@ final class EditorModel: ObservableObject {
   func reloadGroups() {
     let store = store, id = videoId
     Self.saveQueue.async { [weak self] in
-      guard let fresh = try? store.hashtagSets(), let saved = try? store.versions(videoId: id) else { return }
+      guard let fresh = try? store.hashtagSets(), let saved = try? store.versions(videoId: id),
+            let st = try? store.settings(), let tpl = try? store.captionTemplates() else { return }
       DispatchQueue.main.async {
-        guard let self, self.videoId == id, fresh != self.sets else { return }
+        guard let self, self.videoId == id, fresh != self.sets || st != self.settings || tpl != self.templates else { return }
         self.commitCaptionDraft()
         self.sets = fresh
+        self.settings = st
+        self.templates = tpl
         if let e = self.groupForm?.editing, !fresh.contains(where: { $0.id == e }) {
           self.groupForm = nil
           self.show("That group was deleted")

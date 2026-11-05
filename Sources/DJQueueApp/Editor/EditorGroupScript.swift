@@ -315,7 +315,7 @@ enum EditorGroupScript {
     }
   }
 
-  private static func fields(in v: NSView) -> [NSTextField] {
+  static func fields(in v: NSView) -> [NSTextField] {
     var out: [NSTextField] = []
     if let t = v as? NSTextField { out.append(t) }
     for s in v.subviews { out += fields(in: s) }

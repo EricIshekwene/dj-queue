@@ -718,6 +718,8 @@ public struct Settings: Codable, Sendable, Hashable {
   /// Round 7: YouTube title templates (Settings → Captions & titles). New clip defaults picks the default one
   /// (`defaults.youtubeTitleTemplateId`); a clip can pick another in the editor.
   public var youtubeTitleTemplates: [TitleTemplate] = Defaults.youtubeTitleTemplates
+  /// v0.8.3: what `{link}` fills in and what the Link chip adds.
+  public var captionLink: String = Defaults.captionLink
 
   public init() {}
 
