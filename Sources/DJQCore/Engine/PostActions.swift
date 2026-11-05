@@ -91,6 +91,7 @@ public final class PostActions: @unchecked Sendable {
     p.rawResponse = raw
     p.resolution = nil
     try store.save(p, note: "\(type.rawValue): \(message)")
+    try store.clearRetryPromise(p)  // a new report is a new failure: `errored` promises again if this one retries
     if type == .tooLong { try Self.snapshotTrim(store: store, post: p) }
     try store.logEvent("problem", "\(p.platform.displayName): \(type.displayName) — \(message)", videoId: p.videoId, postId: p.id)
     try store.refreshState(videoId: p.videoId)

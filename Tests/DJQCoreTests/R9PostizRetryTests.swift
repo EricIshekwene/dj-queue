@@ -47,7 +47,7 @@ import Testing
     (.tiktok, "Failed to pull video from URL"), (.instagram, "The media is not ready for publishing, please wait"),
     (.instagram, "Application request limit reached"), (.facebook, "An unexpected error has occurred. Please retry your request later."),
     (.facebook, "Video upload failed"), (.threads, "Service temporarily unavailable"), (.x, "503 Service Unavailable"),
-    (.x, "Rate limit exceeded"), (.x, "Quota exceeded"), (.x, "This request exceeds your quota for today"),
+    (.x, "Rate limit exceeded"), (.x, "Rate-limited"), (.x, "Quota exceeded"), (.instagram, "Upload failed, please retry"), (.threads, "Could not publish"), (.x, "This request exceeds your quota for today"),
     (.x, "502 Bad Gateway"), (.threads, "socket hang up"), (.instagram, "Request timed out"), (.youtube, Self.quota),
     (.youtube, "defaultVideoInsertPerDayPerProject exceeded"), (.tiktok, "Internal server error"),
   ] as [(Platform, String)])
@@ -79,6 +79,14 @@ import Testing
     (.facebook, "(#368) The action attempted has been deemed abusive or is otherwise disallowed"), (.instagram, "This content is prohibited"),
     (.x, "You are not permitted to perform this action."), (.instagram, "Nudity or sexual activity"), (.facebook, "Hate speech"),
     (.threads, "Sensitive content detected"),
+    // it says it landed, or may have
+    (.instagram, "Media published but permalink lookup failed"), (.threads, "Post created but could not fetch its URL"),
+    (.x, "The post is live, but the follow-up failed"), (.tiktok, "Could not be posted"), (.facebook, "Published with errors"),
+    (.instagram, "Unable to fetch the permalink"),
+    // the rest of the round 2 list
+    (.x, "File exceeded the limit"), (.x, "Video exceeded the allowed limit"), (.tiktok, "file-too-large"),
+    (.x, "Tweet needs to be a bit shorter."), (.facebook, "Content not eligible"), (.x, "Insufficient credits"),
+    (.threads, "Verify your account"), (.instagram, "Not available in your country"),
     // sign-in
     (.x, "Please reauthenticate your account"), (.facebook, "Please reauthorize the app"), (.threads, "Unauthenticated"),
     (.instagram, "Refresh your connection"), (.x, "Request failed with status code 401"), (.x, "Request failed with status code 403"),
@@ -627,15 +635,38 @@ import Testing
     #expect(try rig.invariants().isEmpty)
   }
 
-  @Test func aReleaseIdAloneCountsAndMissingDoesNot() {
+  @Test func aReleaseIdAloneCountsAndSoDoesMissing() {
     #expect(PostizRemotePost(id: "a", state: "ERROR", releaseId: "123").hasRelease)
     #expect(PostizRemotePost(id: "a", state: "ERROR", releaseURL: "https://x.com/1").hasRelease)
-    #expect(!PostizRemotePost(id: "a", state: "ERROR", releaseId: "missing").hasRelease)
+    #expect(PostizRemotePost(id: "a", state: "ERROR", releaseId: "missing").hasRelease)
     #expect(!PostizRemotePost(id: "a", state: "ERROR", releaseURL: "", releaseId: "").hasRelease)
     #expect(!PostizRemotePost(id: "a", state: "ERROR").hasRelease)
   }
 
-  /// D1: no release, unknown wording: it retries (Postiz records a release only on success). YouTube stays with Eric.
+  /// `missing` is a post that went out with no id: posted, no link, and Doctor's link_missing takes it from there.
+  @Test(arguments: [Platform.tiktok, .instagram, .x])
+  func anErrorWithAMissingReleaseCountsAsPublished(_ platform: Platform) throws {
+    let (rig, p) = try xRig([platform])
+    let j = try #require(try rig.job(p))
+    let creates = rig.fake.createCount
+    rig.fake.publish(j.postizId!, url: "", releaseId: "missing")
+    try fail(rig, p, "Something went wrong")
+    rig.tick(3)
+    let cur = try #require(try rig.store.post(id: p.id))
+    #expect(cur.state == .posted && cur.url == nil)
+    #expect(try attempts(rig, p).count == 1 && rig.fake.createCount == creates)
+    #expect(try rig.service.linkMissingPosts().map(\.id) == [p.id])
+  }
+
+  /// Wording that says it landed is the likeliest shape of a failure after a live post. It doesn't retry.
+  @Test func wordingThatSaysItLandedStaysWithEricThroughTheWholePath() throws {
+    let (rig, x) = try xRig()
+    try fail(rig, x, "Media published but permalink lookup failed")
+    rig.tick(2)
+    #expect(try attempts(rig, x).count == 1 && r8.problems(rig) == [x.id])
+  }
+
+  /// D1: no release, unknown wording: it retries, an accepted risk off YouTube. YouTube stays with Eric.
   @Test func anUnknownErrorWithNoReleaseRetriesExceptOnYouTube() throws {
     let (rig, x) = try xRig()
     try fail(rig, x, nil)
@@ -799,6 +830,52 @@ import Testing
     #expect(rig.fake.post(job.postizId!)?.deleted == true)
     #expect(try rig.service.pendingAutoRetries().isEmpty)
     #expect(try rig.invariants().isEmpty)
+  }
+
+  /// `djq problem` on a waiting failure: a report by hand ends the promise, so it's a Problem, not a retry that never fires.
+  @Test func aHandReportOnAWaitingFailureIsLoud() throws {
+    let (rig, x) = try xRig()
+    let j = try #require(try rig.job(x))
+    rig.fake.fail(j.postizId!, error: "Something went wrong")
+    rig.f.clock.set(j.remoteDate.addingTimeInterval(700))
+    try rig.f.updateSettings { $0.paused = true }
+    rig.tick()
+    #expect(try r8.problems(rig).isEmpty)
+    try PostActions(store: rig.store).reportProblem(postId: x.id, type: .uploadFailed, message: "Eric says it's broken")
+    #expect(try r8.problems(rig) == [x.id])
+  }
+
+  /// Removing the day takes its retry too: Eric took it out, and a post of that day doesn't go out after that.
+  @Test func removingTheDayTakesTheRetry() throws {
+    let (rig, x) = try xRig()
+    try fail(rig, x)
+    rig.tick(2)
+    let a = try #require(try attempts(rig, x).last)
+    let job = try #require(try rig.job(a))
+    try Planner(store: rig.store).remove(slotId: try #require(x.planSlotId))
+    rig.tick(3)
+    #expect(try rig.store.post(id: a.id) == nil)
+    #expect(rig.fake.post(job.postizId!)?.deleted == true)
+    #expect(try attempts(rig, x).count == 1 && rig.service.pendingAutoRetries().isEmpty)
+  }
+
+  /// A promise given up refreshes the clip: it counted that post as still going.
+  @Test func aRetryGivenUpLeavesTheClipFinished() throws {
+    let (rig, x) = try xRig()
+    try rig.f.updateSettings { $0.enabledPlatforms = [.x] }
+    let j = try #require(try rig.job(x))
+    rig.fake.fail(j.postizId!, error: "Something went wrong")
+    rig.f.clock.set(j.remoteDate.addingTimeInterval(700))
+    try rig.f.updateSettings { $0.paused = true }
+    rig.tick()
+    #expect(try rig.store.video(id: x.videoId)?.state == .planned)
+    var e = try rig.store.edit(videoId: x.videoId)
+    e.skippedPlatforms = [.x]
+    try rig.store.save(e, videoId: x.videoId)
+    try rig.f.updateSettings { $0.paused = false }
+    rig.tick()
+    #expect(try r8.problems(rig) == [x.id])
+    #expect(try rig.store.video(id: x.videoId)?.state != .planned)
   }
 
   @Test func waitingBehindAnotherPostSaysSo() throws {

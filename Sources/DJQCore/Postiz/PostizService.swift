@@ -945,14 +945,13 @@ public final class PostizService: @unchecked Sendable {
       var failed: PlatformPost?
       if let p = try store.post(id: j.postId), !p.state.isTerminal {
         let note = copyright ? "" : try retryNote(msg, p)
-        if try !copyright && retryPromised(msg, p) {
-          try recordFailure(p, at: min(j.remoteDate, now))
-          failed = p
-        } else {
-          try store.clearRetryPromise(p)
-        }
+        let promised = try !copyright && retryPromised(msg, p)
         try PostActions(store: store).reportProblem(postId: p.id, type: copyright ? .copyrightBlocked : .uploadFailed,
                                                     message: msg + note, raw: "postiz:\(r.id)")
+        if promised {
+          try recordFailure(p, at: min(j.remoteDate, now))
+          failed = p
+        }
       }
       try store.closePostizJob(id: j.id, reason: copyright ? .copyright : .error, note: msg)
       try store.logEvent("postiz", "\(j.platform.displayName) failed in Postiz: \(msg)", videoId: j.videoId, postId: j.postId)

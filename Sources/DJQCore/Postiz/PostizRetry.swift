@@ -108,6 +108,15 @@ extension Store {
     try setKV(PostizService.autoRetryKey(p), r)
   }
 
+  /// Eric removed the day: its automatic attempts go with it, as a regular post of that day does. The publish step
+  /// deletes them from Postiz.
+  func dropAutoRetries(slot s: PlanSlot) throws {
+    for a in try slotPosts(s.id) where a.kind != .regular && !a.state.isTerminal {
+      if try autoRetries(a).lastPostId == a.id { try deletePost(a.id) }
+    }
+    try dropWaitingRetries(videoId: s.videoId)
+  }
+
   /// Eric took the clip out of the plan: a failure of it that still waits for its retry stops waiting.
   func dropWaitingRetries(videoId: String) throws {
     for var f in try posts(where: "video_id=? AND state='failed' AND resolution IS NULL", [videoId]) where try retryIsComing(f) {
@@ -153,27 +162,30 @@ extension PostizService {
   /// Words that mean more than "not now": a policy or rights problem, an account problem or a paid limit.
   static let notTemporary = #"\b(violat\w*|infring\w*|intellectual property|dmca|content[- ]?id|copy[- ]right|trademark\w*|"#
     + #"abus\w*|disallow\w*|prohibit\w*|not permitted|nud\w*|sexual\w*|adult|hate|harass\w*|violen\w*|sensitive|inappropriate|harmful|unsafe|"#
-    + #"private|privacy|unaudited|unverified|ownership|active user|"#
+    + #"private|privacy|unaudited|(un)?verif\w*|ownership|active user|(in)?eligible|insufficient|credits?|in your (country|region)|"#
     + #"(un)?licen[sc]\w*|songs?|sounds?|soundtracks?|tracks?|lyrics|strikes?|takedowns?|taken? down|third[- ]party|polic(y|ies)|"#
     + #"guidelines?|community|terms|not allowed|\w+n't allowed|spam\w*|flagged|reject\w*|remov\w*|revok\w*|bans?|banned|suspen\w*|restrict\w*|"#
     + #"block\w*|locked|disabled|deactivat\w*|terminated|denied|forbidden|unauthori[sz]ed|upgrade\w*|plans?|subscri\w*|storage)\b"#
   /// Failures the same post would hit again: too long, too large, its format, its fields or the channel's sign-in.
   /// "Exceeds" counts for a size, never for "rate limit exceeded" or "exceeds the quota".
-  static let cantBeFixedByARetry = #"\b(too (long|short|large|big|small)|(longer|shorter|larger|bigger|smaller) than|sizes?|duration|length|"#
+  static let cantBeFixedByARetry = #"\b(too (long|short|large|big|small)|longer|shorter|larger|bigger|smaller|sizes?|duration|length|"#
     + #"maximum|minimum|max|over the limit|\d+ ?(kb|mb|gb)|400|401|403|413|415|422|"#
     + #"format\w*|codecs?|aspect ratio|resolution|frame rate|bitrate|unsupported|not supported|hashtags?|mismatch|"#
     + #"validat\w*|invalid\w*|not a valid|malformed|bad (request|body)|missing|required|must (be|have|not|contain)|"#
     + #"(re|un)?-?auth\w*|oauth\w*|tokens?|expired|credentials?|permissions?|scopes?|log[- ]?in|sign[- ]?in|refresh\w*|"#
-    + #"re-?connect\w*|re-?link\w*|disconnected|not connected|sessions?)\b|\bexceeds\b(?!\s+(the |your )?(rate|quota|daily|request|api))"#
-  /// The platform says it has the post. A retry here is a double post, so any "already" counts, in any tense.
-  static let alreadyThere = #"\b(already|duplicate\w*|identical|repeat\w*|(been|was|were) (posted|published|uploaded|shared)|"#
-    + #"(posted|published|uploaded|shared) (before|earlier|previously)|same (post|content|video|media|status|tweet))\b"#
+    + #"re ?connect\w*|re ?link\w*|disconnected|not connected|sessions?)\b|\bexceeds\b(?!\s+(the |your )?(rate|quota|daily|request|api))|"#
+    + #"\b(file|video|media|image|post|caption|text|title|upload)s? exceeded\b"#
+  /// The platform says it has the post, or may. A retry here is a double post, so this one is broad on purpose: any
+  /// "already", and any "published", "posted" or "live", even in "couldn't be posted". A false veto costs one Fixed.
+  static let alreadyThere = #"\b(already|duplicate\w*|identical|repeat\w*|published|posted|live|permalink\w*|"#
+    + #"(been|was|were) (uploaded|shared)|(uploaded|shared) (before|earlier|previously)|(created|uploaded),? but|"#
+    + #"same (post|content|video|media|status|tweet))\b"#
 
   /// Copyright, or a veto word anywhere in the message. Platforms write codes too ("duration_check_failed",
-  /// "FileSizeExceeded"), so those read as words.
+  /// "file-too-large", "FileSizeExceeded"), so those read as words.
   static func isVetoed(_ message: String) -> Bool {
     let m = message.replacingOccurrences(of: "([a-z0-9])([A-Z])", with: "$1 $2", options: .regularExpression)
-      .lowercased().replacingOccurrences(of: "_", with: " ")
+      .lowercased().replacingOccurrences(of: "[_-]", with: " ", options: .regularExpression)
     return isCopyright(message) || [notTemporary, cantBeFixedByARetry, alreadyThere].contains {
       m.range(of: $0, options: .regularExpression) != nil
     }
@@ -332,6 +344,7 @@ extension PostizService {
         p.errorMessage = (job.lastError ?? p.errorMessage ?? "") + " — \(note)"
         try store.save(p, note: "no automatic retry after all: \(note)")
       }
+      try store.refreshState(videoId: p.videoId)  // the clip counted this post as still going
       return false
     }
     guard decision == .go || decision == .wait, let job = try store.finalPostizJob(postId: p.id) else { return false }

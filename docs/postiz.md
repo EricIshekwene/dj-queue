@@ -177,16 +177,18 @@ while a job is within six hours of its slot or waiting for a result, otherwise h
 `ERROR` reads "Postiz reported an error (no details)".
 
 **Failed posts retry by themselves** (`PostizRetry.swift`, DECISIONS-R9.md). Eric never audits a failure a retry can fix.
-An `ERROR` with a release link or id counts as published on every platform: the platform has the post and a later step
-failed, so it's never sent again. Any other `ERROR` retries unless it's on the veto list. Unknown and empty errors
-retry, because Postiz records a release only on success. The veto list:
+An `ERROR` with a release link or id, `missing` included, counts as published on every platform: the platform has the
+post and a later step failed, so it's never sent again. Any other `ERROR` retries unless it's on the veto list. Unknown
+and empty errors retry. That's an accepted risk off YouTube: a failure after the platform took the post may carry no id,
+and then a retry double-posts (DECISIONS-R9.md #35). The veto list:
 
 - copyright, always, on this post or any job of the clip + platform (`copyright_blocked`, never retried);
 - policy, rights, account and paid-limit words (violates, DMCA, Content ID, trademark, licensed, song, sound, Community
   Standards, flagged, ban, suspended, restricted, disabled, spam, upgrade, plan, subscription, storage, …);
 - what the same post would hit again: too long, too large, format, codec, aspect ratio, validation (invalid, missing,
   required, bad request, 400, 413), sign-in (auth, token, expired, permission, reconnect, 401, 403);
-- a platform that says it has the post, in any wording (already, duplicate, has been posted, posted before).
+- a platform that says it has the post or may have, in any wording (already, duplicate, published, posted, live,
+  permalink, created but, even "could not be posted").
 
 Platform codes count as words: `duration_check_failed` and `FileSizeExceeded` both match. "Exceeds" vetoes a size, never
 a rate or a quota.
@@ -231,7 +233,8 @@ and Send to queue brings it back without using a try. Doctor warns (`postiz.auto
 because a platform left on Manual never brings it back. A day past its time a waiting retry sends one alert and keeps
 waiting (`postiz.retryWaits:<post>`). An attempt nothing stops that still can't be sent (the clip went invalid) goes back
 to Eric after a day plus about an hour awake: it stops being a retry and goes overdue, with the reason. Scheduled → Queue
-is Eric taking the clip out, so no retry: a failure still waiting reads "Unscheduled". Mark posted on a failed row skips
+is Eric taking the clip out, so no retry: a failure still waiting reads "Unscheduled". Removing the day takes its automatic
+attempt too. Mark posted on a failed row skips
 its live attempt, and the publish step deletes that from Postiz.
 
 Eric's Fixed works on a failure whose retry waits, and that attempt replaces the retry. Once the retry's attempt exists,

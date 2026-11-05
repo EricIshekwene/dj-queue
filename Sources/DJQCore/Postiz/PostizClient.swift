@@ -258,10 +258,9 @@ public struct PostizMedia: Codable, Sendable, Hashable {
 
 /// One entry of `GET /posts` (only the fields DJ Queue reads).
 public struct PostizRemotePost: Codable, Sendable, Hashable {
-  /// The platform gave back a link or an id, so it has the post, whatever `state` says.
-  public var hasRelease: Bool {
-    !(releaseURL ?? "").isEmpty || !["", "missing"].contains(releaseId ?? "")
-  }
+  /// The platform has the post, whatever `state` says: a link, or an id. "missing" counts: it's Postiz's word for a post
+  /// that went out and whose platform id didn't come back (docs/postiz.md §5).
+  public var hasRelease: Bool { !(releaseURL ?? "").isEmpty || !(releaseId ?? "").isEmpty }
   public var id: String
   public var group: String?
   public var publishDate: Date?
