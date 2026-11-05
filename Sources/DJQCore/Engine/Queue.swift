@@ -51,8 +51,9 @@ public final class Queue: @unchecked Sendable {
       .sorted { ($0.score ?? 0, $0.part ?? 0, $0.start ?? 0) < ($1.score ?? 0, $1.part ?? 0, $1.start ?? 0) }
   }
 
-  /// approvedDays = consecutive days from today with an approved slot; readyDays = ready backlog ÷ posts/day;
-  /// totalDays = approvedDays + (ready + Edit clips with their file) ÷ posts/day.
+  /// approvedDays = consecutive days with a scheduled slot, from today (from tomorrow when today has none: a clip can't
+  /// take a day whose post times passed); readyDays = waiting clips ÷ posts/day;
+  /// totalDays = approvedDays + (waiting + Edit clips with their file) ÷ posts/day.
   public func runway() throws -> Runway {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
@@ -64,15 +65,18 @@ public final class Queue: @unchecked Sendable {
       .compactMap { $0.string("plan_slot_id") })
     let approvedDates = Set(slots.filter { approvedWeeks.contains($0.weekStart) || withPosts.contains($0.id) }.map(\.date))
     var approved = 0
-    var d = today
+    var through: String?
+    var d = approvedDates.contains(today) ? today : dm.addDays(today, 1)
     while approvedDates.contains(d) {
       approved += 1
+      through = d
       d = dm.addDays(d, 1)
     }
     let ready = try ordered().count
     // Missing-file clips are in Edit but can't become posting days until relinked, so runway leaves them out.
     let edit = try needsEdit().filter { !$0.missing }.count
-    return Runway(approvedDays: approved, readyDays: ready / perDay, totalDays: approved + (ready + edit) / perDay)
+    return Runway(approvedDays: approved, readyDays: ready / perDay, totalDays: approved + (ready + edit) / perDay,
+                  scheduledThrough: through)
   }
 
   // MARK: Skip next (backlog videos)

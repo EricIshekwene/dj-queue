@@ -256,6 +256,10 @@ public struct Video: Codable, Sendable, Identifiable, Hashable {
   /// Sent back to Edit from the Queue ("Remove from queue", app-owned, schema v3): the clip stays `needs_edit`
   /// with the issue "Sent back from Queue" until "Send to queue" clears it.
   public var heldInEdit: Bool = false
+  /// Eric sent it to the Queue (round 13, A11). Nothing else moves a clip Edit → Queue: a short clip that isn't sent stays
+  /// `needs_edit` even with nothing to fix. It goes back to false when the clip leaves the Queue for Edit, its score is
+  /// cleared or it's excluded.
+  public var sentToQueue: Bool = false
 
   /// The marker tag (the part of the name after the session), e.g. "yayo x johnny".
   public var tag: String { tags.first ?? name }
@@ -695,8 +699,8 @@ public struct Settings: Codable, Sendable, Hashable {
   public var renderHorizonDays: Int = 7
   public var videoBitrateKbps: Int = 12000
   public var weekStartsOn: Int = 2  // Calendar weekday, 2 = Monday (Q5)
-  public var approvalReminderWeekday: Int = 1  // Sunday
-  public var approvalReminderMinutes: Int = 18 * 60
+  public var approvalReminderWeekday: Int = 1  // retired in round 13: nothing reads it (kept so stored rows decode as before)
+  public var approvalReminderMinutes: Int = 18 * 60  // retired in round 13, same
   public var repostCooldownDays: Int = 14
   public var lateGraceHours: Double = 6
   public var retryStaggerHours: Double = 3

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Why a platform (or one post) set to Postiz goes to Today as a manual post instead (docs/postiz.md §5 Fallback).
+/// Why a platform (or one post) set to Postiz goes to the Calendar as a manual post instead (docs/postiz.md §5 Fallback).
 public enum PostizFallbackReason: Codable, Sendable, Hashable {
   case noKey
   case keyInvalid
@@ -44,7 +44,7 @@ public enum PublishRoute: Sendable, Hashable {
   case manual
   /// Set to Postiz and usable.
   case postiz(integrationId: String, provider: String)
-  /// Set to Postiz but it can't be used now; the posts go to Today.
+  /// Set to Postiz but it can't be used now; the posts go to the Calendar.
   case fallback(PostizFallbackReason)
 
   public var isPostiz: Bool { if case .postiz = self { return true } else { return false } }

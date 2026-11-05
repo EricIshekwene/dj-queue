@@ -7,7 +7,10 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 6
+  /// Schema step that adds `videos.sent_to_queue` (`migrateSentToQueue`). Its own constant, so merging another round's
+  /// schema step only means changing this number and `schemaVersion`.
+  static let sentToQueueVersion = 7
+  public static let schemaVersion = sentToQueueVersion
 
   public init(paths: Paths, clock: Clock = SystemClock(), path: String? = nil) throws {
     self.paths = paths
@@ -87,6 +90,7 @@ public final class Store: @unchecked Sendable {
     if v < 4 { try migrateToV4(from: v) }
     if v < 5 { try migrateToV5(from: v) }
     if v < 6 { try migrateToV6(from: v) }
+    if v < Self.sentToQueueVersion { try migrateSentToQueue(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -157,6 +161,32 @@ public final class Store: @unchecked Sendable {
         try db.exec("ALTER TABLE videos ADD COLUMN held_in_edit INTEGER NOT NULL DEFAULT 0")
       }
       try db.exec("PRAGMA user_version = 3")
+    }
+  }
+
+  /// Round 13 (A11): the only way into the Queue is Eric's Send to Queue, so a clip now carries that as a fact. Additive
+  /// and lossless: every clip that's already past Edit counts as sent, and no state changes. An unscored clip is in Score
+  /// whatever its stored state says, so it starts unsent; scoring it must not put it in the Queue. A file database with
+  /// data is copied to `<app support>/backups/` first.
+  private func migrateSentToQueue(from v: Int) throws {
+    if v >= 1, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-sent-to-queue-\(f.string(from: Date())).sqlite").path)
+    }
+    try db.transaction {
+      let cols = Set(try db.query("PRAGMA table_info(videos)").compactMap { $0.string("name") })
+      if !cols.contains("sent_to_queue") {
+        try db.exec("ALTER TABLE videos ADD COLUMN sent_to_queue INTEGER NOT NULL DEFAULT 0")
+      }
+      try db.exec("""
+        UPDATE videos SET sent_to_queue=1 WHERE type='short-form'
+          AND (state IN ('planned','posting','posted','partial') OR (state='ready' AND score IS NOT NULL));
+        PRAGMA user_version = \(Self.sentToQueueVersion);
+        """)
     }
   }
 
@@ -335,8 +365,8 @@ public final class Store: @unchecked Sendable {
       INSERT INTO videos(id,session_id,name,tags,type,content_type,kind,file,fingerprint,file_size,duration,
         marked_start,marked_end,start,"end",grace,audio,part,score,state,excluded,missing,in_manifest,notes,
         already_posted_on,longform_url,created_at,updated_at,title,title_tracks,title_source,source_width,source_height,
-        held_in_edit)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        held_in_edit,sent_to_queue)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, name=excluded.name, tags=excluded.tags,
         type=excluded.type, content_type=excluded.content_type, kind=excluded.kind, file=excluded.file,
         fingerprint=excluded.fingerprint, file_size=excluded.file_size, duration=excluded.duration,
@@ -345,12 +375,14 @@ public final class Store: @unchecked Sendable {
         excluded=excluded.excluded, missing=excluded.missing, in_manifest=excluded.in_manifest, notes=excluded.notes,
         already_posted_on=excluded.already_posted_on, longform_url=excluded.longform_url, updated_at=excluded.updated_at,
         title=excluded.title, title_tracks=excluded.title_tracks, title_source=excluded.title_source,
-        source_width=excluded.source_width, source_height=excluded.source_height, held_in_edit=excluded.held_in_edit
+        source_width=excluded.source_width, source_height=excluded.source_height, held_in_edit=excluded.held_in_edit,
+        sent_to_queue=excluded.sent_to_queue
       """, [v.id, v.sessionId, v.name, JSONCoding.string(v.tags), v.type.rawValue, v.contentType, v.kind.rawValue,
             v.file, v.fingerprint, v.fileSize, v.duration, v.markedStart, v.markedEnd, v.start, v.end, v.grace,
             v.audio, v.part, v.score, v.state.rawValue, v.excluded, v.missing, v.inManifest, v.notes,
             JSONCoding.string(v.alreadyPostedOn), v.longformURL, v.createdAt, v.updatedAt, v.title,
-            v.titleTracks.map { JSONCoding.string($0) }, v.titleSource, v.sourceWidth, v.sourceHeight, v.heldInEdit])
+            v.titleTracks.map { JSONCoding.string($0) }, v.titleSource, v.sourceWidth, v.sourceHeight, v.heldInEdit,
+            v.sentToQueue])
   }
 
   /// Updates only the fields that come from videos.json / the file (spec §4: never overwrite app-owned fields).
@@ -373,13 +405,17 @@ public final class Store: @unchecked Sendable {
     try db.run("UPDATE videos SET already_posted_on=?, updated_at=? WHERE id=?", [JSONCoding.string(platforms), now, id])
   }
 
+  /// Clearing a score takes the clip back past Edit: it has to be sent again.
   public func setScore(_ id: String, _ score: Int?) throws {
-    try db.run("UPDATE videos SET score=?, updated_at=? WHERE id=?", [score.map { min(100, max(0, $0)) }, now, id])
+    try db.run("UPDATE videos SET score=?, sent_to_queue=CASE WHEN ? THEN 0 ELSE sent_to_queue END, updated_at=? WHERE id=?",
+               [score.map { min(100, max(0, $0)) }, score == nil, now, id])
     try logEvent("score", "Score \(score.map(String.init) ?? "cleared")", videoId: id)
   }
 
+  /// Excluding takes the clip out of the pipeline; including it again doesn't put it back in the Queue.
   public func setExcluded(_ id: String, _ excluded: Bool) throws {
-    try db.run("UPDATE videos SET excluded=?, updated_at=? WHERE id=?", [excluded, now, id])
+    try db.run("UPDATE videos SET excluded=?, sent_to_queue=CASE WHEN ? THEN 0 ELSE sent_to_queue END, updated_at=? WHERE id=?",
+               [excluded, excluded, now, id])
     try refreshState(videoId: id)
   }
 
@@ -388,12 +424,20 @@ public final class Store: @unchecked Sendable {
     try refreshState(videoId: id)  // "No text for Talking" can change readiness
   }
 
-  /// "Remove from queue" / "Send to queue": while held, the clip stays in Edit (state `needs_edit`, issue
-  /// "Sent back from Queue") even when everything else is valid, so the planner never picks it. Plan slots and
-  /// posts are not touched here — `BulkActions.removeFromQueue` does that with the planner's rules.
+  /// "Back to Edit": while held, the clip stays in Edit with the issue "Sent back from Queue", and it is no longer sent.
+  /// Clearing the flag doesn't send it (`setSentToQueue` does). Plan slots and posts are not touched here —
+  /// `BulkActions.removeFromQueue` does that with the planner's rules.
   public func setHeldInEdit(_ id: String, _ held: Bool) throws {
-    try db.run("UPDATE videos SET held_in_edit=?, updated_at=? WHERE id=?", [held, now, id])
-    try logEvent("queue", held ? "Sent back to Edit from Queue" : "Sent to Queue", videoId: id)
+    try db.run("UPDATE videos SET held_in_edit=?, sent_to_queue=CASE WHEN ? THEN 0 ELSE sent_to_queue END, updated_at=? WHERE id=?",
+               [held, held, now, id])
+    if held { try logEvent("queue", "Sent back to Edit from Queue", videoId: id) }
+    try refreshState(videoId: id)
+  }
+
+  /// Round 13 (A11): Eric's Send to Queue. Only `BulkActions.send` sets it; nothing else ever moves a clip Edit → Queue.
+  func setSentToQueue(_ id: String, _ sent: Bool) throws {
+    try db.run("UPDATE videos SET sent_to_queue=?, updated_at=? WHERE id=?", [sent, now, id])
+    if sent { try logEvent("queue", "Sent to Queue", videoId: id) }
     try refreshState(videoId: id)
   }
 
@@ -413,7 +457,8 @@ public final class Store: @unchecked Sendable {
           notes: r.string("notes") ?? "", alreadyPostedOn: r.json("already_posted_on") ?? [],
           longformURL: r.string("longform_url"), createdAt: r.date("created_at")!, updatedAt: r.date("updated_at")!,
           title: r.string("title"), titleTracks: r.json("title_tracks"), titleSource: r.string("title_source"),
-          sourceWidth: r.int("source_width"), sourceHeight: r.int("source_height"), heldInEdit: r.bool("held_in_edit"))
+          sourceWidth: r.int("source_width"), sourceHeight: r.int("source_height"), heldInEdit: r.bool("held_in_edit"),
+          sentToQueue: r.bool("sent_to_queue"))
   }
 
   public func fileURL(for v: Video) throws -> URL? {
@@ -679,6 +724,10 @@ public final class Store: @unchecked Sendable {
   @discardableResult
   public func refreshState(_ v: Video, context: ValidationContext?) throws -> VideoState? {
     let s = try computeState(v, context: context)
+    // Round 13 (A11): a sent clip that lands in Edit isn't sent any more, so fixing it later never promotes it.
+    if v.sentToQueue, s == .needsEdit || s == .missingFile {
+      try db.run("UPDATE videos SET sent_to_queue=0, updated_at=? WHERE id=?", [now, v.id])
+    }
     guard s != v.state else { return nil }
     try db.run("UPDATE videos SET state=?, updated_at=? WHERE id=?", [s.rawValue, now, v.id])
     var after = v
@@ -728,6 +777,8 @@ public final class Store: @unchecked Sendable {
     if try isHeld(v) { return .needsEdit }
     if let s = try planOrPostState(v, settings: context?.settings) { return s }
     if v.type == .long { return v.longformURL == nil ? .ready : .posted }
+    // Round 13 (A11, reverses round 4's "stage = readiness"): valid isn't enough, the Queue takes only what Eric sent.
+    guard v.sentToQueue else { return .needsEdit }
     return try Validation.isReady(video: v, store: self, context: context) ? .ready : .needsEdit
   }
 

@@ -85,14 +85,14 @@ extension Store {
 
   func sessionName(for v: Video) throws -> String { try session(id: v.sessionId)?.name ?? "" }
 
-  /// Round 6 (F5): slots on a day before `today` in a week that isn't approved and that never got a post (pinned or
-  /// not). They can't post any more; left in place they would keep their clip out of the queue for good.
+  /// Round 6 (F5): slots on a day before `today` in a draft week that never got a post (pinned or not). They can't
+  /// post any more; left in place they would keep their clip out of the queue for good.
   public func stalePastDraftSlots(today: String) throws -> [PlanSlot] {
     try planSlots(where: "date<? AND week_start NOT IN (SELECT week_start FROM weeks WHERE state='approved') "
                     + "AND id NOT IN (SELECT plan_slot_id FROM platform_posts WHERE plan_slot_id IS NOT NULL)", [today])
   }
 
-  /// Deletes `stalePastDraftSlots` (only `week`'s when given), each with a "Past draft day … dropped" event.
+  /// Deletes `stalePastDraftSlots` (only `week`'s when given), each with a "Past day … dropped" event.
   @discardableResult
   public func dropStalePastDraftSlots(today: String, week: String? = nil) throws -> [PlanSlot] {
     try db.transaction {
@@ -100,7 +100,7 @@ extension Store {
       for s in list {
         try deletePlanSlot(s.id)
         try refreshState(videoId: s.videoId)
-        try logEvent("plan", "Past draft day \(s.date) dropped (never approved)\(s.pinned ? ", pin removed" : "") — back in the Queue",
+        try logEvent("plan", "Past day \(s.date) dropped (it never got posts)\(s.pinned ? ", pin removed" : "") — back in the Queue",
                      videoId: s.videoId)
       }
       return list
