@@ -37,8 +37,7 @@ extension AppModel {
                         actionTitle: "Open Health", dismissible: true, action: { [weak self] in self?.screen = .health }))
     }
     if loaded && queueRunningLow {
-      soft.append(.init(id: "queuelow", tone: .warning, title: "Queue running low",
-                        message: scheduledThroughText.map { "Scheduled through \($0)" } ?? "Nothing scheduled",
+      soft.append(.init(id: "queuelow", tone: .warning, title: StageWording.queueLowTitle, message: scheduledText,
                         actionTitle: "Go to Edit", dismissible: true, action: { [weak self] in self?.screen = .edit }))
     }
     if loaded && runway.totalDays < settings.totalRunwayAlertDays {

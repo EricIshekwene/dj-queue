@@ -21,7 +21,7 @@ import Testing
       let code = line.trimmingCharacters(in: .whitespaces)
       guard !code.hasPrefix("//") else { return [] }
       return code.split(separator: "\"", omittingEmptySubsequences: false).enumerated().compactMap { i, s in
-        i % 2 == 1 ? String(s).replacing(/\\\([^)]*\)/, with: "") : nil
+        i % 2 == 1 ? String(s).replacingOccurrences(of: #"\\\([^)]*\)"#, with: "", options: .regularExpression) : nil
       }
     }
   }

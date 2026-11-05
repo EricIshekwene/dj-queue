@@ -1,15 +1,15 @@
 import DJQCore
 import SwiftUI
 
-/// Quiet schedule chip for Queue and Calendar (DESIGN-v2 §3): "Scheduled through Sat 7 Nov", amber when fewer days are
-/// scheduled than the Low Queue alert. Click → popover with the numbers explained.
+/// Quiet schedule chip for Queue and Calendar (DESIGN-v2 §3): "Scheduled through Sat 7 Nov", amber when the Queue is
+/// running low. Click → popover with the numbers explained.
 struct RunwayChip: View {
   @Bindable var model: AppModel
   @State private var open = false
   @State private var hovering = false
 
-  private var low: Bool { model.scheduleIsLow }
-  private var text: String { model.scheduledThroughText.map { "Scheduled through \($0)" } ?? "Nothing scheduled" }
+  private var low: Bool { model.queueRunningLow }
+  private var text: String { model.scheduledText }
 
   var body: some View {
     Button { open.toggle() } label: {
@@ -46,7 +46,7 @@ struct RunwayDetail: View {
     let s = model.settings
     VStack(alignment: .leading, spacing: DS.space.md) {
       DSEyebrow("Schedule")
-      row(model.runway.approvedDays, "Scheduled", "Days in a row with a clip going out. Alert under \(s.approvedRunwayAlertDays) d.", model.scheduleIsLow)
+      row(model.runway.approvedDays, "Scheduled", "Days in a row with a clip going out. Alert under \(s.approvedRunwayAlertDays) d.", model.queueRunningLow)
       row(model.runway.readyDays, "Queue waiting", "Queue clips with no day yet, at \(s.postsPerDay) a day.", false)
       row(Self.editDays(model.runway), "Edit left", "Scored clips still in Edit, at \(s.postsPerDay) a day. Record a new set when the total is under \(s.totalRunwayAlertDays) d.",
           model.runway.totalDays < s.totalRunwayAlertDays)

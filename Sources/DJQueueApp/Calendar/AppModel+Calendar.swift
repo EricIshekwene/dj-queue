@@ -15,9 +15,6 @@ extension AppModel {
   /// The platform filter, ignored once that platform is off.
   var calendarFilter: Platform? { calendarPlatform.flatMap { settings.activePlatforms.contains($0) ? $0 : nil } }
 
-  /// How far the engine schedules ahead, for "N in Queue waiting" (mirrors `Planner.autoScheduleHorizonDays`).
-  static let calendarHorizonDays = 30
-
   /// Toolbar subtitle: "Thu 5 Nov" · "5 – 7 Nov" · "2 – 8 Nov" · "30 Nov – 2 Dec" · "November 2026".
   var calendarRangeText: String {
     switch calendarMode {
@@ -218,19 +215,13 @@ extension AppModel {
     return ordered.filter { !planned.contains($0.id) }
   }
 
-  // MARK: Runway words
+  // MARK: Schedule words
 
-  /// "Sat 7 Nov": the last day of the unbroken scheduled run from today; nil when today has nothing.
-  var scheduledThroughText: String? {
-    guard runway.approvedDays > 0 else { return nil }
-    return Fmt.day(dm.date(dm.addDays(todayKey, runway.approvedDays - 1)), tz: tz, style: "EEE d MMM")
-  }
+  /// "Scheduled through Sat 7 Nov" · "Nothing scheduled" (the chip, the low card).
+  var scheduledText: String { StageWording.scheduledThrough(runway.scheduledThrough, settings: settings) }
 
-  /// Fewer scheduled days than the Low Queue alert setting.
-  var scheduleIsLow: Bool { runway.approvedDays < settings.approvedRunwayAlertDays }
-
-  /// Low, and the Queue has less than a day left to fill it with.
-  var queueRunningLow: Bool { scheduleIsLow && calendarBacklog.count < max(1, settings.postsPerDay) }
+  /// Fewer days scheduled than the Low Queue alert, and nothing waiting to fill them.
+  var queueRunningLow: Bool { runway.isLow(settings) }
 
   // MARK: Actions
 

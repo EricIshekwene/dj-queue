@@ -55,7 +55,7 @@ struct CalendarMonthView: View {
         Text("\(waiting) in Queue waiting").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
           .frame(maxWidth: .infinity, alignment: .trailing)
           .frame(height: 18)
-          .dsTooltip("They get days as the \(AppModel.calendarHorizonDays)-day schedule moves on")
+          .dsTooltip("They get days as the \(Planner.autoScheduleHorizonDays)-day schedule moves on")
       }
     }
     .padding(.horizontal, gutter)

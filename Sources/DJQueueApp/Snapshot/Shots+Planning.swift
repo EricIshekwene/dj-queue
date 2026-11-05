@@ -53,7 +53,6 @@ extension SnapshotShots {
       },
       c.main("edit-nothing-to-fix") { m in  // B16: complete, and waiting for Send to Queue
         m.setViewMode(.wide, for: .edit)
-        if !m.editList.contains(where: { (m.issuesByVideo[$0.id] ?? []).isEmpty }), let v = m.editList.first { m.issuesByVideo[v.id] = [] }
         ListPrefs.shared.setStatus(.edit, EditView.nothingToFixId)
         m.screen = .edit
       },
