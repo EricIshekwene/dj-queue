@@ -111,3 +111,5 @@ Reviewed and corrected once; these are the final calls.
 - **Undo of a swap inside the lead stays refused and says so in plain words.** The other clip's posts were regenerated and their times have passed; Core's message named an action and a force the app doesn't offer.
 - **A post just past midnight sits on the day it goes out with no "moved" wording; a shifted post has no retry arrow.** Neither is a retry or a repost.
 - **"Pin to this day" hides when the day shown isn't the slot's.** Otherwise it would pin a different day from the one on screen.
+- **A failed post stays on its own day while its retry waits, and says when (`CalendarClip.dayPosts`).** Day shows r9's badge, 3 Day the chip, Week a line on the card; the attempt itself is a chip on the day it goes out.
+- **Going back from Scheduled drops waiting retries (r9) on the way to Edit.** The merge kept both rules: the clip lands in Edit, and no retry fires for a clip taken off the calendar.
