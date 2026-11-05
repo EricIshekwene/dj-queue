@@ -18,6 +18,9 @@ struct CalendarView: View {
   @Bindable var model: AppModel
   @State private var width: CGFloat = 1180
 
+  /// Under this the toolbar is full: the progress and the chip use their short words.
+  private static let tightWidth: CGFloat = 1100
+
   var body: some View {
     let mode = model.calendarMode
     ScreenScaffold(model: model, screen: .calendar, subtitle: model.calendarRangeText, readingColumn: mode == .day) {
@@ -45,11 +48,13 @@ struct CalendarView: View {
 
   @ViewBuilder private func toolbar(_ mode: CalendarViewMode) -> some View {
     if mode == .day && model.calendarDay == model.todayKey && model.loaded && model.todayTotal > 0 { progress }
+    let tight = width < Self.tightWidth
     HStack(spacing: 2) {
       DSIconButton("chevron.left", tooltip: "Show the previous \(mode.stepName)", size: .sm, shortcut: "←") { model.stepCalendar(-1) }
       DSButton("Today", variant: .ghost, size: .sm, tooltip: "Jump back to today", shortcut: "T") { model.calendarToday() }
       DSIconButton("chevron.right", tooltip: "Show the next \(mode.stepName)", size: .sm, shortcut: "→") { model.stepCalendar(1) }
     }
+    .fixedSize()
     DSSegmented(selection: Binding(get: { model.calendarMode }, set: { model.setCalendarMode($0) }),
                 segments: CalendarViewMode.allCases.map { m in
                   DSSegment(value: m, title: m.title, tooltip: "\(m.title) view", shortcut: m.key)
@@ -57,7 +62,7 @@ struct CalendarView: View {
                 size: .sm)
       .fixedSize()
     platformFilter
-    RunwayChip(model: model)
+    RunwayChip(model: model, compact: tight)
   }
 
   private var progress: some View {
@@ -65,7 +70,7 @@ struct CalendarView: View {
     return HStack(spacing: DS.space.xs) {
       DSProgressRing(value: Double(done) / Double(max(total, 1)), size: 22, lineWidth: 3, tone: .success)
       // The toolbar is full at the narrowest window: the numbers stay, the words go.
-      Text(width < 1100 ? "\(done) / \(total)" : "\(done) of \(total) posted").font(DS.type.calloutMedium.monospacedDigit()).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+      Text(width < Self.tightWidth ? "\(done) / \(total)" : "\(done) of \(total) posted").font(DS.type.calloutMedium.monospacedDigit()).foregroundStyle(DS.color.textSecondary).lineLimit(1)
     }
     .fixedSize()
     .accessibilityElement(children: .combine)
@@ -75,7 +80,7 @@ struct CalendarView: View {
   /// "All platforms ▾" (`C.F` Buffer's channels menu): one active platform narrows every view; remembered.
   private var platformFilter: some View {
     let f = model.calendarFilter
-    return DSXMenuLabelButton(title: f?.displayName ?? "All platforms", icon: f?.dsSymbol ?? "square.stack.3d.up", variant: f == nil ? .ghost : .outline,
+    return DSXMenuLabelButton(title: f?.dsxCompactName ?? "All platforms", icon: f?.dsSymbol ?? "square.stack.3d.up", variant: f == nil ? .ghost : .outline,
                               size: .sm, tooltip: "Show one platform") {
       Picker("Platform", selection: Binding(get: { model.calendarFilter }, set: { model.setCalendarPlatform($0) })) {
         Label("All platforms", systemImage: "square.stack.3d.up").tag(Platform?.none)

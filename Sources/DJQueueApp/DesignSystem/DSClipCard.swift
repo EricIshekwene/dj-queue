@@ -214,7 +214,7 @@ struct DSClipCard<Actions: View>: View {
         .padding(.horizontal, 10).frame(height: 26)
         .overlay(Capsule().strokeBorder(none ? DS.color.border : DS.color.borderStrong))
         .fixedSize()
-        .dsTooltip(clip.isPinned ? "Pinned to this day — the plan works around it" : none ? "Not in the plan yet" : "Next planned post")
+        .dsTooltip(clip.isPinned ? "Pinned to this day — the plan works around it" : none ? "No day yet" : "Next planned post")
       }
     }
   }

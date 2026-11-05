@@ -124,6 +124,11 @@ extension AppModel {
   func stageBack(_ ids: [String], unschedule: Bool = false) {
     let vids = ids.compactMap(video)
     guard !vids.isEmpty else { return }
+    // Unschedule never clears a score: back from Edit is Back to Score, a different move.
+    if unschedule, vids.contains(where: { ![.queue, .scheduled].contains(ClipStage.of($0)) }) {
+      show("It isn't in the Queue", error: true)
+      return
+    }
     if vids.count == 1, ClipStage.of(vids[0]) == .queue, !unschedule { removeFromQueue(ids); return }
     let b = bulk
     let one = vids.count == 1 ? vids[0] : nil

@@ -26,6 +26,8 @@ extension SnapshotShots {
       c.main("calendar-month") { m in calendar(m, .month) },
       c.main("calendar-month-narrow", size: Shot.narrow) { m in calendar(m, .month) },
       c.main("calendar-day-narrow", size: Shot.narrow) { m in calendar(m, .day) },
+      c.main("calendar-day-1200", size: Shot.tight) { m in calendar(m, .day) },
+      c.main("calendar-week-1200", size: Shot.tight) { m in calendar(m, .week) },
       c.main("calendar-filtered") { m in
         calendar(m, .week)
         m.calendarPlatform = .youtube

@@ -11,6 +11,10 @@ extension AppModel {
   var calendarDays: [String] { calendarVisible.days(dm: dm) }
   /// True once the data for what's on screen has landed.
   var calendarLoaded: Bool { loaded && (calendarData.range?.covers(calendarVisible) ?? false) }
+  /// Where the awake strip's data starts: the view, at most two weeks back. Month has no strip.
+  var calendarAwakeFrom: String? { calendarMode == .month ? nil : max(calendarVisible.first, calendarAwakeLimit) }
+  /// Older days show no strip: their heartbeats aren't worth reading on every refresh.
+  var calendarAwakeLimit: String { dm.addDays(todayKey, -14) }
 
   /// The platform filter, ignored once that platform is off.
   var calendarFilter: Platform? { calendarPlatform.flatMap { settings.activePlatforms.contains($0) ? $0 : nil } }
@@ -97,13 +101,17 @@ extension AppModel {
     Dictionary((postsBySlot[slotId] ?? []).map { ($0.platform, $0) }, uniquingKeysWith: { a, b in a.attemptNo > b.attemptNo ? a : b })
   }
 
-  /// The clips going out on `day`, in slot order, narrowed by the platform filter.
+  /// The clips going out on `day`, in slot order, narrowed by the platform filter. Built from the posts that really go
+  /// out that day: a post shifted off this day shows on its own day (`calendarExtras`), not on this card.
   func calendarClips(_ day: String) -> [CalendarClip] {
     let filter = calendarFilter
+    let here = Set((calendarData.posts[day] ?? []).map(\.id))
     return (calendarData.slots[day] ?? []).compactMap { s -> CalendarClip? in
       guard let v = video(s.videoId) else { return nil }
       let posts = slotPosts(s.id)
-      let platforms = shownPlatforms(posts, filter: filter)
+      let onDay = posts.filter { here.contains($0.value.id) }
+      if !posts.isEmpty && onDay.isEmpty { return nil }
+      let platforms = shownPlatforms(onDay, filter: filter)
       return platforms.isEmpty ? nil : CalendarClip(slot: s, video: v, posts: posts, platforms: platforms)
     }
   }
@@ -115,10 +123,16 @@ extension AppModel {
     return filter.map { f in all.filter { $0 == f } } ?? all
   }
 
-  /// Retries and reposts on `day` (no plan slot), in time order.
+  /// Posts on `day` that no card there carries, in time order: retries, reposts, and posts shifted here from their
+  /// clip's own day.
   func calendarExtras(_ day: String) -> [PlatformPost] {
     let filter = calendarFilter
-    return (calendarData.posts[day] ?? []).filter { $0.planSlotId == nil && (filter == nil || $0.platform == filter) }
+    let here = Set((calendarData.slots[day] ?? []).map(\.id))
+    return (calendarData.posts[day] ?? []).filter { p in
+      guard filter == nil || p.platform == filter else { return false }
+      guard let slot = p.planSlotId else { return true }
+      return !here.contains(slot) && slotPosts(slot)[p.platform]?.id == p.id
+    }
   }
 
   /// Day view: every post of the day grouped by clip, in time order. Today also takes overdue leftovers from earlier
@@ -135,7 +149,9 @@ extension AppModel {
     }
     let slots = calendarData.slots[day] ?? []
     var groups = order.map { id in
-      CalendarDayGroup(videoId: id, video: video(id), slot: slots.first { $0.videoId == id }, posts: byVideo[id] ?? [], platforms: [])
+      let own = byVideo[id] ?? []
+      let slot = slots.first { $0.videoId == id } ?? own.lazy.compactMap { $0.planSlotId.flatMap { self.calendarData.slotById[$0] } }.first
+      return CalendarDayGroup(videoId: id, video: video(id), slot: slot, posts: own, platforms: [])
     }
     for c in calendarClips(day) where byVideo[c.slot.videoId] == nil {
       groups.append(CalendarDayGroup(videoId: c.slot.videoId, video: c.video, slot: c.slot, posts: [], platforms: c.platforms))
@@ -145,9 +161,21 @@ extension AppModel {
 
   /// True when no day on screen has anything for the platform filter.
   var calendarFilterIsEmpty: Bool {
-    guard let f = calendarFilter else { return false }
-    return !calendarDays.contains { d in
-      !calendarClips(d).isEmpty || (calendarData.posts[d] ?? []).contains { $0.platform == f && $0.planSlotId == nil }
+    guard calendarFilter != nil else { return false }
+    return !calendarDays.contains { !calendarClips($0).isEmpty || !calendarExtras($0).isEmpty }
+  }
+
+  /// A clip holds this day, whatever the filter shows.
+  func calendarDayIsTaken(_ day: String) -> Bool { !(calendarData.slots[day] ?? []).isEmpty }
+
+  /// The engine can still fill this day: same rule as `Planner.isOpen`, a free position with time left before it.
+  func calendarDayCanFill(_ day: String) -> Bool {
+    guard day >= todayKey else { return false }
+    let used = Set((calendarData.slots[day] ?? []).map(\.position))
+    let limit = now.addingTimeInterval(Planner.autoScheduleLead)
+    let dm = self.dm
+    return (0..<max(1, settings.postsPerDay)).contains { pos in
+      !used.contains(pos) && (settings.activePlatforms.map { dm.at(day, minutes: settings.slot(for: $0) + pos * settings.secondPostOffsetMinutes) }.min() ?? limit) >= limit
     }
   }
 
@@ -201,7 +229,7 @@ extension AppModel {
 
   /// Why this clip can't leave its day (nil = it can).
   func calendarMoveBlocker(_ slot: PlanSlot?, posts: [Platform: PlatformPost]) -> String? {
-    guard let slot else { return "A retry or repost has no day to move" }
+    guard let slot else { return "Only this post is on this day" }
     if slot.date < todayKey { return "Past days are fixed" }
     if let p = posts.values.filter({ $0.state == .posted }).min(by: { $0.platform < $1.platform }) {
       return "Posted on \(p.platform.displayName), so it stays on this day"
@@ -209,10 +237,12 @@ extension AppModel {
     return nil
   }
 
-  /// Queue clips still waiting for a day, in Queue order.
-  var calendarBacklog: [Video] {
-    let planned = Set(upcomingSlots.map(\.videoId))
-    return ordered.filter { !planned.contains($0.id) }
+  /// Clips beyond the schedule: the days are full out to the horizon and these are still waiting. Zero while paused or
+  /// between ticks, when open days are about to take them.
+  var calendarWaitingBeyondHorizon: Int {
+    guard !settings.paused, let last = upcomingSlots.map(\.date).max(),
+          last >= dm.addDays(todayKey, Planner.autoScheduleHorizonDays) else { return 0 }
+    return schedulable.count
   }
 
   // MARK: Schedule words
@@ -226,21 +256,22 @@ extension AppModel {
   // MARK: Actions
 
   /// Slot → day, pinned so nothing re-lays it. A full day swaps (Planner.moveSlot) and the toast names the other clip.
-  /// Past days and posted slots refuse here, in words, before anything is written.
+  /// Past days and posted slots refuse here, in words, before anything is written. A landing on today inside the lead
+  /// asks first; a swap that would put the other clip there is refused by the planner (`StageWording.todayTooSoon`).
   @discardableResult
   func calendarMove(slotId: String, to day: String) -> Bool {
     guard day >= todayKey else { show("Past days can't be changed", error: true); return false }
-    let all = calendarData.slots.values.joined()
-    guard let s = all.first(where: { $0.id == slotId }) ?? upcomingSlots.first(where: { $0.id == slotId }), s.date != day else { return false }
+    guard let s = calendarData.slotById[slotId] ?? upcomingSlots.first(where: { $0.id == slotId }), s.date != day else { return false }
     let label = Fmt.day(dm.date(day), tz: tz)
     if s.date < todayKey { show("That clip already went out", error: true); return false }
     if let p = (postsBySlot[s.id] ?? []).first(where: { $0.state == .posted }) {
       show("Posted on \(p.platform.displayName), so it stays on its day", error: true)
       return false
     }
-    let here = (calendarData.slots[day] ?? []).filter { $0.id != s.id }
+    let here = upcomingSlots.filter { $0.date == day && $0.id != s.id }
+    let perDay = max(1, settings.postsPerDay)
     var other: PlanSlot?
-    if here.count >= max(1, settings.postsPerDay) { other = here.first { $0.position == s.position } ?? here.first }
+    if here.count >= perDay { other = here.first { $0.position == s.position } ?? here.first }
     if let o = other {
       let name = video(o.videoId).map(displayName) ?? "that clip"
       if o.pinned { show("“\(name)” is pinned to \(label). Move it first", error: true); return false }
@@ -250,19 +281,65 @@ extension AppModel {
       }
     }
     let swapped = other.flatMap { video($0.videoId) }.map { "Moved to \(label) · swapped with “\(displayName($0))”" }
-    return undoable(swapped ?? "Moved to \(label)", "move", ids: [s.videoId] + (other.map { [$0.videoId] } ?? []), plan: true) {
-      try planner.pin(videoId: s.videoId, date: day)
+    let toast = swapped ?? "Moved to \(label)"
+    let position = other?.position ?? (0..<perDay).first { p in !here.contains { $0.position == p } } ?? 0
+    let videoId = s.videoId
+    let soon = calendarTooSoon(s, day: day, position: position)
+    if !soon.isEmpty {
+      askPostToday(videoId, platforms: soon, done: toast) { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
+      return true
+    }
+    return undoable(toast, "move", ids: [videoId] + (other.map { [$0.videoId] } ?? []), plan: true) {
+      try planner.pin(videoId: videoId, date: day)
     }
   }
 
-  /// "Post today" for one clip from a card or a menu (same path as Queue).
+  /// "Move to…" from a menu: the same checks and words as a drag.
+  func calendarMove(videoId: String, to day: String) {
+    guard let s = nextSlotByVideo[videoId] else { return }
+    if s.date == day { show("Already on \(Fmt.day(dm.date(day), tz: tz))"); return }
+    calendarMove(slotId: s.id, to: day)
+  }
+
+  /// Platforms that would go out inside the lead if this clip landed on `day` at `position`: only ever today.
+  private func calendarTooSoon(_ s: PlanSlot, day: String, position: Int) -> [Platform] {
+    guard day == todayKey else { return [] }
+    let live = slotPosts(s.id).filter { $0.value.state != .skipped }
+    let limit = now.addingTimeInterval(Planner.autoScheduleLead)
+    return settings.activePlatforms.filter { p in
+      (live.isEmpty || live[p] != nil) && dm.at(day, minutes: settings.slot(for: p) + position * settings.secondPostOffsetMinutes) < limit
+    }
+  }
+
+  /// The Post today confirmation, naming what goes out at once so Eric can still say no.
+  private func askPostToday(_ videoId: String, platforms: [Platform], done: String,
+                            _ body: @escaping @Sendable (BulkActions, Bool) throws -> BulkResult) {
+    let b = bulk
+    requestBulk(BulkRequest(title: "Post today?", verb: "Post today", ids: [videoId],
+                            changes: platforms.isEmpty ? [] : [.init(field: "Goes out right away", value: platforms.map(\.displayName).joined(separator: ", "))],
+                            doneMessage: done, alwaysConfirm: true) { dry in try body(b, dry) })
+  }
+
+  /// "Post today" for one clip from a card or a menu: asks first, like a drop on today.
   func calendarPostToday(_ videoId: String) {
-    pipelineBulk("Post today?", verb: "Post today", ids: [videoId], done: "Posting today") { b, dry in try b.postToday([videoId], dryRun: dry) }
+    let soon = nextSlotByVideo[videoId].map { calendarTooSoon($0, day: todayKey, position: 0) }
+      ?? calendarTooSoon(PlanSlot(id: "", date: todayKey, position: 0, videoId: videoId, pinned: false, weekStart: ""), day: todayKey, position: 0)
+    askPostToday(videoId, platforms: soon, done: "Posting today") { b, dry in try b.postToday([videoId], dryRun: dry) }
+  }
+
+  /// Why Unschedule isn't offered (nil = it is): past days are fixed, and only Queue and Scheduled clips have a day to
+  /// give up.
+  func calendarUnscheduleBlocker(_ video: Video, slot: PlanSlot?) -> String? {
+    if let slot, slot.date < todayKey { return "Past days are fixed" }
+    guard let stage = ClipStage.of(video), stage == .queue || stage == .scheduled else {
+      return "It isn't in the Queue"
+    }
+    return removeFromQueueBlocker(video)
   }
 
   /// Unschedule: back one stage through `stageBack`, with the Calendar's own words.
   func calendarUnschedule(_ videoId: String) {
-    if let why = removeFromQueueBlocker([videoId]) { show(why, error: true); return }
+    if let why = video(videoId).flatMap({ removeFromQueueBlocker($0) }) { show(why, error: true); return }
     stageBack([videoId], unschedule: true)
   }
 }

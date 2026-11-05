@@ -93,8 +93,11 @@ enum SampleData {
     try store.db.run("UPDATE videos SET in_manifest=0 WHERE id=?", [shorts[61].id])
     try store.logEvent("relink", "Relinked \(shorts[3].name)", videoId: shorts[3].id)
 
-    // Every finished clip was sent to the Queue, except the last, which waits in Edit with nothing to fix.
-    try store.db.run("UPDATE videos SET sent_to_queue=1 WHERE type='short-form' AND id<>?", [shorts[39].id])
+    // Every finished clip was sent to the Queue, except the last, which waits in Edit with nothing to fix. Clips with
+    // something missing were never sent.
+    for v in shorts.prefix(39) where try Validation.issues(video: v, store: store).isEmpty {
+      try store.db.run("UPDATE videos SET sent_to_queue=1 WHERE id=?", [v.id])
+    }
     for v in shorts { try store.refreshState(videoId: v.id) }
 
     // This week: scheduled, one video per day, every platform.

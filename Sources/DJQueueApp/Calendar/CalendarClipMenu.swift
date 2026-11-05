@@ -20,11 +20,17 @@ struct CalendarClipMenu: View {
     let moveWhy = model.calendarMoveBlocker(slot, posts: posts)
     Button("Move to…" + AppModel.menuReason(moveWhy), systemImage: "calendar") { model.calendarPinTarget = [video.id] }
       .disabled(moveWhy != nil)
+    if let slot {
+      Button(slot.pinned ? "Pinned to this day" : "Pin to this day" + AppModel.menuReason(moveWhy), systemImage: "pin") {
+        model.pin(video.id, dayKey: slot.date)
+      }
+      .disabled(slot.pinned || moveWhy != nil)
+    }
     Button("Post today" + AppModel.menuReason(moveWhy), systemImage: "bolt") { model.calendarPostToday(video.id) }
       .disabled(moveWhy != nil)
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }
     Divider()
-    let unscheduleWhy = model.removeFromQueueBlocker(video)
+    let unscheduleWhy = model.calendarUnscheduleBlocker(video, slot: slot)
     Button("Unschedule" + AppModel.menuReason(unscheduleWhy), systemImage: "calendar.badge.minus") { model.calendarUnschedule(video.id) }
       .disabled(unscheduleWhy != nil)
     let skippable = posts.values.filter { model.canSkip($0) }.sorted { $0.platform < $1.platform }
@@ -74,8 +80,16 @@ struct ExtraPostChip: View {
     .padding(.horizontal, 6)
     .frame(height: 22)
     .background(DS.color.surfaceSunken, in: Capsule())
-    .dsTooltip(post.kind == .repost ? "Repost of \(model.video(post.videoId).map(model.displayName) ?? "a clip") (new version)"
-               : "Re-queued attempt #\(post.attemptNo) of \(model.video(post.videoId).map(model.displayName) ?? "a clip")")
+    .dsTooltip(help)
     .contextMenu { PostContextMenu(model: model, post: post) }
+  }
+
+  private var help: String {
+    let name = model.video(post.videoId).map(model.displayName) ?? "a clip"
+    switch post.kind {
+    case .repost: return "Repost of \(name) (new version)"
+    case .retry: return "Re-queued attempt #\(post.attemptNo) of \(name)"
+    default: return "\(post.platform.displayName) post of \(name), moved to this day"
+    }
   }
 }

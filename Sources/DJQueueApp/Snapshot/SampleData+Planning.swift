@@ -54,6 +54,14 @@ extension SampleData {
       st.postsPerDay = 3
       try store.save(st)
       var pool = try Queue(store: store).ordered()
+      // Two stay waiting, with the schedule reaching the horizon ("N in Queue waiting").
+      if let last = pool.popLast() {
+        let day = dm.addDays(today, Planner.autoScheduleHorizonDays)
+        let week = dm.weekStart(of: dm.date(day))
+        if try store.week(week) == nil { try store.save(Week(weekStart: week, state: .draft, approvedAt: nil)) }
+        try store.save(PlanSlot(id: newId(), date: day, position: 0, videoId: last.id, pinned: false, weekStart: week))
+      }
+      pool.removeLast(min(2, pool.count))
       for d in 0..<21 {
         let day = dm.addDays(today, d)
         let used = Set(try store.planSlots(where: "date=?", [day]).map(\.position))

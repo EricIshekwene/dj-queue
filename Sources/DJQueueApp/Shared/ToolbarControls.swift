@@ -5,11 +5,15 @@ import SwiftUI
 /// running low. Click → popover with the numbers explained.
 struct RunwayChip: View {
   @Bindable var model: AppModel
+  /// "Through Sat 7 Nov", for a full toolbar.
+  var compact = false
   @State private var open = false
   @State private var hovering = false
 
   private var low: Bool { model.queueRunningLow }
-  private var text: String { model.scheduledText }
+  private var text: String {
+    compact ? model.scheduledText.replacingOccurrences(of: "Scheduled through", with: "Through") : model.scheduledText
+  }
 
   var body: some View {
     Button { open.toggle() } label: {

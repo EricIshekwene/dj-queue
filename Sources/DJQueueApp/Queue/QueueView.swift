@@ -226,12 +226,17 @@ struct QueuePinDialog: View {
   private func pin(_ d: Date) {
     let ids = ids
     let day = model.dm.key(d)
+    if moving, ids.count == 1 {
+      onClose()
+      model.calendarMove(videoId: ids[0], to: day)
+      return
+    }
     let first = Fmt.day(d, tz: model.tz)
     let last = Fmt.day(model.dm.date(model.dm.addDays(day, ids.count - 1)), tz: model.tz)
     onClose()
     model.pipelineBulk("Pin \(AppModel.pipelineClips(ids.count)) to \(first) – \(last)?", verb: "Pin", ids: ids,
                        changes: [.init(field: "Days", value: ids.count == 1 ? first : "\(first) – \(last), one a day")],
-                       done: ids.count == 1 ? "\(moving ? "Moved" : "Pinned") to \(first)" : nil) { b, dry in
+                       done: ids.count == 1 ? "Pinned to \(first)" : nil) { b, dry in
       try b.pinConsecutive(ids, from: day, dryRun: dry)
     }
   }

@@ -85,6 +85,9 @@ enum SnapshotRunner {
       ThumbCache.shared.store = store
       model.refreshNow()
 
+      if ProcessInfo.processInfo.environment["DJQ_SEND_TO_QUEUE_SCRIPT"] != nil {
+        return await SendToQueueScript.run(model: model, store: store, out: out)
+      }
       let ctx = SnapshotContext(model: model, empty: empty, store: store, now: now, postiz: pModel)
       var shots = SnapshotShots.shell(ctx) + SnapshotShots.pipeline(ctx) + SnapshotShots.planning(ctx)
         + SnapshotShots.browse(ctx) + SnapshotShots.settings(ctx)
@@ -180,6 +183,8 @@ struct Shot {
 
   nonisolated static let standard = CGSize(width: 1440, height: 900)
   nonisolated static let narrow = CGSize(width: 1100, height: 700)
+  /// The tightest Calendar toolbar: the sidebar is still open at this width.
+  nonisolated static let tight = CGSize(width: 1200, height: 700)
 
   func render(to dir: URL) async throws {
     let window: NSWindow

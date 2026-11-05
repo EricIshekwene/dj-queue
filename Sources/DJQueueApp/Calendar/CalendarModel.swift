@@ -105,20 +105,25 @@ struct CalendarData {
   var range: CalendarRange?
   /// Plan slots by day, in position order.
   var slots: [String: [PlanSlot]] = [:]
+  /// The same slots by id (a post's own slot, for a post shifted to another day).
+  var slotById: [String: PlanSlot] = [:]
   /// Every post scheduled on a day, in time order (`planSlotId == nil` = a retry or repost).
   var posts: [String: [PlatformPost]] = [:]
   var awake: [DateInterval] = []
+  /// The day `awake` starts from; nil = not loaded (Month has no strip).
+  var awakeFrom: String?
 
-  static func load(store: Store, posts: [PlatformPost], range: CalendarRange, dm: DayMath) throws -> CalendarData {
-    var d = CalendarData(range: range)
+  static func load(store: Store, posts: [PlatformPost], range: CalendarRange, awakeFrom: String?, dm: DayMath) throws -> CalendarData {
+    var d = CalendarData(range: range, awakeFrom: awakeFrom)
     let slots = try store.planSlots(where: "date>=? AND date<=?", [range.first, range.last])
     d.slots = Dictionary(grouping: slots, by: \.date).mapValues { $0.sorted { $0.position < $1.position } }
+    d.slotById = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, $0) })
     let shown = posts.compactMap { p -> (String, PlatformPost)? in
       let key = dm.key(p.scheduledAt)
       return range.contains(key) ? (key, p) : nil
     }
     d.posts = Dictionary(grouping: shown, by: \.0).mapValues { $0.map(\.1).sorted { $0.scheduledAt < $1.scheduledAt } }
-    d.awake = try Health.awakePeriods(store: store, since: dm.date(range.first))
+    if let awakeFrom { d.awake = try Health.awakePeriods(store: store, since: dm.date(awakeFrom)) }
     return d
   }
 }
@@ -129,12 +134,13 @@ struct CalendarClip: Identifiable {
   let video: Video
   /// Latest attempt per platform (all platforms: moves and blockers read these, whatever the filter shows).
   let posts: [Platform: PlatformPost]
-  /// Platforms shown, in Settings order. A slot with no posts yet shows the platforms it will post to.
+  /// Platforms going out on this day, in Settings order. A post shifted to another day shows there instead; a slot
+  /// with no posts yet shows the platforms it will post to.
   let platforms: [Platform]
   var id: String { slot.id }
 }
 
-/// Day view: one clip's posts on that day. `slot` is nil for a retry or repost on a day the clip isn't planned.
+/// Day view: one clip's posts on that day. `slot` is nil for a post with no plan slot (a retry or repost).
 struct CalendarDayGroup: Identifiable {
   let videoId: String
   let video: Video?

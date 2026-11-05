@@ -73,7 +73,7 @@ struct WeekDayHeader: View {
         .contentShape(Rectangle())
         .onTapGesture { model.openCalendarDay(day) }
         .dsTooltip("Open this day")
-      if isPast || isToday {
+      if isToday || (isPast && day >= model.calendarAwakeLimit) {
         AwakeStrip(model: model, day: day, awake: model.calendarData.awake)
       } else {
         Color.clear.frame(height: 4)
@@ -107,11 +107,20 @@ struct CalendarDayColumn: View {
       }
       ForEach(extras) { p in ExtraPostChip(model: model, post: p) }
       if clips.isEmpty {
-        CalendarOpenDay(model: model, isPast: isPast, targeted: targeted, height: style == .week ? width * 16 / 9 : CalendarCover.smallHeight + 2 * DS.space.xs)
+        CalendarOpenDay(model: model, day: day, targeted: targeted, height: style == .week ? width * 16 / 9 : CalendarCover.smallHeight + 2 * DS.space.xs)
       }
     }
     .opacity(isPast ? 0.5 : 1)
     .frame(maxWidth: .infinity, alignment: .top)
+    .background {
+      if targeted { RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous).fill(DS.color.hover).padding(-DS.space.xxs) }
+    }
+    .overlay {
+      if targeted {
+        RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous)
+          .strokeBorder(DS.color.text.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 3])).padding(-DS.space.xxs)
+      }
+    }
     .dropDestination(for: String.self) { items, _ in CalendarDrop.accept(items, on: day, model: model) } isTargeted: { targeted = $0 && !isPast }
   }
 }
@@ -125,21 +134,28 @@ enum CalendarDrop {
   }
 }
 
-/// The dashed empty future day, saying what will fill it. Past days only say nothing went out.
+/// The dashed day with no card, saying what will fill it, and only what's true: a day the filter emptied isn't open,
+/// and today stops promising once no position has time left. Past days only say nothing went out.
 struct CalendarOpenDay: View {
   @Bindable var model: AppModel
-  let isPast: Bool
+  let day: String
   let targeted: Bool
   let height: CGFloat
 
   var body: some View {
-    let waiting = !model.calendarBacklog.isEmpty
+    let f = model.calendarFilter
     VStack(spacing: DS.space.xxs) {
-      Text(isPast ? "Nothing posted" : "Open").font(DS.type.calloutMedium).foregroundStyle(DS.color.textTertiary)
-      if !isPast {
+      if let f, model.calendarDayIsTaken(day) {
+        Text("Nothing on \(f.dsxCompactName)").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+      } else if day < model.todayKey {
+        Text("Nothing posted").font(DS.type.calloutMedium).foregroundStyle(DS.color.textTertiary)
+      } else if !model.calendarDayCanFill(day) {
+        Text("Nothing going out").font(DS.type.calloutMedium).foregroundStyle(DS.color.textTertiary)
+      } else {
+        Text("Open").font(DS.type.calloutMedium).foregroundStyle(DS.color.textTertiary)
         if model.settings.paused {
           Text("Posting paused").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
-        } else if waiting {
+        } else if !model.schedulable.isEmpty {
           Text("Next from the Queue").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
         } else {
           Text("Queue is empty").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)

@@ -92,11 +92,11 @@ struct GalleryListHeader: View {
         }
         .frame(width: 540, alignment: .leading)
       }
-      GSection("List header · compact", note: "drawers (Week › Next up): one row, small controls") {
+      GSection("List header · compact", note: "drawers: one row, small controls") {
         GState("") { q in
           HStack(spacing: DS.space.xs) {
             DSIconButton("chevron.down", tooltip: "Hide the list", size: .sm) {}
-            DSListHeader("Next up", count: 4, of: 6, search: q, searchPlaceholder: "Search clips",
+            DSListHeader("Clips", count: 4, of: 6, search: q, searchPlaceholder: "Search clips",
                          filters: Self.sections(["score": "top"]), onFilter: { _, _ in }, onClearAll: {}, compact: true) {
               EmptyView()
             } sort: {

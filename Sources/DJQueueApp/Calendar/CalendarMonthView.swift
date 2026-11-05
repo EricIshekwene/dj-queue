@@ -24,7 +24,7 @@ struct CalendarMonthView: View {
   var body: some View {
     let weeks = stride(from: 0, to: days.count, by: 7).map { Array(days[$0..<min($0 + 7, days.count)]) }
     let month = Fmt.day(model.dm.date(model.calendarDay), tz: model.tz, style: "yyyy-MM")
-    let waiting = model.calendarBacklog.count
+    let waiting = model.calendarWaitingBeyondHorizon
     VStack(spacing: DS.space.xxs) {
       GeometryReader { g in
         let cellW = g.size.width / 7
@@ -150,6 +150,7 @@ struct CalendarMonthChip: View {
     .onTapGesture { model.openCalendarDay(clip.slot.date) }
     .modifier(SlotDrag(enabled: blocker == nil, id: clip.slot.id, poster: model.poster(clip.video)))
     .contextMenu { CalendarClipMenu(model: model, video: clip.video, slot: clip.slot, posts: clip.posts) }
+    .dsTooltip(blocker)
     .accessibilityElement(children: .contain)
     .accessibilityLabel("\(model.displayName(clip.video)), \(model.calendarTimeRange(clip))")
   }

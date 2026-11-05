@@ -22,7 +22,7 @@ struct EditView: View {
     let filters = Self.filters(scope, issues: model.issuesByVideo)
     let active = prefs[.edit].status.flatMap { id in filters.first { $0.filter.id == id }?.filter }
     let clean = scope.filter(nothingToFix)
-    let cleanOnly = prefs[.edit].status == Self.nothingToFixId
+    let cleanOnly = prefs[.edit].status == Self.nothingToFixId && !clean.isEmpty
     let list = model.listSorted(.edit, cleanOnly ? clean : active.map { f in scope.filter { f.matches(model.issuesByVideo[$0.id] ?? []) } } ?? scope)
     let ids = list.map(\.id)
     let mode = model.viewMode(.edit)
@@ -104,7 +104,8 @@ struct EditView: View {
 
   private func makeReady(_ ids: [String]) {
     model.pipelineBulk("Send \(AppModel.pipelineClips(ids.count)) to the Queue?", verb: "Send to Queue", ids: ids,
-                       changes: [.init(field: "Crop", value: "Default anchor, confirmed where missing"),
+                       changes: [.init(field: "Held clips", value: "Released: clips you sent back go to the Queue too"),
+                                 .init(field: "Crop", value: "Default anchor, confirmed where missing"),
                                  .init(field: "Text, caption, cover", value: "Keep following New clip defaults"),
                                  .init(field: "Title", value: "Not set by this — clips without one still need text")]) { b, dry in
       try b.makeReadyWithDefaults(ids, dryRun: dry)

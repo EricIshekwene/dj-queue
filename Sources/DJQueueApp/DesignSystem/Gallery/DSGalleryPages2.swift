@@ -58,7 +58,7 @@ struct GallerySurfaces: View {
               DSSidebarItem("Score", icon: "scope", count: 12, isSelected: true) {}
               DSSidebarItem("Edit", icon: "pencil", count: 9) {}.dsForcedState(.hover)
               DSSidebarItem("Queue", icon: "list.bullet", count: 41) {}
-              DSSidebarItem("Today", icon: "sun.max", count: 3, countStyle: .attention) {}
+              DSSidebarItem("Calendar", icon: "calendar", count: 3, countStyle: .attention) {}
               DSEyebrow("Browse").padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
               DSSidebarItem("Posts", icon: "paperplane", count: 2, countStyle: .danger) {}
               DSSidebarItem("Health", icon: "heart", dot: .success) {}

@@ -95,6 +95,8 @@ final class AppModel {
   var lastRefresh = Date.distantPast
   /// The Calendar's loaded range, indexed by day (`CalendarData`, loaded off-main with every refresh).
   var calendarData = CalendarData()
+  /// Queue clips with no day that can still get one (`Planner.schedulable`), in Queue order.
+  var schedulable: [Video] = []
   var popoverVisible = false
   /// False until the first background load lands (skeleton rows).
   var loaded = false
@@ -324,12 +326,13 @@ final class AppModel {
     var captionTemplates: [CaptionTemplate] = []
     var hashtagSets: [HashtagSet] = []
     var calendar = CalendarData()
+    var schedulable: [Video] = []
     var postiz = PostizLoaded()
     var error: String?
   }
 
   nonisolated static func load(store: Store, queue: Queue, postActions: PostActions, now: Date, calendar: CalendarRange,
-                               postiz: PostizService, hasKey: Bool?) -> Loaded {
+                               awakeFrom: String?, postiz: PostizService, hasKey: Bool?) -> Loaded {
     var l = Loaded()
     l.startedAt = Date()
     do {
@@ -375,7 +378,8 @@ final class AppModel {
         l.previewStamps[v.id] = l.previewTable.stamp(for: v, version: 1)
         l.previewAllStamps[v.id] = l.previewTable.stamp(for: v, version: .max)
       }
-      l.calendar = try CalendarData.load(store: store, posts: l.posts, range: calendar, dm: dm)
+      l.calendar = try CalendarData.load(store: store, posts: l.posts, range: calendar, awakeFrom: awakeFrom, dm: dm)
+      l.schedulable = try Planner(store: store).schedulable(l.settings)
       l.postiz = try PostizLoaded.load(store: store, now: now, service: postiz, hasKey: hasKey, posts: l.posts)
     } catch {
       l.error = "\(error)"
@@ -431,6 +435,7 @@ final class AppModel {
     renderProgress = renderProgress.filter { id, _ in l.activeRenders.contains { $0.id == id } }
     loaded = true
     calendarData = l.calendar
+    schedulable = l.schedulable
     // Week start or today moved under the load: fetch again rather than wait for the timer.
     if !frozen && !(calendarData.range?.covers(calendarVisible) ?? false) { refresh() }
     postiz.apply(l.postiz)
@@ -463,7 +468,7 @@ final class AppModel {
   func refreshNow() {
     if !frozen { now = store.clock.now }
     apply(Self.load(store: store, queue: queue, postActions: postActions, now: now, calendar: calendarVisible.padded(dm: dm),
-                    postiz: postizBridge.service, hasKey: postiz.hasKey))
+                    awakeFrom: calendarAwakeFrom, postiz: postizBridge.service, hasKey: postiz.hasKey))
   }
 
   /// Coalesced background reload; the result is applied on the main actor.
@@ -472,10 +477,10 @@ final class AppModel {
     if refreshing { refreshAgain = true; return }
     refreshing = true
     now = store.clock.now
-    let (s, q, pa, n, r) = (store, queue, postActions, now, calendarVisible.padded(dm: dm))
+    let (s, q, pa, n, r, af) = (store, queue, postActions, now, calendarVisible.padded(dm: dm), calendarAwakeFrom)
     let (svc, key) = (postizBridge.service, postiz.hasKey)
     Task.detached(priority: .userInitiated) {
-      let l = AppModel.load(store: s, queue: q, postActions: pa, now: n, calendar: r, postiz: svc, hasKey: key)
+      let l = AppModel.load(store: s, queue: q, postActions: pa, now: n, calendar: r, awakeFrom: af, postiz: svc, hasKey: key)
       await MainActor.run {
         self.apply(l)
         self.refreshing = false
@@ -487,7 +492,7 @@ final class AppModel {
   /// The Calendar moved: load what it now shows. Stepping within the padded range keeps the data on screen while this
   /// runs; a snapshot only reloads when it has to.
   private func calendarViewChanged() {
-    if !frozen || !(calendarData.range?.covers(calendarVisible) ?? false) { refresh() }
+    if !frozen || !(calendarData.range?.covers(calendarVisible) ?? false) || calendarData.awakeFrom != calendarAwakeFrom { refresh() }
   }
 
   /// Timer entry: every 5 s while a window or the menu-bar popover is visible, otherwise every 30 s (menu-bar badge).
