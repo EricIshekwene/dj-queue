@@ -18,6 +18,17 @@ public enum CaptionTemplates {
   /// What the editor's form and Settings say beside a template.
   public static let hashtagHint = "You can type hashtags here too; {hashtags} adds the clip's groups"
 
+  /// What a template can say, for the form's token menu. `caption(for:)` fills every one.
+  public static let tokens: [(token: String, label: String)] = [
+    ("{text}", "Text"), ("{title}", "Title"), ("{set}", "Set name"), ("{link}", "Link line"), ("{tag}", "Raw tag"), ("{hashtags}", "The clip's hashtags"),
+  ]
+
+  /// `template` with `token` added on the end, on its own line for `{hashtags}`, the way every template has it.
+  public static func adding(_ token: String, to template: String) -> String {
+    guard !template.isEmpty else { return token }
+    return template + (token == "{hashtags}" && !template.hasSuffix("\n") ? "\n" : template.hasSuffix(" ") || template.hasSuffix("\n") ? "" : " ") + token
+  }
+
   // MARK: Rules
 
   /// What's wrong with a template, worst first. `message` is what the disabled Save button says.
