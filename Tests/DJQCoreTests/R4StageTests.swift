@@ -347,9 +347,11 @@ import Testing
     let f = try Fixture(clips: clips, longform: false)
     try f.intake()
     for i in 0..<200 { try f.makeReady("clip-\(i)", score: 50) }
-    let t0 = Date()
+    // This thread's CPU time, not wall time: the update gate runs tests while the Mac is busy, and a wall clock then
+    // measures the load (5.06 s here on 2026-11-05 with the Mac busy), not the work.
+    let t0 = threadCPUSeconds()
     let r = try Revalidation(store: f.store).run()
-    let dt = Date().timeIntervalSince(t0)
+    let dt = threadCPUSeconds() - t0
     #expect(r.checked == 200 && r.movedToEdit.isEmpty)
     #expect(dt < 5, "revalidation of 200 clips took \(dt) s")
   }

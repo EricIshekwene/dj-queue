@@ -174,12 +174,12 @@ private func ids(_ index: SearchIndex, _ q: String) -> [String] { index.search(S
     var worst = 0.0
     for text in ["blend", "no such text anywhere", "midnight run afterglow 4999", "12 nov", "#amapiano who"] {
       let q = SearchQuery(text)
-      let t = Date()
+      let t = threadCPUSeconds()
       _ = index.search(q)
-      worst = max(worst, Date().timeIntervalSince(t))
+      worst = max(worst, threadCPUSeconds() - t)
     }
     #if DEBUG
-      #expect(worst < 0.5, "\(worst)")  // loose: the update gate runs tests under load
+      #expect(worst < 0.5, "\(worst)")  // loose: debug code is far slower than release
     #else
       #expect(worst < 0.01, "\(worst)")
     #endif
