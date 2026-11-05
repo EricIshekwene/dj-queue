@@ -10,7 +10,15 @@ struct CaptionsSettings: View {
   @State private var sets: [HashtagSet] = []
   /// What changing each group's tags reaches, shown under its row.
   @State private var reach: [String: HashtagGroups.Impact] = [:]
+  /// Groups added here and not changed yet. They aren't saved, so one Eric never fills in goes away with the screen.
+  @State private var drafts: Set<String> = []
+  /// Group rows still waiting to save what Eric typed.
+  @State private var pendingGroups: Set<String> = []
   @State private var titles: [TitleTemplate] = []
+  /// Each template's save waiting for typing to pause.
+  @State private var templateSaves: [String: Task<Void, Never>] = [:]
+  @State private var link = ""
+  @State private var linkSave: Task<Void, Never>?
 
   private var defaults: NewClipDefaults { model.settings.defaults }
 
@@ -22,7 +30,9 @@ struct CaptionsSettings: View {
           .padding(.top, DS.space.sm)
       }
       ForEach($sets) { $s in
-        HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), reach: reach[s.id], onSave: save, onDelete: deleteSet)
+        HashtagSetRow(set: $s, isDefault: defaults.hashtagSetIds.contains(s.id), reach: reach[s.id], canMoveUp: canMove(s, -1),
+                      canMoveDown: canMove(s, 1), onMove: moveSet, onSave: save, onDelete: deleteSet,
+                      onPending: { pending in if pending { pendingGroups.insert(s.id) } else { pendingGroups.remove(s.id) } })
       }
       DSButton("Add hashtag group", icon: "plus", variant: .ghost, size: .sm, tooltip: "Make a new hashtag group: a name and its hashtags") { addSet() }
         .padding(.top, DS.space.xs)
@@ -32,12 +42,24 @@ struct CaptionsSettings: View {
       DSButton("Add title template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add a YouTube title template") { addTitle() }
         .padding(.top, DS.space.xs)
 
-      SettingsGroupHeader("Caption templates", description: "{text} overlay text on one line · {tag} raw marker tag · {set} session name · {hashtags} the clip's hashtags")
+      SettingsGroupHeader("Caption templates", description: "{text} overlay text on one line · {title} the clip's title · {set} session name · {link} the link line · {tag} raw marker tag · {hashtags} the clip's hashtags. \(CaptionTemplates.hashtagHint).")
       ForEach($templates) { $t in
         templateRow($t)
       }
       DSButton("Add template", icon: "plus", variant: .ghost, size: .sm, tooltip: "Add an empty caption template") { addTemplate() }
         .padding(.top, DS.space.xs)
+      SettingsRow("Link line", description: "What {link} fills in and the editor's Link chip adds. Clips with scheduled or posted posts keep their captions.", stacked: true) {
+        DSTextField(placeholder: Defaults.captionLink, text: $link, size: .sm)
+          .accessibilityLabel("Link line")
+          .onChange(of: link) { _, l in
+            linkSave?.cancel()
+            linkSave = Task { @MainActor in
+              try? await Task.sleep(for: .milliseconds(600))
+              guard !Task.isCancelled else { return }
+              model.saveCaptionLink(l)
+            }
+          }
+      }
 
       SettingsGroupHeader("Titles")
       SettingsRow("Where titles come from", description: "videos.json (title, title_suggestions) or an agent running djq title / djq suggest. The app never makes titles up.") {
@@ -52,6 +74,16 @@ struct CaptionsSettings: View {
       }
     }
     .onAppear(perform: load)
+    // Undo, the editor and `djq` change these underneath: rows follow, except one still waiting to save what Eric typed.
+    .onChange(of: model.captionTemplates) { _, fresh in
+      let local = Dictionary(templates.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+      templates = fresh.map { templateSaves[$0.id] != nil ? local[$0.id] ?? $0 : $0 }
+    }
+    .onChange(of: model.hashtagSets) { _, fresh in
+      let local = Dictionary(sets.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+      sets = fresh.map { pendingGroups.contains($0.id) ? local[$0.id] ?? $0 : $0 } + sets.filter { drafts.contains($0.id) }
+      measureReach()
+    }
   }
 
   private var askTitle: String {
@@ -63,55 +95,54 @@ struct CaptionsSettings: View {
 
   private func templateRow(_ t: Binding<CaptionTemplate>) -> some View {
     let id = t.wrappedValue.id
-    let usedBy = templateUse(id)
+    let usedBy = CaptionTemplates.blocker(of: id, settings: model.settings)
     return VStack(alignment: .leading, spacing: DS.space.xs) {
       HStack(spacing: DS.space.xs) {
         DSTextField(placeholder: "Template name", text: t.name, size: .sm).frame(width: 240)
           .accessibilityLabel("Template name")
         if id == defaults.captionTemplateId { DSBadge("Default", style: .soft(.neutral), help: "New clips use this template") }
         Spacer(minLength: 0)
-        DSIconButton("trash", tooltip: "Delete this template…", size: .sm,
-                     disabledReason: usedBy.map { "Used by New clip defaults (\($0)) — choose another template there first" }) {
+        DSIconButton("trash", tooltip: "Delete this template…", size: .sm, disabledReason: usedBy) {
           deleteTemplate(t.wrappedValue)
         }
       }
-      DSTextArea(placeholder: "{text}\n\n{hashtags}", text: t.template, minHeight: 104, maxHeight: 180)
+      DSTextArea(placeholder: "{text}\n\n{hashtags}", text: t.template, hint: CaptionTemplates.hashtagHint, minHeight: 104, maxHeight: 180)
         .accessibilityLabel("Template")
     }
     .padding(.vertical, DS.space.md)
     .overlay(alignment: .bottom) { DSSeparator() }
-    .onChange(of: t.wrappedValue) { _, nt in try? model.store.save(nt) }
-  }
-
-  private func templateUse(_ id: String) -> String? {
-    if defaults.captionTemplateId == id { return "caption template" }
-    if let p = defaults.platformCaptionTemplates.first(where: { $0.value == id })?.key { return p.displayName }
-    return nil
+    // Saved once typing pauses: each save is a journaled change that can freeze clips with posts.
+    .onChange(of: t.wrappedValue) { _, nt in
+      templateSaves[id]?.cancel()
+      templateSaves[id] = Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(600))
+        guard !Task.isCancelled else { return }
+        templateSaves[id] = nil
+        model.saveTemplateEdit(nt)
+      }
+    }
   }
 
   private func addTemplate() {
-    let t = CaptionTemplate(id: newId(), name: "New template", template: "{text}\n\n{hashtags}", sort: (templates.map(\.sort).max() ?? 0) + 1)
-    try? model.store.save(t)
-    templates.append(t)
+    let t = CaptionTemplates.make(name: CaptionTemplates.uniqueName("New template", existing: templates), template: "{text}\n\n{hashtags}", existing: templates)
+    if model.addTemplate(t), !templates.contains(where: { $0.id == t.id }) { templates.append(t) }
   }
 
-  /// Asks first: templates aren't in the undo history, and clips that chose this one lose it.
   private func deleteTemplate(_ t: CaptionTemplate) {
-    model.confirm(ConfirmRequest(
-      title: "Delete “\(t.name)”?",
-      message: "Clips that chose this template show “Missing template” until you pick another. You can't undo this.",
-      verb: "Delete template", icon: "trash", destructive: true) {
-        if model.perform("Template “\(t.name)” deleted", { try model.store.deleteCaptionTemplate(t.id) }) {
-          templates.removeAll { $0.id == t.id }
-          model.revalidateStages()
-        }
-      })
+    templateSaves[t.id]?.cancel()
+    templateSaves[t.id] = nil
+    model.confirmDeleteTemplate(t, undoHint: "Undo (⌘Z) brings it back.") { templates.removeAll { $0.id == t.id } }
   }
 
   // MARK: Hashtag groups
 
   private func save(_ s: HashtagSet) {
-    model.saveGroupEdit(s)
+    if drafts.contains(s.id) {
+      guard !HashtagGroups.cleanName(s.name).isEmpty, model.saveNewGroup(s) else { return }
+      drafts.remove(s.id)
+    } else {
+      model.saveGroupEdit(s)
+    }
     measureReach()
   }
 
@@ -122,13 +153,27 @@ struct CaptionsSettings: View {
   }
 
   private func addSet() {
-    let s = HashtagSet(id: newId(), name: "New group", category: "My groups", tags: [],
-                       sort: (sets.map(\.sort).max() ?? -1) + 1)
-    try? model.store.save(s)
+    let s = HashtagGroups.make(name: "New group", tags: [], existing: sets)
+    drafts.insert(s.id)
     sets.append(s)
   }
 
+  /// Saved groups move past each other; a draft stays at the end until it's saved.
+  private func canMove(_ s: HashtagSet, _ by: Int) -> Bool {
+    let saved = sets.filter { !drafts.contains($0.id) }
+    return saved.firstIndex { $0.id == s.id }.map { saved.indices.contains($0 + by) } ?? false
+  }
+
+  private func moveSet(_ s: HashtagSet, _ by: Int) {
+    guard model.moveGroup(s, by: by), let stored = try? model.store.hashtagSets() else { return }
+    sets = stored + sets.filter { drafts.contains($0.id) }
+  }
+
   private func deleteSet(_ s: HashtagSet) {
+    if drafts.remove(s.id) != nil {
+      sets.removeAll { $0.id == s.id }
+      return
+    }
     model.confirmDeleteGroup(s, undoHint: "Undo (⌘Z) brings it back.") { sets.removeAll { $0.id == s.id } }
   }
 
@@ -187,8 +232,10 @@ struct CaptionsSettings: View {
   private func load() {
     templates = (try? model.store.captionTemplates()) ?? []
     sets = (try? model.store.hashtagSets()) ?? []
+    drafts = []
     measureReach()
     titles = (try? model.store.settings().youtubeTitleTemplates) ?? []
+    link = (try? model.store.settings().captionLink) ?? Defaults.captionLink
   }
 }
 
@@ -197,14 +244,21 @@ private struct HashtagSetRow: View {
   @Binding var set: HashtagSet
   let isDefault: Bool
   var reach: HashtagGroups.Impact?
+  var canMoveUp = false
+  var canMoveDown = false
+  var onMove: (HashtagSet, Int) -> Void = { _, _ in }
   let onSave: (HashtagSet) -> Void
   let onDelete: (HashtagSet) -> Void
+  var onPending: (Bool) -> Void = { _ in }
   @State private var tags = ""
   @State private var saveTask: Task<Void, Never>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       fields
+      if HashtagGroups.cleanName(set.name).isEmpty {
+        EditorHint("Needs a name", icon: "exclamationmark.circle", tone: .warning)
+      }
       if let reach, reach.kept + reach.others > 0 {
         Text(reach.editSummary).font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -215,11 +269,16 @@ private struct HashtagSetRow: View {
     // Saved once typing pauses: each save is a journaled change that can freeze clips.
     .onChange(of: set) { _, s in
       saveTask?.cancel()
+      onPending(true)
       saveTask = Task { @MainActor in
         try? await Task.sleep(for: .milliseconds(600))
         guard !Task.isCancelled else { return }
+        onPending(false)
         onSave(s)
       }
+    }
+    .onChange(of: set.tags) { _, t in
+      if tags.split(whereSeparator: \.isWhitespace).map(String.init) != t { tags = t.joined(separator: " ") }
     }
   }
 
@@ -234,6 +293,10 @@ private struct HashtagSetRow: View {
       }), size: .sm)
       .accessibilityLabel("Hashtags")
       if isDefault { DSBadge("Default", style: .soft(.neutral), help: "New clips get this group") }
+      DSIconButton("chevron.up", tooltip: "Move up: its tags come earlier when groups are turned on", size: .sm,
+                   disabledReason: canMoveUp ? nil : "Already first") { onMove(set, -1) }
+      DSIconButton("chevron.down", tooltip: "Move down: its tags come later when groups are turned on", size: .sm,
+                   disabledReason: canMoveDown ? nil : "Already last") { onMove(set, 1) }
       DSIconButton("trash", tooltip: "Delete this hashtag group…", size: .sm) {
         onDelete(set)
       }

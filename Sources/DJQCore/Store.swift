@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 6
+  public static let schemaVersion = 7
 
   public init(paths: Paths, clock: Clock = SystemClock(), path: String? = nil) throws {
     self.paths = paths
@@ -87,6 +87,7 @@ public final class Store: @unchecked Sendable {
     if v < 4 { try migrateToV4(from: v) }
     if v < 5 { try migrateToV5(from: v) }
     if v < 6 { try migrateToV6(from: v) }
+    if v < 7 { try migrateToV7(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -217,6 +218,13 @@ public final class Store: @unchecked Sendable {
     }
     let r = try HashtagGroupsMigration.run(self)
     Log.shared.info("schema 6: hashtag groups — \(r.frozen.count) clip(s) with posts frozen, \(r.dropped.count) dropped built-in groups, \(r.suffixed) written caption(s) kept their hashtags, batch \(r.batchId ?? "none")")
+  }
+
+  /// v0.8.3 changes how captions are built (`CaptionRulesMigration`): clips with posts keep byte-identical captions.
+  private func migrateToV7(from v: Int) throws {
+    guard v >= 1 else { try db.exec("PRAGMA user_version = 7"); return }
+    let held = try CaptionRulesMigration.run(self)
+    Log.shared.info("schema 7: caption rules — \(held.count) clip(s) with posts kept their captions")
   }
 
   private func seedDefaults() throws {
