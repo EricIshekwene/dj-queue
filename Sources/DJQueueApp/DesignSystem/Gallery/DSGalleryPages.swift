@@ -180,8 +180,8 @@ struct GalleryButtons: View {
       HStack(alignment: .top, spacing: DS.space.xxxl) {
         GSection("Tooltip", note: "floating panel on hover · drawn in place here · see Tooltips page") {
           HStack(spacing: DS.space.xxxl) {
-            DSTooltipDemo(text: "Add to week", shortcut: "⌘W") {
-              DSIconButton("calendar.badge.plus", tooltip: "Add to week", variant: .outline) {}
+            DSTooltipDemo(text: "Pin to days…", shortcut: "⌘W") {
+              DSIconButton("calendar.badge.plus", tooltip: "Pin to days…", variant: .outline) {}
             }
             DSTooltipDemo(text: "Instagram isn't rendered yet") {
               DSButton("Post today", icon: "bolt", variant: .outline, disabledReason: "Instagram isn't rendered yet") {}

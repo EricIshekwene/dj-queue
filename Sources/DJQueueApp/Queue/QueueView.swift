@@ -196,6 +196,8 @@ private struct QueueBulkBar: View {
 struct QueuePinDialog: View {
   @Bindable var model: AppModel
   let ids: [String]
+  /// Opened from the Calendar's "Move to…": the same pin, in the words of a move.
+  var moving = false
   let onClose: () -> Void
   @State private var date: Date?
 
@@ -203,7 +205,7 @@ struct QueuePinDialog: View {
     let start = model.dm.date(model.todayKey)
     let pick = date ?? model.nextSlotByVideo[ids.first ?? ""].map { model.dm.date($0.date) } ?? start
     let multi = ids.count > 1
-    DSDialog(multi ? "Pin \(AppModel.pipelineClips(ids.count)) to days" : "Pin to date",
+    DSDialog(moving ? "Move to" : multi ? "Pin \(AppModel.pipelineClips(ids.count)) to days" : "Pin to date",
              description: multi ? "The first clip goes on the day you pick, the next on the day after, in the order shown."
                : "The clip posts on this day and stays there.",
              icon: "pin", width: 380, onClose: onClose) {
@@ -214,7 +216,7 @@ struct QueuePinDialog: View {
     } footer: {
       DSButton("Cancel", variant: .ghost, shortcut: "esc") { onClose() }
         .keyboardShortcut(.cancelAction)
-      DSButton(multi ? "Pin \(ids.count)" : "Pin", variant: .primary,
+      DSButton(moving ? "Move" : multi ? "Pin \(ids.count)" : "Pin", variant: .primary,
                tooltip: multi ? "Pin them one a day from this day" : "Pin it to this day", shortcut: "↩") { pin(pick) }
         .keyboardShortcut(.defaultAction)
     }
@@ -229,7 +231,7 @@ struct QueuePinDialog: View {
     onClose()
     model.pipelineBulk("Pin \(AppModel.pipelineClips(ids.count)) to \(first) – \(last)?", verb: "Pin", ids: ids,
                        changes: [.init(field: "Days", value: ids.count == 1 ? first : "\(first) – \(last), one a day")],
-                       done: ids.count == 1 ? "Pinned to \(first)" : nil) { b, dry in
+                       done: ids.count == 1 ? "\(moving ? "Moved" : "Pinned") to \(first)" : nil) { b, dry in
       try b.pinConsecutive(ids, from: day, dryRun: dry)
     }
   }

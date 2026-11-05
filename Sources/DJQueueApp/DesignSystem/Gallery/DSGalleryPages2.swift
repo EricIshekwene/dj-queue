@@ -18,7 +18,7 @@ struct GallerySurfaces: View {
         GSection("Attention card", note: "replaces full-width bars") {
           VStack(spacing: 8) {
             DSAttentionCard(title: "2 posts need attention", message: "Instagram copyright · X failed", tone: .danger, actionTitle: "Review", action: {})
-            DSAttentionCard(title: "Queue running low", message: "Scheduled through Tue 10 Nov", tone: .warning, actionTitle: "Open Week",
+            DSAttentionCard(title: "Queue running low", message: "Scheduled through Tue 10 Nov", tone: .warning, actionTitle: "Go to Edit",
                             onDismiss: {}, action: {})
           }
           .frame(width: 560)
@@ -40,7 +40,7 @@ struct GallerySurfaces: View {
             Button {} label: { Label("Exclude", systemImage: "eye.slash") }
           } trailing: {
             DSButton("More", trailingIcon: "chevron.down", variant: .ghost) {}
-            DSButton("Add to week", variant: .primary) {}
+            DSButton("Pin to days…", variant: .primary) {}
           }
         }
         GSection("Toasts") {

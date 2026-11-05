@@ -431,7 +431,7 @@ struct DSToolbar<Center: View, Trailing: View>: View {
     ZStack {
       HStack(spacing: DS.space.sm) {
         HStack(alignment: .firstTextBaseline, spacing: DS.space.xs) {
-          Text(title).font(DS.type.title).foregroundStyle(DS.color.text)
+          Text(title).font(DS.type.title).foregroundStyle(DS.color.text).lineLimit(1).fixedSize()
           if let subtitle { Text(subtitle).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1) }
         }
         Spacer(minLength: DS.space.md)

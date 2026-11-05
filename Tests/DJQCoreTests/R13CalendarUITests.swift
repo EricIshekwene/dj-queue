@@ -14,12 +14,15 @@ import Testing
     return try files.filter { $0.pathExtension == "swift" }.map { ($0.path, try String(contentsOf: $0, encoding: .utf8)) }
   }
 
-  /// String literals on code lines (comments dropped); interpolations stay as text, which is enough for a word check.
+  /// String literals on code lines, without comments or interpolated code (`\\(s.approvedRunwayAlertDays)` is a field,
+  /// not a word Eric sees).
   private func literals(_ text: String) -> [String] {
     text.split(separator: "\n").flatMap { line -> [String] in
       let code = line.trimmingCharacters(in: .whitespaces)
       guard !code.hasPrefix("//") else { return [] }
-      return code.split(separator: "\"", omittingEmptySubsequences: false).enumerated().compactMap { i, s in i % 2 == 1 ? String(s) : nil }
+      return code.split(separator: "\"", omittingEmptySubsequences: false).enumerated().compactMap { i, s in
+        i % 2 == 1 ? String(s).replacing(/\\\([^)]*\)/, with: "") : nil
+      }
     }
   }
 

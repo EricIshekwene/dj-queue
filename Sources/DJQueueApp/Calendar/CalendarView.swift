@@ -16,6 +16,7 @@ import SwiftUI
 /// off-main with every refresh (`CalendarData`); `body` reads memory only.
 struct CalendarView: View {
   @Bindable var model: AppModel
+  @State private var width: CGFloat = 1180
 
   var body: some View {
     let mode = model.calendarMode
@@ -25,11 +26,12 @@ struct CalendarView: View {
       content(mode)
     }
     .background { EditorKeyMonitor { model.handleCalendarKey($0) } }
+    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     .overlay {
       if let t = model.calendarPinTarget {
         ZStack {
           DS.color.scrim.ignoresSafeArea().onTapGesture { model.calendarPinTarget = nil }
-          QueuePinDialog(model: model, ids: t) { model.calendarPinTarget = nil }
+          QueuePinDialog(model: model, ids: t, moving: true) { model.calendarPinTarget = nil }
         }
         .transition(.opacity)
       }
@@ -62,7 +64,8 @@ struct CalendarView: View {
     let done = model.postedTodayCount, total = model.todayTotal
     return HStack(spacing: DS.space.xs) {
       DSProgressRing(value: Double(done) / Double(max(total, 1)), size: 22, lineWidth: 3, tone: .success)
-      Text("\(done) of \(total) posted").font(DS.type.calloutMedium.monospacedDigit()).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+      // The toolbar is full at the narrowest window: the numbers stay, the words go.
+      Text(width < 1100 ? "\(done) / \(total)" : "\(done) of \(total) posted").font(DS.type.calloutMedium.monospacedDigit()).foregroundStyle(DS.color.textSecondary).lineLimit(1)
     }
     .fixedSize()
     .accessibilityElement(children: .combine)

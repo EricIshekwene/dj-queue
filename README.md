@@ -8,7 +8,7 @@ Built for my own use as DJ Lovd (TikTok, Instagram, Facebook, YouTube Shorts, Th
 
 ## What it does
 
-The app follows a clip's life — **Score → Edit → Queue → Week → Today** — with one job and one primary action per screen, on a calm, rounded design system modelled on ChatGPT's look and shadcn/ui component anatomy.
+The app follows a clip's life — **Score → Edit → Queue → Calendar** — with one job and one primary action per screen, on a calm, rounded design system modelled on ChatGPT's look and shadcn/ui component anatomy.
 
 - **Intake** — watches my session folders; every clip exported from my CapCut markers shows up automatically. Renamed files are re-found by content fingerprint; deleted files are flagged, never lost.
 - **Score & queue** — I score each clip 0–100 on a large autoplaying preview; the queue orders the backlog worst → best (to warm up new accounts) or best → worst. Every list has Cards / Grid / Single / List views and one shared header (search, view modes, page chips, one Filters popover with removable chips, sort; remembered per page, ⌘F to search). Lists show each clip as it will post: small background-generated proxies carry the crop and trim, the text overlay is drawn live during its window, and covers include the text.
@@ -17,10 +17,11 @@ The app follows a clip's life — **Score → Edit → Queue → Week → Today*
 - **Stage = readiness** — there are no Ready / Needs edit labels: a clip in Edit isn't ready, the Queue only ever holds ready clips, and a queued clip that becomes invalid (crop cleared, a platform limit changed, file missing) moves back to Edit by itself with a chip saying why. Any clip can move one stage back or forward from wherever it is (e.g. *Back to Edit* from the Queue; a scheduled clip can go back to the Queue), with the reason shown when a move isn't allowed (nothing already posted is ever pulled back) and one-step undo.
 - **Every control explains itself** — every icon-only button and badge has a tooltip (label, shortcut, and why it's disabled), enforced by a lint in the test suite; every data-changing click has Undo or asks first, and ⌘Z always undoes the most recent action (a whole editor session counts as one).
 - **Defaults + bulk editing** — new-clip defaults for frame, trim, text, cover, captions and platforms (clips store only overrides, so changing a default updates every untouched clip); bulk actions with a confirmation sheet showing exactly what changes and one-step undo.
-- **Weekly approval** — the app proposes the next 7 days; I drag, swap, pin and approve. Only approved weeks ever post.
-- **Background engine** — runs at login, renders the approved week ahead of time (1080×1920 H.264, loudness-normalised to −14 LUFS), and notifies me when each platform post is due.
-- **Manual publisher (phase 1)** — a Today screen: drag the file into the upload page, copy the platform-specific caption, mark posted with the URL. Built behind a `Publisher` interface.
-- **Postiz publisher (phase 2, v0.7.0)** — per platform, Manual or Postiz. Once a week is approved and a render exists, the engine uploads it and schedules it in Postiz at the slot, so posts go out with the Mac off; edits, re-renders and plan changes replace or cancel the Postiz post, and the engine syncs back the state, the live link, failures and copyright blocks. A one-switch Test run (TikTok inbox, YouTube unlisted, Postiz drafts for the rest), a request budget, and a fallback to the Today screen for any platform Postiz can't take. Contract: [`docs/postiz.md`](docs/postiz.md); first-run checklist: [`docs/postiz-test.md`](docs/postiz-test.md).
+- **Queue is the last step** — only my Send to Queue moves a clip out of Edit, and being in the Queue is my approval: the engine keeps every Queue clip on the calendar up to 30 days out, and I can drag, swap, pin or unschedule anything before it goes.
+- **Calendar** — Day, 3 Day, Week and Month views of the videos going out and where each one posts, with a filter per platform.
+- **Background engine** — runs at login, renders scheduled posts ahead of time (1080×1920 H.264, loudness-normalised to −14 LUFS), and notifies me when each platform post is due.
+- **Manual publisher (phase 1)** — the Calendar's Day view: drag the file into the upload page, copy the platform-specific caption, mark posted with the URL. Built behind a `Publisher` interface.
+- **Postiz publisher (phase 2, v0.7.0)** — per platform, Manual or Postiz. Once a clip is scheduled and a render exists, the engine uploads it and schedules it in Postiz at the slot, so posts go out with the Mac off; edits, re-renders and plan changes replace or cancel the Postiz post, and the engine syncs back the state, the live link, failures and copyright blocks. A one-switch Test run (TikTok inbox, YouTube unlisted, Postiz drafts for the rest), a request budget, and a fallback to the Today screen for any platform Postiz can't take. Contract: [`docs/postiz.md`](docs/postiz.md); first-run checklist: [`docs/postiz-test.md`](docs/postiz-test.md).
 - **Failure handling** — missed slots shift that platform's plan without ever double-posting; failed posts re-queue the next day after a fix, and a temporary platform limit (a quota, a rate limit) re-queues by itself, up to twice; copyright blocks are shown loudly and never auto-retried.
 - **Doctor** — `djq doctor` checks everything (manifests, missing files, renders, overdue posts, runway, DB integrity, disk, tools) and prints a report an AI agent can act on, paired with a skill that documents the safe fix for every finding.
 
@@ -29,8 +30,8 @@ The app follows a clip's life — **Score → Edit → Queue → Week → Today*
 | ![Score](docs/screenshots/score.jpg) | ![Edit](docs/screenshots/edit.jpg) |
 | **Editor — platform previews** | **Editor — safe zones** |
 | ![Editor previews](docs/screenshots/editor-preview.jpg) | ![Editor zones](docs/screenshots/editor-zones.jpg) |
-| **Week** | **Today** |
-| ![Week](docs/screenshots/week.jpg) | ![Today](docs/screenshots/today.jpg) |
+| **Calendar: Week** | **Calendar: Month** |
+| ![Calendar, Week view](docs/screenshots/calendar-week.jpg) | ![Calendar, Month view](docs/screenshots/calendar-month.jpg) |
 | **Queue — stage moves** | **Posts — one card per clip and day** |
 | ![Queue stage menu](docs/screenshots/queue-stage-menu.jpg) | ![Posts](docs/screenshots/posts.jpg) |
 | **Library** | **Settings — new clip defaults** |
@@ -58,7 +59,7 @@ flowchart LR
   CLI <--> DB
   ENG <--> DB
   ENG --> R --> OUT[Ready to Post/Shortform]
-  ENG --> P --> N[Notifications · Today screen]
+  ENG --> P --> N[Notifications · Calendar]
 ```
 
 - **One process, three roles.** A LaunchAgent starts the app in agent mode at login; the same process hosts the engine loop, the menu-bar item and (on demand) the main window. macOS only delivers notifications from an app bundle, which drove this design. A file lock guarantees one engine per database; the CLI shares the same WAL-mode SQLite file.
@@ -73,7 +74,7 @@ flowchart LR
   *Editor preview (left), frame from the exported MP4 (middle), difference ×8 (right).*
 
 - **Loudness.** Two-pass EBU R128 normalisation so a phone-mic clip and a clean desk-feed clip play at the same volume (−11.2 and −13.2 LUFS sources → −14.1 LUFS both, true peak ≤ −1 dBTP).
-- **Never double-post.** Every planner operation (approve, swap, move, push, skip, reset, missed-day shifts) goes through one placement rule; an invariant check runs after every operation in the tests, and a reviewer fuzzed 80 × 60 random operations with zero violations.
+- **Never double-post.** Every planner operation (auto-schedule, swap, move, push, skip, reset, missed-day shifts) goes through one placement rule; an invariant check runs after every operation in the tests, and a reviewer fuzzed 80 × 60 random operations with zero violations.
 - **Time is hard.** Slots are scheduled in America/New_York; a reviewer-found bug where every slot was an hour off on the DST change day is covered by a test.
 - **Crash-safe background work.** Kernel `flock` per render plus atomic status claims, so the app and the CLI can't render the same file; ffmpeg timeouts; failed renders back off instead of starving the queue.
 - **Never touch source footage.** The app writes only to its own output folders; enforced in review and checked in the final acceptance run.
