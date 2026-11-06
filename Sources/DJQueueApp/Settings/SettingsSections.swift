@@ -354,7 +354,7 @@ struct PlaybackSettings: View {
 
   var body: some View {
     let off = model.playback.autoplay ? nil : "Turn on Autoplay previews first."
-    SettingsRow("Autoplay previews", description: "Visible clips play muted from small preview copies made in the background.") {
+    SettingsRow("Autoplay previews", description: "Clips play from small preview copies made in the background. Off, lists, Score and the Calendar show covers.") {
       DSSwitch(isOn: model.playbackBinding(\.autoplay)).accessibilityLabel("Autoplay previews")
     }
     SettingsRow("Unmute on hover", description: "Hovering a clip plays it with sound (one clip at a time); moving away mutes it again. Previews never unmute by themselves.",
@@ -363,14 +363,14 @@ struct PlaybackSettings: View {
                              set: { v in model.setPlayback { $0.chooseUnmuteOnHover(v) } }))
         .accessibilityLabel("Unmute on hover")
     }
-    SettingsRow("Grids: play on hover only", description: "Grid views show covers; a tile plays only while the pointer is on it.",
+    SettingsRow("Small previews: play on hover only", description: "Calendar, Cards, Grid and List show covers; a clip plays only while the pointer is on it. Single view and full previews play by themselves.",
                 disabledReason: off) {
       DSSwitch(isOn: Binding(get: { model.playback.gridHoverOnly },
                              set: { v in model.setPlayback { $0.chooseGridHoverOnly(v) } }))
-        .accessibilityLabel("Grids: play on hover only")
+        .accessibilityLabel("Small previews: play on hover only")
     }
-    SettingsRow("Which clips play", description: "Cards, List and Single views: all visible clips play, at most 4 at once.",
-                disabledReason: off) {
+    SettingsRow("Which clips play", description: "With hover-only off: all visible clips play, at most 4 at once, or only the one you're on.",
+                disabledReason: off ?? (model.playback.gridHoverOnly ? "Turn off Small previews: play on hover only first." : nil)) {
       SettingsSelect(label: "Which clips play", selection: model.playbackBinding(\.focusOnly), options: [
         DSSelectOption(value: false, title: "All visible (up to 4)"),
         DSSelectOption(value: true, title: "Only the focused clip"),

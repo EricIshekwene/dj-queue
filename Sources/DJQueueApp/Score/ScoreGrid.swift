@@ -50,7 +50,7 @@ struct ScoreGridView: View {
                  })
       ScoreTileField(model: model, id: v.id, focus: $focus, next: next)
     }
-    .onHover { inside in
+    .dsPlaybackHover { inside in
       if inside { hovered = v.id } else if hovered == v.id { hovered = nil }
     }
     .onAppear {

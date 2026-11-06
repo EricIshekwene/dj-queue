@@ -80,7 +80,7 @@ struct DSClip: Identifiable {
 
 /// Card behaviour shared by all modes.
 struct DSClipCardConfig {
-  /// Autoplay setting (Settings → autoplay). Focus-only mode: pass `autoplay: isFocused`.
+  /// May this card's preview play now? Screens pass `PreviewPlayback.plays(…)`.
   var autoplay = true
   var unmuteOnHover = false
   /// Selection mode: checkbox always visible and a click toggles selection.
@@ -106,6 +106,8 @@ struct DSClipCard<Actions: View>: View {
   var onAcceptSuggestion: ((DSTitleSuggestion) -> Void)? = nil
   @ViewBuilder var actions: Actions
   @State private var hovering = false
+  /// The pointer is really on the card (playback); `hovering` drives its controls.
+  @State private var pointerOn = false
   @Environment(\.dsForcedState) private var forced
 
   init(_ clip: DSClip, mode: DSViewMode = .wide, isSelected: Bool = false, isFocused: Bool = false, config: DSClipCardConfig = .init(),
@@ -123,6 +125,7 @@ struct DSClipCard<Actions: View>: View {
   }
 
   private var hot: Bool { forced == .hover || forced == .pressed || hovering || DSClipCardDebug.hoverIds.contains(clip.id) }
+  private var playHot: Bool { forced == .hover || forced == .pressed || pointerOn || DSClipCardDebug.hoverIds.contains(clip.id) }
   private var showCheck: Bool { onToggleSelect != nil && mode != .single && (config.selectionMode || isSelected || hot) }
   private var autoplay: Bool { config.autoplay && !clip.isMissing }
 
@@ -137,6 +140,7 @@ struct DSClipCard<Actions: View>: View {
     }
     .contentShape(Rectangle())
     .onHover { hovering = $0 }
+    .dsPlaybackHover { pointerOn = $0 }
     .onTapGesture { handleTap() }
     .dsAnimation(DS.motion.hover, value: hot)
     .dsAnimation(DS.motion.layout, value: isSelected)
@@ -168,7 +172,7 @@ struct DSClipCard<Actions: View>: View {
   private func media(radius: CGFloat, active: Bool, mute: Bool = true, muteAlignment: Alignment = .bottomTrailing,
                      scrubber: Bool = false, updating: DSPreviewUpdatingStyle = .label) -> some View {
     DSVideoPreview(url: clip.isMissing ? nil : clip.proxyURL, poster: clip.poster, isActive: active, isPriority: isFocused,
-                   loopRange: clip.loopRange, unmuteOnHover: config.unmuteOnHover, isHovered: hot, showsMuteButton: mute,
+                   loopRange: clip.loopRange, unmuteOnHover: config.unmuteOnHover, isHovered: playHot, showsMuteButton: mute,
                    muteAlignment: muteAlignment, showsScrubber: scrubber, cornerRadius: radius,
                    overlay: clip.overlay, textWindow: clip.textWindow, isUpdating: clip.isUpdatingPreview && !clip.isMissing,
                    updatingStyle: updating, needsOverlay: clip.overlayMissing, onNeedsOverlay: clip.reloadOverlay)
@@ -385,7 +389,7 @@ struct DSClipCard<Actions: View>: View {
         Text("\(p)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary).frame(minWidth: 16, alignment: .trailing)
           .dsTooltip("Number \(p) in the posting order")
       }
-      media(radius: DS.radius.xs, active: false, mute: false, updating: .none).frame(width: 24, height: 42)
+      media(radius: DS.radius.xs, active: autoplay && playHot, mute: false, updating: .none).frame(width: 24, height: 42)
       VStack(alignment: .leading, spacing: 1) {
         Text(clip.title).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(1)
         if let s = clip.subtitle { Text(s).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1) }

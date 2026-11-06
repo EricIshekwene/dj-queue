@@ -175,7 +175,9 @@ struct CalendarOpenDay: View {
   }
 }
 
-/// A clip's 9:16 cover (muted autoplay from the proxy, poster fallback): the post's version as it will post.
+/// A clip's 9:16 cover: the post's version as it will post. A small preview, so it plays only while hovered, and
+/// muted because the Calendar is an overview (its mute button plays the sound). With "play on hover only" off, past
+/// days still wait for the pointer.
 struct CalendarCover: View {
   /// 3 Day's cover.
   static let smallWidth: CGFloat = 96
@@ -193,8 +195,8 @@ struct CalendarCover: View {
     let p = model.playback
     let pv = firstPost.flatMap { model.clipPreview(post: $0) } ?? model.clipPreview(clip.video)
     DSVideoPreview(url: pv.proxyURL, poster: pv.cover,
-                   isActive: p.autoplay && !isPast && (!p.focusOnly || hovering), loopRange: pv.loopRange,
-                   unmuteOnHover: p.hoverSound && !isPast, isHovered: hovering, muteAlignment: .bottomTrailing,
+                   isActive: PreviewPlayback.plays(p, layout: .grid, hovered: hovering, focused: false) && (hovering || !isPast),
+                   loopRange: pv.loopRange, unmuteOnHover: false, isHovered: hovering, muteAlignment: .bottomTrailing,
                    overlay: pv.overlay, textWindow: pv.textWindow, isUpdating: pv.isUpdating, updatingStyle: .label,
                    needsOverlay: pv.overlayMissing, onNeedsOverlay: { model.reloadOverlay(clip.video.id, version: pv.version) })
       .task(id: pv.stamp) { if let f = firstPost { model.requestPreview(post: f) } else { model.requestPreview(clip.video) } }
@@ -246,6 +248,7 @@ private struct CardBehaviour: ViewModifier {
   @Bindable var model: AppModel
   let clip: CalendarClip
   @Binding var hovering: Bool
+  @Binding var pointerOn: Bool
 
   func body(content: Content) -> some View {
     let blocker = model.calendarMoveBlocker(clip.slot, posts: clip.posts)
@@ -255,6 +258,7 @@ private struct CardBehaviour: ViewModifier {
       .dsElevation(DS.elevation.e1)
       .contentShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
       .onHover { h in dsWithAnimation(DS.motion.hover) { hovering = h } }
+      .dsPlaybackHover { pointerOn = $0 }
       .onTapGesture(count: 2) { model.openEditor(clip.video.id) }
       .modifier(SlotDrag(enabled: blocker == nil, id: clip.slot.id, poster: model.poster(clip.video)))
       .contextMenu { CalendarClipMenu(model: model, video: clip.video, slot: clip.slot, posts: clip.posts) }
@@ -271,10 +275,12 @@ struct CalendarWeekCard: View {
   let isPast: Bool
   let width: CGFloat
   @State private var hovering = false
+  /// The pointer is really on the card (playback); `hovering` drives its ⋯ button.
+  @State private var pointerOn = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      CalendarCover(model: model, clip: clip, isPast: isPast, hovering: hovering, width: width)
+      CalendarCover(model: model, clip: clip, isPast: isPast, hovering: pointerOn, width: width)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: DS.radius.md, topTrailingRadius: DS.radius.md, style: .continuous))
         .opacity(isPast ? 0.5 : 1)  // the card dims, its "1 failed" doesn't
         .modifier(CoverBadges(model: model, clip: clip, isPast: isPast, hovering: hovering))
@@ -296,7 +302,7 @@ struct CalendarWeekCard: View {
       .padding(.horizontal, 6)
       .padding(.vertical, DS.space.xs)
     }
-    .modifier(CardBehaviour(model: model, clip: clip, hovering: $hovering))
+    .modifier(CardBehaviour(model: model, clip: clip, hovering: $hovering, pointerOn: $pointerOn))
   }
 }
 
@@ -320,10 +326,12 @@ struct CalendarThreeDayCard: View {
   let clip: CalendarClip
   let isPast: Bool
   @State private var hovering = false
+  /// The pointer is really on the card (playback); `hovering` drives its ⋯ button.
+  @State private var pointerOn = false
 
   var body: some View {
     HStack(alignment: .top, spacing: DS.space.sm) {
-      CalendarCover(model: model, clip: clip, isPast: isPast, hovering: hovering, width: CalendarCover.smallWidth)
+      CalendarCover(model: model, clip: clip, isPast: isPast, hovering: pointerOn, width: CalendarCover.smallWidth)
         .clipShape(RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
         .opacity(isPast ? 0.5 : 1)
         .modifier(CoverBadges(model: model, clip: clip, isPast: isPast, hovering: hovering))
@@ -339,7 +347,7 @@ struct CalendarThreeDayCard: View {
       .opacity(isPast ? 0.5 : 1)
     }
     .padding(DS.space.xs)
-    .modifier(CardBehaviour(model: model, clip: clip, hovering: $hovering))
+    .modifier(CardBehaviour(model: model, clip: clip, hovering: $hovering, pointerOn: $pointerOn))
   }
 
   private func chip(_ p: Platform) -> some View {

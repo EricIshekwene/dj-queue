@@ -12,8 +12,8 @@ import SwiftUI
 /// Clicks: checkbox → toggle; ⇧-click → range from the anchor; ⌘-click → toggle; plain click → `onOpen` when
 /// nothing is selected, otherwise it toggles (selection mode — the same rule DSClipCard applies). A suggestion
 /// chip sets the Title through `acceptSuggestion` (undoable). Items request their poster and preview proxy as they
-/// appear. Autoplay follows `model.playback` via `PreviewPlayback.plays` (focus-only → only the hovered / shown item
-/// plays; Grid with "play on hover only" → posters, the hovered tile plays and its neighbours' proxies prefetch).
+/// appear. Autoplay follows `model.playback` via `PreviewPlayback.plays` (small previews with "play on hover only" →
+/// covers, the hovered item plays; Grid also prefetches its neighbours' proxies, Cards keep theirs ready).
 ///
 /// The collection registers its ids in `model.visibleIds[screen]` (⌘A, Select all) and drops selected ids that
 /// left the list. Empty lists: show a DSEmptyState instead of the collection (the screen's job).
@@ -187,7 +187,7 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
       actions(v)
     }
     .modifier(OptionalContextMenu(enabled: Menu.self != EmptyView.self) { contextMenu(v) })
-    .onHover { inside in
+    .dsPlaybackHover { inside in
       if inside { hovered = v.id } else if hovered == v.id { hovered = nil }
     }
     .onAppear {
