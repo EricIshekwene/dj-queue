@@ -139,11 +139,16 @@ struct DSVideoPreview: View {
   @State private var hovering = false
   @State private var ready = false
   @State private var progress = DSPlaybackProgress()
+  /// The scrubber is being dragged. A held mouse can leave the preview: the drag keeps the scrubber and the sound
+  /// until it ends (a gesture state, so it also clears if the drag is cancelled).
+  @GestureState private var scrubbing = false
+  /// A new player view after each release, so one that's still fading out never comes back (`released`).
+  @State private var playerGeneration = 0
   @Environment(\.dsPreviewOverlayOnPoster) private var overlayOnPoster
   private var budget: DSPlaybackBudget { .shared }
 
   var body: some View {
-    let hoverSound = unmuteOnHover && (hovering || isHovered)
+    let hoverSound = unmuteOnHover && (hovering || isHovered || scrubbing)
     let wantsPlay = url != nil && visible && (isActive || hoverSound)
     let priority = hoverSound ? 2 : isPriority ? 1 : 0
     let playing = wantsPlay && budget.isGranted(id)
@@ -153,6 +158,7 @@ struct DSVideoPreview: View {
       if playing, let url {
         DSPlayerLayerView(url: url, loopRange: loopRange, muted: !audible, gravity: gravity, overlay: overlay,
                           textWindow: textWindow, progress: progress) { r in ready = r }
+          .id(playerGeneration)
           .opacity(ready ? 1 : 0)
           .animation(DS.motion.fade, value: ready)
       }
@@ -186,7 +192,7 @@ struct DSVideoPreview: View {
       }
     }
     .overlay(alignment: .bottom) {
-      if showsScrubber && playing && hovering { scrubber.padding(.horizontal, 14).padding(.bottom, 12).transition(.opacity) }
+      if showsScrubber && playing && (hovering || scrubbing) { scrubber.padding(.horizontal, 14).padding(.bottom, 12).transition(.opacity) }
     }
     .dsPlaybackHover { hovering = $0 }
     .onAppear { visible = true }
@@ -199,7 +205,8 @@ struct DSVideoPreview: View {
         budget.release(id)
         ready = false
         // At once: a removal inside a hover animation would keep the player (and its sound) until the fade ends.
-        progress.view?.teardown()
+        progress.view?.release()
+        playerGeneration += 1
       }
     }
     .onChange(of: priority) { _, p in if wantsPlay { budget.request(id, priority: p) } }
@@ -248,7 +255,9 @@ struct DSVideoPreview: View {
       .frame(height: 4)
       .frame(maxHeight: .infinity)
       .contentShape(Rectangle())
-      .gesture(DragGesture(minimumDistance: 0).onChanged { v in progress.seek(min(1, max(0, v.location.x / max(1, g.size.width)))) })
+      .gesture(DragGesture(minimumDistance: 0)
+        .updating($scrubbing) { _, on, _ in on = true }
+        .onChanged { v in progress.seek(min(1, max(0, v.location.x / max(1, g.size.width)))) })
     }
     .frame(height: 16)
     .dsTooltip("Drag to scrub through the preview")
@@ -308,6 +317,8 @@ final class DSPlayerNSView: NSView {
   private var range: ClosedRange<Double>?
   private var readyObs: NSKeyValueObservation?
   private var timeObs: Any?
+  /// Told to stop for good: SwiftUI's last update on a fading view must not build a new player.
+  private var released = false
   var onReady: ((Bool) -> Void)?
   weak var progress: DSPlaybackProgress?
   /// A video frame is on screen (evidence runs: the tooltip probe waits for it).
@@ -316,6 +327,7 @@ final class DSPlayerNSView: NSView {
   var isPlayingWithSound: Bool { (player?.rate ?? 0) > 0 && player?.isMuted == false }
   var isPlaying: Bool { (player?.rate ?? 0) > 0 }
   @MainActor static var debugLivePlayers = 0
+  @MainActor static var debugPlayersBuilt = 0
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -339,6 +351,7 @@ final class DSPlayerNSView: NSView {
   }
 
   func configure(url: URL, loopRange: ClosedRange<Double>?, muted: Bool, gravity: AVLayerVideoGravity) {
+    guard !released else { return }
     playerLayer.videoGravity = gravity
     let k = "\(url.path)|\(loopRange.map { "\($0.lowerBound)-\($0.upperBound)" } ?? "")"
     if k != key {
@@ -359,6 +372,7 @@ final class DSPlayerNSView: NSView {
       }
       player = p
       Self.debugLivePlayers += 1
+      Self.debugPlayersBuilt += 1
       playerLayer.player = p
       readyObs = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] l, _ in
         let r = l.isReadyForDisplay
@@ -409,6 +423,11 @@ final class DSPlayerNSView: NSView {
     let end = range?.upperBound ?? item.duration.seconds
     guard end.isFinite, end > start else { return }
     player?.seek(to: CMTime(seconds: start + fraction * (end - start), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+  }
+
+  func release() {
+    released = true
+    teardown()
   }
 
   func teardown() {

@@ -70,7 +70,7 @@ final class DSPlaybackHoverView: NSView {
 /// SwiftUI only reports a hover exit when a mouse-moved event reaches the window, so it says nothing when the view
 /// scrolls out from under a still pointer, while a menu or a drag has the mouse, or when the window goes to the
 /// background. While SwiftUI says a region is hovered, this checks ten times a second that it's true: the pointer is
-/// inside the region, its window has focus and no menu is open. If not, the region reads as left; if it becomes true
+/// inside the region, the app is active, its window is key and no menu is open. If not, the region reads as left; if it becomes true
 /// again while SwiftUI still says hovered (a menu closed with the pointer on the card), it reads as entered.
 @MainActor
 final class DSPlaybackHoverGuard {
@@ -88,6 +88,11 @@ final class DSPlaybackHoverGuard {
     }
     _ = center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil) { [weak self] _ in
       MainActor.assumeIsolated { self?.menuOpen = false; self?.recheck() }
+    }
+    for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+      _ = center.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+        MainActor.assumeIsolated { self?.recheck(); self?.updateTimer() }
+      }
     }
   }
 
@@ -108,16 +113,25 @@ final class DSPlaybackHoverGuard {
     hovered.removeAll { $0 === v }
     if inside { hovered.append(v) }
     deliver(v, inside && pointerIsOn(v))
-    if hovered.isEmpty {
+    updateTimer()
+  }
+
+  /// Runs only while something is hovered and the app is active: on an always-on Mac a region can stay hovered all
+  /// night, and an inactive app has nothing to check until it comes back.
+  private func updateTimer() {
+    if hovered.isEmpty || !appIsActive {
       timer?.invalidate()
       timer = nil
     } else if timer == nil {
       // Common modes: the check keeps running while a menu or a drag has the run loop.
       let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.recheck() } }
+      t.tolerance = 0.05
       RunLoop.main.add(t, forMode: .common)
       timer = t
     }
   }
+
+  private var appIsActive: Bool { simulatedAppActive ?? NSApp.isActive }
 
   private func recheck() {
     for v in hovered { deliver(v, pointerIsOn(v)) }
@@ -130,8 +144,7 @@ final class DSPlaybackHoverGuard {
   }
 
   private func pointerIsOn(_ v: DSPlaybackHoverView) -> Bool {
-    guard !menuOpen, let w = v.window, w.isVisible, simulatedFocus ?? (NSApp.isActive && w.isKeyWindow),
-          let r = v.visibleScreenRect else { return false }
+    guard !menuOpen, appIsActive, let w = v.window, w.isVisible, w.isKeyWindow, let r = v.visibleScreenRect else { return false }
     // 1 pt of slack: SwiftUI can call a point on the edge inside.
     return r.insetBy(dx: -1, dy: -1).contains(simulatedPointer ?? NSEvent.mouseLocation)
   }
@@ -140,8 +153,10 @@ final class DSPlaybackHoverGuard {
 
   /// Probe pointer in screen coordinates (replaces the real cursor).
   var simulatedPointer: CGPoint?
-  /// Probe's "window has focus" (the probe never activates the app).
-  var simulatedFocus: Bool?
+  /// Probe's "the app is active" (the probe never activates the app; the key window is real).
+  var simulatedAppActive: Bool? {
+    didSet { recheck(); updateTimer() }
+  }
   /// SwiftUI hover events dropped because they followed the real cursor, not the probe's pointer.
   var debugRealCursorHovers = 0
 

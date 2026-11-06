@@ -196,7 +196,7 @@ struct CalendarCover: View {
     let pv = firstPost.flatMap { model.clipPreview(post: $0) } ?? model.clipPreview(clip.video)
     DSVideoPreview(url: pv.proxyURL, poster: pv.cover,
                    isActive: PreviewPlayback.plays(p, layout: .grid, hovered: hovering, focused: false) && (hovering || !isPast),
-                   loopRange: pv.loopRange, unmuteOnHover: false, isHovered: hovering, muteAlignment: .bottomTrailing,
+                   isPriority: hovering, loopRange: pv.loopRange, unmuteOnHover: false, isHovered: hovering, muteAlignment: .bottomTrailing,
                    overlay: pv.overlay, textWindow: pv.textWindow, isUpdating: pv.isUpdating, updatingStyle: .label,
                    needsOverlay: pv.overlayMissing, onNeedsOverlay: { model.reloadOverlay(clip.video.id, version: pv.version) })
       .task(id: pv.stamp) { if let f = firstPost { model.requestPreview(post: f) } else { model.requestPreview(clip.video) } }

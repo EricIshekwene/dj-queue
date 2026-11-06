@@ -357,7 +357,7 @@ struct PlaybackSettings: View {
     SettingsRow("Autoplay previews", description: "Clips play from small preview copies made in the background. Off, lists, Score and the Calendar show covers.") {
       DSSwitch(isOn: model.playbackBinding(\.autoplay)).accessibilityLabel("Autoplay previews")
     }
-    SettingsRow("Unmute on hover", description: "Hovering a clip plays it with sound (one clip at a time); moving away mutes it again. Previews never unmute by themselves.",
+    SettingsRow("Unmute on hover", description: "Hovering a clip plays it with sound (one clip at a time); moving away mutes it again. Calendar covers stay muted. Previews never unmute by themselves.",
                 disabledReason: off) {
       DSSwitch(isOn: Binding(get: { model.playback.unmuteOnHover },
                              set: { v in model.setPlayback { $0.chooseUnmuteOnHover(v) } }))
@@ -369,7 +369,7 @@ struct PlaybackSettings: View {
                              set: { v in model.setPlayback { $0.chooseGridHoverOnly(v) } }))
         .accessibilityLabel("Small previews: play on hover only")
     }
-    SettingsRow("Which clips play", description: "With hover-only off: all visible clips play, at most 4 at once, or only the one you're on.",
+    SettingsRow("Which clips play", description: "With hover-only off: all visible clips in Calendar, Cards and Grid play, at most 4 at once, or only the one you're on.",
                 disabledReason: off ?? (model.playback.gridHoverOnly ? "Turn off Small previews: play on hover only first." : nil)) {
       SettingsSelect(label: "Which clips play", selection: model.playbackBinding(\.focusOnly), options: [
         DSSelectOption(value: false, title: "All visible (up to 4)"),

@@ -66,9 +66,10 @@ enum DSHoverProbe {
 
     func all() async {
       guardian.simulatedPointer = DSTooltipProbe.offscreen
-      guardian.simulatedFocus = true
+      guardian.simulatedAppActive = true
       model.playback = PlaybackPrefs()  // in memory only: the defaults, whatever this Mac saved
       guard await prepareProxies() else { return }
+      keyWindowGate()
       let week = Page(name: "Calendar Week", screen: .calendar, calendar: .week)
       let three = Page(name: "Calendar 3 Day", screen: .calendar, calendar: .threeDay)
       let queueCards = Page(name: "Queue Cards", screen: .queue, mode: .wide)
@@ -77,6 +78,7 @@ enum DSHoverProbe {
         await hoverWalk(page)
       }
       await exitCases(queueCards)
+      await hoverOnlyOff(week)
       stackTwoClipsOnADay()
       await exitCases(week)
       await dragEnd(week)
@@ -145,6 +147,7 @@ enum DSHoverProbe {
 
       // Scrolling under a still pointer: no pointer move, so no hover event. The pointer sits near the card's bottom
       // edge, so a short scroll takes the card out from under it.
+      await fadeOut(a)
       let nearEdge = CGPoint(x: a.center.x, y: a.rect.minY + 6)
       await move(to: nearEdge)
       _ = await until(2000) { [self] in state().only(in: a) }
@@ -169,14 +172,14 @@ enum DSHoverProbe {
       check(closed != nil, "menu closed with the pointer elsewhere: zero players, zero audible (\(state().words))")
       await move(to: restPoint)
 
-      // Focus: stand-in for the app going to the background (the probe never activates the app).
+      // The app goes to the background: a stand-in, because the probe never activates the app.
       await hover(a)
-      guardian.simulatedFocus = false
+      guardian.simulatedAppActive = false
       let blurred = await until(1500) { [self] in state().nothing }
-      check(blurred != nil, "window loses focus (stand-in): zero players, zero audible (\(state().words))")
-      guardian.simulatedFocus = true
+      check(blurred != nil, "app goes to the background (stand-in): zero players, zero audible (\(state().words))")
+      guardian.simulatedAppActive = true
       let refocus = await until(1500) { [self] in state().only(in: a) }
-      check(refocus != nil, "focus returns with the pointer on the card: it plays again (\(state().words))")
+      check(refocus != nil, "app comes back with the pointer on the card: it plays again (\(state().words))")
 
       // The window really leaves the screen.
       w.orderOut(nil)
@@ -185,6 +188,7 @@ enum DSHoverProbe {
       let frame = w.frame
       w.orderFrontRegardless()
       w.setFrame(frame, display: true)
+      w.makeKey()
       await settle(600)
       await move(to: restPoint)
       _ = await until(1500) { [self] in state().nothing }
@@ -219,6 +223,54 @@ enum DSHoverProbe {
       await move(to: restPoint)
     }
 
+    /// Leaving inside an animation, as a card's hover does: the player goes at once and no other is built for the
+    /// view that's fading out. Coming straight back during the fade plays again.
+    func fadeOut(_ a: Card) async {
+      await hover(a)
+      let built = DSPlayerNSView.debugPlayersBuilt
+      withAnimation(.easeOut(duration: 0.12)) { guardian.debugPointerMoved(to: restPoint, in: w) }
+      await settle(350)
+      check(state().nothing && DSPlayerNSView.debugPlayersBuilt == built,
+            "leave during a hover fade: no player built for the fading view (\(DSPlayerNSView.debugPlayersBuilt - built) built, \(state().words))")
+      await hover(a)
+      withAnimation(.easeOut(duration: 0.12)) { guardian.debugPointerMoved(to: restPoint, in: w) }
+      await settle(40)
+      await move(to: a.center)
+      let back = await until(1500) { [self] in state().only(in: a) }
+      check(back != nil, "come straight back during the fade: it plays again (\(state().words))")
+      await move(to: restPoint)
+      _ = await until(1500) { [self] in state().nothing }
+    }
+
+    /// The key-window check reads the window's real state, and it's true throughout this run. Its false side can't
+    /// be reached without activating the app: while inactive, two windows both read as key and `resignKey` changes
+    /// nothing. "The app is active" stays a stand-in.
+    func keyWindowGate() {
+      w.makeKey()
+      check(w.isKeyWindow, "the window reads as key (real): every hover check runs through it")
+      say("  NOT DRIVEN the window losing key status: it needs the app active, and the probe never takes focus")
+    }
+
+    // MARK: With the switch off
+
+    /// "Small previews: play on hover only" off (in memory): the old behaviour, and a hovered card still gets a slot.
+    func hoverOnlyOff(_ page: Page) async {
+      say("\nSwitch off on \(page.name)")
+      model.playback.gridHoverOnly = false
+      defer { model.playback.gridHoverOnly = true }
+      await open(page)
+      let four = await until(2500) { [self] in state().playing == 4 }
+      check(four != nil, "four covers play by themselves (\(state().words))")
+      guard let other = cards().first(where: { state().count(in: $0) == 0 }) else {
+        say("  NOT DRIVEN switch off: every card already plays")
+        return
+      }
+      await move(to: other.center)
+      let got = await until(1500) { [self] in state().count(in: other) == 1 && state().playing <= 4 }
+      check(got != nil, "hover a card with no slot: it takes one, still at most 4 (\(state().words))")
+      await move(to: restPoint)
+    }
+
     // MARK: Large previews still play by themselves
 
     func largeViews() async {
@@ -238,6 +290,49 @@ enum DSHoverProbe {
       await move(to: restPoint)
       let off = await until(1500) { [self] in !state().sound && state().playing == 1 }
       check(off != nil, "Score Single: leaving mutes it and it keeps playing (\(state().words))")
+      await scrubPastTheEdge(p)
+    }
+
+    /// Mouse events to this window's content only: a held mouse sends no hover, and the pointer overshoots the preview.
+    func scrubPastTheEdge(_ p: CGRect) async {
+      await move(to: CGPoint(x: p.midX, y: p.midY))
+      _ = await until(1500) { [self] in state().sound && scrubber != nil }
+      guard let bar = scrubber else {
+        check(false, "Score Single: the scrubber shows on hover")
+        return
+      }
+      let start = CGPoint(x: bar.midX, y: bar.midY)
+      let end = CGPoint(x: p.maxX + 30, y: p.minY - 20)
+      mouse(.leftMouseDown, start)
+      for i in 1...8 {
+        let t = CGFloat(i) / 8
+        let at = CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)
+        guardian.simulatedPointer = at
+        mouse(.leftMouseDragged, at)
+        await settle(30)
+      }
+      await settle(400)  // well past the guard's check
+      check(scrubber != nil && state().sound, "scrub past the preview's edge: the scrubber and the sound stay (\(state().words))")
+      mouse(.leftMouseUp, end)
+      let ended = await until(1500) { [self] in scrubber == nil && !state().sound && state().playing == 1 }
+      check(ended != nil, "the scrub ends off the preview: the scrubber goes, it mutes and keeps playing (\(state().words))")
+      await move(to: restPoint)
+    }
+
+    var scrubber: CGRect? {
+      DSTooltipProbe.anchors(in: w).first { $0.content.label == "Drag to scrub through the preview" }?.visibleScreenRect
+    }
+
+    func mouse(_ type: NSEvent.EventType, _ p: CGPoint) {
+      if let e = NSEvent.mouseEvent(with: type, location: w.convertPoint(fromScreen: p), modifierFlags: [],
+                                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil,
+                                    eventNumber: 0, clickCount: 1, pressure: 1) {
+        switch type {
+        case .leftMouseDown: w.contentView?.mouseDown(with: e)
+        case .leftMouseDragged: w.contentView?.mouseDragged(with: e)
+        default: w.contentView?.mouseUp(with: e)
+        }
+      }
     }
 
     // MARK: Moves
@@ -247,7 +342,7 @@ enum DSHoverProbe {
 
     func park() async {
       guardian.simulatedPointer = nil
-      guardian.simulatedFocus = nil
+      guardian.simulatedAppActive = nil
     }
 
     func move(to p: CGPoint) async {

@@ -12,6 +12,7 @@ struct ScoreGridView: View {
   @State private var visible: Set<String> = []
   @State private var hovered: String?
   @Environment(\.screenGutter) private var gutter
+  @Environment(\.controlActiveState) private var controlActive
   private var ui: PipelineUIState { .shared }
 
   var body: some View {
@@ -39,7 +40,8 @@ struct ScoreGridView: View {
     c.blocks = []
     var cfg = DSClipCardConfig()
     let p = model.playback
-    cfg.autoplay = PreviewPlayback.plays(p, layout: .grid, hovered: hovered == v.id, focused: focus == v.id)
+    // Keyboard focus counts only while the window has it: a focused tile stops with the app in the background too.
+    cfg.autoplay = PreviewPlayback.plays(p, layout: .grid, hovered: hovered == v.id, focused: focus == v.id && controlActive == .key)
     cfg.unmuteOnHover = p.hoverSound
     cfg.selectionMode = !sel.isEmpty
     return VStack(alignment: .leading, spacing: DS.space.xs) {
