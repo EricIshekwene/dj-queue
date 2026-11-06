@@ -89,10 +89,10 @@ States everywhere: default · hover · pressed · focused (accent ring) · disab
 - **Model `DSClip`:** id, title (Title or raw tag), subtitle (session), poster, proxyURL, loopRange, durationText, kind, score, position, status, tags, issues (warning chips), blocks (danger chips), suggestions (`DSTitleSuggestion`, outlined chips), platforms (`DSClipPlatform`), dateText, isPinned, isMissing. Meta line = session · duration · kind.
 - **Config `DSClipCardConfig`:** autoplay, unmuteOnHover, selectionMode, showsDragHandle.
 - **Callbacks:** `onToggleSelect`, `onTap(EventModifiers)` (⇧ range / ⌘ toggle, implemented by the screen), `onAcceptSuggestion`. The `actions` slot holds hover actions and ⋯.
-- **Cards (`.wide`):** 132 tall, r.lg, e1, padding 12, max 880. Layout: drag handle · 20 pt circle checkbox (on hover or in selection mode) · position · 63×112 autoplay thumb · title/meta/chips · platforms · date chip · score · actions.
+- **Cards (`.wide`):** 132 tall, r.lg, e1, padding 12, max 880. Layout: drag handle · 20 pt circle checkbox (on hover or in selection mode) · position · 63×112 thumb (cover at rest, plays while hovered) · title/meta/chips · platforms · date chip · score · actions.
 - **Grid:** cover r.md 9:16, checkbox top-left, score capsule top-right, duration bottom-left, mute bottom-right, hover actions on the cover. Below: title, meta, ≤2 chips.
 - **Single:** player r.xl with sound toggle and hover scrubber. 280 pt side panel with title, meta, chips, platforms, and the `actions` slot (score field, Kind, Exclude). Not selectable.
-- **List:** 52 pt row, hairline separators, hover fill r.sm, 24×42 poster. Columns: kind chip · score · date · platforms · actions.
+- **List:** 52 pt row, hairline separators, hover fill r.sm, 24×42 thumb (cover at rest, plays while hovered). Columns: kind chip · score · date · platforms · actions.
 
 ## Notes for the screen and editor builders
 - Map AppModel to `DSClip` in one helper per screen. Pass `isFocused` for the keyboard-focused card (it gets autoplay priority). Use `Lazy` stacks/grids so previews release when scrolled away.

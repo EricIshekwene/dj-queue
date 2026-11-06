@@ -16,7 +16,9 @@ struct QueueCardList: View {
   let onPin: ([String]) -> Void
 
   @State private var visible: Set<String> = []
+  /// The clip the pointer is really on (playback); `actionsShown` drives its buttons.
   @State private var hovered: String?
+  @State private var actionsShown: String?
   @State private var dropTarget: String?
   @Environment(\.screenGutter) private var gutter
 
@@ -41,11 +43,11 @@ struct QueueCardList: View {
     c.position = positions[v.id]
     var cfg = DSClipCardConfig()
     let p = model.playback
-    cfg.autoplay = p.autoplay && (!p.focusOnly || hovered == v.id)
+    cfg.autoplay = PreviewPlayback.plays(p, layout: .cards, hovered: hovered == v.id, focused: false)
     cfg.unmuteOnHover = p.hoverSound
     cfg.selectionMode = !sel.isEmpty
     cfg.showsDragHandle = true
-    let hot = hovered == v.id || SnapshotHover.id == v.id
+    let hot = actionsShown == v.id || SnapshotHover.id == v.id
     return DSClipCard(c, mode: .wide, isSelected: sel.contains(v.id), isFocused: dropTarget == v.id, config: cfg,
                       onToggleSelect: { model.toggleSelection(v.id, screen: .queue) },
                       onTap: { m in
@@ -69,6 +71,9 @@ struct QueueCardList: View {
       if t { dropTarget = v.id } else if dropTarget == v.id { dropTarget = nil }
     }
     .onHover { inside in
+      if inside { actionsShown = v.id } else if actionsShown == v.id { actionsShown = nil }
+    }
+    .dsPlaybackHover { inside in
       if inside { hovered = v.id } else if hovered == v.id { hovered = nil }
     }
     .onAppear {
