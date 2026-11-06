@@ -497,6 +497,29 @@ private func resolve(_ vs: [Version], _ n: Int? = nil, video: Video? = nil) -> R
     #expect(TextOverlay.png(for: layer(look: TextLook(tracking: 0.2)), aspect: .r9x16) != TextOverlay.png(for: layer(look: nil), aspect: .r9x16))
   }
 
+  /// Looks composited on a mid-grey frame for eyeballing (DJQ_SAMPLES=<dir>).
+  @Test(.enabled(if: ProcessInfo.processInfo.environment["DJQ_SAMPLES"] != nil))
+  func writeLookSamples() throws {
+    let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DJQ_SAMPLES"]!)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let (w, h) = (1080 * 3, 1920)
+    let ctx = try #require(CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                     space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    ctx.setFillColor(CGColor(srgbRed: 0.35, green: 0.4, blue: 0.45, alpha: 1))
+    ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+    let fonts = TextFont.allCases
+    for (i, f) in fonts.enumerated() {
+      let col = i % 3, row = i / 3
+      let styles = TextStyle.allCases
+      let l = TextLayer(text: "\(f.displayName) 🔥", style: styles[i % 3], size: 76, posY: 0.1 + Double(row) * 0.18,
+                        look: TextLook(color: i % 2 == 0 ? "#FFCC00" : nil, accent: i % 3 == 0 ? "#AF52DE" : "#FF3B30", font: f,
+                                       opacity: i % 4 == 3 ? 0.6 : nil, tracking: i % 5 == 4 ? 0.12 : nil))
+      ctx.draw(try #require(TextOverlay.image(for: l, aspect: .r9x16)), in: CGRect(x: col * 1080, y: 0, width: 1080, height: 1920))
+    }
+    try Media.writePNG(try #require(ctx.makeImage()), to: dir.appendingPathComponent("r16-looks.png"))
+  }
+
   @Test func stackedImagePutsLaterTextsOnTop() throws {
     let under = TextLayer(text: "HHHH", size: 120, look: TextLook(accent: "#FF0000"))
     let over = TextLayer(text: "HHHH", size: 120, look: TextLook(accent: "#0000FF"))

@@ -73,6 +73,8 @@ Example entry:
 - **Text** (the overlay on the video, per version) follows the Title until Eric types it or taps a text suggestion
   in the editor's Text section. Title and Text are separate on purpose: the Title is one clean line for lists and
   search; the Text carries line breaks and hooks. Caption `{text}` and the YouTube title use the Text on one line.
+  A clip can have more texts with their own times (`djq overlay`); those are on-video only, and captions and titles keep
+  reading the first text.
 
 ## Adding suggestions after intake
 

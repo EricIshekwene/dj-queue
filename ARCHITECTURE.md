@@ -48,6 +48,7 @@ public enum TextOverlay {
   public static func png(for v: ResolvedVersion, aspect: Aspect) -> Data?
   @discardableResult public static func write(for v: ResolvedVersion, aspect: Aspect, to url: URL) throws -> Bool
   public static func textBounds(for v: ResolvedVersion, aspect: Aspect) -> CGRect?       // in output pixels, top-left origin (for drag hit-testing)
+  // Round 16: the same four for one `TextLayer` (image, png, write, textBounds), and `image(for: [TextLayer], aspect:)` stacked.
 }
 public struct ProbeInfo: Sendable, Hashable, Codable { duration: Double; width: Int; height: Int; fps: Double; hasAudio: Bool; size: Int64; videoCodec: String; audioCodec: String? }
 public enum Media {
@@ -132,6 +133,14 @@ CLI `djq`: `doctor [--json]`, `intake`, `status`, `queue`, `week [YYYY-MM-DD]`, 
 ### UI agents (`Sources/DJQueueApp/`)
 
 SwiftUI app per `design/DESIGN.md`. Talks only to the APIs above and `Store`. Runs `Engine` in-process (background queue). Implements `Notifier` with `UNUserNotificationCenter` (actions Post now / Shift plan / Skip / Mark posted). `scripts/build-app.sh` builds release, assembles `DJ Queue.app` (Info.plist: `LSUIElement` true, bundle id `com.djlovd.queue`, min macOS 15), ad-hoc signs, installs to `~/Applications`.
+
+## Round 16 additions: timed texts and the text look
+
+- **One text is still the Version fields.** `Version.moreText: [TextLayer]?` holds every text after the first and carries forward as a whole list (nil inherits, [] = none); `Version.textLook: TextLook?` is the first text's look (an empty look = back to default). Both are optional JSON keys, so nothing is rewritten, Title-follow keeps working and `hasText` still means the first text. `ResolvedVersion` adds `moreText`, `textLook` (written only when used), `firstLayer`, `allLayers` (every text, numbered), `layers` (what draws) and `hasDrawnText` (what Health's "No text" asks).
+- **`TextLayers`** (`DJQCore/TextLayers.swift`) holds the pure edits, shared by the editor and `djq overlay`: `new`, `layer(ref)`, `adding`, `updating`, `removing`, `promotingNext`, `copyAdvanced`, and the cap (`maxCount`, 12 with the first text).
+- **`TextOverlay`** draws a `TextLayer`. `Layout` takes the look through the same Core Text path (colour, accent by style, font with system fallback, kerning, opacity as one transparency layer); a nil look doesn't touch the path, so the PNG is byte-identical.
+- **`PreviewKeys`** has the shared rules: `layerWindows` (first text as ever; an extra starting past the trim or inverted isn't drawn), `coverLayers` (what shows at the cover frame, else the first text), `layerKey` and `coverKey` for caches. `textKey` is unchanged for one plain text.
+- **Renderer**: one PNG input per text, chained `overlay` filters each with its own `between(t,…)` (`Renderer.overlayGraph`). `HashInput` adds `text.look` and `moreText`, nil and absent when unused, so existing edit hashes hold and `pipelineVersion` stays.
 
 ## Round 4 additions (v0.5.0)
 
