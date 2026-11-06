@@ -181,7 +181,11 @@ enum DSTooltipProbe {
           try await settle(1600)
           let before = anchors(in: w)
           var picks: [DSTooltipAnchorView] = []
-          if mode == .grid || mode == .wide, let first = model.visibleIds[scr]?.first {
+          // On Edit, a clip with nothing to fix: a clip with a fix to offer shows that instead of the editor button.
+          let plain = scr == .edit ? model.visibleIds[scr]?.first { id in
+            model.videos.first { $0.id == id }.map { model.editFixes($0, ids: []).isEmpty } ?? false
+          } : nil
+          if mode == .grid || mode == .wide, let first = plain ?? model.visibleIds[scr]?.first {
             DSClipCardDebug.hoverIds = [first]
             model.screen = scr == .library ? .health : .library
             try await Task.sleep(for: .milliseconds(50))
@@ -381,7 +385,7 @@ enum DSTooltipProbe {
       .overlay { DS.color.hover.frame(width: 90, height: 44).dsTooltip("Inner trigger") }
       .dsTooltip("Outer trigger")
       .frame(width: 420, height: 280)
-    .background(DS.color.surfaceRaised)
+    .background(Color.gray)  // not a token: in dark, surface, hover and raised are one colour, and the capture would read as blank
     let w = SnapshotWindow.make(NSRect(x: 0, y: 0, width: 420, height: 280), [.borderless])
     w.isReleasedWhenClosed = false
     w.contentView = NSHostingView(rootView: fixture)

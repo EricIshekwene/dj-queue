@@ -193,12 +193,11 @@ enum EditorGroupScript {
     if let a = anchor(in: host), let sv = a.enclosingScrollView {
       let f = a.convert(a.bounds, to: sv.contentView), clip = sv.contentView.bounds
       note("anchor in clip \(f), clip \(clip), flipped \(sv.contentView.isFlipped)")
-      // Scrolls like a wheel over the inspector (an event built here and handed to this window only).
-      let over = window.convertPoint(toScreen: sv.convert(NSPoint(x: sv.bounds.midX, y: sv.bounds.midY), to: nil))
-      if let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(clip.maxY - f.maxY - 4), wheel2: 0, wheel3: 0) {
-        cg.location = CGPoint(x: over.x, y: (NSScreen.screens.first?.frame.height ?? 0) - over.y)
-        if let e = NSEvent(cgEvent: cg) { sv.scrollWheel(with: e) }
-      }
+      // Sets up the scroll position directly: a wheel event's location can't reach a window off every display.
+      var o = sv.contentView.bounds.origin
+      o.y += f.maxY - clip.maxY + 4
+      sv.contentView.scroll(to: o)
+      sv.reflectScrolledClipView(sv.contentView)
       await wait(800)
       let g = a.convert(a.bounds, to: sv.contentView), now = sv.contentView.bounds
       note("anchor now \(g), clip \(now)")

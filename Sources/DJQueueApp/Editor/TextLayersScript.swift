@@ -251,7 +251,6 @@ enum TextLayersScript {
       note("clip \(v.id.prefix(8)) “\(a.displayName(v))”")
       EditorDisclosures.shared.closeAll()
       baseline = state()
-      dsAnimationsOff = screenLocked
 
       let w = WindowManager.makeMainWindow(model: a, make: SnapshotWindow.make)
       window = w

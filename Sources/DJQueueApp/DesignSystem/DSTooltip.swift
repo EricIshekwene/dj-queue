@@ -370,7 +370,7 @@ final class DSTooltipController {
     let wasShown = shown != nil
     shown = a
     group.opened()
-    if animated && !wasShown {
+    if animated && !wasShown && !dsAnimationsOff {
       // Fade in 120 ms with a 4 pt slide away from the trigger; Reduce Motion = fade only.
       var start = placed.frame
       if !reduceMotion {

@@ -6,7 +6,7 @@ import AppKit
 /// tooltips included) and capturing them needs no permission. Clicks, keys and hovers are events sent to the window, so
 /// the user's pointer and keyboard stay out of it.
 ///
-/// Three things to know. Capture one window at a time (`WindowCapture`): a region capture of this area comes back empty.
+/// Things to know. Nothing ticks an animation here, so `dsAnimationsOff` is on for these runs. Capture one window at a time (`WindowCapture`): a region capture of this area comes back empty.
 /// A real `.sheet` pulls its parent onto a display, and so does a real `NSMenu`, so checks stand in for those.
 /// Players stay at volume 0 in these runs (`silenceForChecks`): state checks read `isMuted`, and nobody hears a run.
 @MainActor

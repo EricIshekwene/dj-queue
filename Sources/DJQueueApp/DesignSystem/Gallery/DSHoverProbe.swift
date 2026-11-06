@@ -256,8 +256,11 @@ enum DSHoverProbe {
       model.playback.gridHoverOnly = false
       defer { model.playback.gridHoverOnly = true }
       await open(page)
-      let four = await until(2500) { [self] in state().playing == 4 }
-      check(four != nil, "four covers play by themselves (\(state().words))")
+      // Past days don't play, so late in the week the calendar has fewer than four covers to start.
+      let weekday = Calendar(identifier: .gregorian).component(.weekday, from: Date())
+      let want = min(4, weekday == 1 ? 1 : 9 - weekday)
+      let four = await until(2500) { [self] in state().playing == want }
+      check(four != nil, "\(want) covers play by themselves (\(state().words))")
       guard let other = cards().first(where: { state().count(in: $0) == 0 }) else {
         say("  NOT DRIVEN switch off: every card already plays")
         return

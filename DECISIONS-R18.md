@@ -9,3 +9,7 @@ Eric's rule (2026-11-06): live click-through checks keep running on every build,
 5. **Players are at volume 0 in these runs.** `isMuted`, which the checks read, is unchanged, so nobody hears a run.
 6. **Dev binaries refuse to start without `DJQ_HOME` and `DJQ_ROOT`,** and an unknown `--` flag refuses instead of opening the real window. The check is a path under `.build`, so the installed app is never refused.
 7. **On a locked Mac the tooltip and hover checks fail on blank captures.** That's correct: nothing was verified. Rerun once it's unlocked.
+8. **Animations are off in these runs.** Nothing ticks an animation off a display, so an animated change would never land. Tooltips and forms open at once, and no check covers the animations themselves.
+9. **Checks run on a copy of the newest backup,** because the scripts need clips waiting in Edit. The window of the first tooltip check keeps a gray background so its capture can't read as blank in dark.
+10. **Two old checks stop depending on the data.** The hover probe expects as many covers as days left in the week, up to four, because past days don't play. The tooltip probe hovers an Edit clip with nothing to fix, because a clip with a fix doesn't show the editor button. That second check already failed the same way in round 16.
+11. **`editor-group` sets its scroll position directly,** because a wheel event's location can't reach a window off every display.

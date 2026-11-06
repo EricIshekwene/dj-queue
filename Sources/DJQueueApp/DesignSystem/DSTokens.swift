@@ -308,7 +308,7 @@ private struct DSAnimationModifier<V: Equatable>: ViewModifier {
   let animation: Animation
   let value: V
   func body(content: Content) -> some View {
-    content.animation(DS.motion.respecting(animation, reduceMotion: reduceMotion), value: value)
+    content.animation(dsAnimationsOff ? nil : DS.motion.respecting(animation, reduceMotion: reduceMotion), value: value)
   }
 }
 
@@ -338,14 +338,15 @@ extension AnyTransition {
   }
 }
 
-/// Evidence runs on a locked Mac: nothing ticks an animation there, so a jump in the inspector goes without one, or it would
-/// never land.
-@MainActor var dsAnimationsOff = false
+/// Evidence runs: their windows sit off every display, where nothing ticks an animation, so one would never land. Every
+/// animated change happens at once there. Animations themselves aren't covered by these checks.
+@MainActor let dsAnimationsOff = AppModel.isSnapshotRun
 
 /// `withAnimation` that respects Reduce Motion.
 @MainActor
 func dsWithAnimation<R>(_ a: Animation = DS.motion.layout, _ body: () throws -> R) rethrows -> R {
-  try withAnimation(DS.motion.respecting(a, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion), body)
+  if dsAnimationsOff { return try body() }
+  return try withAnimation(DS.motion.respecting(a, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion), body)
 }
 
 // MARK: - Interaction state (live or forced for the gallery)

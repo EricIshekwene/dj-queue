@@ -7,6 +7,7 @@
 # DJQ_BIN picks the binary (default .build/debug/DJQueueApp). Never point it at the installed app: copy the staged
 # build to scratch first.
 set -u
+setopt null_glob
 cd "$(dirname "$0")/.."
 OUT=${1:?usage: scripts/live-checks.sh <evidence dir> [check ...]}
 shift
@@ -22,6 +23,11 @@ esac
 [[ -x "$BIN" ]] || { echo "live-checks: no binary at $BIN (run swift build)" >&2; exit 2; }
 HOME_DIR=$(mktemp -d "$DEV/scratch-live-XXXXXX") || exit 2
 trap 'rm -rf "$HOME_DIR"' EXIT
+# A copy of the newest backup: the scripts need clips waiting in Edit, which a fresh database doesn't have.
+seed=("$DEV"/backups/real-queue-*.sqlite(Nom[1]))
+[[ -n "${seed[1]:-}" ]] || { echo "live-checks: no backup in $DEV/backups" >&2; exit 2; }
+mkdir -p "$HOME_DIR/support"
+cp "$seed[1]" "$HOME_DIR/support/queue.sqlite"
 
 typeset -A checks
 checks=(
