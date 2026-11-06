@@ -62,6 +62,46 @@ public enum AgentAPI {
     public var error_message: String?
   }
 
+  /// Round 16: one text on the video (`djq overlay list --json`, `overlays` in `djq video --json`). `number` is what
+  /// `djq overlay set` and `remove` take (1 = the first text, the one `djq text` writes), `id` stays the same when the
+  /// numbers shift. Nil look fields mean the default look.
+  public struct OverlayOut: Codable, Sendable {
+    public var number: Int
+    public var id: String
+    public var text: String
+    public var style: String
+    public var size: Double
+    public var x: Double
+    public var y: Double
+    public var align: String
+    /// Seconds from the trim start, as stored (null = from the start / to the end).
+    public var start: Double?
+    public var end: Double?
+    public var color: String?
+    /// The box fill, outline colour or shadow colour, by style.
+    public var background: String?
+    public var font: String?
+    public var opacity: Double?
+    public var tracking: Double?
+    /// False for an empty text, while "No text" is on, or when its window falls outside the trim.
+    public var drawn: Bool
+    /// When it shows in the main trim, in seconds from the trim start (null when it isn't drawn).
+    public var shows_from: Double?
+    public var shows_to: Double?
+  }
+
+  /// Every text of a resolved version, numbered, against a trim of `trimDuration` seconds.
+  public static func overlays(_ r: ResolvedVersion, trimDuration d: Double) -> [OverlayOut] {
+    let windows = PreviewKeys.layerWindows(r, trimDuration: d)
+    return r.allLayers.enumerated().map { i, l in
+      let w = windows.first { $0.layer.id == l.id }?.window
+      return OverlayOut(number: i + 1, id: l.id, text: l.text, style: l.style.rawValue, size: l.size, x: l.posX, y: l.posY,
+                        align: l.align.rawValue, start: l.start, end: l.end, color: l.look?.color, background: l.look?.accent,
+                        font: l.look?.font?.rawValue, opacity: l.look?.opacity, tracking: l.look?.tracking, drawn: w != nil,
+                        shows_from: w?.lowerBound, shows_to: w.map { min($0.upperBound, d) })
+    }
+  }
+
   public struct VideoDetail: Codable, Sendable {
     public var video: VideoSummary
     public var title_tracks: [Track]?
@@ -78,6 +118,8 @@ public enum AgentAPI {
     public var issues: [ValidationIssue]
     public var plan: [PlanSlot]
     public var posts: [PostOut]
+    /// Round 16: every text of v1 in order, the first text first (also in `versions` and `resolved_v1`, as stored).
+    public var overlays: [OverlayOut] = []
   }
 
   public struct WeekOut: Codable, Sendable {
@@ -165,6 +207,7 @@ public enum AgentAPI {
       }
       yt = Captions.youtubeTitle(r1, video: v, settings: settings)
     }
+    let trim = try store.resolvedEdit(videoId: id, settings: settings).trim()
     return VideoDetail(
       video: try summary(v, store: store), title_tracks: v.titleText == nil ? nil : v.titleTracks,
       title_suggestions: try store.titleSuggestions(videoId: id).map(suggestion),
@@ -172,7 +215,8 @@ public enum AgentAPI {
       edit: try store.edit(videoId: id), resolved_edit: try store.resolvedEdit(videoId: id, settings: settings),
       versions: try store.versions(videoId: id), resolved_v1: r1, captions: captions, youtube_title: yt,
       issues: v.type == .short ? try Validation.issues(video: v, store: store) : [],
-      plan: try store.planSlots(where: "video_id=?", [id]), posts: try store.posts(where: "video_id=?", [id]).map(post))
+      plan: try store.planSlots(where: "video_id=?", [id]), posts: try store.posts(where: "video_id=?", [id]).map(post),
+      overlays: r1.map { overlays($0, trimDuration: trim.duration) } ?? [])
   }
 
   /// `djq week --json [date]`

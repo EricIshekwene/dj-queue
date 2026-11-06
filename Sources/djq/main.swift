@@ -23,6 +23,15 @@ usage: djq <command> [args]
   suggest [<video>] --file <json>     add title and/or on-video text suggestions
                                       (array of {video_id, title_suggestions, text_suggestions} for many)
   text <video> "<text>" | --none | --default [--version N]
+  overlay list <video> [--version N] [--json]       every text on the clip, numbered (1 = the first text, the one `text` writes)
+  overlay add <video> "<text>" [options]            add a timed text (at most \(TextLayers.maxCount) on a clip)
+  overlay set <video> <number|id> ["<text>"] [options]
+  overlay remove <video> <number|id> [--version N]  removing 1 moves the next text into its place
+       options: --start S --end S (seconds from the trim start) --x 0-1 --y 0-1 --style \(TextStyle.allCases.map(\.rawValue).joined(separator: "|"))
+       --size 8-400 --align \(TextAlign.allCases.map(\.rawValue).joined(separator: "|")) --color <#hex> --background <#hex> (box, outline or shadow colour by style)
+       --font <\(TextFont.allCases.map(\.rawValue).joined(separator: "|"))> --opacity \(TextLook.opacityRange.lowerBound)-\(TextLook.opacityRange.upperBound)
+       --tracking \(TextLook.trackingRange.lowerBound)-\(TextLook.trackingRange.upperBound) (share of the font size) --version N --json
+       "default" clears a timing or look option
   caption <video> "<caption>" | --default [--platform P] [--version N]
                                       the caption exactly as it posts (nothing appended; {hashtags} = the clip's groups + extras)
   youtube-title <video> "<title>" | --template <id|default> | --default [--version N]
@@ -198,7 +207,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "posts-per-day", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "posts-per-day", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -225,10 +234,11 @@ func run() throws -> Int32 {
   let writes: Set<String> = ["pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem",
                              "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted",
                              "score", "exclude", "include", "pause", "resume", "intake", "tick", "render",
-                             "title", "suggest", "text", "caption", "kind", "bulk", "unqueue", "requeue", "stage",
+                             "title", "suggest", "text", "overlay", "caption", "kind", "bulk", "unqueue", "requeue", "stage",
                              "youtube-title", "hashtag-groups", "title-templates", "caption-templates"]
   var wrote = writes.contains(cmd)
     && !(cmd == "bulk" && (args.contains("--dry-run") || args.first == "batches"))
+    && !(cmd == "overlay" && args.first == "list")
     && !((cmd == "unqueue" || cmd == "requeue" || cmd == "stage") && args.contains("--dry-run"))
     && !(cmd == "stage" && !args.contains("back") && !args.contains("forward"))
     && !((cmd == "hashtag-groups" || cmd == "title-templates" || cmd == "caption-templates") && (args.isEmpty || args.first == "--json" || args.first == "list"))
@@ -341,6 +351,7 @@ func run() throws -> Int32 {
     let re = d.resolved_edit
     print("  trim \(EditorLogic.time(re.trimIn, tenths: true))–\(EditorLogic.time(re.trimOut, tenths: true))\(re.isDefault(.trimIn) && re.isDefault(.trimOut) ? " (default)" : "") · aspect \(re.aspect.rawValue) · crop \(re.cropConfirmed ? "confirmed" : "not confirmed")")
     if let r = d.resolved_v1 { print("  text \(r.noText ? "(no text)" : "\"\(Captions.oneLine(r.text))\"")\(r.isDefault("text") ? " (default)" : "")") }
+    if d.overlays.count > 1 { print("  \(d.overlays.count) texts on the video (djq overlay list \(short(v.id)))") }
     if let r = d.resolved_v1, v.type == .short {
       let groups = try store.hashtagSets().filter { r.hashtagSetIds.contains($0.id) }.map(\.name)
       print("  hashtag groups \(groups.isEmpty ? "none" : groups.joined(separator: ", "))\(r.isDefault("hashtagSetIds") ? " (default)" : "") · extra \(r.extraHashtags.isEmpty ? "none" : r.extraHashtags.joined(separator: " "))")
@@ -397,6 +408,9 @@ func run() throws -> Int32 {
     try store.save(ver, videoId: v.id)
     wrote = true
     print("\(v.tag) v\(n) text → \(ver.noText == true ? "No text" : ver.text.map { "\"\($0)\"" } ?? "default")")
+
+  case "overlay":
+    return try OverlayCommand.run(store, settings, &wrote)
 
   case "caption":
     let v = try resolveVideo(store, try arg(0, "video id"))

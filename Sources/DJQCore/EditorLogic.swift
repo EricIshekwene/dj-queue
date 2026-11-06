@@ -128,6 +128,15 @@ public enum EditorLogic {
     return (s, e, inside ? cover : clampCover(cover, trim: trim))
   }
 
+  /// `layer`'s window after a committed trim change (`d` = the trim's length): the first text's rule, so an extra the
+  /// trim would drop moves inside it instead. Per-platform trims don't come through here: there the text just isn't
+  /// drawn (`PreviewKeys.layerWindows`).
+  public static func clampLayer(_ layer: TextLayer, trimDuration d: Double) -> TextLayer {
+    var l = layer
+    (l.start, l.end) = clampTextTiming(start: layer.start, end: layer.end, trimDuration: d)
+    return l
+  }
+
   /// Cover time (absolute) kept inside the trim; nil = first frame of the trim.
   public static func clampCover(_ t: Double?, trim: TrimRange) -> Double? {
     guard let t else { return nil }

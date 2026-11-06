@@ -7,7 +7,7 @@ public enum BulkSection: String, Codable, Sendable, CaseIterable {
   case frame
   /// Trim in/out and per-platform trims.
   case trim
-  /// v1 text, No text, style, size, position, alignment, timing.
+  /// v1 text, No text, style, size, position, alignment, timing, the clip's other texts and the custom look.
   case text
   /// Cover time and "include text on cover".
   case cover
@@ -186,7 +186,7 @@ public final class BulkActions: @unchecked Sendable {
         let o = v1
         if sections.contains(.text) {
           v1.text = nil; v1.noText = nil; v1.style = nil; v1.size = nil; v1.posX = nil; v1.posY = nil
-          v1.align = nil; v1.textStart = nil; v1.textEnd = nil
+          v1.align = nil; v1.textStart = nil; v1.textEnd = nil; v1.moreText = nil; v1.textLook = nil
         }
         if sections.contains(.caption) {
           v1.caption = nil; v1.captionTemplateId = nil; v1.hashtagSetIds = nil; v1.extraHashtags = nil
