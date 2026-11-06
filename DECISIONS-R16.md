@@ -1,8 +1,7 @@
 # Round 16: timed text overlays and the text look
 
 Eric wants several texts on a clip, each with its own start and end like CapCut, and a colour and font per text, kept out of the way
-behind Advanced because he won't use it often. This file covers the data, drawing and `djq` side; the editor decisions follow from
-the second branch.
+behind Advanced because he won't use it often. This file covers the data, drawing and `djq` side, then the editor.
 
 ## Data
 
@@ -82,7 +81,58 @@ the second branch.
 30. **The PNG golden runs only on the macOS build that recorded it.** System fonts change with macOS and the auto-update gate must
     not fail for that. The edit-hash and `textKey` goldens have no such dependency, so they always run.
 
-## For the editor branch
+## Editor
+
+31. **`selectedTextRaw` is the one selection, read through `selectedText`.** The switcher, a timeline bar and the canvas all write it,
+    and the getter falls back to the first text, so undo, another version or a delete can't leave a field editing nothing. A promoted
+    text needs no special case: only the first text can be promoted out of, and the selection is on it.
+32. **The first text keeps its own setters** (`setText`, `setVersionField`), so Title-follow and the Default markers work as before.
+    The others go through `TextLayers.updating`, which also copies an inherited list into the version on its first edit.
+33. **A switcher of number chips, not a select.** Twelve texts need to fit, one click beats a menu, and the tooltip says what each is.
+34. **A new text is empty, with the keyboard in the field,** rather than a "New text" placeholder someone could post. The bar says
+    "Empty text". It isn't drawn until it has words (S1-R7).
+35. **A new text or a duplicate sharing the time of the one it copies goes 10 % lower.** On top of it neither could be read or picked.
+    A duplicate goes straight after the original when there's room; when not, it stays on the same time, below.
+36. **With No text on, Add and Duplicate are off, with the reason.** The field is off too, so a new text couldn't be typed into.
+    The timeline shows the one "No text" bar: nothing else shows on the video, so nothing else is listed.
+37. **Show from / to commit on ↩ and on blur,** so typing "1.5" doesn't land "1" first. A time that doesn't parse says so and writes nothing.
+38. **A window is written whole for the first text too,** matching decision 19: setting one end of a default window would drop the other.
+39. **Undo:** clicks (add, delete, swatch, font, drop on the canvas, typed time) are one step each. Drags, sliders and the colour
+    panel coalesce like every other drag.
+40. **Drags are an AppKit surface (`EditorDragSurface`), not `DragGesture`.** SwiftUI gestures and taps don't see events sent to a
+    window, so a script could never drive them, and "verified in the real app" would have meant "called the model". The Crop dialog
+    made the same choice. The filmstrip's scrub and `DSToggle` stay SwiftUI, so the script calls what they call and says so.
+41. **`keepInsideTrim` skips an inverted first-text window.** It means the whole clip, and clamping would make it a 0.3 s flash.
+42. **`textBars` shows an extra the trim leaves out as a sliver at the end,** so it can still be seen and picked up, instead of vanishing.
+
+## Canvas and lists
+
+43. **One image per text, in a 160 MB cache keyed by `layerKey`.** The key has no time in it, so moving a text in time draws nothing,
+    and dragging or typing in one never redraws the rest (the script checks image identity). 160 MB holds a full clip of 12 at
+    1080 wide with room for what's being typed.
+44. **An edited text keeps its old image until the new one lands,** as the single overlay did.
+45. **Block bounds are stored with the image,** because the Zones canvas reads them on every playhead tick while playing.
+46. **Only the selected text dims when hidden in Zones.** Dimming all of them would show every text at once and hide what plays.
+47. **Lists: one `CALayer` per text under one 30 Hz observer**, compared by key and window, so a SwiftUI update of a preview costs an
+    equality check. `overlayMissing` is true when any text's image is gone, and `reloadOverlay` draws just those.
+48. **The Crop dialog draws the cover's texts:** its still is the cover frame, so it follows S1-R6 through `AppModel.textOverlays`.
+
+## Collapsible rows
+
+49. **`EditorDisclosures` is a shared object,** because `EditorView` makes a new model each time the editor opens and the state must
+    outlive it, and a static starts empty at launch, which is the rule. `scrollTarget`'s `didSet` opens the section, so every path that
+    lands on one (mini-index, the to-fix chip, `writePlatformCaption`, scripts) opens it without knowing about rows.
+50. **What's inside a closed section isn't built,** so a closed Cover loads no frames.
+51. **The problem replaces the summary on a closed row,** as the first issue of that section. Closing can't hide one.
+
+## Proof
+
+52. **`DJQ_TEXT_LAYERS_SCRIPT`** drives the real window and `AppModel`. Which text shows at each time is decided by comparing the
+    canvas and the exported frame with the text's own image, under its solid pixels: both must agree with the windows.
+53. **On a locked Mac** the window server draws nothing, so the script says so and captures the view tree. The player is black there,
+    but the texts are real, so the check still means what it says. The side-by-sides with real video need an unlocked screen.
+
+## For the editor branch (done)
 
 - Edit through `TextLayers.updating / adding / removing`; for "Duplicate" use `TextLayers.new(text:like:start:end:)`.
 - `EditorModel.newVersion(copying:)` needs `TextLayers.copyAdvanced(into:from:)` in its older-version branch.

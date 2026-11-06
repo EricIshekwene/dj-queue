@@ -141,6 +141,11 @@ SwiftUI app per `design/DESIGN.md`. Talks only to the APIs above and `Store`. Ru
 - **`TextOverlay`** draws a `TextLayer`. `Layout` takes the look through the same Core Text path (colour, accent by style, font with system fallback, kerning, opacity as one transparency layer); a nil look doesn't touch the path, so the PNG is byte-identical.
 - **`PreviewKeys`** has the shared rules: `layerWindows` (first text as ever; an extra starting past the trim or inverted isn't drawn), `coverLayers` (what shows at the cover frame, else the first text), `layerKey` and `coverKey` for caches. `textKey` is unchanged for one plain text.
 - **Renderer**: one PNG input per text, chained `overlay` filters each with its own `between(t,…)` (`Renderer.overlayGraph`). `HashInput` adds `text.look` and `moreText`, nil and absent when unused, so existing edit hashes hold and `pipelineVersion` stays.
+- **`TextTimeline`** (`DJQCore/TextTimeline.swift`) is the timeline's arithmetic, pure and tested: `span`, `lanes` (first fit in list order, 4 at most), `newWindow`, `duplicateWindow`, `moved`, `snappedStart`, `clampedStart/End`, `parse`.
+- **Editor:** `EditorModel.selectedText` is the one selection; `updateText` edits any text; the first text keeps its version fields. `textImages` holds one `EditorTextImage` per drawn text from a cost-capped cache keyed by `layerKey`. `textBars` is the timeline's list. `EditorDisclosures.shared` holds the open rows for the app run, and `scrollTarget` opens what it lands on.
+- **Lists:** `ClipPreview.overlays` is a `[DSTimedOverlay]`, each image with its window. `DSPlayerNSView` keeps one `CALayer` per text, toggled in one time observer, with no SwiftUI redraw per frame. `AppModel.overlayCache` is keyed by `layerKey`.
+- **Design system:** `DSDisclosure` (the collapsible row of Frame, Cover, Size and position, Advanced) and `DSColorSwatches` (preset swatches plus a custom well).
+- **Scripted checks:** `EditorDragSurface` takes the mouse in AppKit for text bars, grips and text on the canvas, so `TextLayersScript` (`DJQ_TEXT_LAYERS_SCRIPT=<dir>`) can drive them with window events, then export and compare.
 
 ## Round 4 additions (v0.5.0)
 
