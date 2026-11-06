@@ -7,8 +7,8 @@ import SwiftUI
 /// with the REAL `AppModel` on a throwaway copy of the database. Clicks, drags and keys go to this window only, and every check
 /// reads the store. It exports the clip through `Renderer` and compares the canvas with the file, frame by frame.
 ///
-/// The window is in front but click-through: macOS doesn't draw a covered window's layers, and the player only shows in a
-/// window-server capture. Wait for `pgrep -f -- --snapshot` to be empty first, so no other probe covers it. Exits 1 on a FAIL.
+/// The window is off every display (`Backstage`), where the window server still draws it: the player only shows in that
+/// capture. Exits 1 on a FAIL.
 @MainActor
 enum TextLayersScript {
   /// Mean difference (0…255) under a text's solid pixels below which that text counts as showing.
@@ -163,9 +163,8 @@ enum TextLayersScript {
       return rep.representation(using: .png, properties: [:])
     }
 
-    /// The window as it is on screen. A covered window comes back blank from the window server: back in front first, and a
-    /// capture of one colour is tried again rather than trusted. On a locked Mac there's no screen to read, so it says so
-    /// and uses the view tree.
+    /// The window as the window server has it. A capture of one colour is tried again rather than trusted. On a locked Mac
+    /// there's no screen to read, so it says so and uses the view tree.
     func frontCapture() async -> Data? {
       if screenLocked {
         if !lockedNoted { lockedNoted = true; note("screen locked: captures are the view tree, with the player black") }
@@ -173,7 +172,7 @@ enum TextLayersScript {
         return viewTreePNG()
       }
       for _ in 0..<12 {
-        window.orderFrontRegardless()
+        Backstage.front(window)
         await wait(250)
         if let data = WindowCapture.png(window), let img = NSBitmapImageRep(data: data)?.cgImage, !Self.isBlank(img) { return data }
         note("blank capture, trying again")
@@ -258,10 +257,7 @@ enum TextLayersScript {
       window = w
       w.setContentSize(NSSize(width: 1440, height: 900))
       w.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
-      if let s = NSScreen.main { w.setFrameOrigin(NSPoint(x: s.visibleFrame.minX, y: s.visibleFrame.minY)) }
-      w.ignoresMouseEvents = true  // in front but inert (DSTooltipProbe)
-      w.level = .floating
-      w.orderFrontRegardless()
+      Backstage.show(w)
       defer { w.orderOut(nil); w.close() }
 
       a.openEditor(clip, in: [clip, other.id])

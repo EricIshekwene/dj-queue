@@ -1,0 +1,69 @@
+#!/bin/zsh
+# Live click-through checks, run in the background. Every window stays off every display, nothing takes focus, and only
+# dev data is touched. A run fails if a window lands on a screen, even when its own checks pass.
+#
+#   scripts/live-checks.sh <evidence dir> [check ...]     (default: all of them; see `checks` below)
+#
+# DJQ_BIN picks the binary (default .build/debug/DJQueueApp). Never point it at the installed app: copy the staged
+# build to scratch first. Several sessions can run this at once: windows off screen don't cover each other.
+set -u
+cd "$(dirname "$0")/.."
+OUT=${1:?usage: scripts/live-checks.sh <evidence dir> [check ...]}
+shift
+mkdir -p "$OUT"
+OUT=${OUT:A}
+DEV="$HOME/code/dj-queue-dev"
+BIN=${DJQ_BIN:-.build/debug/DJQueueApp}
+BIN=${BIN:A}
+case "$BIN" in
+  "$HOME/Applications/"*|/Applications/*) echo "live-checks: refusing to run the installed app" >&2; exit 2 ;;
+esac
+[[ -x "$BIN" ]] || { echo "live-checks: no binary at $BIN (run swift build)" >&2; exit 2; }
+HOME_DIR=$(mktemp -d "$DEV/scratch-live-XXXXXX")
+trap 'rm -rf "$HOME_DIR"' EXIT
+
+typeset -A checks
+checks=(
+  guard          "DJQ_SCREEN_GUARD_SELFTEST=1 DJQ_SNAPSHOT_ONLY=00-shell-queue"
+  screens        ""
+  gallery        "DJQ_SNAPSHOT_GALLERY=1"
+  editor         "DJQ_SNAPSHOT_EDITOR=1"
+  editor-selftest "DJQ_SNAPSHOT_EDITOR=1 DJQ_EDITOR_SELFTEST=1"
+  editor-live    "DJQ_SNAPSHOT_EDITOR=1 DJQ_EDITOR_LIVE=1 DJQ_EDITOR_LIVE_PNG=@/live.png"
+  tooltip        "DJQ_SNAPSHOT_GALLERY=1 DJQ_TOOLTIP_PROBE=1"
+  tooltip-pass   "DJQ_SNAPSHOT_GALLERY=1 DJQ_TOOLTIP_PASS=1"
+  hover          "DJQ_SNAPSHOT_GALLERY=1 DJQ_HOVER_PROBE=1"
+  search         "DJQ_SEARCH_PROBE=1"
+  send-to-queue  "DJQ_SEND_TO_QUEUE_SCRIPT=1"
+  text-layers    "DJQ_SNAPSHOT_EDITOR=1 DJQ_TEXT_LAYERS_SCRIPT=@"
+  bulk-caption   "DJQ_SNAPSHOT_EDITOR=1 DJQ_BULK_CAPTION_SCRIPT=@"
+  bulk-crop      "DJQ_SNAPSHOT_EDITOR=1 DJQ_BULK_CROP_SCRIPT=@"
+  editor-group   "DJQ_SNAPSHOT_EDITOR=1 DJQ_EDITOR_GROUP_SCRIPT=@"
+  editor-caption "DJQ_SNAPSHOT_EDITOR=1 DJQ_EDITOR_CAPTION_SCRIPT=@"
+  editor-template "DJQ_SNAPSHOT_EDITOR=1 DJQ_EDITOR_TEMPLATE_SCRIPT=@"
+  settings-group "DJQ_SNAPSHOT_EDITOR=1 DJQ_SETTINGS_GROUP_SCRIPT=@"
+)
+order=(guard screens gallery editor editor-selftest editor-live tooltip tooltip-pass hover search send-to-queue text-layers
+       bulk-caption bulk-crop editor-group editor-caption editor-template settings-group)
+(( $# )) && order=("$@")
+
+failed=0
+for name in $order; do
+  [[ -n "${checks[$name]+x}" ]] || { echo "unknown check: $name" >&2; failed=$((failed + 1)); continue; }
+  dir="$OUT/$name"
+  mkdir -p "$dir"
+  vars=("${(@s: :)checks[$name]}")
+  vars=("${vars[@]//@/$dir}")
+  env DJQ_HOME="$HOME_DIR" DJQ_ROOT="$DEV/DJ Video" $vars "$BIN" --snapshot "$dir" > "$dir/run.log" 2>&1
+  code=$?
+  want=0
+  [[ $name == guard ]] && want=3  # the guard's own proof: its test window must fail the run
+  if (( code == want )); then
+    echo "PASS $name"
+  else
+    echo "FAIL $name (exit $code): $dir/run.log"
+    failed=$((failed + 1))
+  fi
+done
+echo "live-checks: $failed failed of ${#order}"
+(( failed == 0 ))

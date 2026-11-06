@@ -78,7 +78,6 @@ enum DSTooltipPass {
       var summary: [[String: String]] = []
       let c = DSTooltipController.shared
       c.requireActiveApp = false
-      let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
       for k in cases where only.map({ k.name.contains($0) }) ?? true {
         for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
           SnapshotContext.resetUI(model)
@@ -99,9 +98,7 @@ enum DSTooltipPass {
           }
           w.isReleasedWhenClosed = false
           w.appearance = NSAppearance(named: appearance)
-          w.setFrameOrigin(NSPoint(x: screen.midX - 720, y: screen.midY - 450))
-          w.ignoresMouseEvents = true  // in front but inert: a covered window's SwiftUI layers aren't drawn (DSTooltipProbe)
-          w.orderFrontRegardless()
+          Backstage.show(w)
           try await Task.sleep(for: .milliseconds(1400))
           // Hover the first tile of the screen, then let it redraw.
           if let first = model.visibleIds[k.screen]?.first, model.editor == nil, !model.showSettings, !model.showPalette {

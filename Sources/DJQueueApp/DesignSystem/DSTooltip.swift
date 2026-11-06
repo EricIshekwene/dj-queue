@@ -352,7 +352,8 @@ final class DSTooltipController {
     host?.rootView = AnyView(bubble)
     let fit = host?.fittingSize ?? .zero
     let size = CGSize(width: ceil(fit.width), height: ceil(fit.height))
-    let screen = (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
+    // Probe windows sit off every display: their stage is the screen, or the bubble would land on the user's real one.
+    let screen = AppModel.isSnapshotRun ? Backstage.stage : (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
     var bounds = window.frame.intersection(screen).insetBy(dx: edgePadding, dy: edgePadding)
     // A bubble too big for the window (menu bar popover, tiny sheet) may use the whole screen instead.
     if bounds.width < size.width || bounds.height < size.height * 3 { bounds = screen.insetBy(dx: edgePadding, dy: edgePadding) }

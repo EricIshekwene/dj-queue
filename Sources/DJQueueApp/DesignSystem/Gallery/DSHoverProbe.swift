@@ -6,12 +6,12 @@ import SwiftUI
 /// `DJQ_SNAPSHOT_GALLERY=1 DJQ_HOVER_PROBE=1 DJQueueApp --snapshot <dir>`, with the dev-root env. Writes
 /// `hover-probe.log` in plain words and exits 1 when any check fails.
 ///
-/// Same setup as DSTooltipProbe: the real model on a throwaway DB, the real window in front, click-through and never
-/// activating the app. macOS doesn't let the app move the pointer and SwiftUI's hover follows the real cursor only, so
+/// Same setup as DSTooltipProbe: the real model on a throwaway DB, the real window off every display (`Backstage`),
+/// never activating the app. macOS doesn't let the app move the pointer and SwiftUI's hover follows the real cursor only, so
 /// a probe pointer stands in for it: each move reaches `DSPlaybackHoverGuard` as the enter/exit pairs a real pointer
 /// there would produce (forwarded moves). A case that gets no hover events in real use (scrolling, a drag, a menu)
 /// sends none here, so only the guard can end the playback. State comes from `DSPlaybackBudget` and the player views,
-/// not from pixels, so a covered window still gets a true result; captures are extra.
+/// not from pixels; captures are extra.
 @MainActor
 enum DSHoverProbe {
   static func run(outputDir: String) async -> Int32 {
@@ -23,10 +23,7 @@ enum DSHoverProbe {
       let w = WindowManager.makeMainWindow(model: model, make: SnapshotWindow.make)
       w.isReleasedWhenClosed = false
       w.appearance = NSAppearance(named: .aqua)
-      let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
-      w.setFrameOrigin(NSPoint(x: screen.midX - 720, y: screen.midY - 450))
-      w.ignoresMouseEvents = true
-      w.orderFrontRegardless()
+      Backstage.show(w)
       let run = Run(model: model, window: w, out: out)
       await run.all()
       w.orderOut(nil)
@@ -164,10 +161,10 @@ enum DSHoverProbe {
 
       // A real menu opens over the card; closes with the pointer still on it, then with the pointer gone.
       await hover(a)
-      await menu(at: a.center, then: nil)
+      await menu(then: nil)
       let back = await until(1500) { [self] in state().only(in: a) }
       check(back != nil, "menu closed with the pointer still on the card: it plays again (\(state().words))")
-      await menu(at: a.center, then: restPoint)
+      await menu(then: restPoint)
       let closed = await until(1500) { [self] in state().nothing }
       check(closed != nil, "menu closed with the pointer elsewhere: zero players, zero audible (\(state().words))")
       await move(to: restPoint)
@@ -186,7 +183,7 @@ enum DSHoverProbe {
       let hidden = await until(1500) { [self] in state().nothing }
       check(hidden != nil, "window hidden for real: zero players, zero audible (\(state().words))")
       let frame = w.frame
-      w.orderFrontRegardless()
+      Backstage.front(w)
       w.setFrame(frame, display: true)
       w.makeKey()
       await settle(600)
@@ -472,38 +469,17 @@ enum DSHoverProbe {
       return true
     }
 
-    /// Pops a real menu at `p`, reads the state while it's open, and moves the pointer first when `then` is set (a
-    /// menu takes every move, so no hover event goes with it). An inactive app's menu can be closed by anything on
-    /// the Mac, so a menu that closes before the read gets another try.
-    func menu(at p: CGPoint, then: CGPoint?) async {
-      for _ in 0..<4 {
-        if let s = openMenu(at: p, then: then) {
-          check(s.nothing, "while a menu is open: zero players, zero audible (\(s.words))")
-          return
-        }
-        await settle(400)
-      }
-      say("  NOT DRIVEN menu: it kept closing before the read")
-    }
-
-    private func openMenu(at p: CGPoint, then: CGPoint?) -> State? {
-      nonisolated(unsafe) let m = NSMenu()
-      m.addItem(withTitle: "Hover probe", action: nil, keyEquivalent: "")
-      var whileOpen: State?
-      let t = Timer(timeInterval: 0.3, repeats: false) { [weak self] _ in
-        MainActor.assumeIsolated {
-          whileOpen = self?.state()
-          if let then { self?.guardian.simulatedPointer = then }
-          m.cancelTracking()
-        }
-      }
-      RunLoop.main.add(t, forMode: .common)
-      defer { t.invalidate() }
-      guard let e = NSEvent.mouseEvent(with: .rightMouseDown, location: w.convertPoint(fromScreen: p), modifierFlags: [],
-                                       timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil,
-                                       eventNumber: 0, clickCount: 1, pressure: 1), let view = w.contentView else { return nil }
-      NSMenu.popUpContextMenu(m, with: e, for: view)
-      return whileOpen
+    /// A menu opening, through the notifications AppKit sends for one: reads the state while it's open, then moves the
+    /// pointer first when `then` is set (a menu takes every move, so no hover event goes with it). A real menu would
+    /// draw on the user's display, since macOS pulls menus back onto a screen.
+    func menu(then: CGPoint?) async {
+      let center = NotificationCenter.default
+      center.post(name: NSMenu.didBeginTrackingNotification, object: NSMenu())
+      await settle(300)
+      let s = state()
+      if let then { guardian.simulatedPointer = then }
+      center.post(name: NSMenu.didEndTrackingNotification, object: NSMenu())
+      check(s.nothing, "while a menu is open: zero players, zero audible (\(s.words))")
     }
 
     // MARK: Output
@@ -542,7 +518,7 @@ enum DSHoverProbe {
 
     func finish() -> Int32 {
       say("\nPointer moves were forwarded. \(guardian.debugRealCursorHovers) real SwiftUI hover events from the real cursor reached the guard and were dropped.")
-      if blanks > 0 { say("\(blanks) captures were blank or covered (the window was covered, not a bug); state above is still true.") }
+      if blanks > 0 { say("\(blanks) captures were blank; state above is still true.") }
       say(failures == 0 ? "RESULT: PASS" : "RESULT: FAIL, \(failures) check(s) failed")
       try? (lines.joined(separator: "\n") + "\n").write(to: out.appendingPathComponent("hover-probe.log"), atomically: true, encoding: .utf8)
       return failures == 0 ? 0 : 1

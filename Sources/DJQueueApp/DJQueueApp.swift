@@ -225,8 +225,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     case .snapshot(let dir):
       NSApp.setActivationPolicy(.prohibited)
       Task { @MainActor in
-        let code = await SnapshotRunner.run(outputDir: dir)
-        exit(code)
+        ScreenGuard.start()
+        exit(ScreenGuard.finish(await SnapshotRunner.run(outputDir: dir)))
       }
     case .agent:
       NSApp.setActivationPolicy(.accessory)

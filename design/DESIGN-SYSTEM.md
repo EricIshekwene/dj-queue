@@ -3,7 +3,7 @@
 One central SwiftUI design system with ChatGPT-calm tokens (`design/DESIGN-v2.md` §2). It mirrors the component anatomy of shadcn/ui and Base UI. Code lives in `Sources/DJQueueApp/DesignSystem/`. Decisions and deviations are in `design/DS-DECISIONS.md`.
 
 - **Gallery:** `DSGallery()` is a standalone view with a sidebar of pages, showing every component in every state.
-- **Tooltip probe:** `DJQ_SNAPSHOT_GALLERY=1 DJQ_TOOLTIP_PROBE=1 .build/debug/DJQueueApp --snapshot <dir>` hovers every tooltip type in the real main window (in front but click-through, never activating the app) and captures the window plus the tooltip panel on hover and after leaving, along with `probe.json`; it exits 1 on an empty bubble or one that stays or flashes (TOOLTIPS-DECISIONS #41).
+- **Tooltip probe:** `DJQ_SNAPSHOT_GALLERY=1 DJQ_TOOLTIP_PROBE=1 .build/debug/DJQueueApp --snapshot <dir>` hovers every tooltip type in the real main window (off every display, never activating the app) and captures the window plus the tooltip panel on hover and after leaving, along with `probe.json`; it exits 1 on an empty bubble or one that stays or flashes (TOOLTIPS-DECISIONS #41).
 - **PNG render:** `DJQ_SNAPSHOT_GALLERY=1 [DJQ_GALLERY_MEDIA=<local folder>] .build/debug/DJQueueApp --snapshot <dir>` writes `ds-0N-<page>-{light,dark}.png` at 1440×900. You can also call `await DSGallerySnapshot.run(outputDir:)`, or `DSGallerySnapshot.render(_:size:name:to:)` for any view.
 
 ## Rules (read first)

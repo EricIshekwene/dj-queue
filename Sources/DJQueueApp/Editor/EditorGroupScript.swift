@@ -34,8 +34,7 @@ enum EditorGroupScript {
     let host = NSHostingView(rootView: EditorView(model: model, videoIds: ids, onDone: {}))
     window.contentView = host
     window.isReleasedWhenClosed = false
-    if let screen = NSScreen.main { window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX, y: screen.visibleFrame.minY)) }
-    window.orderBack(nil)
+    Backstage.show(window)
     defer { window.orderOut(nil); window.close() }
     try? await Task.sleep(for: .seconds(3))
     model.resetVersion(["caption", "platformCaptions", "hashtagSetIds", "extraHashtags", "captionTemplateId"])

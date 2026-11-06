@@ -5,8 +5,8 @@ import SwiftUI
 /// Evidence run for whole-app search in the REAL main window (round 10, S1-R13):
 /// `DJQ_SEARCH_PROBE=1 DJQueueApp --snapshot <dir>` with the dev-root env. Exit 1 when any step fails.
 ///
-/// Same rules as `DSTooltipProbe`: the real AppModel on a throwaway copy of the dev DB, the real main window in front,
-/// click-through and never activating the app; the user's pointer and keyboard never reach it.
+/// Same rules as `DSTooltipProbe`: the real AppModel on a throwaway copy of the dev DB, the real main window off every
+/// display (`Backstage`), never activating the app; the user's pointer and keyboard never reach it.
 ///
 /// How the keys travel. Each step builds a real `NSEvent` and hands it to the window through the entry points
 /// `NSApplication.sendEvent` itself uses: `NSWindow.performKeyEquivalent(with:)` for Command keys and
@@ -67,10 +67,7 @@ final class SearchProbe {
       let model = try DSTooltipProbe.makeModel()
       let w = WindowManager.makeMainWindow(model: model, make: SnapshotWindow.make)
       w.isReleasedWhenClosed = false
-      let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
-      w.setFrameOrigin(NSPoint(x: screen.midX - 720, y: screen.midY - 450))
-      w.ignoresMouseEvents = true  // in front but inert (DSTooltipProbe)
-      w.orderFrontRegardless()
+      Backstage.show(w)
       DSTooltipController.shared.requireActiveApp = false
       DSTooltipController.shared.simulatedPointer = DSTooltipProbe.offscreen
       let p = SearchProbe(model: model, window: w, out: out)
@@ -232,7 +229,7 @@ final class SearchProbe {
     steps.append(Step(theme: theme, flow: flow, step: "SETUP \(what)", file: nil, passed: true, note: "direct model call"))
   }
 
-  /// Captures the window. A blank capture (a covered window draws nothing) fails the step.
+  /// Captures the window. A blank capture fails the step.
   @discardableResult
   private func shot(_ name: String) async -> CGImage? {
     await settle(160)

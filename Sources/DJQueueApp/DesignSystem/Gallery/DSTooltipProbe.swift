@@ -6,13 +6,12 @@ import SwiftUI
 /// `DJQ_SNAPSHOT_GALLERY=1 DJQ_TOOLTIP_PROBE=1 DJQueueApp --snapshot <dir>`.
 ///
 /// Builds the real AppModel on a throwaway copy of the dev DB (same seeding as SnapshotRunner), opens the real main
-/// window in front, click-through and without activating the app (it never steals focus or answers the user's
-/// cursor), then drives the tooltip through synthetic mouse-moved events posted to the app's own queue — the same
+/// window off every display (`Backstage`, so it never shows, steals focus or answers the user's cursor), then drives the tooltip through synthetic mouse-moved events posted to the app's own queue — the same
 /// hover path a real pointer takes.
 /// For each case it captures the window server's composite of the main window + the tooltip panel and records
 /// the frames (`probe.json`). Cases: toolbar at the window's top edge (must flip below), sidebar status near the
-/// bottom edge, the delay group hand-off, Escape, dark mode, and the window pushed into the screen's top-right
-/// corner (must flip + shift and stay on screen). Then every tooltip type on every page — video-preview buttons on
+/// bottom edge, the delay group hand-off, Escape, dark mode, and the window pushed into the stage's top-right
+/// corner (must flip + shift and stay on the stage). Then every tooltip type on every page — video-preview buttons on
 /// a hovered tile, disabled (label + why), keycaps, plain — each captured on hover and after leaving; the run fails
 /// if a bubble doesn't open, renders no text (`textPixels`) or stays after the pointer leaves.
 @MainActor
@@ -48,13 +47,9 @@ enum DSTooltipProbe {
       let w = WindowManager.makeMainWindow(model: model, make: SnapshotWindow.make)
       w.isReleasedWhenClosed = false
       w.appearance = NSAppearance(named: .aqua)
-      let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
-      w.setFrameOrigin(NSPoint(x: screen.midX - 720, y: screen.midY - 450))
-      // In front but inert: macOS stops drawing a fully covered window's SwiftUI layers (the capture comes back blank),
-      // so the window is shown without activating the app and lets every real click and hover pass through to
-      // whatever is under it — the user's pointer never drives it, only the probe's posted events do.
-      w.ignoresMouseEvents = true
-      w.orderFrontRegardless()
+      // Off every display (`Backstage`): the user's pointer can't reach it, only the probe's posted events do.
+      let screen = Backstage.stage
+      Backstage.show(w)
       let c = DSTooltipController.shared
       c.requireActiveApp = false
       c.simulatedPointer = offscreen
@@ -78,7 +73,7 @@ enum DSTooltipProbe {
         try await Task.sleep(for: .milliseconds(250))  // let the 120 ms fade/slide finish
         let rect = a.visibleScreenRect ?? .zero
         let b = c.debugPanelFrame
-        let vis = (w.screen ?? NSScreen.main)?.frame ?? screen
+        let vis = screen
         records.append(Record(name: name, label: a.content.label ?? a.content.disabledReason ?? "", side: c.debugSide?.rawValue ?? "-",
                               anchor: arr(rect), bubble: b.map(arr), window: arr(w.frame),
                               insideWindow: b.map { w.frame.contains($0) } ?? false, insideScreen: b.map { vis.contains($0) } ?? false,
@@ -382,12 +377,10 @@ enum DSTooltipProbe {
       .dsTooltip("Outer trigger")
       .frame(width: 420, height: 280)
     .background(DS.color.surfaceRaised)
-    let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
-    let w = SnapshotWindow.make(NSRect(x: screen.midX - 210, y: screen.midY - 140, width: 420, height: 280), [.borderless])
+    let w = SnapshotWindow.make(NSRect(x: 0, y: 0, width: 420, height: 280), [.borderless])
     w.isReleasedWhenClosed = false
     w.contentView = NSHostingView(rootView: fixture)
-    w.ignoresMouseEvents = true
-    w.orderFrontRegardless()
+    Backstage.show(w)
     defer { w.orderOut(nil); w.close() }
     try await Task.sleep(for: .milliseconds(900))
     w.displayIfNeeded()

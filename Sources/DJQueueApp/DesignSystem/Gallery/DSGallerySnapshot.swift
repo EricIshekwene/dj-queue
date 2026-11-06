@@ -39,10 +39,9 @@ enum DSGallerySnapshot {
     let window = SnapshotWindow.make(hv.frame, [.borderless])
     window.contentView = hv
     window.isReleasedWhenClosed = false
-    if let screen = NSScreen.main { window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX, y: screen.visibleFrame.minY)) }
     for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
       window.appearance = NSAppearance(named: appearance)
-      window.orderBack(nil)
+      Backstage.show(window)
       try await Task.sleep(for: .milliseconds(suffix == "light" ? 1400 : 900))
       window.displayIfNeeded()
       // Default: AppKit draws the view tree (deterministic, works with the display asleep; no AVPlayer frames).
