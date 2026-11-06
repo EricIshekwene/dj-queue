@@ -289,10 +289,10 @@ private struct EditorTextAdvanced: View {
                  range: TextLook.opacityRange, step: 0.05, format: { "\(Int(($0 * 100).rounded())) %" }, showsValue: false,
                  disabledReason: off, accessibilityName: "Opacity")
       }
-      EditorField(label: "Letter spacing", value: String(format: "%+.0f %%", (look.tracking ?? 0) * 100), isCustom: look.tracking != nil,
+      EditorField(label: "Letter spacing", value: Self.spacingText(look.tracking ?? 0), isCustom: look.tracking != nil,
                   resetHelp: "Back to normal spacing", onReset: look.tracking == nil ? nil : { model.setLook { $0.tracking = nil } }) {
         DSSlider(value: Binding(get: { look.tracking ?? 0 }, set: { v in model.setLook(coalesce: true) { $0.tracking = v } }),
-                 range: TextLook.trackingRange, step: 0.01, format: { String(format: "%+.0f %%", $0 * 100) }, showsValue: false,
+                 range: TextLook.trackingRange, step: 0.01, format: Self.spacingText, showsValue: false,
                  disabledReason: off, accessibilityName: "Letter spacing")
       }
       DSButton("Back to default look", icon: "arrow.uturn.backward", variant: .ghost, size: .sm,
@@ -302,6 +302,8 @@ private struct EditorTextAdvanced: View {
         .background(ScriptAnchor("Back to default look"))
     }
   }
+
+  private static func spacingText(_ t: Double) -> String { String(format: abs(t) < 0.005 ? "%.0f %%" : "%+.0f %%", abs(t) < 0.005 ? 0 : t * 100) }
 
   /// The second colour is the box, the outline or the shadow, by style.
   private static func accentLabel(_ s: TextStyle) -> String {
