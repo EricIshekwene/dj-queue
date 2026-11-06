@@ -211,9 +211,11 @@ enum DSHoverProbe {
       await hover(a)
       let other = model.calendarDays.last { $0 > model.todayKey && $0 != day } ?? model.todayKey
       guardian.simulatedPointer = CGPoint(x: a.center.x - a.rect.width * 2, y: a.center.y)
+      let away = await until(1500) { [self] in state().nothing }
+      check(away != nil, "drag carries the pointer off the card (stand-in, the card stays put): zero players, zero audible (\(state().words))")
       let moved = model.calendarMove(slotId: clip.slot.id, to: other)
-      let done = await until(1500) { [self] in state().nothing }
-      check(done != nil, "drag between days ends (stand-in, drop \(moved ? "landed" : "refused")): zero players, zero audible (\(state().words))")
+      await settle(400)
+      check(state().nothing, "drag ends on another day (stand-in, drop \(moved ? "landed" : "refused")): zero players, zero audible (\(state().words))")
       await move(to: restPoint)
     }
 
