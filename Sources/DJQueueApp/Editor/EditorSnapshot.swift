@@ -15,7 +15,8 @@ import SwiftUI
 /// - `DJQ_EDITOR_GROUP_SCRIPT=<dir>` makes a hashtag group in the real editor (`EditorGroupScript`);
 ///   `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption field (`EditorCaptionScript`);
 ///   `DJQ_SETTINGS_GROUP_SCRIPT=<dir>` drives the real Settings group rows (`SettingsGroupScript`);
-///   `DJQ_EDITOR_TEMPLATE_SCRIPT=<dir>` drives the template actions and part chips (`EditorTemplateScript`).
+///   `DJQ_EDITOR_TEMPLATE_SCRIPT=<dir>` drives the template actions and part chips (`EditorTemplateScript`);
+///   `DJQ_TEXT_LAYERS_SCRIPT=<dir>` drives timed texts end to end, export included (`TextLayersScript`).
 @MainActor
 enum EditorSnapshot {
   static func run(outputDir: String) async -> Int32 {
@@ -50,6 +51,9 @@ enum EditorSnapshot {
 
       if env["DJQ_EDITOR_SELFTEST"] != nil { return selfTest(store: store, ids: ids, start: pick.id) }
       if let secs = env["DJQ_EDITOR_LIVE"].flatMap(Double.init) { return await live(store: store, video: pick.id, ids: ids, seconds: secs) }
+      if let dir = env["DJQ_TEXT_LAYERS_SCRIPT"] {
+        return await TextLayersScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
+      }
       if let dir = env["DJQ_BULK_CROP_SCRIPT"] {
         return await BulkCropScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
       }
@@ -79,6 +83,7 @@ enum EditorSnapshot {
       var shots: [(String, () -> Void)] = []
       func shot(_ name: String, _ setup: @escaping () -> Void) { shots.append((name, setup)) }
       let reset = {
+        EditorDisclosures.shared.closeAll()
         model.compare = false
         model.openPlatformCaption = nil
         model.toast = nil
@@ -272,6 +277,25 @@ enum EditorSnapshot {
           print("editor-snapshot: read-only \(model.readOnly), reason \(model.groupsOffReason ?? "none")")
           model.canvasMode = .zones; model.scrollTarget = .caption
         }
+      }
+      // Round 16: the closed rows, then timed texts with Advanced open. Last, because they change the clip.
+      let timed = shorts.first { $0.id != pick.id && $0.id != shorts.first(where: { $0.id != pick.id })?.id } ?? pick
+      shot("r16-closed-rows") { reset(); model.groupForm = nil; model.load(timed.id); model.canvasMode = .zones }
+      shot("r16-three-texts") {
+        reset()
+        let d = model.trim.duration
+        let like = model.resolved.firstLayer
+        var second = TextLayers.new(text: "Second hook", like: like, start: 1, end: min(d, 6))
+        second.posY = 0.3
+        second.look = TextLook(color: "#FF3B30", font: .impact)
+        var third = TextLayers.new(text: "Third line", like: like, start: 4, end: min(d, 9))
+        third.posY = 0.72
+        third.style = .outline
+        model.updateVersion { $0.moreText = [second, third] }
+        model.selectText(second.id)
+        EditorDisclosures.shared.set(.advanced, true)
+        model.playback.seek(model.trim.start + 5)
+        model.scrollTarget = .text
       }
       if let only = env["DJQ_SNAPSHOT_ONLY"] { shots = shots.filter { $0.0.contains(only) } }
 

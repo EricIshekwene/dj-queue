@@ -281,6 +281,7 @@ struct EditorHeader: View {
       }
       .buttonStyle(EditorPressStyle())
       .dsTooltip(chipHelp(issues, target: target, held: held))
+      .background(ScriptAnchor("To fix"))
     }
   }
 }

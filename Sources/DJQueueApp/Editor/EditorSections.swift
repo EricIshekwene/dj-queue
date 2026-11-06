@@ -7,7 +7,7 @@ struct EditorFrameSection: View {
   @ObservedObject var model: EditorModel
 
   var body: some View {
-    EditorSectionView(.frame) {
+    EditorCollapsibleSection(.frame, disclosure: .frame, summary: summary, model: model) {
       VStack(alignment: .leading, spacing: DS.space.md) {
         EditorField(label: "Aspect", help: "Output shape of the video", isCustom: !model.isDefault(.aspect),
                     resetHelp: "Back to the default aspect (\(model.defaults.aspect.rawValue))",
@@ -19,6 +19,10 @@ struct EditorFrameSection: View {
         trim
       }
     }
+  }
+
+  private var summary: String {
+    model.aspect.rawValue + (model.cropIsSet ? " · Crop confirmed" : " · Default crop")
   }
 
   private var crop: some View {
@@ -33,6 +37,7 @@ struct EditorFrameSection: View {
             DSButton("Use this crop", variant: .outline, size: .sm,
                      disabledReason: model.fileMissing ? "The clip file is missing" : nil,
                      tooltip: "Confirm the framing shown on the canvas") { model.confirmCrop() }
+              .background(ScriptAnchor("Use this crop"))
           }
         }
         // Zoom and Place are part of Crop, so they get small secondary labels, not field headers.
@@ -98,211 +103,30 @@ struct EditorFrameSection: View {
   }
 }
 
-// MARK: - Text (overlay text, style, size, alignment, position, timing)
-
-struct EditorTextSection: View {
-  @ObservedObject var model: EditorModel
-
-  var body: some View {
-    let r = model.resolved
-    EditorSectionView(.text) {
-      VStack(alignment: .leading, spacing: DS.space.md) {
-        EditorField(label: "Text on the video", isCustom: !r.isDefault("text"), inheritedFrom: model.source(of: "text"),
-                    resetHelp: textResetHelp, onReset: resetter(["text"])) {
-          VStack(alignment: .leading, spacing: DS.space.xs) {
-            DSTextArea(placeholder: r.noText ? "No text on this clip" : "Text on the video",
-                       text: Binding(get: { r.noText ? "" : r.text },
-                                     set: { t in model.setText(t) }),
-                       minHeight: Self.textAreaHeight(r.noText ? "" : r.text), maxHeight: 120)
-              .disabled(r.noText)
-              .opacity(r.noText ? 0.55 : 1)
-            textSuggestions
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-              EditorHint(textHint(r))
-              Spacer(minLength: 0)
-              if !r.isDefault("text") && model.ownsField(["text"]) && model.defaults.textSource == .title && !r.noText {
-                DSButton("Follow the Title", variant: .ghost, size: .sm,
-                         tooltip: "Drop the typed text and use the Title again") { model.resetVersion(["text"]) }
-              }
-            }
-            DSToggle("No text", description: nil, isOn: Binding(get: { r.noText }, set: { v in model.setNoText(v) }),
-                     size: .sm)
-              .dsTooltip("Post this clip without any text on the video")
-          }
-        }
-        EditorField(label: "Style", isCustom: !r.isDefault("style"), inheritedFrom: model.source(of: "style"),
-                    resetHelp: "Back to the default style (\(model.defaults.textStyle.displayName))",
-                    onReset: resetter(["style"])) {
-          HStack(spacing: DS.space.xs) {
-            ForEach(TextStyle.allCases, id: \.self) { s in styleTile(s, selected: r.style == s, noText: r.noText) }
-          }
-        }
-        EditorField(label: "Size", value: "\(Self.sizeName(r.size)) · \(Int(r.size))", isCustom: !r.isDefault("size"), inheritedFrom: model.source(of: "size"),
-                    resetHelp: "Back to the default size (\(Int(model.defaults.textSize)))", onReset: resetter(["size"])) {
-          DSSlider(value: Binding(get: { r.size }, set: { v in model.setVersionField(\.size, \.size, v.rounded()) }),
-                   range: 40...110, step: 1, format: { "\(Self.sizeName($0)) · \(Int($0))" }, showsValue: false,
-                   disabledReason: r.noText ? noTextReason : nil, accessibilityName: "Text size")
-        }
-        EditorField(label: "Alignment", isCustom: !r.isDefault("align"), inheritedFrom: model.source(of: "align"),
-                    resetHelp: "Back to the default alignment (\(Self.alignName(model.defaults.textAlign)))",
-                    onReset: resetter(["align"])) {
-          DSSegmented(selection: Binding(get: { r.align }, set: { a in model.setVersionField(\.align, \.align, a) }),
-                      segments: [DSSegment(value: TextAlign.left, title: "Left", icon: "text.alignleft"),
-                                 DSSegment(value: TextAlign.center, title: "Centre", icon: "text.aligncenter"),
-                                 DSSegment(value: TextAlign.right, title: "Right", icon: "text.alignright")],
-                      size: .sm, fullWidth: true)
-            .disabled(r.noText)
-            .opacity(r.noText ? 0.55 : 1)
-            // On the wrapper (outside .disabled) so the reason still shows on hover.
-            .dsTooltip(nil, disabledReason: r.noText ? noTextReason : nil)
-        }
-        EditorField(label: "Position", isCustom: !r.isDefault("posX") || !r.isDefault("posY"),
-                    inheritedFrom: model.source(of: "posY"), resetHelp: "Back to the default position",
-                    onReset: resetter(["posX", "posY"])) {
-          VStack(alignment: .leading, spacing: 4) {
-            Text(abs(r.posX - 0.5) < 0.001 && abs(r.posY - 0.5) < 0.001 ? "Centre"
-                 : String(format: "%.0f %% across · %.0f %% down", r.posX * 100, r.posY * 100))
-              .font(DS.type.callout).foregroundStyle(DS.color.text)
-            EditorHint("Drag the text on the preview (Zones view).")
-          }
-        }
-        EditorField(label: "Timing", isCustom: !r.isDefault("textStart") || !r.isDefault("textEnd"),
-                    inheritedFrom: model.source(of: "textStart"), resetHelp: "Back to the default timing",
-                    onReset: resetter(["textStart", "textEnd"])) {
-          VStack(alignment: .leading, spacing: 4) {
-            Text(r.textStart == nil && r.textEnd == nil ? "Whole clip"
-                 : "\(EditorGeometry.time(r.textStart ?? 0, tenths: true)) – \(EditorGeometry.time(r.textEnd ?? model.trim.duration, tenths: true)) after the start")
-              .font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.text)
-            EditorHint("Drag the ends of the text bar on the timeline.")
-          }
-        }
-      }
-    }
-  }
-
-  /// Agent suggestions for the text on the video (`text_suggestions`): a tap puts one on this version.
-  @ViewBuilder private var textSuggestions: some View {
-    if model.textSuggestions.isEmpty {
-      HStack(spacing: 6) {
-        EditorHint("No text suggestions yet", icon: "text.badge.plus")
-        Spacer(minLength: 0)
-        DSButton("Ask an agent", icon: "doc.on.clipboard", variant: .ghost, size: .sm,
-                 tooltip: "Copy a prompt for your agent: song names, the title and the text on the video") {
-          model.copyAgentPrompt()
-        }
-      }
-    } else {
-      VStack(alignment: .leading, spacing: 6) {
-        Text("Text suggestions").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
-        DSFlowLayout(spacing: 6) {
-          ForEach(model.textSuggestions) { s in
-            let chosen = model.isCurrentText(s)
-            EditorSuggestionChip(text: s.text, detail: s.confidence.map { "\(Int(($0 * 100).rounded())) %" },
-                                 chosen: chosen, lineLimit: 4, tooltip: textTooltip(s, chosen: chosen)) {
-              model.acceptText(s)
-            }
-          }
-        }
-      }
-    }
-  }
-
-  /// Same shape as the Title chips: the full text first (line breaks as " / "), then what a click does.
-  private func textTooltip(_ s: TitleSuggestion, chosen: Bool) -> String {
-    let one = s.text.replacingOccurrences(of: "\n", with: " / ")
-    var t = "“\(one)” · " + (chosen ? "the text on the video" : "click to put on the video")
-    if let v = versionLabel { t += " (\(v))" }
-    if !s.source.isEmpty { t += "\nFrom \(s.source)" }
-    return t
-  }
-
-  /// "v2" when the editor is on a later version, so the tooltip says which one the tap changes.
-  private var versionLabel: String? { model.versionNo > 1 ? "v\(model.versionNo)" : nil }
-
-  private func resetter(_ f: [String]) -> (() -> Void)? {
-    model.ownsField(f) ? { model.resetVersion(f) } : nil
-  }
-
-  private var textResetHelp: String {
-    switch model.defaults.textSource {
-    case .title: "Back to the Title"
-    case .rawTag: "Back to the raw tag"
-    case .empty: "Back to no text"
-    }
-  }
-
-  private func textHint(_ r: ResolvedVersion) -> String {
-    if !r.isDefault("text") { return r.noText ? "No text on this clip." : "Typed for this clip." }
-    if r.noText { return "Talking clips have no text by default." }
-    switch model.defaults.textSource {
-    case .title: return model.title == nil ? "Follows the Title — no Title yet. Set one above, or type text here." : "Follows the Title."
-    case .rawTag: return "Follows the raw tag (Settings → New clip defaults)."
-    case .empty: return "Empty by default (Settings → New clip defaults)."
-    }
-  }
-
-  /// Tall enough to show every line of a laid-out text (2–5 lines; longer ones scroll).
-  static func textAreaHeight(_ text: String) -> CGFloat {
-    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).count
-    return CGFloat(min(5, max(2, lines))) * 18 + 24
-  }
-
-  static func sizeName(_ s: Double) -> String { s < 54 ? "Small" : s <= 76 ? "Medium" : "Large" }
-  static func alignName(_ a: TextAlign) -> String { a == .left ? "Left" : a == .right ? "Right" : "Centre" }
-
-  private let noTextReason = "No text is on; turn off No text to style it"
-
-  /// Soft-disabled while No text is on (dimmed, ignores clicks, the tooltip says why).
-  private func styleTile(_ s: TextStyle, selected: Bool, noText: Bool) -> some View {
-    Button { if !noText { model.setVersionField(\.style, \.style, s) } } label: {
-      VStack(spacing: 5) {
-        ZStack {
-          RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous)
-            .fill(LinearGradient(colors: [Color(white: 0.34), Color(white: 0.16)], startPoint: .top, endPoint: .bottom))
-          sample(s)
-        }
-        .frame(height: 50)
-        .overlay(RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous)
-          .strokeBorder(selected ? DS.color.text : Color.clear, lineWidth: 2).padding(-3))
-        Text(s.displayName).font(selected ? DS.type.captionMedium : DS.type.caption)
-          .foregroundStyle(selected ? DS.color.text : DS.color.textSecondary)
-      }
-      .frame(maxWidth: .infinity)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(EditorPressStyle())
-    .opacity(noText ? 0.55 : 1)
-    .dsTooltip(selected ? "This is the text style" : "Use the \(s.displayName) text style", disabledReason: noText ? noTextReason : nil)
-  }
-
-  @ViewBuilder private func sample(_ s: TextStyle) -> some View {
-    switch s {
-    case .box:
-      Text("Aa").font(.system(size: 15, weight: .heavy)).foregroundStyle(.black)
-        .padding(.horizontal, 8).padding(.vertical, 2).background(RoundedRectangle(cornerRadius: 5).fill(.white))
-    case .outline:
-      ZStack {
-        ForEach(0..<8, id: \.self) { i in
-          let a = Double(i) * .pi / 4
-          Text("Aa").font(.system(size: 17, weight: .heavy)).foregroundStyle(.black).offset(x: cos(a) * 1.5, y: sin(a) * 1.5)
-        }
-        Text("Aa").font(.system(size: 17, weight: .heavy)).foregroundStyle(.white)
-      }
-    case .shadow:
-      Text("Aa").font(.system(size: 17, weight: .bold)).foregroundStyle(.white).shadow(color: .black.opacity(0.9), radius: 3, y: 1)
-    }
-  }
-}
-
 // MARK: - Cover
 
 struct EditorCoverSection: View {
+  @ObservedObject var model: EditorModel
+
+  var body: some View {
+    EditorCollapsibleSection(.cover, disclosure: .cover, summary: summary, model: model) {
+      EditorCoverFields(model: model)
+    }
+  }
+
+  private var summary: String {
+    EditorGeometry.time(model.coverTime, tenths: true) + (model.resolvedEdit.coverIncludesText ? " · With text" : " · No text")
+  }
+}
+
+/// What's inside the Cover row: only there while it's open, so a closed row loads no frames.
+private struct EditorCoverFields: View {
   @ObservedObject var model: EditorModel
   @StateObject private var strip = EditorFrameStrip()
   @State private var cover: CGImage?
 
   var body: some View {
-    EditorSectionView(.cover) {
+    Group {
       VStack(alignment: .leading, spacing: DS.space.md) {
         EditorField(label: "Cover frame", isCustom: !model.isDefault(.coverTime),
                     resetHelp: "Back to the default cover frame (\(model.defaults.coverFrame.displayName))",
@@ -311,7 +135,7 @@ struct EditorCoverSection: View {
             HStack(alignment: .bottom, spacing: DS.space.sm) {
               ZStack {
                 EditorCroppedImage(image: cover, crop: model.crop, source: model.sourceSize)
-                if model.resolvedEdit.coverIncludesText, let o = model.overlay { Image(decorative: o, scale: 1).resizable() }
+                ForEach(model.coverTextImages) { Image(decorative: $0.image, scale: 1).resizable() }
               }
               .aspectRatio(model.aspect.ratio, contentMode: .fit)
               .frame(height: 176)

@@ -64,14 +64,15 @@ struct EditorStillSurface: View {
   }
 }
 
-/// The clip's output frame: the cropped live video (or still) + the TextOverlay PNG while the text shows.
-/// Fills whatever frame it's given — callers size it at the output aspect (preview == export).
+/// The clip's output frame: the cropped live video (or still) + each text's TextOverlay PNG while it shows, stacked in list
+/// order. Fills whatever frame it's given — callers size it at the output aspect (preview == export).
 struct EditorOutputMedia: View {
   @ObservedObject var model: EditorModel
   @ObservedObject var playback: EditorPlayback
-  /// Zones mode: text outside its timing stays visible, dimmed, so it can be positioned.
+  /// Zones mode: the selected text outside its timing stays visible, dimmed, so it can be positioned.
   var dimHiddenText = false
-  /// Live offset while the text is dragged.
+  /// The text being dragged and its live offset.
+  var dragging: String? = nil
   var textOffset: CGSize = .zero
 
   var body: some View {
@@ -83,11 +84,12 @@ struct EditorOutputMedia: View {
       } else {
         EditorStillSurface(image: playback.still, source: model.sourceSize, visible: visible)
       }
-      if let img = model.overlay {
-        let on = model.textVisible(at: playback.time) || textOffset != .zero
-        Image(decorative: img, scale: 1).resizable()
-          .offset(textOffset)
-          .opacity(on ? 1 : (dimHiddenText ? 0.45 : 0))
+      ForEach(model.textImages) { t in
+        let moving = t.id == dragging
+        let on = t.shows(at: playback.time) || moving
+        Image(decorative: t.image, scale: 1).resizable()
+          .offset(moving ? textOffset : .zero)
+          .opacity(on ? 1 : (dimHiddenText && t.id == model.selectedText ? 0.45 : 0))
       }
     }
     .clipped()
@@ -210,8 +212,8 @@ struct EditorFrameCanvas: View {
         .frame(width: full.width, height: full.height)
         .clipShape(RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
         .offset(x: full.minX, y: full.minY)
-        if let img = model.overlay, model.textVisible(at: playback.time) {
-          Image(decorative: img, scale: 1).resizable()
+        ForEach(model.textImages.filter { $0.shows(at: playback.time) }) { t in
+          Image(decorative: t.image, scale: 1).resizable()
             .frame(width: window.width, height: window.height).offset(x: window.minX, y: window.minY)
             .allowsHitTesting(false)
         }
@@ -291,12 +293,13 @@ struct EditorZonesCanvas: View {
   @ObservedObject var model: EditorModel
   @ObservedObject var playback: EditorPlayback
   @State private var textDrag: CGSize = .zero
-  @State private var textDragStart: (x: Double, y: Double, ex: Double, ey: Double)?
+  /// The text under a press, where its block started, and what it would drop at.
+  @State private var drag: (id: String, x: Double, y: Double, ex: Double, ey: Double)?
   @State private var textDragValue: (x: Double, y: Double)?
   @State private var snapX = false
   @State private var snapY = false
-  /// Pointer over the text: shows the dashed outline so the drag target is visible before dragging.
-  @State private var textHover = false
+  /// The text under the pointer: shows the dashed outline so the drag target is visible before dragging.
+  @State private var hovered: String?
 
   var body: some View {
     GeometryReader { geo in
@@ -304,58 +307,63 @@ struct EditorZonesCanvas: View {
       let out = editorFit(CGSize(width: model.aspect.ratio, height: 1), in: area)
       ZStack(alignment: .topLeading) {
         Color.clear
-        EditorOutputMedia(model: model, playback: playback, dimHiddenText: true, textOffset: textDrag)
+        EditorOutputMedia(model: model, playback: playback, dimHiddenText: true, dragging: drag?.id, textOffset: textDrag)
           .frame(width: out.width, height: out.height)
           .clipShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
           .dsElevation(DS.elevation.e1)
+          .probeFrame("canvas-output")
           .offset(x: out.minX, y: out.minY)
         EditorSafeZones(platforms: model.zonePlatforms, aspect: model.aspect)
           .frame(width: out.width, height: out.height)
           .clipShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
           .offset(x: out.minX, y: out.minY)
           .allowsHitTesting(false)
-        textHandle(in: out)
+        // In stacking order, so the text on top takes the pointer.
+        if !model.readOnly {
+          ForEach(model.textImages.filter { $0.shows(at: playback.time) || $0.id == model.selectedText || $0.id == drag?.id }) { t in
+            textHandle(t, in: out)
+          }
+        }
         if snapX || snapY { guides(in: out) }
         if !playback.ready { DSSpinner(size: 16).position(x: geo.size.width / 2, y: geo.size.height / 2) }
       }
     }
   }
 
-  @ViewBuilder private func textHandle(in r: CGRect) -> some View {
-    if let b = model.textBoundsUnit, !model.readOnly {
-      let hit = CGRect(x: r.minX + b.minX * r.width + textDrag.width, y: r.minY + b.minY * r.height + textDrag.height,
-                       width: b.width * r.width, height: b.height * r.height)
-      RoundedRectangle(cornerRadius: 4)
-        .strokeBorder(Color.white.opacity(textDragStart != nil ? 0.95 : textHover ? 0.6 : 0.0), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-        .contentShape(Rectangle())
-        .frame(width: hit.width, height: hit.height)
-        .offset(x: hit.minX, y: hit.minY)
-        .gesture(textDragGesture(size: r.size))
-        .onHover { inside in
-          textHover = inside
-          if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
-        }
-        .dsTooltip("Drag to move the text")
-    }
+  private func textHandle(_ t: EditorTextImage, in r: CGRect) -> some View {
+    let b = t.bounds
+    let moving = drag?.id == t.id
+    let shift = moving ? textDrag : .zero
+    let hit = CGRect(x: r.minX + b.minX * r.width + shift.width, y: r.minY + b.minY * r.height + shift.height,
+                     width: b.width * r.width, height: b.height * r.height)
+    let chosen = model.texts.count > 1 && t.id == model.selectedText
+    return RoundedRectangle(cornerRadius: 4)
+      .strokeBorder(Color.white.opacity(moving ? 0.95 : chosen ? 0.75 : hovered == t.id ? 0.6 : 0.0), style: StrokeStyle(lineWidth: 1, dash: chosen && !moving ? [] : [4, 3]))
+      .contentShape(Rectangle())
+      .frame(width: hit.width, height: hit.height)
+      .overlay { textSurface(t, size: r.size) }
+      .probeFrame("canvas-text-\(t.id)")
+      .onHover { inside in hovered = inside ? t.id : (hovered == t.id ? nil : hovered) }
+      .dsTooltip("Drag to move the text")
+      .offset(x: hit.minX, y: hit.minY)
   }
 
-  private func textDragGesture(size: CGSize) -> some Gesture {
-    DragGesture(minimumDistance: 1)
-      .onChanged { v in
-        if textDragStart == nil, let b = model.textBoundsUnit {
-          textDragStart = (Double(b.midX), Double(b.midY), Double(b.width), Double(b.height))
-        }
-        guard let st = textDragStart else { return }
-        let (nx, sx) = EditorGeometry.textCentre(st.x + v.translation.width / size.width, extent: st.ex)
-        let (ny, sy) = EditorGeometry.textCentre(st.y + v.translation.height / size.height, extent: st.ey)
-        snapX = sx; snapY = sy
-        textDragValue = (nx, ny)
-        textDrag = CGSize(width: (nx - st.x) * size.width, height: (ny - st.y) * size.height)
-      }
-      .onEnded { _ in
-        if let v = textDragValue { model.updateVersion { $0.posX = v.x; $0.posY = v.y } }
-        textDrag = .zero; textDragStart = nil; textDragValue = nil; snapX = false; snapY = false
-      }
+  private func textSurface(_ t: EditorTextImage, size: CGSize) -> some View {
+    EditorDragSurface(cursor: .openHand, onPress: {
+      let b = t.bounds
+      drag = (t.id, Double(b.midX), Double(b.midY), Double(b.width), Double(b.height))
+      model.selectText(t.id)
+    }, onDrag: { v in
+      guard let st = drag else { return }
+      let (nx, sx) = EditorGeometry.textCentre(st.x + v.width / size.width, extent: st.ex)
+      let (ny, sy) = EditorGeometry.textCentre(st.y + v.height / size.height, extent: st.ey)
+      snapX = sx; snapY = sy
+      textDragValue = (nx, ny)
+      textDrag = CGSize(width: (nx - st.x) * size.width, height: (ny - st.y) * size.height)
+    }, onRelease: { _ in
+      if let v = textDragValue { model.moveText(t.id, x: v.x, y: v.y) } else { model.scrollTarget = .text }
+      textDrag = .zero; drag = nil; textDragValue = nil; snapX = false; snapY = false
+    })
   }
 
   private func guides(in r: CGRect) -> some View {

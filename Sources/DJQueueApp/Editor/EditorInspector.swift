@@ -91,6 +91,7 @@ struct EditorMiniIndex: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 ? s : (hovering == s ? nil : hovering) }
         .dsTooltip(flagged.contains(s) ? "Jump to \(s.rawValue) (needs attention)" : "Jump to \(s.rawValue)", side: .bottom)
+        .background(ScriptAnchor("Index \(s.rawValue)"))
         if s != EditorSection.allCases.last { Spacer(minLength: 0) }
       }
     }

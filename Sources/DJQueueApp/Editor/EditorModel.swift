@@ -11,6 +11,34 @@ enum EditorSection: String, CaseIterable, Identifiable {
   var id: String { rawValue }
 }
 
+/// The inspector's collapsible rows. All closed at launch; what Eric opens stays open while the app runs, across clips, so
+/// the state outlives an `EditorModel` (S4-R2).
+enum EditorDisclosure: Hashable {
+  case frame, cover, sizeAndPosition, advanced
+}
+
+@MainActor
+final class EditorDisclosures: ObservableObject {
+  static let shared = EditorDisclosures()
+  @Published private(set) var open: Set<EditorDisclosure> = []
+
+  func isOpen(_ d: EditorDisclosure) -> Bool { open.contains(d) }
+  func set(_ d: EditorDisclosure, _ on: Bool) { if on { open.insert(d) } else { open.remove(d) } }
+  func binding(_ d: EditorDisclosure) -> Binding<Bool> { Binding(get: { self.isOpen(d) }, set: { self.set(d, $0) }) }
+
+  /// Nothing can point at a hidden field: whatever lands on a closed section opens it first.
+  func reveal(_ s: EditorSection) {
+    switch s {
+    case .frame: set(.frame, true)
+    case .cover: set(.cover, true)
+    default: break
+    }
+  }
+
+  /// Back to the launch state (snapshots, scripts).
+  func closeAll() { open = [] }
+}
+
 /// What the canvas shows: the crop on the full source, the output with platform safe zones, or phone previews.
 enum EditorCanvasMode: String, CaseIterable, Identifiable {
   case frame = "Frame", zones = "Zones", preview = "Preview"
@@ -96,7 +124,8 @@ final class EditorModel: ObservableObject {
   /// On-video text suggestions (`text_suggestions`), best first.
   @Published private(set) var textSuggestions: [TitleSuggestion] = []
   @Published private(set) var lastCrop: CGPoint?
-  @Published private(set) var overlay: CGImage?
+  /// One drawn image per text that shows on the video, in stacking order.
+  @Published private(set) var textImages: [EditorTextImage] = []
   @Published private(set) var saving = false
   @Published private(set) var lastSaved: Date?
   @Published var loadError: String?
@@ -109,8 +138,10 @@ final class EditorModel: ObservableObject {
   }
   @Published var previewPlatform: Platform = .tiktok
   @Published var compare = false
-  /// Section the inspector should scroll to (set, then cleared by the inspector).
-  @Published var scrollTarget: EditorSection?
+  /// Section the inspector should scroll to (set, then cleared by the inspector). A closed section opens first.
+  @Published var scrollTarget: EditorSection? {
+    didSet { if let s = scrollTarget { EditorDisclosures.shared.reveal(s) } }
+  }
   /// Platform whose own caption field should open (Write an X caption).
   @Published var openPlatformCaption: Platform?
   /// The hashtag group form, when it's open.
@@ -139,7 +170,7 @@ final class EditorModel: ObservableObject {
   private var syncedVersions: [Version] = []
   private var saveTask: Task<Void, Never>?
   private var overlayTask: Task<Void, Never>?
-  private var overlayKey: OverlayKey?
+  private var overlaySignature: [String]?
   private var toastTask: Task<Void, Never>?
   nonisolated(unsafe) private var groupObserver: (center: NotificationCenter, token: NSObjectProtocol)?
   private static let saveQueue = DispatchQueue(label: "com.djlovd.queue.editor.save", qos: .userInitiated)
@@ -239,6 +270,7 @@ final class EditorModel: ObservableObject {
     openPlatformCaption = nil
     groupForm = nil
     titleDraft = nil
+    selectedTextRaw = TextLayer.firstId
     loading = true
     clearUndo()
     playback.unload()
@@ -453,7 +485,7 @@ final class EditorModel: ObservableObject {
     if v.type == .short {
       if edit.crop == nil { out.append(.init(kind: .noCrop, platform: nil, message: "Confirm the crop")) }
       let r = resolved
-      if !r.hasText && !r.noText {
+      if !r.hasDrawnText && !r.noText {
         out.append(.init(kind: .noText, platform: nil,
                          message: v.titleText == nil && r.isDefault("text") ? "Add text (no title yet)" : "Add text or choose No text"))
       }
@@ -565,10 +597,20 @@ final class EditorModel: ObservableObject {
       pendingEdit = true
     }
     for i in versions.indices where versions[i].textStart != nil || versions[i].textEnd != nil {
+      // An inverted window means the whole clip (a promoted text has one): clamping would turn it into 0.3 s.
+      if let e = versions[i].textEnd, e <= (versions[i].textStart ?? 0) { continue }
       let (s, e) = EditorGeometry.clampTextTiming(start: versions[i].textStart, end: versions[i].textEnd, trimDuration: t.duration)
       if s != versions[i].textStart || e != versions[i].textEnd {
         versions[i].textStart = s
         versions[i].textEnd = e
+        pendingVersions.insert(versions[i].number)
+      }
+    }
+    for i in versions.indices {
+      guard let list = versions[i].moreText else { continue }
+      let kept = list.map { EditorGeometry.clampLayer($0, trimDuration: t.duration) }
+      if kept != list {
+        versions[i].moreText = kept
         pendingVersions.insert(versions[i].number)
       }
     }
@@ -686,15 +728,16 @@ final class EditorModel: ObservableObject {
 
   func accept(_ s: TitleSuggestion) { titleDraft = nil; setTitle(s.text, tracks: s.tracks.isEmpty ? nil : s.tracks, source: "suggestion") }
 
-  /// Puts a text suggestion on the video for the current version (typed text, so it no longer follows the Title).
-  /// One undo step per tap; tapping the text that's already on the video changes nothing (it keeps following).
+  /// Puts a text suggestion on the selected text of the current version (typed text, so a first text no longer follows
+  /// the Title). One undo step per tap; tapping the text that's already there changes nothing (it keeps following).
   func acceptText(_ s: TitleSuggestion) {
     guard !isCurrentText(s) else { return }
+    guard selectedIsFirst else { updateText(selectedText, coalesce: false) { $0.text = s.text }; return }
     updateVersion(coalesce: false) { v in v.text = s.text; v.noText = nil }
   }
 
-  /// True when this version's text on the video is exactly the suggestion.
-  func isCurrentText(_ s: TitleSuggestion) -> Bool { !resolved.noText && resolved.text == s.text }
+  /// True when the selected text is exactly the suggestion.
+  func isCurrentText(_ s: TitleSuggestion) -> Bool { !resolved.noText && selectedLayer.text == s.text }
 
   /// Copies the "Ask an agent" prompt for this clip (a deterministic template; the agent answers via `djq suggest`).
   func copyAgentPrompt() {
@@ -1257,6 +1300,7 @@ final class EditorModel: ObservableObject {
       if !r.youtubeTitle.isEmpty { v.youtubeTitle = r.youtubeTitle }
       v.youtubeTitleTemplateId = r.youtubeTitleTemplateId
       if !r.platformCaptions.isEmpty { v.platformCaptions = r.platformCaptions }
+      TextLayers.copyAdvanced(into: &v, from: r)
     }
     if !versions.contains(where: { $0.number == 1 }) { versions.insert(Version(number: 1), at: 0); pendingVersions.insert(1) }
     versions.append(v)
@@ -1324,6 +1368,9 @@ final class EditorModel: ObservableObject {
     canUndo = true
     canRedo = false
   }
+
+  /// The next change gets its own undo step, even right after this one.
+  private func lastUndoBreak() { lastUndoMark = .distantPast }
 
   private func clearUndo() {
     undoStack = []
@@ -1430,53 +1477,239 @@ final class EditorModel: ObservableObject {
     Self.saveQueue.sync {}
   }
 
-  // MARK: Text overlay (TextOverlay PNG drawn over the player — preview == export)
+  // MARK: Text images (TextOverlay PNGs drawn over the player, one per text: preview == export)
 
-  /// Only what the text overlay draws (round 7: the whole resolved version was the key, so every caption keystroke
-  /// re-rendered the overlay PNG).
-  private struct OverlayKey: Hashable {
-    var v: ResolvedVersion; var a: Aspect
-    static func == (l: Self, r: Self) -> Bool { l.a == r.a && Self.drawn(l.v) == Self.drawn(r.v) }
-    func hash(into h: inout Hasher) { h.combine(a); h.combine(Self.drawn(v)) }
-    static func drawn(_ v: ResolvedVersion) -> [String] {
-      [v.text, "\(v.noText)", v.style.rawValue, "\(v.size)", "\(v.posX)", "\(v.posY)", v.align.rawValue,
-       "\(v.textStart ?? -1)", "\(v.textEnd ?? -1)"]
-    }
+  /// Drawn texts by `PreviewKeys.layerKey`, so moving one text in time or editing one never redraws the rest. Full-size
+  /// images are 8 MB each at 1080 wide: this holds a full clip of 12 with room for what's being edited, and evicts past it.
+  private nonisolated static let drawnTexts = CostCappedCache<String, EditorDrawnText>(costLimit: 160 << 20)
+
+  private nonisolated static func draw(_ l: TextLayer, aspect: Aspect, key: String) -> EditorDrawnText? {
+    guard let img = TextOverlay.image(for: l, aspect: aspect), let b = TextOverlay.textBounds(for: l, aspect: aspect) else { return nil }
+    let o = aspect.outputSize
+    let unit = CGRect(x: b.minX / CGFloat(o.w), y: b.minY / CGFloat(o.h), width: b.width / CGFloat(o.w), height: b.height / CGFloat(o.h))
+    let drawn = EditorDrawnText(image: img, bounds: unit)
+    drawnTexts.set(drawn, for: key, cost: img.bytesPerRow * img.height)
+    return drawn
   }
 
+  /// Brings `textImages` up to date. An edited text keeps its old image until the new one lands, so nothing flickers.
   func refreshOverlay() {
-    let key = OverlayKey(v: resolved, a: aspect)
-    guard key != overlayKey else { return }
-    overlayKey = key
+    let r = resolved, a = aspect, tr = trim
+    let windows = Dictionary(PreviewKeys.layerWindows(r, trimDuration: tr.duration).map { ($0.layer.id, $0.window) }) { x, _ in x }
+    let wanted = r.layers.map { l in
+      (layer: l, key: PreviewKeys.layerKey(l, aspect: a),
+       window: windows[l.id].map { ($0.lowerBound + tr.start)...($0.upperBound + tr.start) })
+    }
+    let signature = wanted.map { "\($0.layer.id)|\($0.key)|\($0.window.map { "\($0.lowerBound)-\($0.upperBound)" } ?? "off")" }
+    guard signature != overlaySignature else { return }
+    overlaySignature = signature
     overlayTask?.cancel()
+    let before = Dictionary(textImages.map { ($0.id, $0.drawn) }) { x, _ in x }
+    let build: (Bool) -> [EditorTextImage] = { useOld in
+      wanted.compactMap { w in
+        guard let d = Self.drawnTexts.value(w.key) ?? (useOld ? before[w.layer.id] : nil) else { return nil }
+        return EditorTextImage(id: w.layer.id, key: w.key, drawn: d, window: w.window)
+      }
+    }
+    let missing = wanted.filter { Self.drawnTexts.value($0.key) == nil }.map { (layer: $0.layer, key: $0.key) }
     if snapshotMode {
-      overlay = TextOverlay.image(for: key.v, aspect: key.a)
+      for m in missing { _ = Self.draw(m.layer, aspect: a, key: m.key) }
+      textImages = build(false)
       return
     }
+    textImages = build(true)
+    guard !missing.isEmpty else { return }
     overlayTask = Task.detached(priority: .userInitiated) { [weak self] in
-      let img = TextOverlay.image(for: key.v, aspect: key.a)
-      await self?.setOverlay(img, key: key)
+      for m in missing {
+        if Task.isCancelled { return }
+        _ = Self.draw(m.layer, aspect: a, key: m.key)
+      }
+      await self?.textImagesDrawn(signature, build)
     }
   }
 
-  private func setOverlay(_ img: CGImage?, key: OverlayKey) {
-    if overlayKey == key { overlay = img }
+  private func textImagesDrawn(_ signature: [String], _ build: (Bool) -> [EditorTextImage]) {
+    if overlaySignature == signature { textImages = build(false) }
   }
 
-  /// Text bounds in normalised output coordinates (0…1, top-left origin) for hit-testing drags.
-  var textBoundsUnit: CGRect? {
-    guard let b = TextOverlay.textBounds(for: resolved, aspect: aspect) else { return nil }
-    let o = aspect.outputSize
-    return CGRect(x: b.minX / CGFloat(o.w), y: b.minY / CGFloat(o.h), width: b.width / CGFloat(o.w), height: b.height / CGFloat(o.h))
+  /// The texts on the cover: what `Media.coverComposite` draws for this frame.
+  var coverTextImages: [EditorTextImage] {
+    guard resolvedEdit.coverIncludesText else { return [] }
+    let ids = PreviewKeys.coverLayers(resolved, offset: coverTime - trim.start, trimDuration: trim.duration).map(\.id)
+    return textImages.filter { ids.contains($0.id) }
   }
 
-  /// Text visible at the playhead (text timing is relative to the trim start).
-  func textVisible(at t: Double) -> Bool {
+  // MARK: Texts (round 16): the first text routes to the version's fields, the others to `moreText`
+
+  /// The text being edited. Everything that selects one writes here: the switcher, a timeline bar, the canvas.
+  @Published private var selectedTextRaw = TextLayer.firstId
+  /// Bumped when the text field should take the keyboard (a new text).
+  @Published var focusTextField = 0
+
+  var texts: [TextLayer] { resolved.allLayers }
+
+  /// The selected text, or the first one when it's gone (undo, another version).
+  var selectedText: String { resolved.moreText.contains { $0.id == selectedTextRaw } ? selectedTextRaw : TextLayer.firstId }
+  var selectedIsFirst: Bool { selectedText == TextLayer.firstId }
+  var selectedLayer: TextLayer { resolved.moreText.first { $0.id == selectedText } ?? resolved.firstLayer }
+  /// 1 for the first text.
+  var selectedNumber: Int { (texts.firstIndex { $0.id == selectedText } ?? 0) + 1 }
+
+  func selectText(_ id: String) { if id != selectedTextRaw { selectedTextRaw = id } }
+
+  /// One change to a text through `TextLayers.updating`, which copies an inherited list into this version on its first
+  /// edit and writes only what changed on the first text.
+  func updateText(_ id: String, coalesce: Bool = true, _ change: (inout TextLayer) -> Void) {
     let r = resolved
-    let s = trim.start + (r.textStart ?? 0)
-    let e = r.textEnd.map { trim.start + $0 } ?? trim.end
-    return t >= s - 0.01 && t <= e + 0.01
+    updateVersion(coalesce: coalesce) { v in v = TextLayers.updating(id, in: v, resolved: r, change) }
   }
+
+  /// The text track. With "No text" on it's the one stand-in bar: nothing else shows, so nothing else is on the timeline.
+  var textBars: (bars: [EditorTimelineBar], laneCount: Int) {
+    let r = resolved, d = trim.duration
+    let first = EditorTimelineBar(id: TextLayer.firstId, number: 1, label: r.hasText ? Captions.oneLine(r.text) : r.noText ? "No text" : "No text yet",
+                                  on: r.hasText && !r.noText, draggable: r.hasText && !r.noText,
+                                  span: r.hasText && !r.noText ? TextTimeline.span(r.firstLayer, trimDuration: d) : (0, d), lane: 0)
+    guard !r.noText else { return ([first], 1) }
+    var bars = [first] + r.moreText.enumerated().map { i, l in
+      EditorTimelineBar(id: l.id, number: i + 2, label: l.isBlank ? "Empty text" : Captions.oneLine(l.text), on: !l.isBlank, draggable: true,
+                        span: TextTimeline.span(l, trimDuration: d), lane: 0)
+    }
+    let lanes = TextTimeline.lanes(bars.map(\.span))
+    for i in bars.indices { bars[i].lane = lanes[i] }
+    return (bars, (lanes.max() ?? 0) + 1)
+  }
+
+  /// Why a new text can't be added right now (nil = it can).
+  var addTextOffReason: String? {
+    if resolved.noText { return "No text is on; turn off No text to add a text" }
+    return TextLayers.canAdd(resolved) ? nil : "A clip holds \(TextLayers.maxCount) texts at most"
+  }
+
+  /// Why the selected text can't be deleted (nil = it can).
+  var deleteTextOffReason: String? {
+    let r = resolved
+    if !selectedIsFirst { return nil }
+    if r.moreText.isEmpty { return "The only text can't be deleted; use No text" }
+    return r.moreText.contains { !$0.isBlank } ? nil : "Type in another text first, or use No text"
+  }
+
+  /// Appends `l` and selects it. A text sharing the time of the one it copies goes just below it, or neither could be read.
+  private func add(_ new: TextLayer, overlapping: Bool) {
+    let r = resolved
+    var l = new
+    if overlapping { l.posY = TextTimeline.clearY(l.posY) }
+    updateVersion(coalesce: false) { v in if let n = TextLayers.adding(l, to: v, resolved: r) { v = n } }
+    selectedTextRaw = l.id
+    focusTextField += 1
+  }
+
+  /// A new, empty text at the playhead: 3 seconds or to the clip end, looking like the selected text.
+  func addText() {
+    guard addTextOffReason == nil else { return }
+    let like = selectedLayer, d = trim.duration
+    let w = TextTimeline.newWindow(playhead: playback.time - trim.start, trimDuration: d)
+    let span = TextTimeline.span(like, trimDuration: d)
+    add(TextLayers.new(text: "", like: like, start: w.start, end: w.end), overlapping: w.start < span.end && span.start < w.end)
+  }
+
+  /// The selected text again, straight after the original, or on top of it just below when there's no room.
+  func duplicateText() {
+    guard addTextOffReason == nil else { return }
+    let like = selectedLayer
+    let (w, overlaps) = TextTimeline.duplicateWindow(TextTimeline.span(like, trimDuration: trim.duration), trimDuration: trim.duration)
+    add(TextLayers.new(text: like.text, like: like, start: w.start, end: w.end), overlapping: overlaps)
+  }
+
+  /// Deletes the selected text. Deleting the first text moves the next one into its place.
+  func deleteText() {
+    guard deleteTextOffReason == nil else { return }
+    let r = resolved, id = selectedText
+    updateVersion(coalesce: false) { v in if let n = TextLayers.removing(id, from: v, resolved: r) { v = n } }
+    selectedTextRaw = TextLayer.firstId
+  }
+
+  func setSelectedWords(_ t: String) {
+    if selectedIsFirst { setText(t) } else { updateText(selectedText) { $0.text = t } }
+  }
+
+  func setSelectedStyle(_ s: TextStyle) {
+    if selectedIsFirst { setVersionField(\.style, \.style, s) } else { updateText(selectedText, coalesce: false) { $0.style = s } }
+  }
+
+  func setSelectedSize(_ s: Double) {
+    if selectedIsFirst { setVersionField(\.size, \.size, s) } else { updateText(selectedText) { $0.size = s } }
+  }
+
+  func setSelectedAlign(_ a: TextAlign) {
+    if selectedIsFirst { setVersionField(\.align, \.align, a) } else { updateText(selectedText, coalesce: false) { $0.align = a } }
+  }
+
+  /// A text dropped on the canvas: one undo step.
+  func moveText(_ id: String, x: Double, y: Double) {
+    if id == TextLayer.firstId {
+      updateVersion(coalesce: false) { $0.posX = x; $0.posY = y }
+    } else {
+      updateText(id, coalesce: false) { $0.posX = x; $0.posY = y }
+    }
+  }
+
+  /// When `id` shows, seconds from the trim start.
+  func setTextWindow(_ id: String, start: Double, end: Double) {
+    if id == TextLayer.firstId {
+      updateVersion { $0.textStart = start; $0.textEnd = end }
+    } else {
+      updateText(id) { $0.start = start; $0.end = end }
+    }
+  }
+
+  /// Show from (`start`) or Show to of a text, typed or from the playhead; one undo step. By id, because a typed time can
+  /// land just after the selection moved on.
+  func setTextTime(_ id: String, start t: Double? = nil, end e: Double? = nil) {
+    guard let l = texts.first(where: { $0.id == id }) else { return }
+    let d = trim.duration, s = TextTimeline.span(l, trimDuration: d)
+    let a = t.map { TextTimeline.clampedStart($0, end: s.end, trimDuration: d) } ?? s.start
+    let b = e.map { TextTimeline.clampedEnd($0, start: s.start, trimDuration: d) } ?? s.end
+    lastUndoBreak()
+    setTextWindow(id, start: a, end: b)
+    lastUndoBreak()
+  }
+
+  /// The selected text's look with `change` applied. Undo: `coalesce` for a slider or the colour panel.
+  func setLook(coalesce: Bool = false, _ change: (inout TextLook) -> Void) {
+    var look = selectedLayer.look ?? TextLook()
+    change(&look)
+    writeLook(look.normalized, coalesce: coalesce)
+  }
+
+  func resetLook() { writeLook(nil, coalesce: false) }
+
+  private func writeLook(_ look: TextLook?, coalesce: Bool) {
+    guard selectedIsFirst else { updateText(selectedText, coalesce: coalesce) { $0.look = look }; return }
+    // "Back to default" needs an explicit empty look only when an earlier version set one (it carries forward).
+    var vs = versions.isEmpty ? [Version(number: 1)] : versions
+    if let i = vs.firstIndex(where: { $0.number == versionNo }) { vs[i].textLook = nil }
+    let earlier = VersionResolver.resolve(vs, number: versionNo, settings: settings, video: video).textLook
+    updateVersion(coalesce: coalesce) { $0.textLook = look ?? (earlier == nil ? nil : TextLook()) }
+  }
+}
+
+/// One text as the canvas draws it: the image and where its block sits (0…1, top-left origin) for hit-testing.
+struct EditorDrawnText {
+  var image: CGImage
+  var bounds: CGRect
+}
+
+/// A drawn text on this clip: `window` is when it shows, in seconds of the clip file (nil = the trim leaves it out).
+struct EditorTextImage: Identifiable {
+  var id: String
+  var key: String
+  var drawn: EditorDrawnText
+  var window: ClosedRange<Double>?
+
+  var image: CGImage { drawn.image }
+  var bounds: CGRect { drawn.bounds }
+  func shows(at t: Double) -> Bool { window.map { t >= $0.lowerBound - 0.01 && t <= $0.upperBound + 0.01 } ?? false }
 }
 
 /// Player + playhead time, separate from the model so 30 Hz time updates only redraw the playhead.
