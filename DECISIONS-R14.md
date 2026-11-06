@@ -35,3 +35,4 @@ Small previews play only while hovered. Eric reported Calendar cards that played
 - **Driven for real:** leave, straight to another card, scrolling, a real menu opening and closing, hiding the window, the page changing.
 - **Stand-ins:** focus (a flag; the probe never activates the app) and a drag (the pointer moves with no events and `calendarMove` makes the drop; a real drag session needs the real mouse).
 - **Not driven:** a display change. The rect check runs the same way after one.
+- **It can fail.** With the old rule back, 33 checks failed, including 4 players at rest on Calendar Week. With the guard off, 13 failed: scrolling, menus, focus, the hidden window and the drag. Eric's report reproduced in the first of those runs: hovering a Calendar card gave it sound while the other 3 kept playing.
