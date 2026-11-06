@@ -15,7 +15,8 @@ struct BulkCropDialog: View {
   @State private var frames: [String: CGImage] = [:]
   @State private var loaded = false
 
-  private static let reach = 0.40
+  /// As far as any selected clip's crop can go.
+  private var reach: Double { max(previews.map(\.reach).max() ?? 0, 0.01) }
 
   var body: some View {
     DSDialog("Crop for \(AppModel.pipelineClips(ids.count))", description: "Move them all, then check each one. Drag a crop to change just that clip",
@@ -92,7 +93,8 @@ struct BulkCropDialog: View {
 
   private func moveThisClip(_ offset: Double) {
     guard let id = current?.id else { return }
-    change.overrides[id] = min(max(-Self.reach, offset), Self.reach)
+    let most = current?.reach ?? reach
+    change.overrides[id] = min(max(-most, offset), most)
   }
 
   // MARK: Controls
@@ -129,7 +131,7 @@ struct BulkCropDialog: View {
   }
 
   private var slider: some View {
-    DSSlider(label: "All clips", value: Binding(get: { change.offset }, set: { change.offset = $0 }), range: -Self.reach...Self.reach, step: 0.01,
+    DSSlider(label: "All clips", value: Binding(get: { change.offset }, set: { change.offset = $0 }), range: -reach...reach, step: 0.01,
              format: { Self.label($0) }, disabledReason: loaded ? nil : "Checking these clips…", accessibilityName: "Crop offset for all clips")
       .background(ScriptAnchor("All clips"))
   }
@@ -153,7 +155,7 @@ struct BulkCropDialog: View {
 
   // MARK: Data
 
-  /// Starts from where Eric's own crops sit, so a mixed selection opens close to right.
+  /// Starts from where Eric's own crops sit, else where the default puts these clips, so an untouched dialog moves nothing.
   private func load() {
     let b = model.bulk, ids = ids
     Task.detached(priority: .userInitiated) {
@@ -165,7 +167,7 @@ struct BulkCropDialog: View {
       await MainActor.run {
         previews = list
         loaded = true
-        if !own.isEmpty { change.offset = (own[own.count / 2] * 100).rounded() / 100 }
+        change.offset = own.isEmpty ? list.first?.standardOffset ?? 0 : (own[own.count / 2] * 100).rounded() / 100
         loadFrames()
       }
     }

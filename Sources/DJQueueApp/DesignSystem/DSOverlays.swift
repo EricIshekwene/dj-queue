@@ -319,16 +319,19 @@ extension View {
 struct DSBulkBar<Actions: View, Trailing: View>: View {
   let count: Int
   var noun: String = "selected"
+  /// Selected items nothing on screen shows.
+  var hidden: Int = 0
   var onSelectAll: (() -> Void)? = nil
   let onClear: () -> Void
   @ViewBuilder var actions: Actions
   /// More ▾ menu and the primary DSButton.
   @ViewBuilder var trailing: Trailing
 
-  init(count: Int, noun: String = "selected", onSelectAll: (() -> Void)? = nil, onClear: @escaping () -> Void,
+  init(count: Int, noun: String = "selected", hidden: Int = 0, onSelectAll: (() -> Void)? = nil, onClear: @escaping () -> Void,
        @ViewBuilder actions: () -> Actions, @ViewBuilder trailing: () -> Trailing) {
     self.count = count
     self.noun = noun
+    self.hidden = hidden
     self.onSelectAll = onSelectAll
     self.onClear = onClear
     self.actions = actions()
@@ -342,7 +345,8 @@ struct DSBulkBar<Actions: View, Trailing: View>: View {
       }
       .buttonStyle(DSBulkActionStyle(circle: true))
       .dsTooltip("Clear selection", shortcut: "esc")
-      Text("\(count) \(noun)").font(DS.type.calloutSemibold.monospacedDigit()).foregroundStyle(DS.color.text).padding(.trailing, 4)
+      Text("\(count) \(noun)\(hidden > 0 ? " · \(hidden) hidden" : "")").font(DS.type.calloutSemibold.monospacedDigit())
+        .foregroundStyle(DS.color.text).lineLimit(1).fixedSize().padding(.trailing, 4)
       if let onSelectAll {
         Button("Select all", action: onSelectAll).buttonStyle(DSBulkActionStyle())
           .dsTooltip("Select every clip on this screen", shortcut: "⌘A")

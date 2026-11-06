@@ -147,6 +147,50 @@ import Testing
     #expect(try f.store.edit(videoId: "clip-0").crop?.x == 1696)
   }
 
+  /// A clip the pass never moved doesn't hold the undo open.
+  @Test func undoIgnoresClipsThePassLeftAlone() throws {
+    let (f, b) = try setUp()
+    try f.store.db.run("""
+      INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+      VALUES('out','clip-2','tiktok',1,1,'regular',0,'posted','manual',0,0)
+      """)
+    let r = try b.setCropOffset(["clip-0", "clip-2"], CropChange(offset: 0.1))
+    #expect(r.changed == ["clip-0"])
+    let u = try b.undo(try #require(r.batchId))
+    #expect(u.changed == ["clip-0"] && u.skipped.isEmpty)
+    #expect(try f.store.edit(videoId: "clip-0").crop == nil)
+    #expect(throws: EngineError.self) { try b.undo(r.batchId!) }  // the batch closed
+  }
+
+  /// Undo is held to the same lock as Apply: a due post keeps the crop too.
+  @Test func undoStopsWhenAPostIsDue() throws {
+    let (f, b) = try setUp()
+    let r = try b.setCropOffset(["clip-0"], CropChange(offset: 0.1))
+    try f.store.db.run("""
+      INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+      VALUES('due','clip-0','tiktok',1,1,'regular',0,'due','manual',0,0)
+      """)
+    let u = try b.undo(try #require(r.batchId))
+    #expect(u.changed.isEmpty && u.skipped["clip-0"]?.contains("due") == true)
+  }
+
+  @Test func theReachIsWhereTheCropMeetsTheEdge() throws {
+    let (_, b) = try setUp()
+    let p = try #require(try b.previewCrop(["clip-0"], CropChange()).first)
+    #expect(abs(p.reach - (3840.0 - 1216) / 2 / 3840) < 0.001)
+  }
+
+  /// At a third anchor, the slider opens where the default sits, so an untouched dialog moves nothing.
+  @Test func anUntouchedDialogLeavesAnAnchoredDefaultAlone() throws {
+    let (f, b) = try setUp()
+    var s = try f.store.settings()
+    s.defaults.cropAnchor = .leftThird
+    try f.store.save(s)
+    let start = try #require(try b.previewCrop(["clip-0"], CropChange()).first?.standardOffset)
+    #expect(start < 0)
+    #expect(try b.previewCrop(["clip-0"], CropChange(offset: start)).first?.changes == false)
+  }
+
   @Test func aPassDoesntMoveLastCrop() throws {
     let (f, b) = try setUp()
     try b.setCropOffset(["clip-0"], CropChange(offset: 0.2))

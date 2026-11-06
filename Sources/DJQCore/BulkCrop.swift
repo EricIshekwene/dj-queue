@@ -27,6 +27,11 @@ public struct CropChange: Sendable, Hashable {
     return CropRect(x: px.minX, y: px.minY, w: px.width, h: px.height)
   }
 
+  /// How far this crop can go either way before it reaches the frame's edge.
+  public static func reach(of crop: CropRect, source: CGSize) -> Double {
+    source.width > 0 ? max(0, source.width - crop.w) / 2 / source.width : 0
+  }
+
   /// `crop`'s offset from the frame's centre.
   public static func offset(of crop: CropRect, source: CGSize) -> Double {
     source.width > 0 ? (crop.x + crop.w / 2 - source.width / 2) / source.width : 0
@@ -52,6 +57,10 @@ public struct CropPreview: Sendable, Identifiable, Equatable {
   /// The frame to show, in seconds of the clip's file.
   public var frameTime: Double
   public var aspect: Aspect = .r9x16
+  /// Where the default crop sits on this clip, so an untouched dialog leaves it there.
+  public var standardOffset: Double = 0
+  /// How far this clip's crop can move either way.
+  public var reach: Double = 0
 }
 
 public extension BulkActions {
@@ -85,14 +94,16 @@ public extension BulkActions {
   /// Why this clip's crop can't move (nil = it can). Past "went out", the platforms must not end up on different crops: a post
   /// that's due may already be up by hand, Postiz may have published what sync hasn't seen, and inside `PostizService.safety`
   /// Postiz keeps the version it has while the other platforms get replaced.
-  private func cropLock(_ posts: [PlatformPost]) throws -> String? {
+  /// The margin covers a tick: a crop applied just outside the hold would land inside it.
+  func cropLock(_ posts: [PlatformPost]) throws -> String? {
     if CaptionParts.lockReason(posts: posts) != nil { return "This clip has gone out, so its crop stays" }
     if posts.contains(where: { [.due, .overdue].contains($0.state) }) { return "A post is due now, so its crop stays" }
-    let soon = store.clock.now.addingTimeInterval(PostizService.safety)
+    let window = PostizService.safety * 2
+    let soon = store.clock.now.addingTimeInterval(window)
     for p in posts {
       for j in try store.postizJobs(postId: p.id) {
         if j.remoteState == "PUBLISHED" { return "This clip has gone out, so its crop stays" }
-        if j.phase == .live, j.remoteDate <= soon { return "It posts within \(Int(PostizService.safety / 60)) minutes, so its crop stays" }
+        if j.phase == .live, j.remoteDate <= soon { return "It posts within \(Int(window / 60)) minutes, so its crop stays" }
       }
     }
     return nil
@@ -116,6 +127,8 @@ public extension BulkActions {
     let lastUsed = s.defaults.cropAnchor == .lastUsed ? try store.lastCropCentre() : nil
     let standard = s.defaults.defaultCrop(source: size, aspect: e.aspectOverride ?? s.defaults.aspect, lastUsed: lastUsed)
     out.hasOwn = e.crop.map { $0 != standard } ?? false
+    out.standardOffset = CropChange.offset(of: standard, source: size)
+    out.reach = CropChange.reach(of: e.crop ?? standard, source: size)
     guard let base = e.crop ?? re.crop else { out.skipped = "Can't place a crop on this clip"; return out }
     if out.hasOwn, !change.movesOwnCrops, change.overrides[v.id] == nil {
       out.crop = e.crop

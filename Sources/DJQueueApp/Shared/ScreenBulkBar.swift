@@ -36,7 +36,7 @@ struct ScreenBulkBar<Actions: View, More: View, Primary: View>: View {
   var body: some View {
     let count = model.selected(screen).count
     let all = model.visibleIds[screen]?.count ?? 0
-    DSBulkBar(count: count, onSelectAll: count < all ? { model.selectAll(screen) } : nil,
+    DSBulkBar(count: count, hidden: model.hiddenSelected(screen), onSelectAll: count < all ? { model.selectAll(screen) } : nil,
               onClear: { model.clearSelection(screen) }) {
       actions
     } trailing: {

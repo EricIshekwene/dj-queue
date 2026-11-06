@@ -12,8 +12,8 @@ enum SelectResult {
 /// Per-screen multi-select (#11): checkbox toggles, ⇧-click range from the anchor, ⌘-click toggle, ⌘A selects
 /// every item the screen shows (`visibleIds[screen]`, registered by ClipCollection or by the screen itself),
 /// Esc clears. Selection survives screen switches. Ids a list stops showing are dropped when it registers them, and ids that
-/// left the screen's stage are dropped on every refresh (`pruneSelection`), even when no list is left on screen to do it. After
-/// a bulk edit the clips it touched stay selected while they're on the screen's stage, even if a filter no longer shows them.
+/// left the screen's stage are dropped on every refresh (`pruneSelection`), even when no list is left on screen to do it. A bulk
+/// edit that takes clips out of a filter keeps them selected; a search or filter changed afterwards drops hidden clips as usual.
 extension AppModel {
   func selected(_ s: Screen) -> Set<String> { selection[s] ?? [] }
 
@@ -38,7 +38,14 @@ extension AppModel {
 
   /// What a list keeps selected when it shows `shown`: those, and the clips a bulk edit just touched.
   func keptSelection(_ s: Screen, shown: [String]) -> Set<String> {
-    Set(shown).union(bulkEdited[s] ?? []).intersection(stageIds(s) ?? Set(shown))
+    guard let edited = bulkEdited[s], edited.until > Date() else { return Set(shown) }
+    return Set(shown).union(edited.ids).intersection(stageIds(s) ?? Set(shown))
+  }
+
+  /// Selected clips no list shows right now (a bulk edit took them out of a filter).
+  func hiddenSelected(_ s: Screen) -> Int {
+    guard let shown = visibleIds[s], !shown.isEmpty else { return 0 }
+    return selected(s).subtracting(shown).count
   }
   func isSelected(_ id: String, in s: Screen) -> Bool { selection[s]?.contains(id) ?? false }
   /// Selected ids in display order (`visibleIds[s]` order; unknown ids last).
@@ -82,6 +89,7 @@ extension AppModel {
   /// ⌘A / "Select all": every id the screen shows (or the given ids).
   func selectAll(_ s: Screen, ids: [String]? = nil) {
     selection[s] = Set(ids ?? visibleIds[s] ?? [])
+    bulkEdited[s] = nil
   }
 
   func clearSelection(_ s: Screen) {

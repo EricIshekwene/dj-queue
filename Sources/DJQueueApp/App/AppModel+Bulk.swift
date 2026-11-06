@@ -91,7 +91,7 @@ extension AppModel {
           }
           let custom = r.doneText?(res)
           let msg = custom?.0 ?? r.doneMessage ?? res.outlook.map { Self.outlookMessage($0, changed: n) } ?? "Updated \(n) clip\(n == 1 ? "" : "s")"
-          self.bulkEdited[screen] = self.selected(screen).intersection(res.changed)
+          self.bulkEdited[screen] = (ids: self.selected(screen).intersection(res.changed), until: Date().addingTimeInterval(3))
           if let b = res.batchId { self.undoHistory.push(b, label: msg) }
           let skipped = res.skipped.count
           let allReady = res.outlook.map { $0.needTitle.isEmpty && $0.other.isEmpty && $0.needScore.isEmpty } ?? true
@@ -177,8 +177,9 @@ extension AppModel {
           // An undo from a toast while the editor is open: the session restarts after it (its edits so far were
           // journaled by the split above), so closing the editor never re-applies what was just undone.
           if let s = self.editorSession { self.editorSession = (try? self.bulk.begin(s.action, ids: s.ids)) ?? s }
-          let left = r.summary.contains("plan left as it is") ? "plan left as it is" : "changed since"
-          self.show(DSToastModel(message: label.map { "Undone: \($0)" } ?? "Undone",
+          let left = r.summary.contains("plan left as it is") ? "plan left as it is"
+            : r.skipped.values.allSatisfy { $0.hasSuffix("so its crop stays") } ? "their crops are locked" : "changed since"
+          self.show(DSToastModel(message: r.changed.isEmpty && !r.skipped.isEmpty ? "Nothing undone" : label.map { "Undone: \($0)" } ?? "Undone",
                                  detail: r.skipped.isEmpty ? nil : "\(r.skipped.count) skipped · \(left)",
                                  tone: .neutral, duration: 4))
         case .failure(let e):

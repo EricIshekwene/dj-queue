@@ -151,6 +151,19 @@ enum BulkCropScript {
     await wait(1000)
     check("one Undo takes it all back", plain.allSatisfy { crop($0) == nil })
 
+    // A search after a bulk edit drops clips it hides, as it always did: nothing Eric can't see stays in the bar.
+    app.selectAll(.edit, ids: Array(plain))
+    await wait(600)
+    if let first = app.editList.first(where: { !plain.contains($0.id) }) {
+      app.bulkEdited[.edit] = (ids: Set(plain), until: Date().addingTimeInterval(-1))
+      app.visibleIds[.edit] = [first.id]
+      check("an old bulk edit doesn't keep hidden clips", app.keptSelection(.edit, shown: [first.id]) == [first.id])
+      app.bulkEdited[.edit] = (ids: Set(plain), until: Date().addingTimeInterval(3))
+      check("a bulk edit just now keeps them", app.keptSelection(.edit, shown: [first.id]).isSuperset(of: plain))
+      app.bulkEdited[.edit] = nil
+      app.visibleIds[.edit] = app.editList.map(\.id)
+    }
+
     // A clip that isn't 9:16 stays inside its pane.
     if var e = try? store.edit(videoId: plain[0]) {
       e.aspectOverride = .r1x1

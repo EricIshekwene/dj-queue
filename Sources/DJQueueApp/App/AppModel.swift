@@ -218,8 +218,9 @@ final class AppModel {
   let bulk: BulkActions
   /// Bulk confirmation sheet currently shown (AppModel+Bulk.swift).
   var pendingBulk: PendingBulk?
-  /// Clips the last bulk edit touched, per screen: they stay selected when a filter stops showing them.
-  var bulkEdited: [Screen: Set<String>] = [:]
+  /// Clips the last bulk edit touched, per screen. They stay selected when that edit takes them out of a filter, for as long as the
+  /// list takes to catch up: a search or filter Eric changes afterwards drops hidden clips as usual.
+  var bulkEdited: [Screen: (ids: Set<String>, until: Date)] = [:]
   /// The clips the Crop dialog is open for (nil = closed).
   var cropDialogIds: [String]?
   /// The clips the Caption dialog is open for (nil = closed).

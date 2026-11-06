@@ -719,18 +719,18 @@ public final class BulkActions: @unchecked Sendable {
         var restored = Set(rec.restored)
         var planTied = false
         for b in before.clips where !restored.contains(b.id) {
-          // The crop can't go back on a clip that went out since: the platforms left would post a different picture.
-          if !force, rec.action == Self.cropOffsetAction,
-             CaptionParts.lockReason(posts: try store.posts(where: "video_id=?", [b.id], order: "id")) != nil {
-            result.skipped[b.id] = "it has gone out since the batch, so its crop stays (use force to overwrite)"
-            continue
-          }
           let cur = try clipSnapshot(b.id, renders: b.renders != nil)
           if let a = afterById[b.id], !Self.same(cur, a), !force {
             result.skipped[b.id] = "changed again since the batch (use force to overwrite)"
             // The clip stays as it is, so its plan must too if the batch took it out of the Queue or sent it: plan alone
             // would put live posts on a held clip. Anything else about the clip doesn't tie it to the plan.
             planTied = planTied || cur.held != b.held || (b.sent != nil && cur.sent != b.sent)
+            continue
+          }
+          // A crop this batch moved can't go back once a platform could post it: the platforms would end up on different pictures.
+          if !force, rec.action == Self.cropOffsetAction, rec.videoIds.contains(b.id),
+             let why = try cropLock(try store.posts(where: "video_id=?", [b.id], order: "id")) {
+            result.skipped[b.id] = why
             continue
           }
           restored.insert(b.id)
