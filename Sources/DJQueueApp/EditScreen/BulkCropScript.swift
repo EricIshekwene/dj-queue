@@ -151,6 +151,29 @@ enum BulkCropScript {
     await wait(1000)
     check("one Undo takes it all back", plain.allSatisfy { crop($0) == nil })
 
+    // A clip that isn't 9:16 stays inside its pane.
+    if var e = try? store.edit(videoId: plain[0]) {
+      e.aspectOverride = .r1x1
+      try? store.save(e, videoId: plain[0])
+    }
+    app.refreshNow()
+    app.cropDialogIds = [plain[0]]
+    await wait(2500)
+    await shot("square-clip")
+    app.cropDialogIds = nil
+    await wait(400)
+
+    // Selection: every clip leaving the screen takes the bar with it, even when the list gives way to the empty state.
+    let everything = app.editList.map(\.id)
+    app.selectAll(.edit, ids: everything)
+    await wait(600)
+    _ = try? app.bulk.setExcluded(everything, true)
+    app.refreshNow()
+    await wait(900)
+    await shot("all-clips-left")
+    check("no clips left in Edit", app.editList.isEmpty)
+    check("the selection went with them, so the bar is gone", app.selected(.edit).isEmpty)
+
     try? log.joined(separator: "\n").write(to: out.appendingPathComponent("crop-checks-\(appearance).txt"), atomically: true, encoding: .utf8)
     return failed == 0 ? 0 : 1
   }

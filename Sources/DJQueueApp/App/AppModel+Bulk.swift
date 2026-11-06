@@ -68,6 +68,7 @@ extension AppModel {
   func apply(_ r: BulkRequest, then: (() -> Void)? = nil) {
     splitEditorSession()
     let run = r.run
+    let screen = self.screen
     Task.detached(priority: .userInitiated) {
       let out: Result<BulkResult, Error> = Result { try run(false) }
       await MainActor.run {
@@ -90,6 +91,7 @@ extension AppModel {
           }
           let custom = r.doneText?(res)
           let msg = custom?.0 ?? r.doneMessage ?? res.outlook.map { Self.outlookMessage($0, changed: n) } ?? "Updated \(n) clip\(n == 1 ? "" : "s")"
+          self.bulkEdited[screen] = self.selected(screen).intersection(res.changed)
           if let b = res.batchId { self.undoHistory.push(b, label: msg) }
           let skipped = res.skipped.count
           let allReady = res.outlook.map { $0.needTitle.isEmpty && $0.other.isEmpty && $0.needScore.isEmpty } ?? true

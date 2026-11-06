@@ -91,11 +91,11 @@ enum BulkCaptionScript {
     app.refreshNow()
     await wait(500)
     await shot("selected")
+    let batches = captionBatches()
+    let before = caption(ids[0])
     check("the bar's Caption button is real and opens the dialog", await click("Caption") && app.captionDialogIds?.count == 2)
     await wait(800)
     await shot("dialog-open")
-    let before = caption(ids[0])
-    let batches = captionBatches()
     check("nothing is written by opening it", captionBatches() == batches && caption(ids[0]) == before)
     for name in ["DJ lovd", "General mashup", "Afrobeats"] where sets.contains(where: { $0.name == name }) {
       check("clicked \(name)", await click(name))

@@ -47,7 +47,7 @@ import Testing
     #expect(try f.store.edit(videoId: "clip-0").crop == nil)
   }
 
-  @Test func aClipWithACropKeepsItUntilAsked() throws {
+  @Test func aClipWithItsOwnCropKeepsItUntilAsked() throws {
     let (f, b) = try setUp()
     var e = Edit()
     e.crop = CropRect(x: 2000, y: 0, w: 1216, h: 2160)
@@ -102,6 +102,55 @@ import Testing
     #expect(try f.store.edit(videoId: "clip-2").crop == nil)
     let p = try b.previewCrop(["clip-0"], CropChange(offset: 0.2, movesOwnCrops: true))
     #expect(p.first?.scheduled == true && p.first?.changes == true)
+  }
+
+  /// Send to Queue stamps the default crop, and that isn't a crop Eric placed: his 22 clips move with the slider.
+  @Test func theDefaultCropFromSendToQueueStillMoves() throws {
+    let (f, b) = try setUp()
+    try f.store.setScore("clip-0", 50)
+    try f.store.setTitle("clip-0", "Boots x Rider")
+    try b.makeReadyWithDefaults(["clip-0"])
+    #expect(try f.store.edit(videoId: "clip-0").crop?.x == 1312)
+    #expect(try b.previewCrop(["clip-0"], CropChange(offset: 0.1)).first?.hasOwn == false)
+    #expect(try b.setCropOffset(["clip-0"], CropChange(offset: 0.1)).changed == ["clip-0"])
+    #expect(try f.store.edit(videoId: "clip-0").crop?.x == 1696)
+  }
+
+  /// Nothing moved means nothing to apply: Apply doesn't confirm a crop Eric never looked at.
+  @Test func anUntouchedDialogChangesNothing() throws {
+    let (f, b) = try setUp()
+    #expect(try b.previewCrop(["clip-0"], CropChange()).first?.changes == false)
+    #expect(try b.setCropOffset(["clip-0"], CropChange()).changed.isEmpty)
+    #expect(try f.store.edit(videoId: "clip-0").crop == nil)
+  }
+
+  @Test func aDuePostLocksTheCrop() throws {
+    let (f, b) = try setUp()
+    try f.store.db.run("""
+      INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+      VALUES('due','clip-0','tiktok',1,1,'regular',0,'due','manual',0,0)
+      """)
+    let r = try b.setCropOffset(["clip-0"], CropChange(offset: 0.1))
+    #expect(r.changed.isEmpty && r.skipped["clip-0"]?.contains("due") == true)
+  }
+
+  /// Once a platform has gone out, Undo can't put the others on a different picture.
+  @Test func undoStopsOnceAClipWentOut() throws {
+    let (f, b) = try setUp()
+    let r = try b.setCropOffset(["clip-0"], CropChange(offset: 0.1))
+    try f.store.db.run("""
+      INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,scheduled_at,state,publisher,created_at,updated_at)
+      VALUES('out','clip-0','tiktok',1,1,'regular',0,'posted','manual',0,0)
+      """)
+    let u = try b.undo(try #require(r.batchId))
+    #expect(u.changed.isEmpty && u.skipped["clip-0"] != nil)
+    #expect(try f.store.edit(videoId: "clip-0").crop?.x == 1696)
+  }
+
+  @Test func aPassDoesntMoveLastCrop() throws {
+    let (f, b) = try setUp()
+    try b.setCropOffset(["clip-0"], CropChange(offset: 0.2))
+    #expect(try f.store.lastCropCentre() == nil)
   }
 
   /// The one door to the Queue stays Send to Queue: a confirmed crop alone doesn't promote a clip.

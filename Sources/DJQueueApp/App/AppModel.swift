@@ -218,6 +218,8 @@ final class AppModel {
   let bulk: BulkActions
   /// Bulk confirmation sheet currently shown (AppModel+Bulk.swift).
   var pendingBulk: PendingBulk?
+  /// Clips the last bulk edit touched, per screen: they stay selected when a filter stops showing them.
+  var bulkEdited: [Screen: Set<String>] = [:]
   /// The clips the Crop dialog is open for (nil = closed).
   var cropDialogIds: [String]?
   /// The clips the Caption dialog is open for (nil = closed).
@@ -443,6 +445,7 @@ final class AppModel {
     queueList = planned + l.ordered.filter { !seenPlanned.contains($0.id) }
     toScore = l.toScore
     needsEdit = l.needsEdit
+    pruneSelection()
     excluded = videos.filter { $0.excluded && $0.type == .short }
     upcomingSlots = l.upcomingSlots
     var next: [String: PlanSlot] = [:]

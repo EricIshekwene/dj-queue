@@ -11,10 +11,35 @@ enum SelectResult {
 
 /// Per-screen multi-select (#11): checkbox toggles, ⇧-click range from the anchor, ⌘-click toggle, ⌘A selects
 /// every item the screen shows (`visibleIds[screen]`, registered by ClipCollection or by the screen itself),
-/// Esc clears. Selection survives screen switches; ids that disappear from a list are dropped on refresh by the
-/// screens' own filtering (`selectedIds` only returns ids the screen still shows when it registered them).
+/// Esc clears. Selection survives screen switches. Ids a list stops showing are dropped when it registers them, and ids that
+/// left the screen's stage are dropped on every refresh (`pruneSelection`), even when no list is left on screen to do it. After
+/// a bulk edit the clips it touched stay selected while they're on the screen's stage, even if a filter no longer shows them.
 extension AppModel {
   func selected(_ s: Screen) -> Set<String> { selection[s] ?? [] }
+
+  /// Every clip a screen holds, filters aside. Nil = the screen has no clip stage.
+  func stageIds(_ s: Screen) -> Set<String>? {
+    switch s {
+    case .score: Set(scoreList.map(\.id))
+    case .edit: Set(editList.map(\.id))
+    case .queue: Set(queueClips.map(\.id))
+    case .library: Set(libraryAll.map(\.id))
+    default: nil
+    }
+  }
+
+  /// Drops selected clips that left their screen. The lists can't do this once they've gone from the screen (an empty state).
+  func pruneSelection() {
+    for s in Array(selection.keys) {
+      guard let sel = selection[s], !sel.isEmpty, let all = stageIds(s), !sel.isSubset(of: all) else { continue }
+      selection[s] = sel.intersection(all)
+    }
+  }
+
+  /// What a list keeps selected when it shows `shown`: those, and the clips a bulk edit just touched.
+  func keptSelection(_ s: Screen, shown: [String]) -> Set<String> {
+    Set(shown).union(bulkEdited[s] ?? []).intersection(stageIds(s) ?? Set(shown))
+  }
   func isSelected(_ id: String, in s: Screen) -> Bool { selection[s]?.contains(id) ?? false }
   /// Selected ids in display order (`visibleIds[s]` order; unknown ids last).
   func selectedIds(_ s: Screen) -> [String] {
@@ -51,6 +76,7 @@ extension AppModel {
   func setSelection(_ ids: some Sequence<String>, screen s: Screen) {
     selection[s] = Set(ids)
     selectionAnchor[s] = nil
+    bulkEdited[s] = nil
   }
 
   /// ⌘A / "Select all": every id the screen shows (or the given ids).
@@ -61,6 +87,7 @@ extension AppModel {
   func clearSelection(_ s: Screen) {
     selection[s] = []
     selectionAnchor[s] = nil
+    bulkEdited[s] = nil
   }
 
   /// The one selected clip on the current screen (⌘E, ⌘K clip commands).

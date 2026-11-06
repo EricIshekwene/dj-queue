@@ -64,17 +64,23 @@ struct BulkCropDialog: View {
     }
   }
 
+  /// The clip as it will post, fitted inside a fixed box, so any aspect stays put.
   private var output: some View {
     ZStack {
-      Color.black
-      if let p = current, let image = frames[p.id], let source = p.source, let crop = p.crop,
+      if let p = current, let image = frames[p.id], let source = p.source, let crop = p.crop, crop.h > 0,
          let cut = Self.cut(image, crop, source: source) {
-        Image(decorative: cut, scale: 1).resizable().scaledToFill()
-      }
-      if let id = current?.id, let v = model.video(id), let overlay = model.clipPreview(v).overlay {
-        Image(decorative: overlay, scale: 1).resizable().scaledToFit()
+        ZStack {
+          Image(decorative: cut, scale: 1).resizable()
+          if let v = model.video(p.id), let overlay = model.clipPreview(v).overlay {
+            Image(decorative: overlay, scale: 1).resizable()
+          }
+        }
+        .aspectRatio(crop.w / crop.h, contentMode: .fit)
+        .clipped()
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color.black)
     .clipShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
   }
 
@@ -97,7 +103,8 @@ struct BulkCropDialog: View {
         Text(p.name).font(DS.type.captionMedium).foregroundStyle(DS.color.text).lineLimit(1)
         if let own = change.overrides[p.id] {
           Text("· \(Self.label(own)), this clip only").font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
-          DSButton("Use the slider", variant: .ghost, size: .sm, tooltip: "This clip follows the slider again") {
+          DSButton(p.hasOwn && !change.movesOwnCrops ? "Back to its crop" : "Use the slider", variant: .ghost, size: .sm,
+                   tooltip: p.hasOwn && !change.movesOwnCrops ? "This clip keeps the crop it had" : "This clip follows the slider again") {
             change.overrides[p.id] = nil
           }
         } else if p.keepsOwn {
@@ -123,7 +130,7 @@ struct BulkCropDialog: View {
 
   private var slider: some View {
     DSSlider(label: "All clips", value: Binding(get: { change.offset }, set: { change.offset = $0 }), range: -Self.reach...Self.reach, step: 0.01,
-             format: { Self.label($0) }, accessibilityName: "Crop offset for all clips")
+             format: { Self.label($0) }, disabledReason: loaded ? nil : "Checking these clips…", accessibilityName: "Crop offset for all clips")
       .background(ScriptAnchor("All clips"))
   }
 
@@ -138,9 +145,9 @@ struct BulkCropDialog: View {
           .background(ScriptAnchor("Also move"))
       }
       if scheduled > 0 {
-        EditorHint("\(AppModel.pipelineClips(scheduled)) already scheduled will render again and update in Postiz", icon: "info.circle")
+        EditorHint("\(AppModel.pipelineClips(scheduled)) already scheduled will render again and update in Postiz. That can take hours, so do it well before the first slot", icon: "info.circle")
       }
-      if held > 0 { EditorHint("\(held == 1 ? "1 clip stays" : "\(held) clips stay") as it is", icon: "lock") }
+      if held > 0 { EditorHint(held == 1 ? "1 clip stays as it is" : "\(held) clips stay as they are", icon: "lock") }
     }
   }
 
@@ -209,16 +216,27 @@ private struct CropFrameView: View {
   let onMove: (Double) -> Void
   @State private var start: Double?
 
+  /// The picture at its own shape, centred in `box`.
+  static func fitted(_ source: CGSize?, in box: CGSize) -> CGRect {
+    guard let source, source.width > 0, source.height > 0 else { return CGRect(origin: .zero, size: box) }
+    let k = min(box.width / source.width, box.height / source.height)
+    let w = source.width * k, h = source.height * k
+    return CGRect(x: (box.width - w) / 2, y: (box.height - h) / 2, width: w, height: h)
+  }
+
   var body: some View {
     GeometryReader { geo in
-      let k = source.map { geo.size.width / max($0.width, 1) } ?? 1
+      let fit = Self.fitted(source, in: geo.size)
+      let k = source.map { fit.width / max($0.width, 1) } ?? 1
       ZStack(alignment: .topLeading) {
         Color.black
-        if let image { Image(decorative: image, scale: 1).resizable().frame(width: geo.size.width, height: geo.size.height) }
+        if let image {
+          Image(decorative: image, scale: 1).resizable().frame(width: fit.width, height: fit.height).offset(x: fit.minX, y: fit.minY)
+        }
         if let crop {
-          let box = CGRect(x: crop.x * k, y: crop.y * k, width: crop.w * k, height: crop.h * k)
+          let box = CGRect(x: fit.minX + crop.x * k, y: fit.minY + crop.y * k, width: crop.w * k, height: crop.h * k)
           Path { p in
-            p.addRect(CGRect(origin: .zero, size: geo.size))
+            p.addRect(fit)
             p.addRect(box)
           }
           .fill(Color.black.opacity(0.55), style: FillStyle(eoFill: true))
@@ -232,7 +250,7 @@ private struct CropFrameView: View {
           guard canDrag, let source, let crop, source.width > 0 else { return }
           let from = start ?? CropChange.offset(of: crop, source: source)
           start = from
-          onMove(from + dx / geo.size.width)
+          onMove(from + dx / max(fit.width, 1))
         } onEnd: { start = nil }
       }
     }

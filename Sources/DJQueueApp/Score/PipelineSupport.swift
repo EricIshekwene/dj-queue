@@ -121,7 +121,7 @@ struct PipelineClipFeed: ViewModifier {
 
   private func register(_ new: [String]) {
     model.visibleIds[screen] = new
-    let keep = Set(new)
+    let keep = model.keptSelection(screen, shown: new)
     if let sel = model.selection[screen], !sel.isSubset(of: keep) { model.selection[screen] = sel.intersection(keep) }
   }
 }
