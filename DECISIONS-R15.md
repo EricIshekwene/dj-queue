@@ -1,4 +1,4 @@
-# Round 15: bulk selection and crop offset
+# Round 15: bulk selection and crop offset (v0.11.2)
 
 Eric edited 22 clips in one pass and lost the selection, so he couldn't send them on. He also wants one crop offset for clips filmed
 horizontally, checked clip by clip the way the Caption dialog works.
