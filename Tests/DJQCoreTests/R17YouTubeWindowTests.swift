@@ -217,9 +217,9 @@ import Testing
     slot.pinned = true
     try rig.store.save(slot)
     let monday = try #require(try rig.f.post(.youtube, day: day(1)))
-    rig.f.setTime(day(1), "14:52")  // 8 minutes: past the crop's 10, not yet Postiz's 5
+    rig.f.setTime(day(1), "14:40")
     let c = try actions.setSlot(.youtube, minutes: 16 * 60)
-    #expect(Dictionary(uniqueKeysWithValues: c.kept.map { ($0.post.id, $0.why) }) == [monday.id: "it goes out within 10 minutes", wed.id: "pinned"])
+    #expect(Dictionary(uniqueKeysWithValues: c.kept.map { ($0.post.id, $0.why) }) == [monday.id: "it goes out within 30 minutes", wed.id: "pinned"])
     #expect(c.moved.count == 1)
     for p in [monday, posted, wed] { #expect(try rig.store.post(id: p.id) == p) }
   }
@@ -230,7 +230,7 @@ import Testing
     let monday = try #require(try rig.f.post(.youtube, day: day(1)))
     rig.f.setTime(day(1), "10:00")
     let c = try PostActions(store: rig.store).setSlot(.youtube, minutes: 8 * 60)
-    #expect(c.kept.map(\.post.id) == [monday.id] && c.kept[0].why == "the new time has already passed")
+    #expect(c.kept.map(\.post.id) == [monday.id] && c.kept[0].why == "the new time has passed or is under 30 minutes away")
     #expect(try rig.store.post(id: monday.id)?.scheduledAt == monday.scheduledAt)
     #expect(try rig.f.post(.youtube, day: day(2))?.scheduledAt == rig.f.at(day(2), "08:00"))
     #expect(c.moved.count == 3)
@@ -303,6 +303,136 @@ import Testing
     rig.tick(2)
     #expect(dates() == Set(live.map(\.scheduledAt)))
     #expect(try rig.invariants().isEmpty)
+  }
+
+  /// A post 31 minutes out can move, and the undo the command prints works.
+  @Test func whatMovesCanBeUndoneStraightAway() throws {
+    let rig = try slotRig()
+    let monday = try #require(try rig.f.post(.youtube, day: day(1)))
+    rig.f.setTime(day(1), "14:29")
+    let c = try PostActions(store: rig.store).setSlot(.youtube, minutes: 16 * 60)
+    #expect(c.moved.contains { $0.post.id == monday.id })
+    try BulkActions(store: rig.store).undo(try #require(c.batchId))
+    #expect(try rig.store.post(id: monday.id)?.scheduledAt == monday.scheduledAt)
+  }
+
+  /// `djq` commits while the engine is inside a render: the render's save must not put the old time back.
+  @Test func aRenderInProgressKeepsTheNewTime() throws {
+    let rig = try Rig(3, platforms: [.youtube]) { $0.enabledPlatforms = [.youtube] }
+    rig.f.setTime("2026-11-02", "06:00")
+    let actions = PostActions(store: rig.store)
+    rig.renderer.duringRender = { _ = try actions.setSlot(.youtube, minutes: 8 * 60) }
+    rig.settle()
+    #expect(rig.renderer.duringRender == nil)
+    #expect(try rig.f.posts(.youtube).map(\.scheduledAt).sorted() == (1...3).map { rig.f.at(day($0), "08:00") })
+    #expect(try rig.f.posts(.youtube).allSatisfy { $0.renderId != nil && $0.state == .rendered })
+  }
+
+  /// The step's list is read before the render: the clip's next post attaches that render from a stale copy.
+  @Test func theNextPostInTheRenderStepKeepsItsNewTimeToo() throws {
+    let rig = try Rig(1, platforms: [.youtube, .x]) { $0.enabledPlatforms = [.youtube, .x] }
+    rig.f.setTime("2026-11-02", "06:00")
+    let actions = PostActions(store: rig.store)
+    rig.renderer.duringRender = { _ = try actions.setSlot(.x, minutes: 18 * 60) }
+    rig.tick()
+    #expect(try rig.f.post(.x, day: day(1))?.scheduledAt == rig.f.at(day(1), "18:00"))
+  }
+
+  /// 07:30 UTC can be a night slot moved past midnight or a post that belongs to that morning. Its slot says which.
+  @Test func thePlanSlotSettlesWhichDayA0730PostIs() {
+    let dm = DayMath(settings: Settings()), at = utc("2026-11-04", 7, 30)  // 2:30 am New York on the 4th
+    func day(_ slot: String?, _ p: Platform = .youtube, position: Int = 0) -> String {
+      dm.planDay(at, position: position, slotDate: slot, platform: p, offsetMinutes: 180)
+    }
+    #expect(day("2026-11-03") == "2026-11-03")
+    #expect(day("2026-11-04") == "2026-11-04")
+    #expect(day("2026-11-01") == "2026-11-03")  // shifted past a busy day: still the night before
+    #expect(day("2026-11-03", position: 1) == "2026-11-03")
+    #expect(day("2026-11-03", .x) == "2026-11-04")
+    #expect(dm.planDay(at.addingTimeInterval(60), position: 0, slotDate: "2026-11-03", platform: .youtube, offsetMinutes: 180) == "2026-11-04")
+  }
+
+  /// A plan push of night posts counts from their own day, read before the slots moved.
+  @Test func pushingNightPostsMovesThemOneDay() throws {
+    let rig = try nightRig()
+    rig.f.setTime(day(1), "06:00")
+    try Planner(store: rig.store).pushPlan(from: day(1), days: 1)
+    #expect(try rig.f.posts(.youtube).map(\.scheduledAt).sorted() == [utc("2026-11-04", 7, 30), utc("2026-11-05", 7, 30), utc("2026-11-06", 7, 30)])
+    #expect(try rig.f.posts(.youtube).map { try rig.store.planDay(of: $0, dm: rig.f.dm) }.sorted() == [day(2), day(3), day(4)])
+  }
+
+  /// Removed during its render, a post stays gone.
+  @Test func aRenderDoesntBringBackAPostThatWentAway() throws {
+    let rig = try Rig(1, platforms: [.youtube]) { $0.enabledPlatforms = [.youtube] }
+    let yt = try #require(try rig.f.post(.youtube, day: day(1)))
+    rig.renderer.duringRender = { try rig.store.deletePost(yt.id) }
+    rig.tick()
+    #expect(try rig.store.post(id: yt.id) == nil)
+  }
+
+  /// Slot 23:00, then 08:00 at 10:00 on Monday: Monday's post can't go back, so it stays, and it's still Monday's.
+  /// Running the command again must not put it on Tuesday's time.
+  @Test func aKeptNightPostKeepsItsDayAndNothingStacks() throws {
+    let rig = try nightRig()
+    rig.f.setTime(day(1), "10:00")
+    let actions = PostActions(store: rig.store)
+    let first = try actions.setSlot(.youtube, minutes: 8 * 60)
+    #expect(first.kept.count == 1 && first.moved.count == 2)
+    let kept = try #require(first.kept.first).post
+    #expect(try rig.store.planDay(of: kept, dm: rig.f.dm) == day(1))
+    let again = try actions.setSlot(.youtube, minutes: 8 * 60)
+    #expect(again.moved.isEmpty && again.kept.map(\.post.id) == [kept.id])
+    #expect(Set(try rig.f.posts(.youtube).map(\.scheduledAt)).count == 3)
+    #expect(try Placer(store: rig.store, dm: rig.f.dm).isTaken(.youtube, day: day(1), position: 0))
+  }
+
+  /// The slot changed in Settings first: the posts still land on their own days.
+  @Test func aSettingsChangeFirstDoesntShiftNightPostsADay() throws {
+    let rig = try nightRig()
+    rig.f.setTime(day(1), "06:00")
+    try rig.f.updateSettings { $0.slotMinutes[.youtube] = 8 * 60 }
+    let dm = rig.f.dm
+    let days = try rig.f.posts(.youtube).map { try rig.store.planDay(of: $0, dm: dm) }.sorted()
+    #expect(days == (1...3).map(day))  // and so does the Placer, with the setting already changed
+    let c = try PostActions(store: rig.store).setSlot(.youtube, minutes: 8 * 60)
+    #expect(c.moved.count == 3)
+    #expect(try rig.f.posts(.youtube).map(\.scheduledAt).sorted() == (1...3).map { rig.f.at(day($0), "08:00") })
+  }
+
+  @Test(arguments: [("2026-10-30", 3), ("2027-03-15", -3)])
+  func aShiftAcrossAClockChangeStaysOn0730(_ from: String, _ days: Int) throws {
+    let rig = try nightRig(1)
+    let dm = rig.f.dm
+    var p = try #require(try rig.store.posts(where: "platform='youtube'").first)
+    p.scheduledAt = YouTubeWindow.nextSafe(after: dm.at(from, minutes: 22 * 60))
+    try rig.store.save(p, note: "test")
+    try rig.store.reflow([p], days: days, dm: dm, note: "test")
+    let moved = try #require(try rig.store.post(id: p.id))
+    #expect(moved.scheduledAt == p.scheduledAt.addingTimeInterval(Double(days) * 86400))
+    #expect(try rig.store.planDay(of: moved, dm: dm) == dm.addDays(from, days))
+  }
+
+  /// A retry queued for 8:00 by the old code, and the slot goes to 8:00: it makes room, earlier, as a quota retry does.
+  @Test func aPostLandingOnAnAutomaticRetryMovesTheRetry() throws {
+    let rig = try slotRig()
+    let yt = try #require(try rig.f.post(.youtube, day: day(1)))
+    let j = try #require(try rig.job(yt))
+    rig.fake.fail(j.postizId!, error: Self.quota)
+    rig.f.setTime(day(1), "23:30")
+    rig.tick()
+    var retry = try #require(try r8.attempts(rig, yt).first { $0.kind == .retry })
+    retry.scheduledAt = rig.f.at(day(3), "08:00")
+    try rig.store.save(retry, note: "test")
+    let c = try PostActions(store: rig.store).setSlot(.youtube, minutes: 8 * 60)
+    #expect(try rig.store.post(id: retry.id)?.scheduledAt == rig.f.at(day(3), "05:00"))
+    #expect(c.moved.contains { $0.post.id == retry.id })
+  }
+
+  @Test func theCommandCountsPostizCalls() throws {
+    let rig = try slotRig()
+    try rig.f.updateSettings { $0.publishing.hourlyBudget = 5 }
+    let c = try PostActions(store: rig.store).setSlot(.youtube, minutes: 16 * 60, dryRun: true)
+    #expect(c.postizCalls == 8 && c.postizCallsLeft <= 5)
   }
 
   /// The built `djq`: show, dry run, set, undo.

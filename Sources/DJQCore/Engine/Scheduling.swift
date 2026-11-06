@@ -26,6 +26,9 @@ public enum YouTubeWindow {
     return second >= quietStart && second < reset
   }
 
+  /// `d` is 07:30 UTC, where the window sends a time.
+  public static func isMoved(_ d: Date) -> Bool { d.timeIntervalSince1970 - midnightUTC(d) == safe }
+
   /// The first 07:30 UTC after `d`.
   public static func nextSafe(after d: Date) -> Date {
     let today = midnightUTC(d) + safe
@@ -35,6 +38,19 @@ public enum YouTubeWindow {
   /// The one rule, for slot times and retries alike: `d`, unless that's a YouTube time inside the quiet window.
   public static func clear(_ d: Date, _ p: Platform) -> Date {
     p == .youtube && isQuiet(d) ? nextSafe(after: d) : d
+  }
+}
+
+extension DayMath {
+  /// The plan day of a regular post at `at`: the day its slot time counts from. It isn't always the local day: with 3 posts
+  /// a day and a 180-minute offset, position 2 of Thursday's slot posts at 00:00 Friday on Instagram. A night slot the quiet
+  /// window moved past midnight counts for the day before, unless its plan slot says otherwise. That comes from the post's
+  /// own slot and never the current setting: the setting can change while the post stays.
+  public func planDay(_ at: Date, position: Int, slotDate: String?, platform: Platform, offsetMinutes: Int) -> String {
+    let day = key(at.addingTimeInterval(-Double(position * offsetMinutes) * 60))
+    guard platform == .youtube, YouTubeWindow.isMoved(at), let slotDate else { return day }
+    let local = key(at)
+    return slotDate == local ? day : addDays(local, -1)
   }
 }
 
@@ -52,19 +68,15 @@ enum Sched {
     settings.slotTime(platform, date: date, position: position, dm)
   }
 
-  /// The plan day of a regular post at `at`: the day its slot time counts from. It isn't always the local day: with 3 posts
-  /// a day and a 180-minute offset, position 2 of Thursday's slot posts at 00:00 Friday on Instagram. A night slot the quiet
-  /// window moved past midnight still counts for the day before.
-  static func planDay(_ at: Date, position: Int, platform: Platform, settings: Settings, _ dm: DayMath) -> String {
-    let day = dm.key(at.addingTimeInterval(-Double(position * settings.secondPostOffsetMinutes) * 60))
-    guard platform == .youtube else { return day }
-    let before = dm.addDays(day, -1)
-    return slotTime(settings, dm, date: before, position: position, platform: platform) == at ? before : day
-  }
-
   /// Same local clock time `days` calendar days later (DST-safe).
   static func shift(_ d: Date, days: Int, _ dm: DayMath) -> Date {
     dm.calendar.date(byAdding: .day, value: days, to: d) ?? d.addingTimeInterval(Double(days) * 86400)
+  }
+
+  /// `shift` for a platform's post: the local clock, out of the quiet window. 07:30 UTC stays 07:30 UTC, because a local
+  /// clock would walk off it across a DST change.
+  static func shift(_ d: Date, days: Int, platform p: Platform, _ dm: DayMath) -> Date {
+    p == .youtube && YouTubeWindow.isMoved(d) ? d.addingTimeInterval(Double(days) * 86400) : YouTubeWindow.clear(shift(d, days: days, dm), p)
   }
 
   /// A time on `day` for an extra post (retry / repost) on `platform`: that day's regular slot time
@@ -194,7 +206,7 @@ extension Store {
 
 
 /// Occupancy of live regular posts per (platform, plan day, position) — the "never double-post" invariant. Keyed by plan
-/// day (`Sched.planDay`), never the local posting day: `place` reserves plan days, and a post past midnight must count
+/// day (`DayMath.planDay`), never the local posting day: `place` reserves plan days, and a post past midnight must count
 /// for the day it was placed on, or a later Placer sees the wrong day free.
 /// Live = not terminal, or posted. Retries/reposts are staggered extras and don't occupy a position.
 struct Placer {
@@ -203,12 +215,14 @@ struct Placer {
 
   init(store: Store, dm: DayMath, excluding: Set<String> = []) throws {
     self.dm = dm
-    let positions = Dictionary(uniqueKeysWithValues: try store.planSlots().map { ($0.id, $0.position) })
-    let settings = try store.settings()
+    let slots = Dictionary(uniqueKeysWithValues: try store.planSlots().map { ($0.id, $0) })
+    let offset = try store.settings().secondPostOffsetMinutes
     let postedNow = try store.postNowIds()
     for p in try store.posts(where: "kind='regular'") where !excluding.contains(p.id) && Self.isLive(p) {
-      let pos = positions[p.planSlotId ?? ""] ?? 0
-      let day = postedNow.contains(p.id) ? dm.key(p.scheduledAt) : Sched.planDay(p.scheduledAt, position: pos, platform: p.platform, settings: settings, dm)
+      let slot = slots[p.planSlotId ?? ""]
+      let pos = slot?.position ?? 0
+      let day = postedNow.contains(p.id) ? dm.key(p.scheduledAt)
+        : dm.planDay(p.scheduledAt, position: pos, slotDate: slot?.date, platform: p.platform, offsetMinutes: offset)
       taken.insert(Self.key(p.platform, day, pos))
     }
   }
@@ -233,11 +247,13 @@ extension Store {
     try p.planSlotId.flatMap { try planSlot(id: $0)?.position } ?? 0
   }
 
-  /// The plan day of a regular post (`Sched.planDay`). Post now holds its local day: its time is the moment Eric pressed
+  /// The plan day of a regular post (`DayMath.planDay`). Post now holds its local day: its time is the moment Eric pressed
   /// it, not a slot time, so it says nothing about a plan day.
   func planDay(of p: PlatformPost, dm: DayMath) throws -> String {
     if try postNowIds().contains(p.id) { return dm.key(p.scheduledAt) }
-    return Sched.planDay(p.scheduledAt, position: try position(of: p), platform: p.platform, settings: try settings(), dm)
+    let slot = try p.planSlotId.flatMap { try planSlot(id: $0) }
+    return dm.planDay(p.scheduledAt, position: slot?.position ?? 0, slotDate: slot?.date, platform: p.platform,
+                      offsetMinutes: try settings().secondPostOffsetMinutes)
   }
 
   /// Regular posts still at the time Post now gave them (a shift or a reset puts a post back on a slot time).
@@ -275,7 +291,7 @@ extension Store {
       let to = placer.place(o.platform, position: pos, from: dm.addDays(from, days))
       let delta = dm.days(from: from, to: to)
       guard delta != 0 else { continue }
-      o.scheduledAt = YouTubeWindow.clear(Sched.shift(o.scheduledAt, days: delta, dm), o.platform)
+      o.scheduledAt = Sched.shift(o.scheduledAt, days: delta, platform: o.platform, dm)
       if o.state == .due { o.state = o.renderId == nil ? .planned : .rendered }
       try save(o, note: "\(note) → \(to)")
       moved += 1

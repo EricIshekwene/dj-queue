@@ -279,10 +279,12 @@ safe time is the morning after the reset, not just outside their window.
 | Where it applies | Slot times, staggered extras, retries, a plan shift, and every create (`remoteDate`), so a late slot or Post now on YouTube inside the window waits for 07:30 UTC too. A retry whose 07:30 passed while the Mac slept goes at now + 3 min, unless that's inside the window. |
 
 `djq slot youtube 08:00` puts the slot there and moves the unposted future posts with it (`PostActions.setSlot`, undo with
-`djq bulk undo`). The publish step replaces the copies Postiz holds, as for any move. Pinned posts, posts within 10 minutes
-of going out (Postiz's 5-minute hold plus a margin for a tick), automatic retries and posts whose new time has passed
-stay where they are, and the command names each one. The Settings control changes only the slot; `djq slot` at the same
-time then brings the existing posts onto it.
+`djq bulk undo`). The publish step replaces the copies Postiz holds, as for any move, two calls each; when that's more than
+the hour's budget has left, the command says so and the last posts catch up within the hour. Pinned posts, posts within
+30 minutes of going out (the undo needs that lead) and posts whose new time is that close or has passed stay where they
+are, and the command names each one. An automatic retry stays too, unless a post lands within the stagger of it, and then
+it moves earlier, down to the reset. The Settings control changes only the slot; `djq slot` at the same time then brings
+the existing posts onto it.
 
 ## 6. Test mode (one switch)
 

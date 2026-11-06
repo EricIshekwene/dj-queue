@@ -396,7 +396,8 @@ extension AppModel {
   /// False for a post just past midnight: its time runs over from the slot's own day, and nothing moved it.
   func calendarWasMoved(_ p: PlatformPost) -> Bool {
     guard let s = p.planSlotId.flatMap({ calendarData.slotById[$0] }) else { return true }
-    return dm.key(p.scheduledAt.addingTimeInterval(-Double(s.position * settings.secondPostOffsetMinutes) * 60)) != s.date
+    return dm.planDay(p.scheduledAt, position: s.position, slotDate: s.date, platform: p.platform,
+                      offsetMinutes: settings.secondPostOffsetMinutes) != s.date
   }
 
   /// Why Unschedule isn't offered (nil = it is): past days are fixed, and only Queue and Scheduled clips have a day to

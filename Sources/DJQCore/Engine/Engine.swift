@@ -213,8 +213,10 @@ public final class Engine: @unchecked Sendable {
     let settings = try store.settings()
     let horizon = store.clock.now.addingTimeInterval(Double(settings.renderHorizonDays) * 86400)
     var attached = 0, rendered = 0, waiting = 0, failed = 0, backedOff = 0
-    for var p in try store.posts(where: "state IN ('planned','rendering','rendered','due') AND scheduled_at<=?", [horizon]) {
-      guard let v = try store.video(id: p.videoId) else { continue }
+    let open: Set<PostState> = [.planned, .rendering, .rendered, .due]
+    for listed in try store.posts(where: "state IN ('planned','rendering','rendered','due') AND scheduled_at<=?", [horizon]) {
+      // A render takes minutes, and `djq` or the app can move a post meanwhile: this list is stale by the next one.
+      guard var p = try store.post(id: listed.id), open.contains(p.state), let v = try store.video(id: p.videoId) else { continue }
       if let msg = try invalidReason(v, &ctx) {
         notify(AppNotification(key: "invalid:\(v.id):\(try store.today(store.dayMath()))", title: "\(v.tag) can't post",
                                body: "\(msg) — fix it in the editor or take it out of the plan.", critical: false,
@@ -582,14 +584,21 @@ public final class Engine: @unchecked Sendable {
     defer { stateLock.withLock { rendering = false } }
     do {
       let r = try renderer.ensureRender(videoId: p.videoId, versionNo: p.versionNo, platform: p.platform)
-      p.renderId = r.id
-      p.state = prior == .due ? .due : .rendered  // a post already due stays due (the Calendar keeps it)
-      try store.save(p, note: "rendered \(r.id.prefix(8))")
+      // The row as it is now, render fields only: it may have moved, or gone, during the render.
+      if var cur = try store.post(id: p.id), !cur.state.isTerminal {
+        cur.renderId = r.id
+        if cur.state == .rendering { cur.state = prior == .due ? .due : .rendered }  // a post already due stays due (the Calendar keeps it)
+        try store.save(cur, note: "rendered \(r.id.prefix(8))")
+        p = cur
+      }
       try? store.heartbeat(.tick)
     } catch {
-      p.state = prior == .rendering ? .planned : (prior == .rendered ? .planned : prior)
-      p.renderId = nil
-      try store.save(p, note: "render failed: \(error)")
+      if var cur = try store.post(id: p.id), !cur.state.isTerminal {
+        if cur.state == .rendering { cur.state = prior == .rendering ? .planned : (prior == .rendered ? .planned : prior) }
+        cur.renderId = nil
+        try store.save(cur, note: "render failed: \(error)")
+        p = cur
+      }
       throw error
     }
   }

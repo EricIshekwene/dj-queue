@@ -57,7 +57,7 @@ usage: djq <command> [args]
   score <video> <0-100|clear> | exclude <video> | include <video>
   posts-per-day [1-5] [--dry-run]      show or set posts per day (Settings → General); undo with bulk undo
   slot <platform> [HH:MM] [--dry-run]  show or set a platform's slot (Settings → Schedule) and re-time its unposted future
-                                      posts, not pinned ones or any within 10 minutes of going out; undo with bulk undo
+                                      posts, not pinned ones or any within 30 minutes of going out; undo with bulk undo
   pause [platform] | resume [platform]
   intake | tick [--force] | doctor [--json] [--live] | health [--days N]
   render <video> [--version N] [--platform P]
@@ -824,6 +824,9 @@ func run() throws -> Int32 {
     for m in c.moved { print("  \(short(m.post.id))  \(fmt(m.post.scheduledAt, settings)) → \(fmt(m.to, settings))  \(tagOf(store, m.post.videoId))") }
     for k in c.kept { print("  \(short(k.post.id))  \(fmt(k.post.scheduledAt, settings)) stays: \(k.why)  \(tagOf(store, k.post.videoId))") }
     quietNote({ var s = settings; s.slotMinutes[p] = minutes; return s }())
+    if c.postizCalls > c.postizCallsLeft {
+      print("  Postiz: replacing these takes \(c.postizCalls) calls and \(c.postizCallsLeft) are left this hour, so the last posts catch up within the hour")
+    }
 
   case "pause", "resume":
     var s = settings

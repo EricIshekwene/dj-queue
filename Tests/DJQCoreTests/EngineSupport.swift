@@ -9,6 +9,8 @@ final class FakeRenderer: RenderService, @unchecked Sendable {
   private(set) var renderCount = 0
   var failNext = false
   var failVideos: Set<String> = []
+  /// Runs inside `ensureRender`, as another process would while a render takes its minutes.
+  var duringRender: (() throws -> Void)?
   private(set) var attempts: [String] = []
 
   init(store: Store) { self.store = store }
@@ -35,6 +37,9 @@ final class FakeRenderer: RenderService, @unchecked Sendable {
   func ensureRender(videoId: String, versionNo: Int, platform: Platform?) throws -> Render {
     if let r = try currentRender(videoId: videoId, versionNo: versionNo, platform: platform) { return r }
     attempts.append(videoId)
+    let during = duringRender
+    duringRender = nil
+    try during?()
     if failNext { failNext = false; throw EngineError("fake ffmpeg failure") }
     if failVideos.contains(videoId) { throw EngineError("fake ffmpeg failure for \(videoId)") }
     let v = try store.video(id: videoId)!

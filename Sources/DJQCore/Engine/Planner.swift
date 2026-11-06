@@ -496,6 +496,7 @@ public final class Planner: @unchecked Sendable {
     var regular: [(PlatformPost, Int)] = []  // (post, slot delta days)
     var placerExclude = Set<String>()
     var newSlots: [PlanSlot] = []
+    let oldDates = Dictionary(uniqueKeysWithValues: movable.map { ($0.id, $0.date) })
     for original in movable.sorted(by: { ($0.date, $0.position) < ($1.date, $1.position) }) {
       var s = original
       var target = dm.addDays(s.date, days)
@@ -515,7 +516,8 @@ public final class Planner: @unchecked Sendable {
     let positions = Dictionary(uniqueKeysWithValues: newSlots.map { ($0.id, $0.position) })
     for (var p, delta) in regular.sorted(by: { $0.0.scheduledAt < $1.0.scheduledAt }) {
       let pos = positions[p.planSlotId ?? ""] ?? 0
-      let planned = Sched.planDay(p.scheduledAt, position: pos, platform: p.platform, settings: settings, dm)
+      let planned = dm.planDay(p.scheduledAt, position: pos, slotDate: oldDates[p.planSlotId ?? ""], platform: p.platform,
+                               offsetMinutes: settings.secondPostOffsetMinutes)
       let day = placer.place(p.platform, position: pos, from: dm.addDays(planned, delta))
       p.scheduledAt = Sched.slotTime(settings, dm, date: day, position: pos, platform: p.platform)
       if p.state == .due || p.state == .overdue { p.state = p.renderId == nil ? .planned : .rendered }

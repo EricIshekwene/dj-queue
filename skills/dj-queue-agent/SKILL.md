@@ -235,8 +235,9 @@ djq slot youtube 08:00              # set it and re-time; prints `djq bulk undo 
 ```
 
 Sets the slot (Settings → Schedule) and moves that platform's unposted future posts onto it, one undo. The publish step
-replaces what Postiz holds. Pinned posts, automatic retries, posts within 10 minutes of going out and posts whose new time
-has passed stay put, and the command lists each with why. Other platforms don't move. Only when Eric asks.
+replaces what Postiz holds. Pinned posts, automatic retries, posts within 30 minutes of going out and posts whose new time
+is that close or has passed stay put, and the command lists each with why. An automatic retry moves only when a post lands
+next to it. Other platforms don't move. Only when Eric asks.
 
 YouTube has a quiet window: nothing is scheduled from 02:00 up to 07:00 UTC, and a slot landing there goes at 07:30 UTC.
 Postiz's shared YouTube quota resets at 07:00 UTC and is usually gone by the afternoon (`docs/postiz.md` §5a), so a morning
