@@ -77,15 +77,22 @@ enum DSHoverProbe {
         await hoverWalk(page)
       }
       await exitCases(queueCards)
-      // The sample week fits a full window: a shorter one gives it something to scroll.
-      let full = w.frame
-      w.minSize = NSSize(width: 800, height: 300)
-      w.setFrame(NSRect(x: full.minX, y: full.minY, width: full.width, height: 440), display: true)
+      stackTwoClipsOnADay()
       await exitCases(week)
-      w.setFrame(full, display: true)
       await dragEnd(week)
       await largeViews()
       await park()
+    }
+
+    /// The sample week fits the window: two posts on one day (on the throwaway DB) give it something to scroll.
+    func stackTwoClipsOnADay() {
+      guard var st = try? model.store.settings() else { return }
+      st.postsPerDay = 2
+      try? model.store.save(st)
+      model.refreshNow()
+      let days = model.calendarDays.filter { $0 > model.todayKey && !model.calendarClips($0).isEmpty }
+      guard days.count >= 2, let c = model.calendarClips(days[1]).first else { return }
+      _ = model.calendarMove(slotId: c.slot.id, to: days[0])
     }
 
     /// One real proxy, shown for every clip: the rule is under test, not the proxy generator.
@@ -136,12 +143,15 @@ enum DSHoverProbe {
       await open(page)
       guard let (a, _) = await pickCards(page) else { return }
 
-      // Scrolling under a still pointer: no pointer move, so no hover event.
-      await hover(a)
-      if let scroller = scrollView(at: a.center), scrollBy(scroller, a.height + 24) {
+      // Scrolling under a still pointer: no pointer move, so no hover event. The pointer sits near the card's bottom
+      // edge, so a short scroll takes the card out from under it.
+      let nearEdge = CGPoint(x: a.center.x, y: a.rect.minY + 6)
+      await move(to: nearEdge)
+      _ = await until(2000) { [self] in state().only(in: a) }
+      if let scroller = scrollView(at: nearEdge), scrollBy(scroller, Self.scrollStep) {
         let done = await until(1500) { [self] in state().count(in: a) == 0 && !state().sound && state().live == 0 }
         check(done != nil, "scrolling under a still pointer stops it\(done.map { " after \($0) ms" } ?? "") (\(state().words))")
-        _ = scrollBy(scroller, -(a.height + 24))
+        _ = scrollBy(scroller, -Self.scrollStep)
         await settle(500)
       } else {
         say("  NOT DRIVEN scrolling: this page has nothing to scroll in the probe window")
@@ -240,7 +250,6 @@ enum DSHoverProbe {
 
     func move(to p: CGPoint) async {
       guardian.debugPointerMoved(to: p, in: w)
-      try? await Task.sleep(for: .milliseconds(80))
     }
 
     func hover(_ c: Card) async {
@@ -343,10 +352,12 @@ enum DSHoverProbe {
 
     // MARK: Real AppKit stand-ins
 
+    static let scrollStep: CGFloat = 30
+
     func scrollView(at p: CGPoint) -> NSScrollView? {
       var found: NSScrollView?
       func walk(_ v: NSView) {
-        if let s = v as? NSScrollView, let doc = s.documentView, doc.frame.height > s.contentView.bounds.height + 40,
+        if let s = v as? NSScrollView, let doc = s.documentView, doc.frame.height > s.contentView.bounds.height + Self.scrollStep,
            let win = s.window, win.convertToScreen(s.convert(s.bounds, to: nil)).contains(p) { found = s }
         v.subviews.forEach(walk)
       }
@@ -364,16 +375,25 @@ enum DSHoverProbe {
       return true
     }
 
-    /// Pops a real menu at `p` for 700 ms, reads the state while it's open, and moves the pointer first when `then`
-    /// is set (a menu takes every move, so no hover event goes with it).
+    /// Pops a real menu at `p`, reads the state while it's open, and moves the pointer first when `then` is set (a
+    /// menu takes every move, so no hover event goes with it). An inactive app's menu can be closed by anything on
+    /// the Mac, so a menu that closes before the read gets another try.
     func menu(at p: CGPoint, then: CGPoint?) async {
+      for _ in 0..<4 {
+        if let s = openMenu(at: p, then: then) {
+          check(s.nothing, "while a menu is open: zero players, zero audible (\(s.words))")
+          return
+        }
+        await settle(400)
+      }
+      say("  NOT DRIVEN menu: it kept closing before the read")
+    }
+
+    private func openMenu(at p: CGPoint, then: CGPoint?) -> State? {
       nonisolated(unsafe) let m = NSMenu()
       m.addItem(withTitle: "Hover probe", action: nil, keyEquivalent: "")
-      var began = false
       var whileOpen: State?
-      let obs = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: m, queue: nil) { _ in began = true }
-      defer { NotificationCenter.default.removeObserver(obs) }
-      let t = Timer(timeInterval: 0.7, repeats: false) { [weak self] _ in
+      let t = Timer(timeInterval: 0.3, repeats: false) { [weak self] _ in
         MainActor.assumeIsolated {
           whileOpen = self?.state()
           if let then { self?.guardian.simulatedPointer = then }
@@ -381,16 +401,12 @@ enum DSHoverProbe {
         }
       }
       RunLoop.main.add(t, forMode: .common)
+      defer { t.invalidate() }
       guard let e = NSEvent.mouseEvent(with: .rightMouseDown, location: w.convertPoint(fromScreen: p), modifierFlags: [],
                                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil,
-                                       eventNumber: 0, clickCount: 1, pressure: 1), let view = w.contentView else { return }
+                                       eventNumber: 0, clickCount: 1, pressure: 1), let view = w.contentView else { return nil }
       NSMenu.popUpContextMenu(m, with: e, for: view)
-      t.invalidate()
-      if began, let s = whileOpen {
-        check(s.nothing, "while a menu is open: zero players, zero audible (\(s.words))")
-      } else {
-        say("  NOT DRIVEN menu: \(began ? "something else closed it early" : "it did not open")")
-      }
+      return whileOpen
     }
 
     // MARK: Output
