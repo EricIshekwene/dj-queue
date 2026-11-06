@@ -59,6 +59,8 @@ States everywhere: default · hover · pressed · focused (accent ring) · disab
 | `DSSelect` / `DSSelectTrigger` | trigger (value + chevron) → native menu with check | outline / ghost, full width or hug, disabled reason | Select | Don't hand-roll popups |
 | `DSToggle` / `DSSwitch` | label + description ← → switch | on = accent, hover, disabled reason, sm | Switch | Use for settings that apply immediately |
 | `DSCheckbox` | box/circle + label + description | off/on/mixed, square/circle, onMedia, disabled reason | Checkbox | Circle = clip selection |
+| `DSColorSwatches` | preset circles · custom well | selected ring, disabled reason; each swatch has a tooltip | — | Colours are data, so they're the only raw colours in a screen |
+| `DSDisclosure` | title · summary or problem · chevron → content | `.section` / `.field`, whole row clickable, animated | Collapsible | One row for anything closed by default. A problem inside shows on the closed row |
 | `DSSlider` | label · value chip · track/knob | hover, focused (arrow keys), dragging, disabled reason; step, range, format | Slider | Always show the value |
 | `DSProgress` / `DSProgressRing` / `DSSpinner` | track + fill | value or indeterminate, tone | Progress | — |
 | `DSSkeleton` | pulsing rounded block | width/height/radius | Skeleton | Match the real layout's shapes |

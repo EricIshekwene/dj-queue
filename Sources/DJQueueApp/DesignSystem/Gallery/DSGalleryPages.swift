@@ -270,6 +270,14 @@ struct GalleryInputs: View {
             GState(true) { DSToggle("Autoplay clips", description: "Muted, from the 540×960 proxies", isOn: $0) }
             GState(false) { DSToggle("Unmute on hover", isOn: $0) }.dsForcedState(.hover)
             GState(false) { DSToggle("Post to X", isOn: $0, disabledReason: "Over 2:20 — trim for X first") }
+            GState(false) { DSDisclosure("Frame", summary: "9:16 · Crop confirmed", level: .section, isOpen: $0) { Text("What's inside").font(DS.type.callout) } }
+            GState(false) { DSDisclosure("Frame", summary: "9:16", attention: "Confirm the crop", level: .section, isOpen: $0) { Text("What's inside").font(DS.type.callout) } }
+            GState(false) { DSDisclosure("Advanced", summary: "2 more texts", isOpen: $0) { Text("What's inside").font(DS.type.callout) } }
+            GState(true) { DSDisclosure("Size and position", isOpen: $0) { Text("What's inside").font(DS.type.callout) } }
+            GState("#FF3B30") { hex in
+              DSColorSwatches(name: "text colour", swatches: [.init(hex: "#FFFFFF", name: "White"), .init(hex: "#000000", name: "Black"), .init(hex: "#FF3B30", name: "Red")],
+                              selection: hex.wrappedValue, onPick: { hex.wrappedValue = $0 }, onCustom: { hex.wrappedValue = $0 })
+            }
           }
           .frame(width: 300)
         }
