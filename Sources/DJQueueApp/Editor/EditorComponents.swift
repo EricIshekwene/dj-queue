@@ -27,6 +27,7 @@ struct EditorCustomTag: View {
           // Every reset goes through EditorModel, so ⌘Z (Undo in the header) brings the value back.
           DSIconButton("arrow.uturn.backward", tooltip: resetHelp, size: .sm, action: onReset)
             .scaleEffect(0.86)
+            .background(ScriptAnchor(resetHelp))
         }
       }
     }
@@ -82,6 +83,90 @@ struct EditorSectionView<Content: View, Accessory: View>: View {
     .padding(.horizontal, DS.space.md).padding(.vertical, DS.space.lg)
     .frame(maxWidth: .infinity, alignment: .leading)
     .id(section)
+  }
+}
+
+/// A section that starts closed: the title row is the shared `DSDisclosure`, with a summary of the current value, and a
+/// problem in the section shows on the closed row (S4-R1, S4-R2).
+struct EditorCollapsibleSection<Content: View>: View {
+  var section: EditorSection
+  var disclosure: EditorDisclosure
+  var summary: String
+  @ObservedObject var model: EditorModel
+  @ObservedObject private var open = EditorDisclosures.shared
+  @ViewBuilder var content: Content
+
+  init(_ section: EditorSection, disclosure: EditorDisclosure, summary: String, model: EditorModel, @ViewBuilder content: () -> Content) {
+    self.section = section
+    self.disclosure = disclosure
+    self.summary = summary
+    self.model = model
+    self.content = content()
+  }
+
+  var body: some View {
+    DSDisclosure(section.rawValue, summary: summary, attention: problem, level: .section, isOpen: open.binding(disclosure)) {
+      content.disabled(model.fieldsOff)
+    }
+      .padding(.horizontal, DS.space.md).padding(.vertical, open.isOpen(disclosure) ? DS.space.lg : DS.space.sm)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .id(section)
+  }
+
+  private var problem: String? { model.liveIssues.first { EditorModel.section(for: $0.kind) == section }?.message }
+}
+
+/// Takes the mouse in AppKit for what's dragged in the editor (text bars, their grips, text on the canvas): SwiftUI gestures
+/// don't see events sent to the window, so the scripted runs could never reach them (the Crop dialog's surface has the same
+/// reason). Translation is from the press. It hands the mouse back while the view around it is disabled.
+struct EditorDragSurface: NSViewRepresentable {
+  var cursor: NSCursor
+  /// Past this many points a press counts as a drag.
+  var slop: CGFloat = 1
+  var onPress: () -> Void = {}
+  var onDrag: (CGSize) -> Void
+  /// `moved` = it went past `slop`; false is a click.
+  var onRelease: (Bool) -> Void
+
+  final class Surface: NSView {
+    var parts = EditorDragSurface(cursor: .arrow, onDrag: { _ in }, onRelease: { _ in })
+    var enabled = true
+    private var start: NSPoint?
+    private var moved = false
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { enabled ? super.hitTest(point) : nil }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: parts.cursor) }
+
+    override func mouseDown(with event: NSEvent) {
+      start = event.locationInWindow
+      moved = false
+      parts.onPress()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+      guard let start else { return }
+      let d = CGSize(width: event.locationInWindow.x - start.x, height: start.y - event.locationInWindow.y)
+      if !moved, abs(d.width) < parts.slop, abs(d.height) < parts.slop { return }
+      moved = true
+      parts.onDrag(d)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+      guard start != nil else { return }
+      start = nil
+      parts.onRelease(moved)
+    }
+  }
+
+  func makeNSView(context: Context) -> Surface { Surface() }
+
+  func updateNSView(_ v: Surface, context: Context) {
+    let cursorChanged = v.parts.cursor !== cursor
+    v.parts = self
+    v.enabled = context.environment.isEnabled
+    if cursorChanged { v.window?.invalidateCursorRects(for: v) }
   }
 }
 

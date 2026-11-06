@@ -157,9 +157,9 @@ public enum Media {
 
   /// Cached JPG in `paths.thumbs`: the clip's cover as it will post (S6). Uses the edit's crop if set, else the
   /// default crop of the edit's aspect; default time = the resolved cover frame (Edit › Cover, else New-clip
-  /// defaults). When "cover includes text" is on and text `version` has text, the overlay is composited exactly
-  /// like the renderer's cover (`coverComposite`). Cache key covers video id, crop, aspect, time, size, text and
-  /// cover-includes-text.
+  /// defaults). When "cover includes text" is on, the texts at that frame (`PreviewKeys.coverLayers`) are composited
+  /// exactly like the renderer's cover (`coverComposite`). Cache key covers video id, crop, aspect, time, size, those
+  /// texts and cover-includes-text.
   public static func thumbnail(store: Store, video: Video, at seconds: Double? = nil, maxHeight: Int = 320,
                                version: Int = 1) -> URL? {
     guard let src = try? store.fileURL(for: video), FileManager.default.fileExists(atPath: src.path) else { return nil }
@@ -174,7 +174,9 @@ public enum Media {
       ?? "default-\(anchor.rawValue)\(lastUsed.map { String(format: "-%.4f,%.4f", $0.x, $0.y) } ?? "")"
     let text = edit.coverIncludesText
       ? (try? store.resolvedVersion(videoId: video.id, number: version, settings: settings)) ?? nil : nil
-    let textKey = edit.coverIncludesText ? "t1-" + PreviewKeys.textKey(text, aspect: edit.aspect) : "t0"
+    let trim = edit.trim()
+    let layers = PreviewKeys.coverLayers(text, offset: t - trim.start, trimDuration: trim.duration)
+    let textKey = edit.coverIncludesText ? "t1-" + PreviewKeys.coverKey(layers, aspect: edit.aspect) : "t0"
     let key = "\(video.id)|\(cropKey)|\(edit.aspect.rawValue)|\(String(format: "%.3f", t))|\(maxHeight)|\(video.fingerprint ?? "")|\(textKey)"
     // The cover (no explicit time) is named per clip, version and size, so older covers of the same slot can be pruned.
     let slot = seconds == nil ? "\(video.id)-c\(version)h\(maxHeight)-" : "\(video.id)-t-"
@@ -187,7 +189,7 @@ public enum Media {
     let crop = raw.crop ?? settings.defaults.defaultCrop(
       source: CGSize(width: frame.width, height: frame.height), aspect: edit.aspect, lastUsed: lastUsed)
     guard let img = coverComposite(frame, crop: crop, aspect: edit.aspect, size: CGSize(width: w, height: h),
-                                   text: text, includesText: edit.coverIncludesText) else { return nil }
+                                   layers: layers) else { return nil }
     do {
       try FileManager.default.createDirectory(at: store.paths.thumbs, withIntermediateDirectories: true)
       try writeJPEG(img, to: url, quality: 0.8)
@@ -219,6 +221,12 @@ public enum Media {
                                     text: ResolvedVersion?, includesText: Bool) -> CGImage? {
     let overlay = includesText ? text.flatMap { TextOverlay.image(for: $0, aspect: aspect) } : nil
     return compose(frame, crop: crop, aspect: aspect, size: size, overlay: overlay)
+  }
+
+  /// The same with the texts already picked for this frame (`PreviewKeys.coverLayers`; empty = no text on the cover).
+  public static func coverComposite(_ frame: CGImage, crop: CropRect?, aspect: Aspect, size: CGSize,
+                                    layers: [TextLayer]) -> CGImage? {
+    compose(frame, crop: crop, aspect: aspect, size: size, overlay: TextOverlay.image(for: layers, aspect: aspect))
   }
 
   public static func writeJPEG(_ img: CGImage, to url: URL, quality: Double = 0.9) throws {

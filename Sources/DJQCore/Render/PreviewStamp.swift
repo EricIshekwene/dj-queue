@@ -74,12 +74,35 @@ public enum PreviewKeys {
   }
 
   /// Identity of the on-video text as drawn (`TextOverlay.image`): text, style, size, position, alignment and the
-  /// output aspect. "none" when there is no text. Timing is not part of it (it never changes the pixels).
+  /// output aspect. "none" when there is no text. Timing is not part of it for one text (it never changes the pixels).
+  /// A clip with more texts or a custom look keys all of them, windows included, because they decide what shows when.
   public static func textKey(_ v: ResolvedVersion?, aspect: Aspect) -> String {
-    guard let v, v.hasText else { return "none" }
-    let raw = [v.text, v.style.rawValue, String(format: "%.3f", v.size), String(format: "%.4f", v.posX),
-               String(format: "%.4f", v.posY), v.align.rawValue, aspect.rawValue].joined(separator: "\u{1F}")
-    return short(raw)
+    guard let v else { return "none" }
+    let drawn = v.layers
+    guard let first = drawn.first else { return "none" }
+    if drawn.count == 1, first.id == TextLayer.firstId { return layerKey(first, aspect: aspect) }
+    return short(drawn.map { l in
+      [layerRaw(l, aspect: aspect), l.start.map { String(format: "%.3f", $0) } ?? "-", l.end.map { String(format: "%.3f", $0) } ?? "-"]
+        .joined(separator: "\u{1F}")
+    }.joined(separator: "\u{1E}"))
+  }
+
+  /// Identity of one text's pixels (`TextOverlay.image(for: layer, aspect:)`), for overlay caches. Timing is not part of
+  /// it. For a first text with no look this equals `textKey`.
+  public static func layerKey(_ l: TextLayer, aspect: Aspect) -> String { short(layerRaw(l, aspect: aspect)) }
+
+  private static func layerRaw(_ l: TextLayer, aspect: Aspect) -> String {
+    var parts = [l.text, l.style.rawValue, String(format: "%.3f", l.size), String(format: "%.4f", l.posX),
+                 String(format: "%.4f", l.posY), l.align.rawValue, aspect.rawValue]
+    if let look = l.look?.normalized { parts.append(JSONCoding.string(look)) }
+    return parts.joined(separator: "\u{1F}")
+  }
+
+  /// Identity of a cover's text: what `coverLayers` picked, in order. "none" when it picked nothing.
+  public static func coverKey(_ layers: [TextLayer], aspect: Aspect) -> String {
+    guard let first = layers.first else { return "none" }
+    return layers.count == 1 ? layerKey(first, aspect: aspect)
+      : short(layers.map { layerKey($0, aspect: aspect) }.joined(separator: "|"))
   }
 
   /// When the text shows, in seconds from the start of the posted clip (the trim) — the renderer's rule:
@@ -90,6 +113,28 @@ public enum PreviewKeys {
     var te = min(dur + 1, v.textEnd ?? (dur + 1))
     if te <= ts || ts >= dur { ts = 0; te = dur + 1 }
     return ts...te
+  }
+
+  /// Every drawn text with when it shows in a trim of `dur` seconds, in stacking order: the one rule the renderer and
+  /// every preview share (S1-R5). The first text follows `textWindow`. Another text starting at or past the end of the
+  /// trim, or with an inverted window, isn't drawn in that trim (per-platform trims), and its end is clamped.
+  public static func layerWindows(_ v: ResolvedVersion?, trimDuration dur: Double) -> [(layer: TextLayer, window: ClosedRange<Double>)] {
+    guard let v, dur > 0 else { return [] }
+    return v.layers.compactMap { l in
+      if l.id == TextLayer.firstId { return textWindow(v, trimDuration: dur).map { (l, $0) } }
+      let ts = max(0, l.start ?? 0)
+      let te = min(dur + 1, l.end ?? (dur + 1))
+      return ts >= dur || te <= ts ? nil : (l, ts...te)
+    }
+  }
+
+  /// The texts on a cover `offset` seconds after the trim start: the ones showing at that frame, else the first text
+  /// (S1-R6, so one text looks as it always has, whatever its window).
+  public static func coverLayers(_ v: ResolvedVersion?, offset: Double, trimDuration dur: Double) -> [TextLayer] {
+    guard let v else { return [] }
+    let showing = layerWindows(v, trimDuration: dur).filter { $0.window.contains(offset) }.map(\.layer)
+    if !showing.isEmpty { return showing }
+    return v.hasText ? [v.firstLayer] : []
   }
 }
 

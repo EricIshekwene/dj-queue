@@ -384,6 +384,11 @@ public struct Version: Codable, Sendable, Hashable {
   public var align: TextAlign?
   public var textStart: Double?  // seconds relative to trim start
   public var textEnd: Double?
+  /// Round 16: every text after the first, carried forward as one list (nil inherits, [] = explicitly none).
+  /// The first text stays in the fields above.
+  public var moreText: [TextLayer]?
+  /// Round 16: the first text's look, carried forward (nil inherits, an empty look = back to the default).
+  public var textLook: TextLook?
   public var caption: String?
   public var captionTemplateId: String?
   public var hashtagSetIds: [String]?
@@ -420,6 +425,10 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
   /// The YouTube title template text this version uses (chosen, else the default one). nil only on hand-built values;
   /// `Captions.youtubeTitle` then uses the template it is given.
   public var youtubeTitleTemplate: String? = nil
+  /// Round 16: every text after the first (see `layers`). Encoded only when non-empty.
+  public var moreText: [TextLayer] = []
+  /// Round 16: the first text's look, normalised (nil = today's look). Encoded only when set.
+  public var textLook: TextLook? = nil
   /// Field names that came from an earlier version (shown faded in the editor).
   public var inherited: Set<String>
   /// Field names (Version property names) that no version set, so they come from `Settings.defaults`
@@ -434,7 +443,7 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
   enum CodingKeys: String, CodingKey {
     case number, text, noText, style, size, posX, posY, align, textStart, textEnd, caption, captionTemplateId,
          hashtagSetIds, extraHashtags, youtubeTitle, platformCaptions, inherited, defaulted, youtubeTitleTemplateId,
-         youtubeTitleTemplate
+         youtubeTitleTemplate, moreText, textLook
   }
 
   /// Deterministic JSON (sets sorted), so hashes/snapshots of a resolved version are stable.
@@ -451,6 +460,8 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
     try c.encode(inherited.sorted(), forKey: .inherited); try c.encode(defaulted.sorted(), forKey: .defaulted)
     try c.encodeIfPresent(youtubeTitleTemplateId, forKey: .youtubeTitleTemplateId)
     try c.encodeIfPresent(youtubeTitleTemplate, forKey: .youtubeTitleTemplate)
+    if !moreText.isEmpty { try c.encode(moreText, forKey: .moreText) }
+    try c.encodeIfPresent(textLook, forKey: .textLook)
   }
 
   public init(from dec: Decoder) throws {
@@ -476,6 +487,8 @@ public struct ResolvedVersion: Sendable, Hashable, Codable {
     defaulted = try c.decodeIfPresent(Set<String>.self, forKey: .defaulted) ?? []
     youtubeTitleTemplateId = try c.decodeIfPresent(String.self, forKey: .youtubeTitleTemplateId)
     youtubeTitleTemplate = try c.decodeIfPresent(String.self, forKey: .youtubeTitleTemplate)
+    moreText = ((try? c.decodeIfPresent([TextLayer].self, forKey: .moreText)) ?? nil) ?? []
+    textLook = (try? c.decodeIfPresent(TextLook.self, forKey: .textLook)) ?? nil
   }
 
   public init(number: Int, text: String, noText: Bool, style: TextStyle, size: Double, posX: Double, posY: Double,

@@ -162,6 +162,7 @@ struct EditorHeader: View {
         DSIconButton("chevron.right", tooltip: "Save and open the next clip", size: .sm, shortcut: "⌘]",
                      disabledReason: (index ?? videoIds.count) >= videoIds.count - 1 ? "This is the last clip in the list" : nil) { go(1) }
           .keyboardShortcut("]", modifiers: .command)
+          .background(ScriptAnchor("Next clip"))
         if let i = index, videoIds.count > 1 {
           Text("\(i + 1) of \(videoIds.count)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
             .padding(.leading, 2)
@@ -197,8 +198,10 @@ struct EditorHeader: View {
     return HStack(spacing: 0) {
       DSIconButton("arrow.uturn.backward", tooltip: "Undo the last change", size: .sm, shortcut: "⌘Z",
                    disabledReason: off ?? (model.canUndo ? nil : "Nothing to undo yet")) { model.undo() }
+        .background(ScriptAnchor("Undo"))
       DSIconButton("arrow.uturn.forward", tooltip: "Redo the change you undid", size: .sm, shortcut: "⇧⌘Z",
                    disabledReason: off ?? (model.canRedo ? nil : "Nothing to redo")) { model.redo() }
+        .background(ScriptAnchor("Redo"))
     }
   }
 
@@ -281,6 +284,7 @@ struct EditorHeader: View {
       }
       .buttonStyle(EditorPressStyle())
       .dsTooltip(chipHelp(issues, target: target, held: held))
+      .background(ScriptAnchor("To fix"))
     }
   }
 }

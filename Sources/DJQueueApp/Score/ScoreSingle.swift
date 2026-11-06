@@ -102,7 +102,7 @@ struct ScoreSingleView: View {
     let p = model.clipPreview(v)
     return DSVideoPreview(url: p.proxyURL, poster: p.cover, isActive: pb.autoplay, isPriority: true,
                           loopRange: p.loopRange, unmuteOnHover: pb.hoverSound, showsMuteButton: true, muteAlignment: .topTrailing,
-                          showsScrubber: true, cornerRadius: DS.radius.xl, overlay: p.overlay, textWindow: p.textWindow,
+                          showsScrubber: true, cornerRadius: DS.radius.xl, overlays: p.overlays,
                           isUpdating: p.isUpdating, needsOverlay: p.overlayMissing,
                           onNeedsOverlay: { model.reloadOverlay(v.id, version: p.version) })
       .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.xl, style: .continuous))

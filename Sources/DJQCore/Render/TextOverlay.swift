@@ -16,6 +16,10 @@ import UniformTypeIdentifiers
 /// - `.box`: white rounded box behind each line, boxes stacked so they touch and merge (TikTok style).
 /// - `.outline`: white heavy text, black outline outside the glyphs (emoji are not outlined).
 /// - `.shadow`: white bold text with a soft shadow.
+///
+/// Round 16: a clip can have several texts. Each `TextLayer` is drawn on its own, and a `TextLook` changes the colours,
+/// font, spacing and opacity through this same path; with no look the pixels are exactly the ones above. The
+/// `ResolvedVersion` variants mean the first text.
 public enum TextOverlay {
   /// Width of the text block relative to the frame width.
   public static let maxBlockWidthFraction: CGFloat = 0.82
@@ -24,8 +28,31 @@ public enum TextOverlay {
 
   /// Transparent RGBA image at `aspect.outputSize`, or nil when the version has no text.
   public static func image(for v: ResolvedVersion, aspect: Aspect) -> CGImage? {
-    guard let layout = Layout(v, aspect: aspect) else { return nil }
-    return layout.draw()
+    guard v.hasText else { return nil }
+    return image(for: v.firstLayer, aspect: aspect)
+  }
+
+  /// One text on a transparent RGBA image at `aspect.outputSize`, or nil when it is blank.
+  public static func image(for layer: TextLayer, aspect: Aspect) -> CGImage? {
+    Layout(layer, aspect: aspect)?.draw()
+  }
+
+  /// `layers` stacked in order on one image; nil when none draws anything. One layer is exactly `image(for:aspect:)`.
+  public static func image(for layers: [TextLayer], aspect: Aspect) -> CGImage? {
+    let images = layers.compactMap { image(for: $0, aspect: aspect) }
+    guard images.count > 1 else { return images.first }
+    let (w, h) = aspect.outputSize
+    guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
+          let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: cs,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return nil }
+    for img in images { ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h)) }
+    return ctx.makeImage()
+  }
+
+  /// `image(for: layer, aspect:)` scaled to at most `maxWidth` wide, for list previews.
+  public static func image(for layer: TextLayer, aspect: Aspect, maxWidth: Int) -> CGImage? {
+    image(for: layer, aspect: aspect).flatMap { scaled($0, maxWidth: maxWidth) }
   }
 
   /// `image(for:aspect:)` scaled down to at most `maxWidth` pixels wide (aspect kept, high-quality interpolation) —
@@ -54,10 +81,25 @@ public enum TextOverlay {
     return pngData(img)
   }
 
+  /// PNG bytes of one text.
+  public static func png(for layer: TextLayer, aspect: Aspect) -> Data? {
+    image(for: layer, aspect: aspect).flatMap(pngData)
+  }
+
   /// Writes the PNG to `url`. Returns false (and writes nothing) when the version has no text.
   @discardableResult
   public static func write(for v: ResolvedVersion, aspect: Aspect, to url: URL) throws -> Bool {
-    guard let data = png(for: v, aspect: aspect) else { return false }
+    try write(png(for: v, aspect: aspect), to: url)
+  }
+
+  /// Writes one text's PNG to `url`. Returns false (and writes nothing) when it is blank.
+  @discardableResult
+  public static func write(for layer: TextLayer, aspect: Aspect, to url: URL) throws -> Bool {
+    try write(png(for: layer, aspect: aspect), to: url)
+  }
+
+  private static func write(_ data: Data?, to url: URL) throws -> Bool {
+    guard let data else { return false }
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     try data.write(to: url, options: .atomic)
     return true
@@ -66,7 +108,35 @@ public enum TextOverlay {
   /// The text block (box union / outlined text) in output pixels with a top-left origin,
   /// for hit-testing drags in the editor. Nil when the version has no text.
   public static func textBounds(for v: ResolvedVersion, aspect: Aspect) -> CGRect? {
-    Layout(v, aspect: aspect)?.blockTL
+    v.hasText ? textBounds(for: v.firstLayer, aspect: aspect) : nil
+  }
+
+  /// One text's block in output pixels with a top-left origin, for hit-testing. Nil when it is blank.
+  public static func textBounds(for layer: TextLayer, aspect: Aspect) -> CGRect? {
+    Layout(layer, aspect: aspect)?.blockTL
+  }
+
+  /// The font a layer draws with: the look's font, the system font when it has none or this Mac doesn't have it.
+  static func font(_ f: TextFont?, size: CGFloat, weight: NSFont.Weight) -> CTFont {
+    let system = NSFont.systemFont(ofSize: size, weight: weight)
+    switch f {
+    case nil, .standard: return system as CTFont
+    case .rounded: return designed(system, .rounded, size) as CTFont
+    case .serif: return designed(system, .serif, size) as CTFont
+    case .mono: return NSFont.monospacedSystemFont(ofSize: size, weight: weight) as CTFont
+    case let named?: return (font(named: named.postScriptName, size: size) ?? system) as CTFont
+    }
+  }
+
+  /// nil when this Mac doesn't have the face.
+  static func font(named name: String?, size: CGFloat) -> NSFont? { name.flatMap { NSFont(name: $0, size: size) } }
+
+  private static func designed(_ f: NSFont, _ design: NSFontDescriptor.SystemDesign, _ size: CGFloat) -> NSFont {
+    f.fontDescriptor.withDesign(design).flatMap { NSFont(descriptor: $0, size: size) } ?? f
+  }
+
+  private static func cgColor(_ hex: String?, alpha: CGFloat = 1) -> CGColor? {
+    TextLook.rgb(hex).map { CGColor(srgbRed: $0.r, green: $0.g, blue: $0.b, alpha: alpha) }
   }
 
   /// PNG encoding without metadata (ImageIO writes no timestamps for PNG).
@@ -100,16 +170,18 @@ public enum TextOverlay {
     let outlineWidth: CGFloat
     let blockTL: CGRect  // block rect, top-left origin
     let contentWidth: CGFloat  // widest line box (block width)
+    let look: TextLook?  // normalised; nil = the plain style
 
-    init?(_ v: ResolvedVersion, aspect: Aspect) {
-      guard v.hasText else { return nil }
+    init?(_ v: TextLayer, aspect: Aspect) {
+      guard !v.isBlank else { return nil }
       let (w, h) = aspect.outputSize
       W = CGFloat(w); H = CGFloat(h)
       style = v.style
       align = v.align
       size = CGFloat(min(max(v.size, 8), 400))
+      look = v.look?.normalized
       let weight: NSFont.Weight = style == .shadow ? .bold : .heavy
-      font = NSFont.systemFont(ofSize: size, weight: weight) as CTFont
+      font = TextOverlay.font(look?.font, size: size, weight: weight)
 
       let ascent = CTFontGetAscent(font), descent = CTFontGetDescent(font), cap = CTFontGetCapHeight(font)
       switch style {
@@ -139,9 +211,14 @@ public enum TextOverlay {
       let maxBlock = W * TextOverlay.maxBlockWidthFraction
       let maxText = max(size, maxBlock - 2 * padX - 2 * outlineWidth)
       // Glyph colour comes from the context fill colour (emoji keep their own colours).
-      let attrs: [NSAttributedString.Key: Any] = [
+      var attrs: [NSAttributedString.Key: Any] = [
         .font: font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
       ]
+      var kern: CGFloat = 0
+      if let t = look?.tracking {
+        kern = CGFloat(t) * size
+        attrs[NSAttributedString.Key(kCTKernAttributeName as String)] = kern
+      }
       var out: [Line] = []
       let paragraphs = v.text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
       // Drop leading/trailing blank lines; keep inner blank lines as gaps.
@@ -160,7 +237,8 @@ public enum TextOverlay {
           let line = CTTypesetterCreateLine(ts, CFRange(location: start, length: count))
           let full = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
           let trailing = CGFloat(CTLineGetTrailingWhitespaceWidth(line))
-          out.append(Line(ctLine: line, width: max(0, full - trailing).rounded(.up)))
+          // The last letter's spacing is empty air: left in, it would push the text off centre.
+          out.append(Line(ctLine: line, width: max(0, full - trailing - kern).rounded(.up)))
           start += count
         }
       }
@@ -208,38 +286,47 @@ public enum TextOverlay {
 
       let white = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
       let black = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
+      let textColor = TextOverlay.cgColor(look?.color)
+      let accent = TextOverlay.cgColor(look?.accent)
       // Top-left → Core Graphics (bottom-left) transform.
       let flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: H)
+
+      // Opacity fades the text as one piece, so a box or outline doesn't show through the glyphs on top of it.
+      if let o = look?.opacity {
+        ctx.setAlpha(CGFloat(o))
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+      }
 
       switch style {
       case .box:
         let path = CGMutablePath()
         for group in boxGroups() { path.addPath(roundedPolygon(group, r: radius), transform: flip) }
-        ctx.setFillColor(white)
+        ctx.setFillColor(accent ?? white)
         ctx.addPath(path)
         ctx.fillPath()
-        drawText(ctx, color: black)
+        drawText(ctx, color: textColor ?? black)
       case .outline:
         let glyphs = glyphOutlines()
         ctx.saveGState()
-        ctx.setStrokeColor(black)
+        ctx.setStrokeColor(accent ?? black)
         ctx.setLineWidth(outlineWidth * 2)
         ctx.setLineJoin(.round)
         ctx.setLineCap(.round)
         ctx.addPath(glyphs)
         ctx.strokePath()
         ctx.addPath(glyphs)  // also fill the inside black so thin counters never show video through AA seams
-        ctx.setFillColor(black)
+        ctx.setFillColor(accent ?? black)
         ctx.fillPath()
         ctx.restoreGState()
-        drawText(ctx, color: white)
+        drawText(ctx, color: textColor ?? white)
       case .shadow:
         ctx.saveGState()
         ctx.setShadow(offset: CGSize(width: 0, height: -(size * 0.06).rounded()), blur: (size * 0.28).rounded(),
-                      color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.75))
-        drawText(ctx, color: white)
+                      color: TextOverlay.cgColor(look?.accent, alpha: 0.75) ?? CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.75))
+        drawText(ctx, color: textColor ?? white)
         ctx.restoreGState()
       }
+      if look?.opacity != nil { ctx.endTransparencyLayer() }
       return ctx.makeImage()
     }
 

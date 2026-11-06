@@ -82,7 +82,7 @@ public enum Validation {
     }
     let re = EditResolver.resolve(edit, video: v, defaults: settings.defaults)
     if edit.crop == nil { out.append(.init(kind: .noCrop, platform: nil, message: "Confirm the crop")) }
-    if !r.hasText && !r.noText {
+    if !r.hasDrawnText && !r.noText {
       out.append(.init(kind: .noText, platform: nil,
                        message: v.titleText == nil && r.isDefault("text") ? "Add text (no title yet)" : "Add text or choose No text"))
     }

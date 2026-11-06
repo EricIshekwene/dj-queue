@@ -895,6 +895,18 @@ public enum VersionResolver {
     let yt = pick("youtubeTitleTemplateId", \.youtubeTitleTemplateId)
     r.youtubeTitleTemplateId = yt
     r.youtubeTitleTemplate = settings.youtubeTitleTemplate(id: yt)
+    // Round 16: carried like the rest, but a clip without them leaves `defaulted` and the resolved JSON as they were.
+    func carried<T>(_ key: String, _ kp: KeyPath<Version, T?>) -> T? {
+      guard let v = chain.last(where: { $0[keyPath: kp] != nil }) else { return nil }
+      if v.number != number { inherited.insert(key) }
+      return v[keyPath: kp]
+    }
+    r.moreText = (carried("moreText", \.moreText) ?? []).map { l in
+      var l = l
+      l.look = l.look?.normalized
+      return l
+    }
+    r.textLook = carried("textLook", \.textLook)?.normalized
     r.inherited = inherited
     r.defaulted = defaulted
     return r

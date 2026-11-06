@@ -39,15 +39,13 @@ struct DSClip: Identifiable {
   var proxyURL: URL? = nil
   /// Part of the proxy that loops (nil = the whole proxy).
   var loopRange: ClosedRange<Double>? = nil
-  /// On-video text drawn over the playing proxy during `textWindow` (S6: the clip as it will post).
-  var overlay: CGImage? = nil
-  /// When `overlay` shows, in seconds of the proxy's timeline.
-  var textWindow: ClosedRange<Double>? = nil
+  /// On-video texts drawn over the playing proxy, each during its window (S6: the clip as it will post).
+  var overlays: [DSTimedOverlay] = []
   /// The edit changed and its new proxy is being made: the (new) poster shows with a quiet "Updating preview".
   var isUpdatingPreview = false
   /// `AppModel.previewStamp` of what this card shows. Key preview tasks on it (`.task(id: clip.previewStamp)`).
   var previewStamp = ""
-  /// Text exists but its overlay image was evicted; `reloadOverlay` draws it again (called only while playing).
+  /// Text exists but an overlay image was evicted; `reloadOverlay` draws it again (called only while playing).
   var overlayMissing = false
   var reloadOverlay: (() -> Void)? = nil
   /// "0:42".
@@ -174,7 +172,7 @@ struct DSClipCard<Actions: View>: View {
     DSVideoPreview(url: clip.isMissing ? nil : clip.proxyURL, poster: clip.poster, isActive: active, isPriority: isFocused,
                    loopRange: clip.loopRange, unmuteOnHover: config.unmuteOnHover, isHovered: playHot, showsMuteButton: mute,
                    muteAlignment: muteAlignment, showsScrubber: scrubber, cornerRadius: radius,
-                   overlay: clip.overlay, textWindow: clip.textWindow, isUpdating: clip.isUpdatingPreview && !clip.isMissing,
+                   overlays: clip.overlays, isUpdating: clip.isUpdatingPreview && !clip.isMissing,
                    updatingStyle: updating, needsOverlay: clip.overlayMissing, onNeedsOverlay: clip.reloadOverlay)
       .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.color.border) }
   }

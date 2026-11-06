@@ -9,8 +9,8 @@ public struct RenderError: Error, LocalizedError, CustomStringConvertible {
   public var description: String { message }
 }
 
-/// Final-file renderer (spec §7): trim → crop (source px) → scale (lanczos) → TextOverlay PNG
-/// (`enable=between(t,…)`) → two-pass EBU R128 loudnorm → h264_videotoolbox / AAC → +faststart,
+/// Final-file renderer (spec §7): trim → crop (source px) → scale (lanczos) → one TextOverlay PNG per text
+/// (`enable=between(t,…)`, chained in list order) → two-pass EBU R128 loudnorm → h264_videotoolbox / AAC → +faststart,
 /// validated with ffprobe; plus a cover JPG. One render per (video, version, editHash, scope).
 public final class Renderer: RenderService, @unchecked Sendable {
   public let store: Store
@@ -269,6 +269,13 @@ public final class Renderer: RenderService, @unchecked Sendable {
     struct Text: Codable {
       var text: String, style: String, size: Double, posX: Double, posY: Double, align: String
       var textStart: Double?, textEnd: Double?
+      /// nil (and absent from the JSON) for today's look, so an existing hash can't change.
+      var look: TextLook? = nil
+
+      init(_ l: TextLayer) {
+        text = l.text; style = l.style.rawValue; size = l.size; posX = l.posX; posY = l.posY; align = l.align.rawValue
+        textStart = l.start; textEnd = l.end; look = l.look?.normalized
+      }
     }
     var pipeline: String
     var source: String  // content fingerprint (rename-proof)
@@ -278,6 +285,8 @@ public final class Renderer: RenderService, @unchecked Sendable {
     var coverTime: Double?
     var coverIncludesText: Bool
     var text: Text?
+    /// Every drawn text after the first. nil (and absent from the JSON) when there are none, same reason as `look`.
+    var moreText: [Text]? = nil
     var loudnessTarget: Double, truePeak: Double, lra: Double
     var videoBitrateKbps: Int
   }
@@ -301,15 +310,13 @@ public final class Renderer: RenderService, @unchecked Sendable {
       if let p = scopePlatform { return limit(p) }
       return settings.activePlatforms.compactMap(limit).min()
     }()
-    let text: HashInput.Text? = version.hasText
-      ? .init(text: version.text, style: version.style.rawValue, size: version.size, posX: version.posX,
-              posY: version.posY, align: version.align.rawValue, textStart: version.textStart, textEnd: version.textEnd)
-      : nil
+    let text: HashInput.Text? = version.hasText ? .init(version.firstLayer) : nil
+    let more = version.layers.filter { $0.id != TextLayer.firstId }.map(HashInput.Text.init)
     let input = HashInput(pipeline: Self.pipelineVersion, source: video.fingerprint ?? video.file,
                           aspect: edit.aspect.rawValue, crop: edit.crop, trimStart: trim.start, trimEnd: trim.end,
-                          coverTime: edit.coverTime, coverIncludesText: edit.coverIncludesText && text != nil,
-                          text: text, loudnessTarget: settings.loudnessTarget, truePeak: settings.truePeak,
-                          lra: settings.lra, videoBitrateKbps: settings.videoBitrateKbps)
+                          coverTime: edit.coverTime, coverIncludesText: edit.coverIncludesText && version.hasDrawnText,
+                          text: text, moreText: more.isEmpty ? nil : more, loudnessTarget: settings.loudnessTarget,
+                          truePeak: settings.truePeak, lra: settings.lra, videoBitrateKbps: settings.videoBitrateKbps)
     let data = try JSONCoding.encoder.encode(input)
     let hash = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
     return Plan(video: video, edit: edit, version: version, settings: settings, scope: scope,
@@ -351,6 +358,25 @@ public final class Renderer: RenderService, @unchecked Sendable {
 
   private static func f(_ d: Double) -> String { String(format: "%.3f", d) }
 
+  /// Appended to the picture chain: PNG input `i + 1` over it during `windows[i]`, each over the last, so overlaps stack
+  /// in list order. Empty with no texts. The chain ends without an output label, and with one text this is the graph
+  /// every earlier render used.
+  static func overlayGraph(_ windows: [ClosedRange<Double>]) -> String {
+    guard !windows.isEmpty else { return "" }
+    var inputs = "", chain = "", below = "bg"
+    for (i, w) in windows.enumerated() {
+      let ov = i == 0 ? "ov" : "ov\(i)"
+      inputs += "[\(i + 1):v]format=rgba,scale=out_color_matrix=bt709:out_range=tv,format=yuva420p[\(ov)];"
+      chain += "[\(below)][\(ov)]overlay=0:0:format=yuv420:eof_action=repeat"
+        + ":enable='between(t,\(f(w.lowerBound)),\(f(w.upperBound)))'"
+      if i < windows.count - 1 {
+        below = "o\(i)"
+        chain += "[\(below)];"
+      }
+    }
+    return "[bg];" + inputs + chain
+  }
+
   func perform(_ p: Plan, renderId: String, startKbps: Int? = nil) throws -> Output {
     let ffmpeg = try Self.tool(Tools.ffmpeg, "ffmpeg")
     guard let src = try store.fileURL(for: p.video), FileManager.default.fileExists(atPath: src.path) else {
@@ -372,13 +398,20 @@ public final class Renderer: RenderService, @unchecked Sendable {
     let work = store.paths.work
     try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
     let tmpBase = "\(renderId)-\(getpid())"  // unique per render and process
-    let overlayURL = work.appendingPathComponent("\(tmpBase).overlay.png")
+    // One PNG per text showing in this trim, stacked in list order (the one window rule, shared with every preview).
+    let shown = PreviewKeys.layerWindows(p.version, trimDuration: dur)
+    let overlayURLs = shown.indices.map { work.appendingPathComponent("\(tmpBase).overlay\($0).png") }
+    let coverOverlayURL = work.appendingPathComponent("\(tmpBase).cover-overlay.png")
     let tmpVideo = work.appendingPathComponent("\(tmpBase).mp4")
     let tmpCover = work.appendingPathComponent("\(tmpBase).jpg")
     defer {
-      for u in [overlayURL, tmpVideo, tmpCover] { try? FileManager.default.removeItem(at: u) }
+      for u in overlayURLs + [coverOverlayURL, tmpVideo, tmpCover] { try? FileManager.default.removeItem(at: u) }
     }
-    let hasText = try TextOverlay.write(for: p.version, aspect: p.edit.aspect, to: overlayURL)
+    var inputs: [URL] = [], windows: [ClosedRange<Double>] = []
+    for (i, s) in shown.enumerated() where try TextOverlay.write(for: s.layer, aspect: p.edit.aspect, to: overlayURLs[i]) {
+      inputs.append(overlayURLs[i])
+      windows.append(s.window)
+    }
     let progress = onProgress
     progress?(renderId, 0)
 
@@ -399,14 +432,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
     let cropF = "crop=\(Int(rect.width)):\(Int(rect.height)):\(Int(rect.minX)):\(Int(rect.minY))"
     let scaleF = "scale=\(ow):\(oh):flags=lanczos+accurate_rnd+full_chroma_int:out_color_matrix=bt709:out_range=tv"
     var videoGraph = "[0:v]\(cropF),\(scaleF),format=yuv420p,setsar=1"
-    if hasText {
-      // The one text-window rule, shared with every list preview (S6): empty/inverted window → whole clip.
-      let w = PreviewKeys.textWindow(p.version, trimDuration: dur) ?? 0...(dur + 1)
-      let (ts, te) = (w.lowerBound, w.upperBound)
-      videoGraph += "[bg];[1:v]format=rgba,scale=out_color_matrix=bt709:out_range=tv,format=yuva420p[ov];"
-        + "[bg][ov]overlay=0:0:format=yuv420:eof_action=repeat:enable='between(t,\(Self.f(ts)),\(Self.f(te)))'"
-    }
-    videoGraph += ",format=yuv420p[v]"
+    videoGraph += Self.overlayGraph(windows) + ",format=yuv420p[v]"
     func graph(headroom: Double) -> String {
       guard info.hasAudio else { return videoGraph }
       let norm = measured.map { loudnormFilter(p.settings, measured: $0, headroom: headroom) + "," } ?? ""
@@ -424,7 +450,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
       var args = ["-hide_banner", "-nostats", "-y"]
       if hw { args += ["-hwaccel", "videotoolbox"] }
       args += ["-ss", Self.f(start), "-to", Self.f(end), "-i", src.path]
-      if hasText { args += ["-i", overlayURL.path] }
+      for u in inputs { args += ["-i", u.path] }
       args += ["-filter_complex", graph(headroom: headroom), "-map", "[v]"]
       if info.hasAudio { args += ["-map", "[a]"] }
       args += ["-c:v", "h264_videotoolbox", "-profile:v", "high", "-b:v", "\(kbps)k",
@@ -475,12 +501,13 @@ public final class Renderer: RenderService, @unchecked Sendable {
     // Cover: built like the editor preview (AVFoundation frame → same pixel crop → scale → TextOverlay),
     // so it looks exactly like the frame Eric picked. ffmpeg fallback if AVFoundation can't decode.
     let coverAt = min(max(0, p.edit.coverTime), max(0, info.duration - 0.05))
-    // The shared cover composite (S6): list covers are this same composite at list size.
-    let coverText = hasText && p.edit.coverIncludesText
+    // The shared cover composite (S6): list covers are this same composite at list size. Its texts are the ones
+    // showing at the cover frame, else the first text (S1-R6).
+    let coverLayers = p.edit.coverIncludesText ? PreviewKeys.coverLayers(p.version, offset: coverAt - start, trimDuration: dur) : []
     var haveCover = false
     if let frame = Media.frame(src, at: coverAt, maxSize: .zero),
        let img = Media.coverComposite(frame, crop: crop, aspect: p.edit.aspect, size: CGSize(width: ow, height: oh),
-                                      text: p.version, includesText: coverText) {
+                                      layers: coverLayers) {
       do { try Media.writeJPEG(img, to: tmpCover, quality: 0.92); haveCover = true } catch {
         Log.shared.warn("cover write failed for render \(renderId): \(error)")
       }
@@ -488,8 +515,9 @@ public final class Renderer: RenderService, @unchecked Sendable {
     if !haveCover {
       var cArgs = ["-hide_banner", "-nostats", "-y", "-ss", Self.f(coverAt), "-i", src.path]
       var cGraph = "[0:v]\(cropF),scale=\(ow):\(oh):flags=lanczos+accurate_rnd+full_chroma_int,format=rgb24"
-      if coverText {
-        cArgs += ["-i", overlayURL.path]
+      if let stack = TextOverlay.image(for: coverLayers, aspect: p.edit.aspect) {
+        try Media.writePNG(stack, to: coverOverlayURL)
+        cArgs += ["-i", coverOverlayURL.path]
         cGraph += "[bg];[1:v]format=rgba[ov];[bg][ov]overlay=0:0:format=rgb"
       }
       cGraph += ",format=yuvj420p[v]"

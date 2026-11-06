@@ -128,6 +128,16 @@ public enum EditorLogic {
     return (s, e, inside ? cover : clampCover(cover, trim: trim))
   }
 
+  /// `layer`'s window after a committed trim change (`d` = the trim's length): the first text's rule, so an extra the
+  /// trim would drop moves inside it instead. Per-platform trims don't come through here: there the text just isn't
+  /// drawn (`PreviewKeys.layerWindows`). An inverted extra is never drawn and stays as it is, so a trim can't make it appear.
+  public static func clampLayer(_ layer: TextLayer, trimDuration d: Double) -> TextLayer {
+    if let e = layer.end, e <= max(0, layer.start ?? 0) { return layer }
+    var l = layer
+    (l.start, l.end) = clampTextTiming(start: layer.start, end: layer.end, trimDuration: d)
+    return l
+  }
+
   /// Cover time (absolute) kept inside the trim; nil = first frame of the trim.
   public static func clampCover(_ t: Double?, trim: TrimRange) -> Double? {
     guard let t else { return nil }

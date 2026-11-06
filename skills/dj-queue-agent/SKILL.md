@@ -80,6 +80,39 @@ Either list may be left out.
   a separate, lower-confidence suggestion. Eric taps one in the editor's Text section; it becomes that version's text.
   Use `djq text` only when Eric asks you to set it.
 
+### More texts on a clip, with their own times and look (round 16)
+
+A clip can show up to 12 texts, each in its own window. Number 1 is the first text, the one `djq text` writes, so
+Title-follow, `{text}`, No text and YouTube titles all keep reading it. The rest are extras.
+
+```sh
+djq overlay list <video> [--version N] [--json]
+djq overlay add <video> "<text>" [--start S] [--end S] [--x 0-1] [--y 0-1] [--style box|outline|shadow] [--size 8-400]
+                [--align left|center|right] [--color #hex] [--background #hex] [--font <name>] [--opacity 0.1-1]
+                [--tracking -0.1-0.5] [--version N] [--json]
+djq overlay set <video> <number|id> ["<text>"] [same options]     # "default" clears --start, --end or a look option
+djq overlay remove <video> <number|id> [--version N]
+```
+
+- `--start` and `--end` are seconds from the trim start. No `--start` = from the start of the trim, no `--end` = to its end.
+- Address a text by number (1 = first) or by the `id` in `djq overlay list`. Numbers shift when one is removed, ids don't.
+  An id is tried before a number.
+- `--background` is the box fill, the outline colour or the shadow colour, by style. `--tracking` is letter spacing as a
+  share of the font size. Fonts: `default rounded serif mono impact futura avenir-next helvetica-neue arial-black georgia didot
+  marker-felt american-typewriter`.
+- A new text starts with the first text's style, size, position and look. Give `--y` so it doesn't sit on top of it.
+- `djq overlay remove <video> 1` moves the next text into first place. On the only text it refuses: use `djq text --none`.
+- `djq text --none` hides every text and keeps the extras stored; turning it off brings them back.
+- In JSON: `overlays` in `djq video --json` (`number`, `id`, `text`, `start`, `end`, `x`, `y`, `style`, `size`, `align`, `color`,
+  `background`, `font`, `opacity`, `tracking`, `drawn`, `shows_from`, `shows_to`), and `moreText` / `textLook` in `versions` and
+  `resolved_v1`, present only when used. `drawn` is false for an empty text, under No text, or when the window misses the trim.
+- A per-platform trim that ends before a text starts just leaves that text out of that platform's video.
+- Bulk Apply defaults (text section) clears the extras and the look too; `djq bulk undo` brings them back.
+- Editing texts never sends a clip to the Queue. The one move it can cause is out of the Queue: a Queue clip left with no
+  text to show goes to Edit with the reason "No text", as with `djq text ""`, and `djq overlay` prints that it left (on stderr
+  with `--json`). Only Eric's Send to Queue brings it back. Edits also change the edit hash, so a scheduled clip renders again
+  before it posts.
+
 ### Captions, hashtag groups, YouTube titles (round 7)
 
 - A written caption (`djq caption`) is posted **exactly as written** — nothing is appended. Put the hashtags in it, or

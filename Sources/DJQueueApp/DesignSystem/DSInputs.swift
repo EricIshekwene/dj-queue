@@ -96,6 +96,8 @@ struct DSTextField: View {
   /// Takes the keyboard when it appears (an inline form's first field).
   var autoFocus = false
   var onSubmit: (() -> Void)? = nil
+  /// The field lost the keyboard (`whenBlurred`).
+  private var onBlur: (() -> Void)? = nil
   @FocusState private var focused: Bool
   @State private var hovering = false
   @Environment(\.dsForcedState) private var forced
@@ -150,8 +152,18 @@ struct DSTextField: View {
       .dsTooltip(disabledReason)
       .dsAnimation(DS.motion.hover, value: isFocused)
       .onChange(of: focusToken) { _, _ in focused = true }
+      .onChange(of: focused) { was, now in if was && !now { onBlur?() } }
       .onAppear { if autoFocus { focused = true } }
     }
+  }
+}
+
+extension DSTextField {
+  /// Runs `action` when the field loses the keyboard, so a typed value that commits on ↩ commits on leaving it too.
+  func whenBlurred(_ action: @escaping () -> Void) -> DSTextField {
+    var field = self
+    field.onBlur = action
+    return field
   }
 }
 
@@ -165,6 +177,8 @@ struct DSTextArea: View {
   var limit: Int? = nil
   var minHeight: CGFloat = 88
   var maxHeight: CGFloat = 220
+  /// Changing it moves the keyboard here (same contract as `DSTextField.focusToken`).
+  var focusToken = 0
   @FocusState private var focused: Bool
   @State private var hovering = false
   /// Height the text needs at the field's width (round 7: the field grows to it, then scrolls).
@@ -172,7 +186,7 @@ struct DSTextArea: View {
   @Environment(\.dsForcedState) private var forced
 
   init(_ label: String? = nil, placeholder: String, text: Binding<String>, hint: String? = nil, error: String? = nil,
-       limit: Int? = nil, minHeight: CGFloat = 88, maxHeight: CGFloat = 220) {
+       limit: Int? = nil, minHeight: CGFloat = 88, maxHeight: CGFloat = 220, focusToken: Int = 0) {
     self.label = label
     self.placeholder = placeholder
     _text = text
@@ -181,6 +195,7 @@ struct DSTextArea: View {
     self.limit = limit
     self.minHeight = minHeight
     self.maxHeight = maxHeight
+    self.focusToken = focusToken
   }
 
   /// Inner height: grows with the text from `minHeight` to `maxHeight` (padding included), then the text scrolls.
@@ -220,6 +235,7 @@ struct DSTextArea: View {
       .modifier(DSFieldBox(focused: isFocused, hovering: forced == .hover || hovering, error: error != nil, disabled: false,
                            radius: DS.radius.lg, fill: DS.color.surfaceRaised))
       .onHover { hovering = $0 }
+      .onChange(of: focusToken) { _, _ in focused = true }
     }
   }
 }

@@ -1,8 +1,8 @@
 import DJQCore
 import SwiftUI
 
-/// Timeline card (DESIGN-v2 §7, #5): playback controls centred on top, the text-timing bar, then the filmstrip of
-/// the whole clip file with yellow trim handles that start on Eric's markers (the default trim). The grace seconds
+/// Timeline card (DESIGN-v2 §7, #5): playback controls centred on top, one bar per text (overlapping texts take extra
+/// lanes, S3-R5), then the filmstrip of the whole clip file with yellow trim handles that start on Eric's markers (the default trim). The grace seconds
 /// beyond the markers are a striped, dimmed zone the handles can be dragged into. Per-platform trim lanes appear
 /// only when used.
 struct EditorTimeline: View {
@@ -14,8 +14,10 @@ struct EditorTimeline: View {
   static let textH: CGFloat = 20, filmH: CGFloat = 48, laneH: CGFloat = 18, gap: CGFloat = 8
 
   private var lanes: [Platform] { EditorPlatforms.order.filter { model.edit.platformTrims[$0] != nil } }
+  /// Height of the text lanes.
+  private var textBlock: CGFloat { EditorTextTrack.height(lanes: model.textBars.laneCount) }
   private var tracksHeight: CGFloat {
-    Self.textH + Self.gap + Self.filmH + (lanes.isEmpty ? 0 : Self.gap + CGFloat(lanes.count) * (Self.laneH + 4) - 4)
+    textBlock + Self.gap + Self.filmH + (lanes.isEmpty ? 0 : Self.gap + CGFloat(lanes.count) * (Self.laneH + 4) - 4)
   }
 
   var body: some View {
@@ -26,12 +28,12 @@ struct EditorTimeline: View {
         HStack(spacing: 0) {
           gutterLabels
           ZStack(alignment: .topLeading) {
-            EditorTextBar(model: model, playback: playback, width: w)
+            EditorTextTrack(model: model, playback: playback, width: w)
             EditorFilmTrack(model: model, playback: playback, strip: strip, width: w)
-              .offset(y: Self.textH + Self.gap)
+              .offset(y: textBlock + Self.gap)
             ForEach(Array(lanes.enumerated()), id: \.element) { i, p in
               EditorTrimLane(model: model, platform: p, width: w)
-                .offset(y: Self.textH + Self.gap + Self.filmH + Self.gap + CGFloat(i) * (Self.laneH + 4))
+                .offset(y: textBlock + Self.gap + Self.filmH + Self.gap + CGFloat(i) * (Self.laneH + 4))
             }
             EditorPlayhead(playback: playback, duration: model.duration, width: w, height: tracksHeight)
               .allowsHitTesting(false)
@@ -41,6 +43,7 @@ struct EditorTimeline: View {
         }
       }
       .frame(height: tracksHeight)
+      .dsAnimation(DS.motion.layout, value: textBlock)
     }
     .padding(.horizontal, DS.space.sm).padding(.top, DS.space.xs).padding(.bottom, DS.space.sm)
     .onAppear { reloadStrip() }
@@ -55,8 +58,8 @@ struct EditorTimeline: View {
   private var gutterLabels: some View {
     VStack(alignment: .leading, spacing: 0) {
       Image(systemName: "textformat").frame(height: Self.textH).contentShape(Rectangle())
-        .dsTooltip("Text lane: when the overlay text shows", side: .leading)
-      Spacer().frame(height: Self.gap)
+        .dsTooltip("Text lane: when each text shows", side: .leading)
+      Spacer().frame(height: textBlock - Self.textH + Self.gap)
       Image(systemName: "film").frame(height: Self.filmH).contentShape(Rectangle())
         .dsTooltip("The clip file: trim, markers, grace", side: .leading)
       if !lanes.isEmpty { Spacer().frame(height: Self.gap) }
@@ -163,6 +166,7 @@ struct EditorFilmTrack: View {
         .contentShape(Rectangle())
         .gesture(scrub(m))
         .dsTooltip("Click or drag to move the playhead")
+        .probeFrame("film-track")
       // Grace zones: the seconds the file keeps beyond the markers (striped; extendable). Hoverable for the tooltip;
       // they carry the same scrub gesture, so clicking/dragging on them still moves the playhead.
       ForEach(grace, id: \.start) { z in
@@ -259,58 +263,148 @@ struct EditorGraceZone: View {
   }
 }
 
-// MARK: - Text timing bar
+// MARK: - Text bars (S3-R5)
 
-struct EditorTextBar: View {
+/// One bar per text. Grips set when it starts and ends, the body moves it keeping its length, and a click selects it.
+struct EditorTextTrack: View {
   @ObservedObject var model: EditorModel
   let playback: EditorPlayback
   var width: CGFloat
-  private let h = EditorTimeline.textH
+
+  static let laneGap: CGFloat = 2
+  static func height(lanes: Int) -> CGFloat { CGFloat(max(1, lanes)) * EditorTimeline.textH + CGFloat(max(1, lanes) - 1) * laneGap }
 
   var body: some View {
-    let m = EditorTrackMath(duration: model.duration, width: width, markers: [model.video?.markerIn, model.video?.markerOut])
-    let r = model.resolved, tr = model.trim
-    let s = tr.start + (r.textStart ?? 0)
-    let e = r.textEnd.map { tr.start + $0 } ?? tr.end
-    let a = m.x(min(max(s, tr.start), tr.end)), b = m.x(min(max(e, tr.start), tr.end))
-    let on = r.hasText
+    let bars = model.textBars
+    ZStack(alignment: .topLeading) {
+      ForEach(bars.bars) { bar in
+        EditorTextBar(model: model, playback: playback, bar: bar, others: bars.bars.filter { $0.id != bar.id }, width: width,
+                      markSelected: bars.bars.count > 1)
+          .offset(y: CGFloat(bar.lane) * (EditorTimeline.textH + Self.laneGap))
+          .zIndex(bar.id == model.selectedText ? 1 : 0)
+      }
+    }
+    .frame(width: width, height: Self.height(lanes: bars.laneCount), alignment: .topLeading)
+  }
+}
+
+/// What the text track shows: `layer` nil is the "No text" stand-in, which has nothing to drag.
+struct EditorTimelineBar: Identifiable {
+  var id: String
+  var number: Int
+  var label: String
+  /// The text has words, so it shows on the video.
+  var on: Bool
+  var draggable: Bool
+  /// Seconds from the trim start.
+  var span: TextTimeline.Span
+  var lane: Int
+}
+
+private struct EditorTextBar: View {
+  @ObservedObject var model: EditorModel
+  let playback: EditorPlayback
+  var bar: EditorTimelineBar
+  var others: [EditorTimelineBar]
+  var width: CGFloat
+  var markSelected: Bool
+  /// The span when a drag started, and whether it has written anything. Until it changes something it writes nothing: a
+  /// sloppy press on a whole-clip bar mustn't pin the window to today's trim.
+  @State private var origin: (span: TextTimeline.Span, wrote: Bool)?
+  private let h = EditorTimeline.textH
+  /// Past this many points a press is a move, not a click.
+  private static let clickSlop: CGFloat = 3
+
+  private var math: EditorTrackMath {
+    EditorTrackMath(duration: model.duration, width: width, markers: [model.video?.markerIn, model.video?.markerOut])
+  }
+
+  /// Seconds from the trim start that an edge snaps to: the trim's ends, markers, the playhead and other texts' ends.
+  private func targets(_ tr: TrimRange) -> [Double] {
+    [0, tr.duration, playback.time - tr.start] + [model.video?.markerIn, model.video?.markerOut].compactMap { $0.map { $0 - tr.start } }
+      + others.filter(\.draggable).flatMap { [$0.span.start, $0.span.end] }
+  }
+
+  private var tolerance: Double { Double(8 / max(width, 1)) * model.duration }
+
+  var body: some View {
+    let tr = model.trim, m = math
+    let a = m.x(tr.start + bar.span.start), b = m.x(tr.start + bar.span.end)
+    let selected = bar.draggable && bar.id == model.selectedText
     ZStack(alignment: .leading) {
-      bar(on: on, text: on ? Captions.oneLine(r.text) : (r.noText ? "No text" : "No text yet"))
+      fill(selected: selected)
         .frame(width: max(14, b - a), height: h)
+        .overlay { moveSurface(tr) }
+        .dsTooltip(bar.draggable ? "Click to edit this text, drag to move it" : "Edit the overlay text")
+        .probeFrame("text-bar-\(bar.number)")
         .offset(x: a)
-        .onTapGesture { model.scrollTarget = .text }
-        .dsTooltip("Edit the overlay text")
-      if on {
-        grip.offset(x: a)
-          .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
-            let t = min(max(m.snapped(v.location.x, extra: [tr.start, playback.time]), tr.start), e - 0.3)
-            model.updateVersion { $0.textStart = t - tr.start < 0.02 ? 0 : t - tr.start }
-          })
-        grip.offset(x: b - 6)
-          .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
-            let t = max(min(m.snapped(v.location.x, extra: [tr.end, playback.time]), tr.end), s + 0.3)
-            model.updateVersion { $0.textEnd = t - tr.start }
-          })
+      if bar.draggable {
+        grip(selected: selected, leading: true, tr)
+          .probeFrame("text-start-\(bar.number)")
+          .offset(x: a)
+        grip(selected: selected, leading: false, tr)
+          .probeFrame("text-end-\(bar.number)")
+          .offset(x: b - 6)
       }
     }
     .frame(width: width, height: h, alignment: .leading)
   }
 
-  private func bar(on: Bool, text: String) -> some View {
-    RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous)
-      .fill(on ? DS.color.selected : DS.color.surfaceSunken)
-      .overlay(RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous)
-        .strokeBorder(on ? DS.color.borderStrong : DS.color.border, lineWidth: 1))
-      .overlay(alignment: .leading) {
-        Text(text).font(DS.type.micro).lineLimit(1)
-          .foregroundStyle(on ? DS.color.text : DS.color.textTertiary)
-          .padding(.leading, 10).padding(.trailing, 8)
-      }
+  private func moveSurface(_ tr: TrimRange) -> some View {
+    EditorDragSurface(cursor: bar.draggable ? .openHand : .arrow, slop: Self.clickSlop, onPress: {
+      model.selectText(bar.id)
+      if bar.draggable { origin = (bar.span, false) }
+    }, onDrag: { d in
+      guard let o = origin?.span else { return }
+      let by = Double(d.width / max(width, 1)) * model.duration
+      let start = TextTimeline.snappedStart(o, proposed: o.start + by, targets: targets(tr), tolerance: tolerance)
+      write(TextTimeline.moved(o, toStart: start, trimDuration: tr.duration))
+    }, onRelease: { moved in
+      origin = nil
+      // A press that never moved is a click: it opens the text in the inspector.
+      if !moved { model.scrollTarget = .text }
+    })
   }
 
-  private var grip: some View {
-    RoundedRectangle(cornerRadius: 2).fill(DS.color.text.opacity(0.7)).frame(width: 6, height: h)
-      .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+  private func write(_ s: TextTimeline.Span) {
+    guard let o = origin, o.wrote || s.start != o.span.start || s.end != o.span.end else { return }
+    origin?.wrote = true
+    model.setTextWindow(bar.id, start: s.start, end: s.end)
+  }
+
+  private func gripSurface(leading: Bool, _ tr: TrimRange) -> some View {
+    EditorDragSurface(cursor: .resizeLeftRight, onPress: {
+      origin = (bar.span, false)
+      model.selectText(bar.id)
+    }, onDrag: { d in
+      guard let o = origin?.span else { return }
+      let edge = math.x(tr.start + (leading ? o.start : o.end)) + d.width
+      let t = math.snapped(edge, extra: targets(tr).map { $0 + tr.start }) - tr.start
+      if leading {
+        write((TextTimeline.clampedStart(t, end: o.end, trimDuration: tr.duration), o.end))
+      } else {
+        write((o.start, TextTimeline.clampedEnd(t, start: o.start, trimDuration: tr.duration)))
+      }
+    }, onRelease: { _ in origin = nil })
+  }
+
+  private func fill(selected: Bool) -> some View {
+    RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous)
+      .fill(bar.on ? DS.color.selected : DS.color.surfaceSunken)
+      .overlay(RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous)
+        .strokeBorder(selected && markSelected ? DS.color.text : bar.on ? DS.color.borderStrong : DS.color.border,
+                      lineWidth: selected && markSelected ? 2 : 1))
+      .overlay(alignment: .leading) {
+        Text(bar.label).font(DS.type.micro).lineLimit(1)
+          .foregroundStyle(bar.on ? DS.color.text : DS.color.textTertiary)
+          .padding(.leading, 10).padding(.trailing, 8)
+      }
+      .clipShape(RoundedRectangle(cornerRadius: DS.radius.xs, style: .continuous))
+  }
+
+  private func grip(selected: Bool, leading: Bool, _ tr: TrimRange) -> some View {
+    RoundedRectangle(cornerRadius: 2).fill(DS.color.text.opacity(selected || !markSelected ? 0.7 : 0.3)).frame(width: 6, height: h)
+      .overlay { gripSurface(leading: leading, tr) }
       .dsTooltip("Drag to set when the text shows")
   }
 }
