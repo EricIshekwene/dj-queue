@@ -15,7 +15,7 @@ struct EditorTextSection: View {
     let first = model.selectedIsFirst
     EditorSectionView(.text) {
       VStack(alignment: .leading, spacing: DS.space.md) {
-        if model.texts.count > 1 { switcher }
+        if model.texts.count > 1 { switcher.disabled(model.fieldsOff) }
         EditorField(label: "Text on the video", isCustom: first && !r.isDefault("text"), inheritedFrom: first ? model.source(of: "text") : nil,
                     resetHelp: textResetHelp, onReset: resetter(["text"])) {
           VStack(alignment: .leading, spacing: DS.space.xs) {
@@ -41,6 +41,7 @@ struct EditorTextSection: View {
               .background(ScriptAnchor("No text"))
           }
         }
+        .disabled(model.fieldsOff)
         EditorField(label: "Style", isCustom: first && !r.isDefault("style"), inheritedFrom: first ? model.source(of: "style") : nil,
                     resetHelp: "Back to the default style (\(model.defaults.textStyle.displayName))",
                     onReset: resetter(["style"])) {
@@ -48,14 +49,16 @@ struct EditorTextSection: View {
             ForEach(TextStyle.allCases, id: \.self) { s in styleTile(s, selected: l.style == s, noText: r.noText) }
           }
         }
+        .disabled(model.fieldsOff)
         VStack(alignment: .leading, spacing: 0) {
           DSSeparator()
           DSDisclosure("Size and position", summary: placement(l), isOpen: open.binding(.sizeAndPosition)) {
             VStack(alignment: .leading, spacing: DS.space.md) { sizeField(r, l, first); alignField(r, l, first); positionField(r, l, first) }
+              .disabled(model.fieldsOff)
           }
           DSSeparator()
           DSDisclosure("Advanced", summary: advancedSummary(r), isOpen: open.binding(.advanced)) {
-            EditorTextAdvanced(model: model)
+            EditorTextAdvanced(model: model).disabled(model.fieldsOff)
           }
         }
       }

@@ -105,7 +105,9 @@ struct EditorCollapsibleSection<Content: View>: View {
   }
 
   var body: some View {
-    DSDisclosure(section.rawValue, summary: summary, attention: problem, level: .section, isOpen: open.binding(disclosure)) { content }
+    DSDisclosure(section.rawValue, summary: summary, attention: problem, level: .section, isOpen: open.binding(disclosure)) {
+      content.disabled(model.fieldsOff)
+    }
       .padding(.horizontal, DS.space.md).padding(.vertical, open.isOpen(disclosure) ? DS.space.lg : DS.space.sm)
       .frame(maxWidth: .infinity, alignment: .leading)
       .id(section)

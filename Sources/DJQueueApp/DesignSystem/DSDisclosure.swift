@@ -31,8 +31,6 @@ struct DSDisclosure<Content: View>: View {
     VStack(alignment: .leading, spacing: 0) {
       Button { dsWithAnimation { isOpen.toggle() } } label: { row }
         .buttonStyle(.plain)
-        // A row opens even inside a disabled form: what's in it can still be read, and it disables with the form.
-        .environment(\.isEnabled, true)
         .dsTooltip(isOpen ? "Hide \(title)" : attention.map { "Show \(title): \($0)" } ?? "Show \(title)")
         .background(ScriptAnchor(title))
         .probeFrame("disclosure-\(title)")

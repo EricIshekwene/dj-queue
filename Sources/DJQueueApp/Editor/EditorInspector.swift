@@ -21,20 +21,20 @@ struct EditorInspector: View {
           // Full-width hairlines between sections (the Framer / Webflow / Figma inspector pattern) so each section
           // reads as its own block.
           VStack(alignment: .leading, spacing: 0) {
-            EditorTitleSection(model: model)
+            // Fields go off section by section, not on this column: the collapsible rows must still open on a read-only clip.
+            EditorTitleSection(model: model).disabled(model.fieldsOff)
             DSSeparator()
             EditorFrameSection(model: model)
             DSSeparator()
             EditorTextSection(model: model)
             DSSeparator()
-            EditorCaptionSection(model: model)
+            EditorCaptionSection(model: model).disabled(model.fieldsOff)
             DSSeparator()
             EditorCoverSection(model: model)
             DSSeparator()
-            EditorPlatformsSection(model: model)
+            EditorPlatformsSection(model: model).disabled(model.fieldsOff)
           }
           .padding(.bottom, DS.space.xxl)
-          .disabled(model.readOnly || model.video == nil)
           .dsTooltip(nil, disabledReason: model.readOnly ? EditorView.readOnlyReason : nil)
         }
         .scrollIndicators(.automatic)

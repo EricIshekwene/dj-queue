@@ -331,6 +331,9 @@ final class EditorModel: ObservableObject {
 
   // MARK: Derived — edit
 
+  /// The inspector's fields are off: an unreadable edit, or no clip yet. Its collapsible rows still open.
+  var fieldsOff: Bool { readOnly || video == nil }
+
   var duration: Double { video?.duration ?? 0 }
   var defaults: NewClipDefaults { settings.defaults }
 
@@ -1204,8 +1207,9 @@ final class EditorModel: ObservableObject {
     // An emptied first text stays empty while another text shows, or the Title would come back over it.
     let othersShow = resolved.moreText.contains { !$0.isBlank }
     updateVersion { v in
-      v.noText = nil
-      if (v.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !othersShow { v.text = nil }
+      let blank = (v.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      v.noText = blank && v.text != nil && othersShow ? false : nil  // false: "" with no answer here would follow the Title
+      if blank && !othersShow { v.text = nil }
     }
     if resolved.noText { updateVersion { $0.noText = false } }
   }
