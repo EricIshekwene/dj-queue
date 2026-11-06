@@ -3,7 +3,7 @@
 Every assignment states: goal and requirement IDs, role, SESSION path, worktree, branch and base SHA, owned files, dependencies, decisions already made, acceptance, exact check commands with the dev-root env (`DJQ_ROOT=~/code/dj-queue-dev/"DJ Video" DJQ_HOME=<scratch>`), and the rules in [djq.md](djq.md) (Safety section). Children return at most 200 words: DONE, NEEDS_FIX, NEEDS_INPUT, CHECKPOINT or INCOMPLETE, with the commit or changed paths, the checks they ran and their exit codes, evidence paths and the next action.
 
 ## Task parent (implementation owner)
-Owns one branch and worktree. Implements its slice, or splits it into leaves with disjoint files. Runs `swift build` and `swift test` in its worktree, takes snapshots of changed screens, and commits coherent milestones (with the trailer). Never touches `main`, the real DB, `~/Applications` or the LaunchAgent. Fixes review findings itself.
+Owns one branch and worktree. Implements its slice, or splits it into leaves with disjoint files. Runs `swift build` and `swift test` in its worktree, runs `scripts/live-checks.sh` for changed screens, and commits coherent milestones (with the trailer). Never touches `main`, the real DB, `~/Applications` or the LaunchAgent. Fixes review findings itself.
 
 ## Leaf
 Implements a bounded change in the given worktree. Doesn't stage, commit, switch branches or make worktrees. Reports changed paths and focused-check results. Asks the task parent before editing a file it doesn't own.

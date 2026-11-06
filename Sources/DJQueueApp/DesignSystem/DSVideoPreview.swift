@@ -370,6 +370,7 @@ final class DSPlayerNSView: NSView {
       let item = AVPlayerItem(url: url)
       let p = AVQueuePlayer()
       p.isMuted = true
+      Backstage.silenceForChecks(p)
       p.preventsDisplaySleepDuringVideoPlayback = false
       p.automaticallyWaitsToMinimizeStalling = false
       if let r = loopRange, r.upperBound > r.lowerBound {

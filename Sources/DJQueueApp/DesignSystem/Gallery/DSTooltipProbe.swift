@@ -40,6 +40,7 @@ enum DSTooltipProbe {
       try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
       var problems = try await nested(out: out)
       if ProcessInfo.processInfo.environment["DJQ_TOOLTIP_PROBE"] == "nested" {
+        if blankCaptures > 0 { problems.append("\(blankCaptures) captures were blank") }
         problems.forEach { print("tooltip-probe: FAIL \($0)") }
         return problems.isEmpty ? 0 : 1
       }
@@ -358,6 +359,10 @@ enum DSTooltipProbe {
             + "real-cursor hovers dropped: \(c.debugRealCursorHovers))")
       w.orderOut(nil)
       w.close()
+      if blankCaptures > 0 {
+        print("tooltip-probe: FAIL \(blankCaptures) captures were blank")
+        return 1
+      }
       return problems.isEmpty ? 0 : 1
     } catch {
       FileHandle.standardError.write(Data("tooltip-probe failed: \(error)\n".utf8))
@@ -557,13 +562,7 @@ enum DSTooltipProbe {
   /// Counts the panel's pixels that contrast with the bubble's own fill (its median luminance): the text and keycaps.
   /// An empty bubble — the round-5 bug — scores ~0.
   static func textPixels(_ panel: NSWindow?) -> Int {
-    guard let panel, panel.isVisible, let fromArray else { return 0 }
-    var ids: [UnsafeRawPointer?] = [UnsafeRawPointer(bitPattern: UInt(panel.windowNumber))]
-    guard let arr = CFArrayCreate(nil, &ids, 1, nil) else { return 0 }
-    let primaryH = NSScreen.screens.first?.frame.height ?? 0
-    let r = panel.frame
-    guard let img = fromArray(CGRect(x: r.minX, y: primaryH - r.maxY, width: r.width, height: r.height), arr, 1 << 4)?
-      .takeRetainedValue() else { return 0 }
+    guard let panel, panel.isVisible, let img = WindowCapture.image(panel) else { return 0 }
     let rep = NSBitmapImageRep(cgImage: img)
     var lums: [CGFloat] = []
     for y in stride(from: 0, to: rep.pixelsHigh, by: 1) {
@@ -577,34 +576,47 @@ enum DSTooltipProbe {
     return lums.filter { abs($0 - bg) > 0.35 }.count
   }
 
-  /// Window-server composite of the main window plus the tooltip panel (own windows: no permission needed).
-  private typealias FromArray = @convention(c) (CGRect, CFArray, UInt32) -> Unmanaged<CGImage>?
-  private static let fromArray: FromArray? = {
-    guard let h = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW),
-          let sym = dlsym(h, "CGWindowListCreateImageFromArray") else { return nil }
-    return unsafeBitCast(sym, to: FromArray.self)
-  }()
-
   private static func capture(_ w: NSWindow, panel: NSWindow?) -> Data? {
     guard let img = captureImage(w, panel: panel) else { return WindowCapture.png(w) }
     return NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])
   }
 
-  /// The window server's image of `w` (plus `panel` when visible), framed by the window: own windows need no
-  /// Screen Recording permission.
+  /// Captures where the window itself came back as one colour. Any of these fails the run: an empty page can't show
+  /// that a tooltip sits right on it. On a locked Mac every capture is empty, so rerun once it's unlocked.
+  static var blankCaptures = 0
+
+  /// The window server's image of `w`, with any sheet and `panel` (when visible) drawn over it where they sit. Each window
+  /// is captured on its own, which needs no permission and works off every display, where a region capture comes back empty.
   static func captureImage(_ w: NSWindow, panel: NSWindow?) -> CGImage? {
-    // The tooltip panel, any sheet on the window, then the window itself (front to back).
-    let wins = [panel?.isVisible == true ? panel : nil, w.attachedSheet, w].compactMap { $0 }
-    var ids: [UnsafeRawPointer?] = wins.map { UnsafeRawPointer(bitPattern: UInt($0.windowNumber)) }
-    guard let fromArray, let arr = CFArrayCreate(nil, &ids, ids.count, nil) else { return nil }
-    let primaryH = NSScreen.screens.first?.frame.height ?? 0
-    var r = w.frame
-    if let s = w.attachedSheet { r = r.union(s.frame) }
-    let cg = CGRect(x: r.minX, y: primaryH - r.maxY, width: r.width, height: r.height)
-    guard let img = fromArray(cg, arr, 1 << 4)?.takeRetainedValue(), img.width > 10 else { return nil }
-    return img
+    guard let base = WindowCapture.image(w), base.width > 10 else { return nil }
+    if pageIsEmpty(base) {
+      blankCaptures += 1
+      print("tooltip-probe: blank capture of a \(base.width)×\(base.height) window")
+    }
+    var frame = w.frame
+    if let s = w.attachedSheet { frame = frame.union(s.frame) }
+    guard let ctx = CGContext(data: nil, width: Int(frame.width), height: Int(frame.height), bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    for win in [w, w.attachedSheet, panel?.isVisible == true ? panel : nil].compactMap({ $0 }) {
+      guard let img = win === w ? base : WindowCapture.image(win) else { continue }
+      ctx.draw(img, in: CGRect(x: win.frame.minX - frame.minX, y: win.frame.minY - frame.minY, width: win.frame.width, height: win.frame.height))
+    }
+    return ctx.makeImage()
   }
 
+  private static func pageIsEmpty(_ img: CGImage) -> Bool {
+    let rep = NSBitmapImageRep(cgImage: img)
+    var seen = Set<Int>()
+    for y in stride(from: 8, to: rep.pixelsHigh, by: 24) {
+      for x in stride(from: 8, to: rep.pixelsWide, by: 24) {
+        if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) {
+          seen.insert(Int(c.redComponent * 15) * 256 + Int(c.greenComponent * 15) * 16 + Int(c.blueComponent * 15))
+        }
+      }
+    }
+    return seen.count < 2
+  }
 }
 
 private extension JSONEncoder {

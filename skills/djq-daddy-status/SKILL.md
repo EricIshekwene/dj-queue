@@ -10,7 +10,7 @@ Read-only: dispatch, write, merge, clean or monitor nothing. Use [session.md](..
 Report compactly:
 - The session's goal, state and last update; the controller lock (owner, age, or stale).
 - Its tree: each node with branch, latest commit, state and review verdict.
-- Checks passed, failed and unrun, with the candidate they ran on.
+- Checks passed, failed and unrun, with the candidate they ran on, including any `screen-guard: FAIL` from `scripts/live-checks.sh`.
 - Versions: installed (`CFBundleShortVersionString` in `~/Applications/DJ Queue.app/Contents/Info.plist`), `git describe --tags` on `main`, and GitHub (`git ls-remote origin main` compared with local `main`).
 - Live worktrees (`git worktree list`) and dirty files in each.
 - Blockers, any question for Eric, and the exact next action. Point to HANDOFF when paused.

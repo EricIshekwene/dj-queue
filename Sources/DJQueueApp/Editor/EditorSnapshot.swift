@@ -473,6 +473,7 @@ enum EditorSnapshot {
     if let a = env["DJQ_EDITOR_LIVE_APPEARANCE"] { window.appearance = NSAppearance(named: a == "dark" ? .darkAqua : .aqua) }
     // Off every display, like every other run: nothing here shows on the screen or takes focus.
     Backstage.show(window)
+    window.makeKey()
     // `DJQ_EDITOR_LIVE_SECTIONS=<dir>`: one window-server capture per inspector section (`live-<section>.png`).
     if let dir = env["DJQ_EDITOR_LIVE_SECTIONS"] {
       print("editor-live: window \(window.windowNumber)")
@@ -506,6 +507,8 @@ enum EditorSnapshot {
         print("editor-live: captured \(png)")
       } else {
         print("editor-live: window capture unavailable")
+        window.close()
+        return 1
       }
       // The window server returns a blank image while the display sleeps, so also let AppKit draw the live view tree
       // (the live player layer doesn't draw this way; everything else is the real, non-snapshot editor).

@@ -11,6 +11,7 @@ enum ScreenGuard {
   private static var samples = 0
 
   static func start() {
+    setvbuf(stdout, nil, _IOLBF, 0)  // a log that grows line by line, so a healthy run never looks stalled
     let t = Timer(timeInterval: 0.1, repeats: true) { _ in MainActor.assumeIsolated { sample() } }
     RunLoop.main.add(t, forMode: .common)
     timer = t

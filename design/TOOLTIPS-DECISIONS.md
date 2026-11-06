@@ -55,7 +55,8 @@ Eric delegated these calls. Each decision gives a one-line reason. The component
 24. **Gallery page "Tooltips" (`DSGalleryPage.tooltips`, `ds-08-tooltips-{light,dark}.png`)** shows the anatomy on four sides, the content variants, wrapping, the in-context toolbar, ⋯ and bulk bar, a collision demo drawn from the production `TooltipPlacement` output, and the behaviour and writing rules.
 25. **Live probe (`DJQ_SNAPSHOT_GALLERY=1 DJQ_TOOLTIP_PROBE=1 DJQueueApp --snapshot <dir>`)** runs against the real main window on a throwaway copy of the dev DB.
     - It never activates the app, never moves the user's cursor, and keeps its panel just above its own window. Since round 5 its window is in front but click-through (`ignoresMouseEvents`): macOS doesn't draw a fully covered window's SwiftUI layers, which made the captures blank.
-    - It drives hover per case and captures the window server's composite of the main window plus the panel. Cases:
+    - Since round 18 its window sits off every display (`Backstage`), which replaces the in-front window above, and each window is captured on its own.
+    - It drives hover per case and captures the main window plus the panel. Cases:
       - Toolbar at the window's top edge (flips below).
       - Delay-group hand-off (~110 ms including the probe's 80 ms poll, versus ~600 ms for a first open).
       - Esc closes and stays closed.

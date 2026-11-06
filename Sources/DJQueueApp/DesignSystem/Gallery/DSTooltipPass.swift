@@ -53,7 +53,10 @@ enum DSTooltipPass {
         Case(name: "21-library-single", screen: .library, mode: .single),
         Case(name: "22-edit-list", screen: .edit, mode: .list),
         Case(name: "23-posts-inspector", screen: .posts) { m in m.postsSelection = m.posts.first { !$0.state.isTerminal }?.id },
-        Case(name: "24-sheet-pin", screen: .queue) { m in m.pinPrompt = m.queueClips.first },
+        // The sheet's own view in a backstage window: a real `.sheet` pulls its window onto a display.
+        Case(name: "24-sheet-pin", screen: .queue, standalone: { m in
+          AnyView(m.queueClips.first.map { PinPromptSheet(model: m, video: $0) })
+        }, size: CGSize(width: 360, height: 340)),
         Case(name: "25-sheet-mark-posted", screen: .calendar) { m in m.calendarMode = .day; m.markPostedTarget = m.dueNow.first ?? m.nextPost },
         Case(name: "26-sheet-bulk-confirm", screen: .edit, mode: .wide) { m in
           let ids = Array(m.editList.prefix(3).map(\.id))
@@ -156,6 +159,10 @@ enum DSTooltipPass {
                                  options: [.prettyPrinted, .sortedKeys])
         .write(to: sumURL)
       DSClipCardDebug.hoverIds = []
+      if DSTooltipProbe.blankCaptures > 0 {
+        print("tooltip-pass: FAIL \(DSTooltipProbe.blankCaptures) captures were blank")
+        return 1
+      }
       return 0
     } catch {
       FileHandle.standardError.write(Data("tooltip-pass failed: \(error)\n".utf8))

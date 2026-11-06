@@ -20,7 +20,7 @@ You are the session parent for one DJ Queue session. You own the outcome: unders
 - Never build in the `~/code/dj-queue` checkout itself. It only receives merges.
 
 ## Execute
-Give every child its goal, requirement IDs, owned files, worktree and branch, relevant SESSION sections, decisions, exact checks (`swift build`, `swift test`, snapshot command, dev root env) and its return format. Keep corrections with the same implementation owner. Use a [watchdog](../djq-watchdog/SKILL.md) on every child that runs in the background. Continue other ready work while children run.
+Give every child its goal, requirement IDs, owned files, worktree and branch, relevant SESSION sections, decisions, exact checks (`swift build`, `swift test`, `scripts/live-checks.sh`) and its return format. Keep corrections with the same implementation owner. Use a [watchdog](../djq-watchdog/SKILL.md) on every child that runs in the background. Continue other ready work while children run.
 
 ## Review and verify
 - At each milestone, one **fresh, read-only, independent reviewer** checks spec fidelity and repo standards on the actual diff (`git diff main...agent/r<N>-<name>`). Its verdict is written to `<session>/reviews/<name>.md`. Send in-scope defects back to the owner as one batch. Re-review when a fix changes behaviour or risk materially.

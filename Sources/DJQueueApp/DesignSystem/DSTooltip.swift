@@ -281,7 +281,7 @@ final class DSTooltipController {
   // MARK: Hover
 
   /// SwiftUI's hover for a trigger. In an evidence run (`simulatedPointer` set) an event that disagrees with the probe's
-  /// pointer is dropped: SwiftUI keeps tracking the real cursor even in the click-through probe window, and re-checks
+  /// pointer is dropped: SwiftUI keeps tracking the real cursor even in the off-display probe window, and re-checks
   /// it whenever the view tree changes (a tile turning hot), so the user's resting cursor would end the probe's hover
   /// (v0.7.1). The probe checks z-order itself (`DSTooltipProbe.coveringView`). Never set in the app.
   func swiftUIHover(_ a: DSTooltipAnchorView, inside: Bool) {
@@ -419,7 +419,7 @@ final class DSTooltipController {
     p.isOpaque = false
     p.backgroundColor = .clear
     p.ignoresMouseEvents = true
-    p.hidesOnDeactivate = true
+    p.hidesOnDeactivate = !AppModel.isSnapshotRun  // a run never activates, and this would hide the panel from its capture
     p.isReleasedWhenClosed = false
     p.becomesKeyOnlyIfNeeded = true
     p.animationBehavior = .none

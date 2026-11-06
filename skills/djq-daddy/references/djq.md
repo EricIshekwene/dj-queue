@@ -26,7 +26,7 @@
 - Schema changes migrate losslessly: test on a **copy** of the newest `~/code/dj-queue-dev/backups/real-queue-before-*.sqlite` and compare counts, scores, titles and edits.
 - Don't resume posting, approve weeks, post, or change Settings on Eric's data unless Eric says so. Touch the LaunchAgents only through the ship steps (the auto-update watcher restarts the engine itself; `launchctl kickstart` only on the manual fallback).
 - Eric may be at the Mac: never move the real pointer or type into Eric's apps. Hover checks run through the probes; list only what a probe can't drive for Eric to try by hand.
-- **Never execute the installed app** (`~/Applications/DJ Queue.app`), even with a flag: unknown flags open a real window on real data. Read its version from `Info.plist`.
+- **Never execute the installed app's `DJQueue` binary**, even with a flag: it runs on real data. Read its version from `Info.plist`. The installed `djq` CLI is fine and required; dev `djq` and app binaries refuse to start without `DJQ_HOME` and `DJQ_ROOT`.
 - `rm` with literal paths only. Never force-push, never `gh auth switch`, never rewrite published history.
 - Public repo: no secrets, emails other than the GitHub no-reply address, absolute home-directory paths, references to Eric's other projects or third-party images. `refs/` stays gitignored.
 - Commits are authored as the repo's configured EricIshekwene no-reply identity and end with the session's Co-Authored-By trailer.
@@ -34,16 +34,16 @@
 ## Checks (from the repo)
 - Build: `swift build` with 0 warnings.
 - Tests: `swift test` (or `scripts/test.sh` with only the Command Line Tools). Includes the icon-tooltip lint `scripts/check-icon-tooltips.py` once the tooltip pass is merged.
-- Live checks: `scripts/live-checks.sh ~/code/dj-queue-dev/evidence/<round>-<name>/live` runs every click-through script, probe and screen render in light and dark against the dev root. Name checks to run only some, for example `… live tooltip hover text-layers`. Save evidence there.
+- Live checks: `scripts/live-checks.sh ~/code/dj-queue-dev/evidence/<round>-<name>/live` runs every click-through script, probe and screen render against the dev root (screens and editor scripts in light and dark; probes as each one defines). Name checks to run only some, for example `… live tooltip hover text-layers`. Save evidence there.
 - Data: `djq doctor --json` (exit 2 means errors) and `djq videos --json`.
 
 ## Background verification (standing rule, Eric 2026-11-06)
 Every build still does live click-through checks and screenshots, and none of it may show on Eric's screen or take focus.
 - Run live checks only through `scripts/live-checks.sh`. Don't launch the app any other way: a plain dev launch opens a real window in front. If a one-off env run is needed, it uses `--snapshot` with `DJQ_HOME` and `DJQ_ROOT`, or it is refused.
-- Windows sit off every display (`Backstage`), where the window server still draws them, live player and materials included. Clicks, keys and hovers are events sent to that window, so they stay real. Sessions can run checks at once; waiting on `pgrep -- --snapshot` is no longer needed.
+- Windows sit off every display (`Backstage`), where the window server still draws them, live player and materials included. Clicks, keys and hovers are events sent to that window, so they stay real. Players run at volume 0, so a run is silent too. Capture one window at a time with `WindowCapture` or `DSTooltipProbe.captureImage`: a region capture of that area comes back empty.
 - `ScreenGuard` watches each run. A `screen-guard: FAIL` line or exit 3 means something reached Eric's screen or took focus: treat it as a failed check and fix it, even if the script's own checks passed. A run's log must end with `screen-guard: clean`.
-- New scripts call `Backstage.show(window)` and add a line to `checks` in `scripts/live-checks.sh`. `BackgroundWindowTests` fails on any other way of bringing a window forward. Anything macOS forces onto a display, such as a real `NSMenu`, doesn't run in a check: drive the same code path another way and say so in the report.
-- Locked Mac: the window server draws nothing, so scripts fall back to the view tree with a black player. Report those captures as such, and rerun the ones that need real video once the Mac is unlocked.
+- New scripts call `Backstage.show(window)` and add a line to `checks` in `scripts/live-checks.sh`. `BackgroundWindowTests` fails on the known ways to bring a window forward, and ScreenGuard catches the rest for anything in `checks`. Anything macOS forces onto a display, such as a real `NSMenu` or a real `.sheet`, can't run in a check: use a stand-in, label it one in the log and list it in the report.
+- Locked Mac: the window server draws nothing, so the tooltip and hover checks fail on blank captures and text-layers falls back to the view tree with a black player. Rerun them once the Mac is unlocked; that isn't a product failure.
 - Scope: the guard samples every 0.1 s and sees this process's windows only. Eric seeing anything from DJ Queue during a build is a bug: find it, fix it, and add it to this list.
 
 ## Ship (Eric has authorized pushing `main`; no extra approval needed unless the round was only staged)

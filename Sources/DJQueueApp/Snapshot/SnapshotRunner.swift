@@ -18,7 +18,7 @@ import SwiftUI
 enum SnapshotRunner {
   static func run(outputDir: String) async -> Int32 {
     // Every run starts from the dev root: `Store` migrates what it opens, and that must never be the real database.
-    guard ProcessInfo.processInfo.environment["DJQ_HOME"] != nil else {
+    guard Paths.hasDevEnvironment(ProcessInfo.processInfo.environment) else {
       FileHandle.standardError.write(Data("snapshot refused: set DJQ_HOME and DJQ_ROOT to the dev root\n".utf8))
       return 2
     }
@@ -267,11 +267,15 @@ enum WindowCapture {
     return unsafeBitCast(sym, to: Fn.self)
   }()
 
-  static func png(_ w: NSWindow) -> Data? {
+  static func image(_ w: NSWindow) -> CGImage? {
     let includingWindow: UInt32 = 1 << 3
     let ignoreFraming: UInt32 = 1 << 0, nominal: UInt32 = 1 << 4
-    guard let fn, let img = fn(.null, includingWindow, UInt32(w.windowNumber), ignoreFraming | nominal)?.takeRetainedValue(),
-          img.width > 10 else { return nil }
+    guard let fn, let img = fn(.null, includingWindow, UInt32(w.windowNumber), ignoreFraming | nominal)?.takeRetainedValue() else { return nil }
+    return img
+  }
+
+  static func png(_ w: NSWindow) -> Data? {
+    guard let img = image(w), img.width > 10 else { return nil }
     return NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])
   }
 }

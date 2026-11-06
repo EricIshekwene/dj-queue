@@ -5,7 +5,7 @@
 #   scripts/live-checks.sh <evidence dir> [check ...]     (default: all of them; see `checks` below)
 #
 # DJQ_BIN picks the binary (default .build/debug/DJQueueApp). Never point it at the installed app: copy the staged
-# build to scratch first. Several sessions can run this at once: windows off screen don't cover each other.
+# build to scratch first.
 set -u
 cd "$(dirname "$0")/.."
 OUT=${1:?usage: scripts/live-checks.sh <evidence dir> [check ...]}
@@ -16,10 +16,11 @@ DEV="$HOME/code/dj-queue-dev"
 BIN=${DJQ_BIN:-.build/debug/DJQueueApp}
 BIN=${BIN:A}
 case "$BIN" in
-  "$HOME/Applications/"*|/Applications/*) echo "live-checks: refusing to run the installed app" >&2; exit 2 ;;
+  "$HOME/Applications/"*|/Applications/*|"$HOME/Library/Application Support/DJ Queue/"*)
+    echo "live-checks: refusing to run the installed app; copy it to a scratch folder" >&2; exit 2 ;;
 esac
 [[ -x "$BIN" ]] || { echo "live-checks: no binary at $BIN (run swift build)" >&2; exit 2; }
-HOME_DIR=$(mktemp -d "$DEV/scratch-live-XXXXXX")
+HOME_DIR=$(mktemp -d "$DEV/scratch-live-XXXXXX") || exit 2
 trap 'rm -rf "$HOME_DIR"' EXIT
 
 typeset -A checks
@@ -43,8 +44,13 @@ checks=(
   editor-template "DJQ_SNAPSHOT_EDITOR=1 DJQ_EDITOR_TEMPLATE_SCRIPT=@"
   settings-group "DJQ_SNAPSHOT_EDITOR=1 DJQ_SETTINGS_GROUP_SCRIPT=@"
 )
+# The editor scripts take one look per run; these are the same checks in dark.
+for name in text-layers bulk-caption bulk-crop editor-group editor-caption editor-template settings-group; do
+  checks[$name-dark]="${checks[$name]} DJQ_EDITOR_LIVE_APPEARANCE=dark"
+done
 order=(guard screens gallery editor editor-selftest editor-live tooltip tooltip-pass hover search send-to-queue text-layers
-       bulk-caption bulk-crop editor-group editor-caption editor-template settings-group)
+       bulk-caption bulk-crop editor-group editor-caption editor-template settings-group
+       text-layers-dark bulk-caption-dark bulk-crop-dark editor-group-dark editor-caption-dark editor-template-dark settings-group-dark)
 (( $# )) && order=("$@")
 
 failed=0
@@ -56,9 +62,10 @@ for name in $order; do
   vars=("${vars[@]//@/$dir}")
   env DJQ_HOME="$HOME_DIR" DJQ_ROOT="$DEV/DJ Video" $vars "$BIN" --snapshot "$dir" > "$dir/run.log" 2>&1
   code=$?
-  want=0
-  [[ $name == guard ]] && want=3  # the guard's own proof: its test window must fail the run
-  if (( code == want )); then
+  want=0 verdict="^screen-guard: clean"
+  # The guard's own proof: its test window must fail the run.
+  [[ $name == guard ]] && { want=3; verdict="^screen-guard: FAIL"; }
+  if (( code == want )) && grep -q "$verdict" "$dir/run.log"; then
     echo "PASS $name"
   else
     echo "FAIL $name (exit $code): $dir/run.log"

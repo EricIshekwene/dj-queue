@@ -1773,6 +1773,7 @@ final class EditorPlayback: ObservableObject {
     unload()
     self.url = url
     let p = AVPlayer(url: url)
+    Backstage.silenceForChecks(p)
     p.actionAtItemEnd = .pause
     player = p
     statusObs = p.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in

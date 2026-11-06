@@ -31,12 +31,27 @@ import Testing
     #expect(ScreenGuardLogic.onScreen([w], displays: [display]).isEmpty)
   }
 
+  @Test func devBuildsNeedBothDevVariables() {
+    let dev = "/x/worktree/.build/debug/djq"
+    #expect(Paths.devRunRefusal(executable: dev, environment: [:]) != nil)
+    #expect(Paths.devRunRefusal(executable: dev, environment: ["DJQ_HOME": "/s"]) != nil)
+    #expect(Paths.devRunRefusal(executable: dev, environment: ["DJQ_HOME": "", "DJQ_ROOT": "/r"]) != nil)
+    #expect(Paths.devRunRefusal(executable: dev, environment: ["DJQ_HOME": "/s", "DJQ_ROOT": "/r"]) == nil)
+  }
+
+  @Test func theInstalledAppIsNeverRefused() {
+    #expect(Paths.devRunRefusal(executable: "/Users/x/Applications/DJ Queue.app/Contents/MacOS/DJQueue", environment: [:]) == nil)
+    #expect(Paths.devRunRefusal(executable: "/Users/x/Applications/DJ Queue.app/Contents/MacOS/djq", environment: [:]) == nil)
+  }
+
   /// Only the real app's window code and `Backstage` may bring a window forward or activate the app.
   @Test func onlyBackstageBringsWindowsForward() throws {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let sources = root.appendingPathComponent("Sources/DJQueueApp")
-    let allowed = ["DJQueueApp.swift", "Snapshot/Backstage.swift", "DesignSystem/DSTooltip.swift"]
-    let banned = ["orderFrontRegardless", "makeKeyAndOrderFront", "orderBack(", "NSApp.activate", "setActivationPolicy(.regular)"]
+    let allowed = ["DJQueueApp.swift", "Snapshot/Backstage.swift", "Snapshot/ScreenGuard.swift", "DesignSystem/DSTooltip.swift"]
+    let banned = ["orderFrontRegardless", "makeKeyAndOrderFront", "orderBack(", ".orderFront(", "setIsVisible(true)", "NSApp.activate",
+                  "NSApplication.shared.activate", "NSRunningApplication.current.activate", "setActivationPolicy(.regular)",
+                  "NSWindow(contentRect", "NSMenu.popUpContextMenu"]
     var offenders: [String] = []
     let walker = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)
     while let url = walker?.nextObject() as? URL {

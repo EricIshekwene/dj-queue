@@ -159,14 +159,14 @@ enum DSHoverProbe {
       await move(to: restPoint)
       _ = await until(1500) { [self] in state().nothing }
 
-      // A real menu opens over the card; closes with the pointer still on it, then with the pointer gone.
+      // A menu over the card (stand-in: AppKit's notifications, see `menu`); closes with the pointer still on it, then gone.
       await hover(a)
       await menu(then: nil)
       let back = await until(1500) { [self] in state().only(in: a) }
-      check(back != nil, "menu closed with the pointer still on the card: it plays again (\(state().words))")
+      check(back != nil, "menu (stand-in) closed with the pointer still on the card: it plays again (\(state().words))")
       await menu(then: restPoint)
       let closed = await until(1500) { [self] in state().nothing }
-      check(closed != nil, "menu closed with the pointer elsewhere: zero players, zero audible (\(state().words))")
+      check(closed != nil, "menu (stand-in) closed with the pointer elsewhere: zero players, zero audible (\(state().words))")
       await move(to: restPoint)
 
       // The app goes to the background: a stand-in, because the probe never activates the app.
@@ -479,7 +479,8 @@ enum DSHoverProbe {
       let s = state()
       if let then { guardian.simulatedPointer = then }
       center.post(name: NSMenu.didEndTrackingNotification, object: NSMenu())
-      check(s.nothing, "while a menu is open: zero players, zero audible (\(s.words))")
+      say("  NOT DRIVEN a real NSMenu: macOS draws it on a display, so this sends the notifications AppKit sends for one")
+      check(s.nothing, "while a menu (stand-in) is open: zero players, zero audible (\(s.words))")
     }
 
     // MARK: Output
@@ -518,7 +519,7 @@ enum DSHoverProbe {
 
     func finish() -> Int32 {
       say("\nPointer moves were forwarded. \(guardian.debugRealCursorHovers) real SwiftUI hover events from the real cursor reached the guard and were dropped.")
-      if blanks > 0 { say("\(blanks) captures were blank; state above is still true.") }
+      if blanks > 0 { check(false, "\(blanks) captures were blank") }
       say(failures == 0 ? "RESULT: PASS" : "RESULT: FAIL, \(failures) check(s) failed")
       try? (lines.joined(separator: "\n") + "\n").write(to: out.appendingPathComponent("hover-probe.log"), atomically: true, encoding: .utf8)
       return failures == 0 ? 0 : 1

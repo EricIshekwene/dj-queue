@@ -12,6 +12,17 @@ public struct Paths: Sendable {
     self.root = root; self.appSupport = appSupport; self.logs = logs; self.launchAgents = launchAgents
   }
 
+  /// Why a run must not start: dev binaries only run on dev data, because opening the Store migrates it. `nil` means go.
+  public static func devRunRefusal(executable: String, environment: [String: String]) -> String? {
+    guard executable.contains("/.build/"), !hasDevEnvironment(environment) else { return nil }
+    return "refused: a dev build needs DJQ_HOME and DJQ_ROOT, so it never opens the real database"
+  }
+
+  /// Both dev variables set: DJQ_HOME keeps the real database out, DJQ_ROOT keeps the real footage out.
+  public static func hasDevEnvironment(_ environment: [String: String]) -> Bool {
+    ["DJQ_HOME", "DJQ_ROOT"].allSatisfy { environment[$0]?.isEmpty == false }
+  }
+
   public static var standard: Paths {
     let env = ProcessInfo.processInfo.environment
     let home = FileManager.default.homeDirectoryForCurrentUser

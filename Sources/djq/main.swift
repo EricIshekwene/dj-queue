@@ -4,6 +4,11 @@ import Foundation
 // djq — command-line access to the DJ Queue database (same SQLite file as the app; posts ChangeSignal after writes).
 // Env: DJQ_ROOT (the "DJ Video" folder), DJQ_HOME (app support + logs) for dev copies and tests.
 
+if let why = Paths.devRunRefusal(executable: Bundle.main.executablePath ?? "", environment: ProcessInfo.processInfo.environment) {
+  FileHandle.standardError.write(Data("djq \(why)\n".utf8))
+  exit(2)
+}
+
 RenderServices.factory = { Renderer(store: $0) }
 
 let usage = """

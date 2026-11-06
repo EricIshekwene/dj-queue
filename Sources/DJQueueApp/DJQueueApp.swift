@@ -41,6 +41,11 @@ enum LaunchMode: Equatable {
     }
     return a.contains("--agent") ? .agent : .normal
   }
+
+  /// A `--` flag the app doesn't know, which would otherwise open the real window on the real database.
+  static var unknownFlag: String? {
+    CommandLine.arguments.dropFirst().first { $0.hasPrefix("--") && !["--agent", "--snapshot"].contains($0) }
+  }
 }
 
 /// Owns the store, the model and the in-process engine.
@@ -58,6 +63,13 @@ final class AppHost {
   private var observer: NSObjectProtocol?
 
   private init() {
+    let env = ProcessInfo.processInfo.environment
+    let refusal = Paths.devRunRefusal(executable: Bundle.main.executablePath ?? "", environment: env)
+      ?? LaunchMode.unknownFlag.map { "refused: DJ Queue has no \($0) flag" }
+    if let refusal {
+      FileHandle.standardError.write(Data("DJ Queue \(refusal)\n".utf8))
+      exit(2)
+    }
     if case .snapshot = mode { menuBarInserted = false } else { menuBarInserted = true }
     if case .snapshot = mode { return }
     RenderServices.factory = { Renderer(store: $0) }
