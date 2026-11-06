@@ -148,10 +148,10 @@ public enum SettingsSearchRegistry {
     .row(.rendering, "Cleanup", group: "Posted renders", description: "What happens to a render once every platform has posted it."),
     .row(.rendering, "Delete after", group: "Posted renders", description: "Days after the last platform posted."),
     // playback
-    .row(.playback, "Autoplay previews", description: "Visible clips play muted from small preview copies made in the background."),
-    .row(.playback, "Unmute on hover", description: "Hovering a clip plays it with sound (one clip at a time); moving away mutes it again. Previews never unmute by themselves."),
-    .row(.playback, "Grids: play on hover only", description: "Grid views show covers; a tile plays only while the pointer is on it."),
-    .row(.playback, "Which clips play", description: "Cards, List and Single views: all visible clips play, at most 4 at once."),
+    .row(.playback, "Autoplay previews", description: "Clips play from small preview copies made in the background. Off, lists, Score and the Calendar show covers."),
+    .row(.playback, "Unmute on hover", description: "Hovering a clip plays it with sound (one clip at a time); moving away mutes it again. Calendar covers stay muted. Previews never unmute by themselves."),
+    .row(.playback, "Small previews: play on hover only", description: "Calendar, Cards, Grid and List show covers; a clip plays only while the pointer is on it. Single view and full previews play by themselves."),
+    .row(.playback, "Which clips play", description: "With hover-only off: all visible clips in Calendar, Cards and Grid play, at most 4 at once, or only the one you're on."),
     .row(.playback, "Loop", description: "The trim is what will post; the whole file shows everything around it."),
     // alerts
     .group(.alerts, "Queue"),

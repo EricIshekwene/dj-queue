@@ -37,26 +37,48 @@ import Testing
     #expect(try !roundTrip(p).gridHoverOnly)
   }
 
-  @Test func whichTilesPlay() {
+  /// Round 14: size decides. Every small preview is a cover until the pointer (or keyboard focus) is on it.
+  @Test func smallPreviewsPlayOnlyWhileHovered() {
+    let p = PlaybackPrefs()
+    for layout in [PreviewPlayback.Layout.cards, .grid, .list] {
+      #expect(!PreviewPlayback.plays(p, layout: layout, hovered: false, focused: false))
+      #expect(PreviewPlayback.plays(p, layout: layout, hovered: true, focused: false))
+      #expect(PreviewPlayback.plays(p, layout: layout, hovered: false, focused: true))
+    }
+  }
+
+  @Test func singlePlaysByItself() {
     var p = PlaybackPrefs()
-    // Grid, hover-only (default): only the hovered (or keyboard-focused) tile.
-    #expect(!PreviewPlayback.plays(p, layout: .grid, hovered: false, focused: false))
-    #expect(PreviewPlayback.plays(p, layout: .grid, hovered: true, focused: false))
-    #expect(PreviewPlayback.plays(p, layout: .grid, hovered: false, focused: true))
-    // Cards / List follow autoplay; Single plays the shown clip.
-    #expect(PreviewPlayback.plays(p, layout: .cards, hovered: false, focused: false))
-    #expect(PreviewPlayback.plays(p, layout: .list, hovered: false, focused: false))
+    #expect(PreviewPlayback.plays(p, layout: .single, hovered: false, focused: false))
     #expect(PreviewPlayback.plays(p, layout: .single, hovered: false, focused: true))
     p.focusOnly = true
-    #expect(!PreviewPlayback.plays(p, layout: .cards, hovered: false, focused: false))
-    #expect(PreviewPlayback.plays(p, layout: .cards, hovered: true, focused: false))
-    // Grid with hover-only off behaves like the others.
-    p.focusOnly = false
+    #expect(PreviewPlayback.plays(p, layout: .single, hovered: false, focused: true))
+    #expect(!PreviewPlayback.plays(p, layout: .single, hovered: false, focused: false))
+  }
+
+  /// "Small previews: play on hover only" off: the old behaviour for every small layout.
+  @Test func hoverOnlyOffPlaysEveryVisibleClip() {
+    var p = PlaybackPrefs()
     p.chooseGridHoverOnly(false)
-    #expect(PreviewPlayback.plays(p, layout: .grid, hovered: false, focused: false))
-    // Autoplay off: nothing plays.
-    p.autoplay = false
-    #expect(!PreviewPlayback.plays(p, layout: .grid, hovered: true, focused: true))
+    for layout in [PreviewPlayback.Layout.cards, .grid, .list] {
+      #expect(PreviewPlayback.plays(p, layout: layout, hovered: false, focused: false))
+    }
+    p.focusOnly = true
+    for layout in [PreviewPlayback.Layout.cards, .grid, .list] {
+      #expect(!PreviewPlayback.plays(p, layout: layout, hovered: false, focused: false))
+      #expect(PreviewPlayback.plays(p, layout: layout, hovered: true, focused: false))
+    }
+  }
+
+  @Test func autoplayOffPlaysNothing() {
+    for hoverOnly in [true, false] {
+      var p = PlaybackPrefs()
+      p.chooseGridHoverOnly(hoverOnly)
+      p.autoplay = false
+      for layout in [PreviewPlayback.Layout.cards, .grid, .list, .single] {
+        #expect(!PreviewPlayback.plays(p, layout: layout, hovered: true, focused: true))
+      }
+    }
   }
 
   @Test func proxyTargets() {

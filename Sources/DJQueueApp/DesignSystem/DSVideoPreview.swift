@@ -30,8 +30,8 @@ final class DSPlaybackBudget {
   func setHover(_ id: UUID, _ on: Bool) {
     if on {
       hoverAudible = id
-    } else if hoverAudible == id {
-      hoverAudible = nil
+    } else {
+      if hoverAudible == id { hoverAudible = nil }
       if hoverMuted == id { hoverMuted = nil }
     }
   }
@@ -97,8 +97,9 @@ extension EnvironmentValues {
 /// Muted looping preview of a proxy file with poster fallback (DESIGN-v2 §2.6/§4). Plays only while visible,
 /// `isActive` and granted a slot; releases the decoder when scrolled away. The proxy fades in over the poster in
 /// 200 ms. Mute toggle on hover. `unmuteOnHover`: while the pointer is over the preview or its card (`isHovered`) it
-/// plays with sound — starting playback (with a priority slot) when it wasn't playing, e.g. in focus-only mode — and
-/// mutes again on exit; `DSPlaybackBudget` keeps one clip audible at a time.
+/// plays with sound — starting playback (with a priority slot) when it wasn't playing — and mutes again on exit;
+/// `DSPlaybackBudget` keeps one clip audible at a time. Hover here and in cards comes from `dsPlaybackHover`, so an
+/// exit SwiftUI doesn't report still stops the clip. When it stops, the player is released at once.
 ///
 /// S6 (the clip as it will post): `overlay` — the on-video text — is drawn over the playing proxy only while the
 /// player time is inside `textWindow` (like the editor and the renderer); never over the poster (the cover already
@@ -107,7 +108,7 @@ extension EnvironmentValues {
 struct DSVideoPreview: View {
   let url: URL?
   var poster: NSImage? = nil
-  /// Parent's say: autoplay setting on, focus-only rules, file present, etc.
+  /// Parent's say: `PreviewPlayback.plays`, file present, etc.
   var isActive = true
   /// Focused card: gets a slot before others.
   var isPriority = false
@@ -138,11 +139,16 @@ struct DSVideoPreview: View {
   @State private var hovering = false
   @State private var ready = false
   @State private var progress = DSPlaybackProgress()
+  /// The scrubber is being dragged. A held mouse can leave the preview: the drag keeps the scrubber and the sound
+  /// until it ends (a gesture state, so it also clears if the drag is cancelled).
+  @GestureState private var scrubbing = false
+  /// A new player view after each release, so one that's still fading out never comes back (`released`).
+  @State private var playerGeneration = 0
   @Environment(\.dsPreviewOverlayOnPoster) private var overlayOnPoster
   private var budget: DSPlaybackBudget { .shared }
 
   var body: some View {
-    let hoverSound = unmuteOnHover && (hovering || isHovered)
+    let hoverSound = unmuteOnHover && (hovering || isHovered || scrubbing)
     let wantsPlay = url != nil && visible && (isActive || hoverSound)
     let priority = hoverSound ? 2 : isPriority ? 1 : 0
     let playing = wantsPlay && budget.isGranted(id)
@@ -152,6 +158,7 @@ struct DSVideoPreview: View {
       if playing, let url {
         DSPlayerLayerView(url: url, loopRange: loopRange, muted: !audible, gravity: gravity, overlay: overlay,
                           textWindow: textWindow, progress: progress) { r in ready = r }
+          .id(playerGeneration)
           .opacity(ready ? 1 : 0)
           .animation(DS.motion.fade, value: ready)
       }
@@ -185,14 +192,22 @@ struct DSVideoPreview: View {
       }
     }
     .overlay(alignment: .bottom) {
-      if showsScrubber && playing && hovering { scrubber.padding(.horizontal, 14).padding(.bottom, 12).transition(.opacity) }
+      if showsScrubber && playing && (hovering || scrubbing) { scrubber.padding(.horizontal, 14).padding(.bottom, 12).transition(.opacity) }
     }
-    .onHover { hovering = $0 }
+    .dsPlaybackHover { hovering = $0 }
     .onAppear { visible = true }
     .onDisappear { visible = false; budget.release(id) }
     .onScrollVisibilityChange(threshold: 0.3) { visible = $0 }
     .onChange(of: wantsPlay, initial: true) { _, w in
-      if w { budget.request(id, priority: priority) } else { budget.release(id); ready = false }
+      if w {
+        budget.request(id, priority: priority)
+      } else {
+        budget.release(id)
+        ready = false
+        // At once: a removal inside a hover animation would keep the player (and its sound) until the fade ends.
+        progress.view?.release()
+        playerGeneration += 1
+      }
     }
     .onChange(of: priority) { _, p in if wantsPlay { budget.request(id, priority: p) } }
     .onChange(of: playing && needsOverlay, initial: true) { _, need in if need { onNeedsOverlay?() } }
@@ -240,7 +255,9 @@ struct DSVideoPreview: View {
       .frame(height: 4)
       .frame(maxHeight: .infinity)
       .contentShape(Rectangle())
-      .gesture(DragGesture(minimumDistance: 0).onChanged { v in progress.seek(min(1, max(0, v.location.x / max(1, g.size.width)))) })
+      .gesture(DragGesture(minimumDistance: 0)
+        .updating($scrubbing) { _, on, _ in on = true }
+        .onChanged { v in progress.seek(min(1, max(0, v.location.x / max(1, g.size.width)))) })
     }
     .frame(height: 16)
     .dsTooltip("Drag to scrub through the preview")
@@ -300,10 +317,17 @@ final class DSPlayerNSView: NSView {
   private var range: ClosedRange<Double>?
   private var readyObs: NSKeyValueObservation?
   private var timeObs: Any?
+  /// Told to stop for good: SwiftUI's last update on a fading view must not build a new player.
+  private var released = false
   var onReady: ((Bool) -> Void)?
   weak var progress: DSPlaybackProgress?
   /// A video frame is on screen (evidence runs: the tooltip probe waits for it).
   var isShowingVideo: Bool { playerLayer.isReadyForDisplay }
+  /// Evidence runs (DSHoverProbe): what the player is really doing, and how many exist anywhere.
+  var isPlayingWithSound: Bool { (player?.rate ?? 0) > 0 && player?.isMuted == false }
+  var isPlaying: Bool { (player?.rate ?? 0) > 0 }
+  @MainActor static var debugLivePlayers = 0
+  @MainActor static var debugPlayersBuilt = 0
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -327,6 +351,7 @@ final class DSPlayerNSView: NSView {
   }
 
   func configure(url: URL, loopRange: ClosedRange<Double>?, muted: Bool, gravity: AVLayerVideoGravity) {
+    guard !released else { return }
     playerLayer.videoGravity = gravity
     let k = "\(url.path)|\(loopRange.map { "\($0.lowerBound)-\($0.upperBound)" } ?? "")"
     if k != key {
@@ -346,6 +371,8 @@ final class DSPlayerNSView: NSView {
         looper = AVPlayerLooper(player: p, templateItem: item)
       }
       player = p
+      Self.debugLivePlayers += 1
+      Self.debugPlayersBuilt += 1
       playerLayer.player = p
       readyObs = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] l, _ in
         let r = l.isReadyForDisplay
@@ -398,6 +425,11 @@ final class DSPlayerNSView: NSView {
     player?.seek(to: CMTime(seconds: start + fraction * (end - start), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
   }
 
+  func release() {
+    released = true
+    teardown()
+  }
+
   func teardown() {
     if let timeObs { player?.removeTimeObserver(timeObs) }
     timeObs = nil
@@ -409,6 +441,7 @@ final class DSPlayerNSView: NSView {
     looper?.disableLooping()
     looper = nil
     player?.removeAllItems()
+    if player != nil { Self.debugLivePlayers -= 1 }
     player = nil
     playerLayer.player = nil
     key = nil

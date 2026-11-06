@@ -3,20 +3,21 @@ import Foundation
 /// Autoplay preferences (decision #12), persisted by the app in UserDefaults `djq.playback`. Settings → Playback &
 /// autoplay edits them through `AppModel.setPlayback`. Lives in the core so the stored-JSON migration is testable.
 public struct PlaybackPrefs: Codable, Equatable, Sendable {
-  /// Muted autoplay of visible clips from their 540×960 proxies.
+  /// Previews play from their 540×960 proxies (small ones while hovered, large ones by themselves).
   public var autoplay = true
   /// Sound for the clip under the pointer (on by default since round 3; never auto-unmutes otherwise).
   public var unmuteOnHover = true
   /// True once Eric set "Unmute on hover" himself. Saved prefs from before round 3 never had it: they had the old
   /// default (off) without anyone choosing it, so they load as on (one-time migration); a later choice sticks.
   public var unmuteOnHoverChosen = false
-  /// Only the hovered / keyboard-focused clip plays (instead of every visible clip, ≤ 4 players).
+  /// With hover-only off: only the hovered / keyboard-focused clip plays (instead of every visible clip, ≤ 4 players).
   public var focusOnly = false
   /// What the proxies loop: the resolved trim (what will post) or the whole clip file.
   public var loop: ProxyRange = .trim
-  /// Grid views show posters and play a tile only while it's hovered (round 3; on by default).
+  /// "Small previews: play on hover only": Calendar, Cards, Grid and List show covers and a clip plays only while
+  /// it's hovered (grids since round 3, every small preview since round 14; on by default).
   public var gridHoverOnly = true
-  /// True once Eric set "Grids: play on hover only" himself (same one-time migration as `unmuteOnHoverChosen`).
+  /// True once Eric set that switch himself (same one-time migration as `unmuteOnHoverChosen`).
   public var gridHoverOnlyChosen = false
 
   public init() {}
@@ -60,13 +61,14 @@ public struct PlaybackPrefs: Codable, Equatable, Sendable {
 public enum PreviewPlayback {
   public enum Layout: Sendable { case cards, grid, single, list }
 
-  /// A tile plays when autoplay is on and:
-  /// - Grid with "play on hover only": only while hovered (or keyboard-focused, the keyboard's pointer).
+  /// Size decides (round 14). A tile plays when autoplay is on and:
+  /// - Any small preview (Cards, Grid, List, Calendar covers) with "play on hover only": only while hovered (or
+  ///   keyboard-focused, the keyboard's pointer).
   /// - Single: the shown clip (focus playback) — or every one when not focus-only.
-  /// - Cards / List (and grids with hover-only off): every visible tile, or only the hovered/focused one in focus-only.
+  /// - Small previews with hover-only off: every visible tile, or only the hovered/focused one in focus-only.
   public static func plays(_ p: PlaybackPrefs, layout: Layout, hovered: Bool, focused: Bool) -> Bool {
     guard p.autoplay else { return false }
-    if layout == .grid && p.gridHoverOnly { return hovered || focused }
+    if layout != .single && p.gridHoverOnly { return hovered || focused }
     return !p.focusOnly || hovered || focused
   }
 
