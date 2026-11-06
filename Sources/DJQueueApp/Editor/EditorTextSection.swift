@@ -343,12 +343,12 @@ private struct EditorTextAdvanced: View {
                        inheritedFrom: first ? model.source(of: "textStart") : nil, resetHelp: "Back to the default timing",
                        onReset: first && model.ownsField(fields) ? { model.resetVersion(fields) } : nil) {
       VStack(alignment: .leading, spacing: 6) {
-        EditorTimeRow(model: model, id: l.id, isStart: true, label: "Show from", seconds: s.start, off: off, tooltip: "Start this text at the playhead")
-        EditorTimeRow(model: model, id: l.id, isStart: false, label: "Show to", seconds: s.end, off: off, tooltip: "End this text at the playhead")
+        EditorTimeRow(model: model, id: l.id, token: model.timeDraftToken, isStart: true, label: "Show from", seconds: s.start, off: off, tooltip: "Start this text at the playhead")
+        EditorTimeRow(model: model, id: l.id, token: model.timeDraftToken, isStart: false, label: "Show to", seconds: s.end, off: off, tooltip: "End this text at the playhead")
         EditorHint("Seconds from the start of the clip as posted.")
       }
     }
-    .id("\(model.videoId)|\(model.versionNo)|\(l.id)")
+    .id("\(model.videoId)|\(model.versionNo)|\(l.id)|\(model.timeDraftToken)")
   }
 
   private func colour(_ label: String, hex: String?, fallback: String, off: String?, set: @escaping (String?, Bool) -> Void) -> some View {
@@ -373,6 +373,8 @@ private struct EditorTextAdvanced: View {
 private struct EditorTimeRow: View {
   @ObservedObject var model: EditorModel
   let id: String
+  /// `EditorModel.timeDraftToken` when this row was made. A newer one means it's on its way out, so it passes nothing on.
+  let token: Int
   let isStart: Bool
   let label: String
   let seconds: Double
@@ -387,6 +389,7 @@ private struct EditorTimeRow: View {
     HStack(alignment: .top, spacing: 6) {
       Text(label).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).frame(width: 66, height: DSButtonSize.sm.height, alignment: .leading)
       DSTextField(placeholder: "0:00.0", text: Binding(get: { draft ?? shown }, set: { t in
+        guard token == model.timeDraftToken else { return }
         draft = t
         invalid = false
         model.timeDraft = t == shown ? nil : (id, isStart, t)
@@ -413,6 +416,7 @@ private struct EditorTimeRow: View {
   /// A draft the model has already applied, or dropped, just clears here.
   private func finish() {
     guard let d = draft else { return }
+    guard token == model.timeDraftToken else { draft = nil; return }
     if d != shown, TextTimeline.parse(d) == nil, model.timeDraft != nil {
       invalid = true
       return

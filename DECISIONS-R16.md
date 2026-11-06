@@ -97,7 +97,8 @@ behind Advanced because he won't use it often. This file covers the data, drawin
     The timeline shows the one "No text" bar: nothing else shows on the video, so nothing else is listed.
 37. **Show from / to commit on ↩ and on blur,** so typing "1.5" doesn't land "1" first. A time that doesn't parse says so and writes
     nothing. What's typed sits in `EditorModel.timeDraft` with the text it belongs to, and `load`, `selectVersion` and Done commit it
-    first, as they do a typed Title: `load` blurs the field, and the blur alone would land it on the next clip.
+    first, as they do a typed Title: `load` blurs the field, and the blur alone would land it on the next clip. Undo, Redo and
+    Delete drop it instead (`dropTimeDraft`): what it was typed for is going, and the row they leave must not inherit it.
 38. **A window is written whole for the first text too,** matching decision 19: setting one end of a default window would drop the other.
 38b. **A drag writes nothing until it changes something.** A sloppy press on a whole-clip bar would otherwise pin the window to
     today's trim, and it would stop following the trim.
@@ -146,7 +147,8 @@ behind Advanced because he won't use it often. This file covers the data, drawin
     canvas and the exported frame with the text's own image, under its solid pixels: both must agree with the windows.
 53. **On a locked Mac** the window server draws nothing, so the script says so and captures the view tree. The player is black there,
     but the texts are real, so the check still means what it says. The side-by-sides with real video need an unlocked screen. Animations
-    don't tick there either, so `dsAnimationsOff` is set for the run: a jump lands, and "the crop fix is on screen" reads where it landed.
+    don't tick there either, so with `dsAnimationsOff` set for the run the inspector's jump goes without one, and "the crop fix is on
+    screen" reads where it landed. The side-by-sides use `plainCanvasForScript`, so they show the output with no dimmed text over it.
 
 ## For the editor branch (done)
 

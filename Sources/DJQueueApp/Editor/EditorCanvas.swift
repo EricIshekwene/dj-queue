@@ -307,7 +307,7 @@ struct EditorZonesCanvas: View {
       let out = editorFit(CGSize(width: model.aspect.ratio, height: 1), in: area)
       ZStack(alignment: .topLeading) {
         Color.clear
-        EditorOutputMedia(model: model, playback: playback, dimHiddenText: true, dragging: drag?.id, textOffset: textDrag)
+        EditorOutputMedia(model: model, playback: playback, dimHiddenText: !model.plainCanvasForScript, dragging: drag?.id, textOffset: textDrag)
           .frame(width: out.width, height: out.height)
           .clipShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
           .dsElevation(DS.elevation.e1)
@@ -320,7 +320,7 @@ struct EditorZonesCanvas: View {
           .allowsHitTesting(false)
         // The selected text when it's hidden goes under the rest, then the showing ones in stacking order: the pointer goes to
         // what's on screen, topmost first.
-        if !model.readOnly {
+        if !model.readOnly && !model.plainCanvasForScript {
           let on = model.textImages.filter { $0.shows(at: playback.time) }
           let dimmed = model.textImages.filter { !$0.shows(at: playback.time) && ($0.id == model.selectedText || $0.id == drag?.id) }
           ForEach(dimmed + on) { t in textHandle(t, in: out) }

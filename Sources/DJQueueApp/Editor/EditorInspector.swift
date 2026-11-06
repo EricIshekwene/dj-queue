@@ -56,7 +56,7 @@ struct EditorInspector: View {
 
   private func jump(_ proxy: ScrollViewProxy, _ s: EditorSection, animated: Bool) {
     current = s
-    if animated { dsWithAnimation { proxy.scrollTo(s, anchor: .top) } } else { proxy.scrollTo(s, anchor: .top) }
+    if animated && !dsAnimationsOff { dsWithAnimation { proxy.scrollTo(s, anchor: .top) } } else { proxy.scrollTo(s, anchor: .top) }
     DispatchQueue.main.async { model.scrollTarget = nil }
   }
 

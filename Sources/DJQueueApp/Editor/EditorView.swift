@@ -198,8 +198,10 @@ struct EditorHeader: View {
     return HStack(spacing: 0) {
       DSIconButton("arrow.uturn.backward", tooltip: "Undo the last change", size: .sm, shortcut: "⌘Z",
                    disabledReason: off ?? (model.canUndo ? nil : "Nothing to undo yet")) { model.undo() }
+        .background(ScriptAnchor("Undo"))
       DSIconButton("arrow.uturn.forward", tooltip: "Redo the change you undid", size: .sm, shortcut: "⇧⌘Z",
                    disabledReason: off ?? (model.canRedo ? nil : "Nothing to redo")) { model.redo() }
+        .background(ScriptAnchor("Redo"))
     }
   }
 

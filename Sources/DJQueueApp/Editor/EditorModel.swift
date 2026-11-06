@@ -151,6 +151,8 @@ final class EditorModel: ObservableObject {
   var onDeleteTemplate: ((CaptionTemplate) -> Void)? { appHooks.deleteTemplate }
   var isCovered: (() -> Bool)? { appHooks.isCovered }
   @Published var toast: String?
+  /// Evidence runs: the Zones canvas shows just the output (no dimmed text, no handles), to set beside an exported frame.
+  @Published var plainCanvasForScript = false
   /// Bumped when Title should take keyboard focus (header title click).
   @Published var focusTitle = 0
   /// True while a clip's data is being read (the canvas shows a spinner, not "not found").
@@ -1393,6 +1395,7 @@ final class EditorModel: ObservableObject {
   func undo() {
     commitCaptionDraft()
     guard !readOnly, let s = undoStack.popLast() else { show("Nothing to undo in this clip"); return }
+    dropTimeDraft()
     redoStack.append(undoState)
     restoreUndo(s)
     show("Undone")
@@ -1401,6 +1404,7 @@ final class EditorModel: ObservableObject {
   func redo() {
     commitCaptionDraft()
     guard !readOnly, let s = redoStack.popLast() else { show("Nothing to redo"); return }
+    dropTimeDraft()
     undoStack.append(undoState)
     restoreUndo(s)
     show("Redone")
@@ -1641,6 +1645,7 @@ final class EditorModel: ObservableObject {
   /// Deletes the selected text. Deleting the first text moves the next one into its place.
   func deleteText() {
     guard deleteTextOffReason == nil else { return }
+    dropTimeDraft()
     let r = resolved, id = selectedText
     updateVersion(coalesce: false) { v in if let n = TextLayers.removing(id, from: v, resolved: r) { v = n } }
     selectedTextRaw = TextLayer.firstId
@@ -1683,13 +1688,23 @@ final class EditorModel: ObservableObject {
   /// A time typed into Show from or to and not committed yet. Not published: a keystroke redraws nothing.
   var timeDraft: (id: String, isStart: Bool, text: String)?
 
-  /// Applies a typed time to the text it was typed for. Text that isn't a time changes nothing, and a clip or version change
-  /// calls this first, so a draft can never land on what comes next.
+  /// Applies a typed time to the text it was typed for. Text that isn't a time changes nothing. A clip or version change calls
+  /// this first, and whatever removes the text or version drops the draft, so it can never land on what comes next.
   func commitTimeDraft() {
     guard let d = timeDraft else { return }
     timeDraft = nil
     guard let t = TextTimeline.parse(d.text) else { return }
     if d.isStart { setTextTime(d.id, start: t) } else { setTextTime(d.id, end: t) }
+  }
+
+  /// Part of the time rows' identity: bumping it replaces them, so a row and its field can't pass a typed time to what comes next.
+  @Published private(set) var timeDraftToken = 0
+
+  /// Forgets a typed time because what it was typed for is going (Undo, Redo, Delete). Clearing the draft isn't enough: the field
+  /// sends its text again when it ends editing, so the row goes too, and a row from before the bump is ignored.
+  func dropTimeDraft() {
+    timeDraft = nil
+    timeDraftToken &+= 1
   }
 
   /// Show from (`start`) or Show to of a text, typed or from the playhead; one undo step. By id, because a typed time can

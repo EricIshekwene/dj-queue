@@ -324,6 +324,11 @@ enum TextLayersScript {
       check("a stray drag on a whole-clip bar pins no window (\(raw()?.textStart ?? -1) – \(raw()?.textEnd ?? -1))",
             raw()?.textStart == untouched?.textStart && raw()?.textEnd == untouched?.textEnd)
 
+      if let f = probe("text-end-1") {
+        await drag(from: NSPoint(x: f.midX, y: f.midY), to: NSPoint(x: f.midX + 30, y: f.midY))
+      }
+      check("nor does a grip dragged against the end of the trim", raw()?.textStart == untouched?.textStart && raw()?.textEnd == untouched?.textEnd)
+
       // The ringed swatch is the default: a tap changes nothing, so nothing gets written.
       await click("swatch text colour Black")
       check("tapping the default colour writes no look", raw()?.textLook == nil)
@@ -495,6 +500,9 @@ enum TextLayersScript {
       let times = [2.0, 5.0, 7.5, 10.0, 18.0]
       var shots: [(t: Double, canvas: CGImage)] = []
       await click("Index Title")
+      // What the export would be: the canvas with no dimmed text or handles over it.
+      e.plainCanvasForScript = true
+      defer { e.plainCanvasForScript = false }
       for t in times {
         await seek(t)
         await wait(900)
@@ -554,7 +562,11 @@ enum TextLayersScript {
       let s0 = saved()
       await click("Index Text")
       await click("Text 1")
+      // A time typed for the text being deleted goes with it.
+      await typeInField("Show from", "1.5")
       await click("Delete")
+      window.makeFirstResponder(nil)
+      await wait(400)
       let s1 = saved()
       check("deleting the first text promotes the next one", s1?.text == "Second hook" && s1?.moreText.count == 1)
       check("the promoted text kept its window and look", near(s1?.textStart, s0?.moreText.first?.start ?? -1, 0.01) && s1?.textLook?.color == "#FF3B30")
@@ -716,6 +728,28 @@ enum TextLayersScript {
       await wait(800)
       check("a typed time stays on its version", near(raw(id, version: 3)?.moreText?.last?.start, 1.5, 0.02))
       check("and doesn't reach the one selected next", raw(id)?.moreText?.last?.start == late.start)
+
+      // Undo takes away the version a time was typed in: the time goes too, and Redo keeps what's typed off the one it leaves.
+      let stored = raw(id)?.moreText?.last?.start
+      e.newVersion(copying: nil)
+      await wait(600)
+      let number = e.versionNo
+      await typeInField("Show from", "2.5")
+      await click("Undo")
+      window.makeFirstResponder(nil)
+      await wait(800)
+      check("Undo removed the new version", e.versionNo == 1 && raw(id, version: number) == nil)
+      check("a time typed in it doesn't land on the version Undo goes to (\(raw(id)?.moreText?.last?.start ?? -1))", raw(id)?.moreText?.last?.start == stored)
+      e.flushAndWait()
+      check("nor later", raw(id)?.moreText?.last?.start == stored)
+      await typeInField("Show from", "3.5")
+      await click("Redo")
+      window.makeFirstResponder(nil)
+      await wait(800)
+      e.flushAndWait()
+      check("a time typed before Redo lands nowhere", raw(id)?.moreText?.last?.start == stored && raw(id, version: number)?.moreText == nil)
+      e.selectVersion(1)
+      await wait(500)
     }
 
     /// A read-only clip can still be read: rows open, and what's in them stays off.

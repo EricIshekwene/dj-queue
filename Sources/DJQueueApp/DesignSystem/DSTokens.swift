@@ -338,13 +338,14 @@ extension AnyTransition {
   }
 }
 
-/// Evidence runs on a locked Mac: nothing ticks an animation there, so a scroll would never land.
+/// Evidence runs on a locked Mac: nothing ticks an animation there, so a jump in the inspector goes without one, or it would
+/// never land.
 @MainActor var dsAnimationsOff = false
 
 /// `withAnimation` that respects Reduce Motion.
 @MainActor
 func dsWithAnimation<R>(_ a: Animation = DS.motion.layout, _ body: () throws -> R) rethrows -> R {
-  try withAnimation(DS.motion.respecting(a, reduceMotion: dsAnimationsOff || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion), body)
+  try withAnimation(DS.motion.respecting(a, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion), body)
 }
 
 // MARK: - Interaction state (live or forced for the gallery)
