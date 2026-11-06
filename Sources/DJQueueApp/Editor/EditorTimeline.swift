@@ -281,6 +281,7 @@ struct EditorTextTrack: View {
         EditorTextBar(model: model, playback: playback, bar: bar, others: bars.bars.filter { $0.id != bar.id }, width: width,
                       markSelected: bars.bars.count > 1)
           .offset(y: CGFloat(bar.lane) * (EditorTimeline.textH + Self.laneGap))
+          .zIndex(bar.id == model.selectedText ? 1 : 0)
       }
     }
     .frame(width: width, height: Self.height(lanes: bars.laneCount), alignment: .topLeading)
@@ -307,8 +308,9 @@ private struct EditorTextBar: View {
   var others: [EditorTimelineBar]
   var width: CGFloat
   var markSelected: Bool
-  /// The span when a drag started.
-  @State private var origin: TextTimeline.Span?
+  /// The span when a drag started, and whether it has written anything. Until it changes something it writes nothing: a
+  /// sloppy press on a whole-clip bar mustn't pin the window to today's trim.
+  @State private var origin: (span: TextTimeline.Span, wrote: Bool)?
   private let h = EditorTimeline.textH
   /// Past this many points a press is a move, not a click.
   private static let clickSlop: CGFloat = 3
@@ -351,13 +353,12 @@ private struct EditorTextBar: View {
   private func moveSurface(_ tr: TrimRange) -> some View {
     EditorDragSurface(cursor: bar.draggable ? .openHand : .arrow, slop: Self.clickSlop, onPress: {
       model.selectText(bar.id)
-      if bar.draggable { origin = bar.span }
+      if bar.draggable { origin = (bar.span, false) }
     }, onDrag: { d in
-      guard let o = origin else { return }
+      guard let o = origin?.span else { return }
       let by = Double(d.width / max(width, 1)) * model.duration
       let start = TextTimeline.snappedStart(o, proposed: o.start + by, targets: targets(tr), tolerance: tolerance)
-      let s = TextTimeline.moved(o, toStart: start, trimDuration: tr.duration)
-      model.setTextWindow(bar.id, start: s.start, end: s.end)
+      write(TextTimeline.moved(o, toStart: start, trimDuration: tr.duration))
     }, onRelease: { moved in
       origin = nil
       // A press that never moved is a click: it opens the text in the inspector.
@@ -365,18 +366,24 @@ private struct EditorTextBar: View {
     })
   }
 
+  private func write(_ s: TextTimeline.Span) {
+    guard let o = origin, o.wrote || s.start != o.span.start || s.end != o.span.end else { return }
+    origin?.wrote = true
+    model.setTextWindow(bar.id, start: s.start, end: s.end)
+  }
+
   private func gripSurface(leading: Bool, _ tr: TrimRange) -> some View {
     EditorDragSurface(cursor: .resizeLeftRight, onPress: {
-      origin = bar.span
+      origin = (bar.span, false)
       model.selectText(bar.id)
     }, onDrag: { d in
-      guard let o = origin else { return }
+      guard let o = origin?.span else { return }
       let edge = math.x(tr.start + (leading ? o.start : o.end)) + d.width
       let t = math.snapped(edge, extra: targets(tr).map { $0 + tr.start }) - tr.start
       if leading {
-        model.setTextWindow(bar.id, start: TextTimeline.clampedStart(t, end: o.end, trimDuration: tr.duration), end: o.end)
+        write((TextTimeline.clampedStart(t, end: o.end, trimDuration: tr.duration), o.end))
       } else {
-        model.setTextWindow(bar.id, start: o.start, end: TextTimeline.clampedEnd(t, start: o.start, trimDuration: tr.duration))
+        write((o.start, TextTimeline.clampedEnd(t, start: o.start, trimDuration: tr.duration)))
       }
     }, onRelease: { _ in origin = nil })
   }

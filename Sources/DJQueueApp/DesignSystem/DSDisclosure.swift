@@ -31,6 +31,8 @@ struct DSDisclosure<Content: View>: View {
     VStack(alignment: .leading, spacing: 0) {
       Button { dsWithAnimation { isOpen.toggle() } } label: { row }
         .buttonStyle(.plain)
+        // A row opens even inside a disabled form: what's in it can still be read, and it disables with the form.
+        .environment(\.isEnabled, true)
         .dsTooltip(isOpen ? "Hide \(title)" : attention.map { "Show \(title): \($0)" } ?? "Show \(title)")
         .background(ScriptAnchor(title))
         .probeFrame("disclosure-\(title)")
@@ -111,7 +113,7 @@ struct DSColorSwatches: View {
 
   private func tile(_ s: Swatch) -> some View {
     let on = s.hex == selection
-    return Button { if disabledReason == nil { onPick(s.hex) } } label: {
+    return Button { if disabledReason == nil && !on { onPick(s.hex) } } label: {
       Circle().fill(Color(dsHex: s.hex))
         .overlay(Circle().strokeBorder(DS.color.borderStrong, lineWidth: 1))
         .frame(width: Self.size - 4, height: Self.size - 4)

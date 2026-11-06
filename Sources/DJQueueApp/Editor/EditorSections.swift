@@ -115,7 +115,7 @@ struct EditorCoverSection: View {
   }
 
   private var summary: String {
-    EditorGeometry.time(model.coverTime, tenths: true) + (model.resolvedEdit.coverIncludesText ? " · With text" : " · No text")
+    EditorGeometry.time(model.coverTime, tenths: true) + (model.coverHasText ? " · With text" : " · No text")
   }
 }
 

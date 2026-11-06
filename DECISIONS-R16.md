@@ -95,8 +95,16 @@ behind Advanced because he won't use it often. This file covers the data, drawin
     A duplicate goes straight after the original when there's room; when not, it stays on the same time, below.
 36. **With No text on, Add and Duplicate are off, with the reason.** The field is off too, so a new text couldn't be typed into.
     The timeline shows the one "No text" bar: nothing else shows on the video, so nothing else is listed.
-37. **Show from / to commit on ↩ and on blur,** so typing "1.5" doesn't land "1" first. A time that doesn't parse says so and writes nothing.
+37. **Show from / to commit on ↩ and on blur,** so typing "1.5" doesn't land "1" first. A time that doesn't parse says so and writes
+    nothing. What's typed sits in `EditorModel.timeDraft` with the text it belongs to, and `load`, `selectVersion` and Done commit it
+    first, as they do a typed Title: `load` blurs the field, and the blur alone would land it on the next clip.
 38. **A window is written whole for the first text too,** matching decision 19: setting one end of a default window would drop the other.
+38b. **A drag writes nothing until it changes something.** A sloppy press on a whole-clip bar would otherwise pin the window to
+    today's trim, and it would stop following the trim.
+38c. **The first text keeps a Timing field with Custom and ↺,** the Timing row's job: without it nothing could return a window to the
+    default. The others have no default, so no tag.
+38d. **The default colour is no colour.** Tapping the ringed swatch does nothing, and picking the default writes nil, so a look-free
+    clip keeps its edit hash (rule #10).
 39. **Undo:** clicks (add, delete, swatch, font, drop on the canvas, typed time) are one step each. Drags, sliders and the colour
     panel coalesce like every other drag.
 40. **Drags are an AppKit surface (`EditorDragSurface`), not `DragGesture`.** SwiftUI gestures and taps don't see events sent to a
@@ -106,6 +114,13 @@ behind Advanced because he won't use it often. This file covers the data, drawin
 42. **`textBars` shows an extra the trim leaves out as a sliver at the end,** so it can still be seen and picked up, instead of vanishing.
 
 ## Canvas and lists
+
+42b. **A hidden selected text gives way.** Its handle goes under the showing ones, or it takes the pointer from the text on screen.
+42c. **The selected bar comes up** over others sharing the last lane, and collapsible rows stay clickable on a read-only clip: what's
+    in them can be read, and it stays disabled.
+42d. **Undo writes an empty v1 when the state it restores has no version row.** Round 3 only saved the rows it restored, so ⌘Z on a
+    clip with no row never reached the store.
+42e. **No text off leaves an emptied first text empty while another text shows,** or the Title would come back on the video.
 
 43. **One image per text, in a 160 MB cache keyed by `layerKey`.** The key has no time in it, so moving a text in time draws nothing,
     and dragging or typing in one never redraws the rest (the script checks image identity). 160 MB holds a full clip of 12 at
@@ -130,7 +145,8 @@ behind Advanced because he won't use it often. This file covers the data, drawin
 52. **`DJQ_TEXT_LAYERS_SCRIPT`** drives the real window and `AppModel`. Which text shows at each time is decided by comparing the
     canvas and the exported frame with the text's own image, under its solid pixels: both must agree with the windows.
 53. **On a locked Mac** the window server draws nothing, so the script says so and captures the view tree. The player is black there,
-    but the texts are real, so the check still means what it says. The side-by-sides with real video need an unlocked screen.
+    but the texts are real, so the check still means what it says. The side-by-sides with real video need an unlocked screen. Animations
+    don't tick there either, so `dsAnimationsOff` is set for the run: a jump lands, and "the crop fix is on screen" reads where it landed.
 
 ## For the editor branch (done)
 

@@ -162,6 +162,7 @@ struct EditorHeader: View {
         DSIconButton("chevron.right", tooltip: "Save and open the next clip", size: .sm, shortcut: "⌘]",
                      disabledReason: (index ?? videoIds.count) >= videoIds.count - 1 ? "This is the last clip in the list" : nil) { go(1) }
           .keyboardShortcut("]", modifiers: .command)
+          .background(ScriptAnchor("Next clip"))
         if let i = index, videoIds.count > 1 {
           Text("\(i + 1) of \(videoIds.count)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
             .padding(.leading, 2)

@@ -269,7 +269,7 @@ private struct EditorTextAdvanced: View {
     let off: String? = r.noText ? "No text is on; turn off No text to style it" : nil
     VStack(alignment: .leading, spacing: DS.space.md) {
       actions
-      timing(l, off: off)
+      timing(r, l)
       EditorField(label: "Font", isCustom: look.font != nil, resetHelp: "Back to the default font",
                   onReset: look.font == nil ? nil : { model.setLook { $0.font = nil } }) {
         DSSelect(selection: Binding(get: { look.font ?? .standard }, set: { f in model.setLook { $0.font = f } }),
@@ -329,26 +329,32 @@ private struct EditorTextAdvanced: View {
     }
   }
 
-  private func timing(_ l: TextLayer, off: String?) -> some View {
+  /// When the selected text shows. The first text keeps its Custom tag and ↺, which go back to the default timing and so
+  /// follow the trim again; the others have no default.
+  private func timing(_ r: ResolvedVersion, _ l: TextLayer) -> some View {
     let s = TextTimeline.span(l, trimDuration: model.trim.duration)
-    return VStack(alignment: .leading, spacing: 6) {
-      EditorTimeRow(label: "Show from", seconds: s.start, off: off, tooltip: "Start this text at the playhead") {
-        model.setTextTime(l.id, start: $0)
-      } usePlayhead: { model.setTextTime(l.id, start: model.playback.time - model.trim.start) }
-      EditorTimeRow(label: "Show to", seconds: s.end, off: off, tooltip: "End this text at the playhead") {
-        model.setTextTime(l.id, end: $0)
-      } usePlayhead: { model.setTextTime(l.id, end: model.playback.time - model.trim.start) }
-      EditorHint("Seconds from the start of the clip as posted.")
+    let first = model.selectedIsFirst
+    let off: String? = r.noText ? "No text is on; turn it off to change when this shows" : nil
+    let fields = ["textStart", "textEnd"]
+    return EditorField(label: "Timing", isCustom: first && (!r.isDefault("textStart") || !r.isDefault("textEnd")),
+                       inheritedFrom: first ? model.source(of: "textStart") : nil, resetHelp: "Back to the default timing",
+                       onReset: first && model.ownsField(fields) ? { model.resetVersion(fields) } : nil) {
+      VStack(alignment: .leading, spacing: 6) {
+        EditorTimeRow(model: model, id: l.id, isStart: true, label: "Show from", seconds: s.start, off: off, tooltip: "Start this text at the playhead")
+        EditorTimeRow(model: model, id: l.id, isStart: false, label: "Show to", seconds: s.end, off: off, tooltip: "End this text at the playhead")
+        EditorHint("Seconds from the start of the clip as posted.")
+      }
     }
-    .id(l.id)
+    .id("\(model.videoId)|\(model.versionNo)|\(l.id)")
   }
 
   private func colour(_ label: String, hex: String?, fallback: String, off: String?, set: @escaping (String?, Bool) -> Void) -> some View {
     let shown = hex ?? fallback
     return EditorField(label: label, value: shown, isCustom: hex != nil, resetHelp: "Back to the default \(label.lowercased())",
                        onReset: hex == nil ? nil : { set(nil, false) }) {
+      // The default colour is no colour: picking it never writes a custom look.
       DSColorSwatches(name: label.lowercased(), swatches: Self.swatches, selection: shown, disabledReason: off,
-                      onPick: { set($0, false) }, onCustom: { set($0, true) })
+                      onPick: { set($0 == fallback ? nil : $0, false) }, onCustom: { set($0 == fallback ? nil : $0, true) })
     }
   }
 
@@ -359,14 +365,16 @@ private struct EditorTextAdvanced: View {
 }
 
 /// A typed time with a Use playhead button. It commits on ↩ or when the keyboard leaves, so typing "1.5" doesn't land "1"
-/// first; a time that isn't one says so and changes nothing.
+/// first; a time that isn't one says so and changes nothing. The model holds what's typed, so a clip or version change
+/// commits it to this text first (`EditorModel.commitTimeDraft`).
 private struct EditorTimeRow: View {
+  @ObservedObject var model: EditorModel
+  let id: String
+  let isStart: Bool
   let label: String
   let seconds: Double
   let off: String?
   let tooltip: String
-  let commit: (Double) -> Void
-  let usePlayhead: () -> Void
   @State private var draft: String?
   @State private var invalid = false
 
@@ -375,15 +383,23 @@ private struct EditorTimeRow: View {
   var body: some View {
     HStack(alignment: .top, spacing: 6) {
       Text(label).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).frame(width: 66, height: DSButtonSize.sm.height, alignment: .leading)
-      DSTextField(placeholder: "0:00.0", text: Binding(get: { draft ?? shown }, set: { draft = $0; invalid = false }),
-                  error: invalid ? "Use a time like 0:03.5" : nil, disabledReason: off, size: .sm,
-                  onSubmit: finish)
+      DSTextField(placeholder: "0:00.0", text: Binding(get: { draft ?? shown }, set: { t in
+        draft = t
+        invalid = false
+        model.timeDraft = t == shown ? nil : (id, isStart, t)
+      }), error: invalid ? "Use a time like 0:03.5" : nil, size: .sm, onSubmit: finish)
         .whenBlurred(finish)
+        .disabled(off != nil)
+        .opacity(off == nil ? 1 : 0.55)
+        // Outside .disabled, so the reason still shows on hover.
+        .dsTooltip(nil, disabledReason: off)
         .background(ScriptAnchor(label))
       DSButton("Use playhead", icon: "scope", variant: .ghost, size: .sm, disabledReason: off, tooltip: tooltip) {
         draft = nil
         invalid = false
-        usePlayhead()
+        model.timeDraft = nil
+        let t = model.playback.time - model.trim.start
+        if isStart { model.setTextTime(id, start: t) } else { model.setTextTime(id, end: t) }
       }
       .fixedSize()
       .background(ScriptAnchor("\(label) playhead"))
@@ -391,12 +407,14 @@ private struct EditorTimeRow: View {
     .onDisappear(perform: finish)
   }
 
+  /// A draft the model has already applied, or dropped, just clears here.
   private func finish() {
     guard let d = draft else { return }
-    guard d != shown else { draft = nil; return }
-    guard let t = TextTimeline.parse(d) else { invalid = true; return }
+    if d != shown, TextTimeline.parse(d) == nil, model.timeDraft != nil {
+      invalid = true
+      return
+    }
     draft = nil
-    invalid = false
-    commit(t)
+    model.commitTimeDraft()
   }
 }

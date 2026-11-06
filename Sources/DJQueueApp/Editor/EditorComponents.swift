@@ -27,6 +27,7 @@ struct EditorCustomTag: View {
           // Every reset goes through EditorModel, so ⌘Z (Undo in the header) brings the value back.
           DSIconButton("arrow.uturn.backward", tooltip: resetHelp, size: .sm, action: onReset)
             .scaleEffect(0.86)
+            .background(ScriptAnchor(resetHelp))
         }
       }
     }

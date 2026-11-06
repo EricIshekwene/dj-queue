@@ -252,6 +252,7 @@ final class EditorModel: ObservableObject {
   func load(_ id: String) {
     commitCaptionDraft()
     commitTitleDraft()  // switching clips is an explicit commit point for a typed Title
+    commitTimeDraft()  // and for a typed time, or it would land on the next clip when its field blurs
     flush()  // queued before the read below on the same serial queue
     loadToken &+= 1
     let token = loadToken
@@ -1200,9 +1201,11 @@ final class EditorModel: ObservableObject {
   /// default is "No text", gets an explicit off).
   func setNoText(_ on: Bool) {
     if on { updateVersion { $0.noText = true }; return }
+    // An emptied first text stays empty while another text shows, or the Title would come back over it.
+    let othersShow = resolved.moreText.contains { !$0.isBlank }
     updateVersion { v in
       v.noText = nil
-      if (v.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { v.text = nil }
+      if (v.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !othersShow { v.text = nil }
     }
     if resolved.noText { updateVersion { $0.noText = false } }
   }
@@ -1281,6 +1284,7 @@ final class EditorModel: ObservableObject {
   func newVersion(copying source: Int?) {
     guard !readOnly else { return }
     commitCaptionDraft()
+    commitTimeDraft()
     flush()
     markUndo(coalesce: false)
     let n = (versions.map(\.number).max() ?? 1) + 1
@@ -1312,6 +1316,7 @@ final class EditorModel: ObservableObject {
 
   func deleteVersion(_ n: Int) {
     guard n > 1, !readOnly else { return }
+    commitTimeDraft()
     flush()
     markUndo(coalesce: false)
     versions.removeAll { $0.number == n }
@@ -1326,6 +1331,7 @@ final class EditorModel: ObservableObject {
 
   func selectVersion(_ n: Int) {
     commitCaptionDraft()
+    commitTimeDraft()
     versionNo = n
     fieldRevision &+= 1
     refreshOverlay()
@@ -1407,8 +1413,9 @@ final class EditorModel: ObservableObject {
     let gone = Set(versions.map(\.number)).subtracting(s.versions.map(\.number)).filter { $0 > 1 }
     edit = s.edit
     pendingEdit = true
-    versions = s.versions
-    pendingVersions.formUnion(s.versions.map(\.number))
+    // A state from before the clip had any version row still has to reach the store: an empty v1 undoes what's there.
+    versions = s.versions.contains { $0.number == 1 } ? s.versions : [Version(number: 1)] + s.versions
+    pendingVersions.formUnion(versions.map(\.number))
     versionNo = s.versions.contains { $0.number == s.versionNo } ? s.versionNo : 1
     if !gone.isEmpty {
       let store = store, id = videoId
@@ -1473,6 +1480,7 @@ final class EditorModel: ObservableObject {
   /// Blocks until queued writes are done (Done / window close).
   func flushAndWait() {
     commitTitleDraft()  // Done / ⌘↩ / closing are explicit commit points; the 300 ms autosave isn't
+    commitTimeDraft()
     flush()
     Self.saveQueue.sync {}
   }
@@ -1530,6 +1538,11 @@ final class EditorModel: ObservableObject {
 
   private func textImagesDrawn(_ signature: [String], _ build: (Bool) -> [EditorTextImage]) {
     if overlaySignature == signature { textImages = build(false) }
+  }
+
+  /// Any text on the cover.
+  var coverHasText: Bool {
+    resolvedEdit.coverIncludesText && !PreviewKeys.coverLayers(resolved, offset: coverTime - trim.start, trimDuration: trim.duration).isEmpty
   }
 
   /// The texts on the cover: what `Media.coverComposite` draws for this frame.
@@ -1661,6 +1674,18 @@ final class EditorModel: ObservableObject {
     } else {
       updateText(id) { $0.start = start; $0.end = end }
     }
+  }
+
+  /// A time typed into Show from or to and not committed yet. Not published: a keystroke redraws nothing.
+  var timeDraft: (id: String, isStart: Bool, text: String)?
+
+  /// Applies a typed time to the text it was typed for. Text that isn't a time changes nothing, and a clip or version change
+  /// calls this first, so a draft can never land on what comes next.
+  func commitTimeDraft() {
+    guard let d = timeDraft else { return }
+    timeDraft = nil
+    guard let t = TextTimeline.parse(d.text) else { return }
+    if d.isStart { setTextTime(d.id, start: t) } else { setTextTime(d.id, end: t) }
   }
 
   /// Show from (`start`) or Show to of a text, typed or from the playhead; one undo step. By id, because a typed time can

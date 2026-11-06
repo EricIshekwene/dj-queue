@@ -318,11 +318,12 @@ struct EditorZonesCanvas: View {
           .clipShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
           .offset(x: out.minX, y: out.minY)
           .allowsHitTesting(false)
-        // In stacking order, so the text on top takes the pointer.
+        // The selected text when it's hidden goes under the rest, then the showing ones in stacking order: the pointer goes to
+        // what's on screen, topmost first.
         if !model.readOnly {
-          ForEach(model.textImages.filter { $0.shows(at: playback.time) || $0.id == model.selectedText || $0.id == drag?.id }) { t in
-            textHandle(t, in: out)
-          }
+          let on = model.textImages.filter { $0.shows(at: playback.time) }
+          let dimmed = model.textImages.filter { !$0.shows(at: playback.time) && ($0.id == model.selectedText || $0.id == drag?.id) }
+          ForEach(dimmed + on) { t in textHandle(t, in: out) }
         }
         if snapX || snapY { guides(in: out) }
         if !playback.ready { DSSpinner(size: 16).position(x: geo.size.width / 2, y: geo.size.height / 2) }
@@ -350,6 +351,9 @@ struct EditorZonesCanvas: View {
 
   private func textSurface(_ t: EditorTextImage, size: CGSize) -> some View {
     EditorDragSurface(cursor: .openHand, onPress: {
+      // A text removed mid-drag never saw its release, so nothing from that drag may carry over.
+      textDrag = .zero
+      textDragValue = nil
       let b = t.bounds
       drag = (t.id, Double(b.midX), Double(b.midY), Double(b.width), Double(b.height))
       model.selectText(t.id)

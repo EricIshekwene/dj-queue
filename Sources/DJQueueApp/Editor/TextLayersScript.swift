@@ -115,13 +115,26 @@ enum TextLayersScript {
       await wait(500)
     }
 
-    /// Clicks a time field, replaces what's in it and presses ↩, as typing does.
-    func typeTime(_ label: String, _ text: String) async {
+    /// True when the control sits inside the inspector's visible part right now. It doesn't scroll, so it says where a jump
+    /// landed.
+    func onScreen(_ label: String) -> Bool {
+      guard let a = anchor(host, ScriptAnchor.prefix + label), let scroll = a.enclosingScrollView else { return false }
+      let r = a.convert(a.bounds, to: nil), box = scroll.convert(scroll.bounds, to: nil)
+      return r.minY >= box.minY - 1 && r.maxY <= box.maxY + 1
+    }
+
+    /// Clicks a time field and replaces what's in it, leaving it uncommitted.
+    func typeInField(_ label: String, _ text: String) async {
       await click(label)
       await wait(200)
       guard let field = window.firstResponder as? NSTextView else { check("\(label) takes the keyboard", false); return }
       field.selectAll(nil)
       await type(text)
+    }
+
+    /// The same, then ↩.
+    func typeTime(_ label: String, _ text: String) async {
+      await typeInField(label, text)
       if let k = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                   windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
                                   isARepeat: false, keyCode: 36) {
@@ -184,10 +197,16 @@ enum TextLayersScript {
     // MARK: Store
 
     /// What's saved right now.
-    func saved() -> ResolvedVersion? {
+    func saved(_ id: String? = nil, version: Int = 1) -> ResolvedVersion? {
       EditorModel.flushLiveAndWait()
       guard let settings = try? store.settings() else { return nil }
-      return (try? store.resolvedVersion(videoId: clip, number: 1, settings: settings)) ?? nil
+      return (try? store.resolvedVersion(videoId: id ?? clip, number: version, settings: settings)) ?? nil
+    }
+
+    /// A version row as stored, before anything is resolved.
+    func raw(_ id: String? = nil, version: Int = 1) -> Version? {
+      EditorModel.flushLiveAndWait()
+      return (try? store.versions(videoId: id ?? clip))?.first { $0.number == version }
     }
 
     func state() -> (state: VideoState, sent: Bool)? { (try? store.video(id: clip)).flatMap { $0 }.map { ($0.state, $0.sentToQueue) } }
@@ -227,10 +246,13 @@ enum TextLayersScript {
         check("an Edit clip with no crop", false)
         return
       }
+      let more = a.editList.filter { $0.type == .short && !$0.missing && $0.id != v.id && $0.id != other.id && $0.duration > 12 }
+      guard more.count >= 2 else { check("two more Edit clips", false); return }
       clip = v.id
       note("clip \(v.id.prefix(8)) “\(a.displayName(v))”")
       EditorDisclosures.shared.closeAll()
       baseline = state()
+      dsAnimationsOff = screenLocked
 
       let w = WindowManager.makeMainWindow(model: a, make: SnapshotWindow.make)
       window = w
@@ -256,7 +278,7 @@ enum TextLayersScript {
       await canvas()
       await stackedExport()
       await deleteAndUndo()
-      await capAndClipChange(other.id)
+      await capAndClipChange(other.id, third: more[0].id, broken: more[1].id)
       await listPreview()
       stageHolds("at the end")
     }
@@ -279,11 +301,7 @@ enum TextLayersScript {
     func frameAndChip() async {
       check("the to-fix chip opens the closed Frame section", await click("To fix") && EditorDisclosures.shared.isOpen(.frame))
       await wait(600)
-      if let f = await control("Use this crop") {
-        check("the crop fix is on screen", window.contentView?.bounds.contains(NSPoint(x: f.midX, y: f.midY)) == true)
-      } else {
-        check("the crop fix is on screen", false)
-      }
+      check("the jump landed with the crop fix on screen", onScreen("Use this crop"))
       await shot("reason-chip-opened-frame")
       await click("Use this crop")
       check("Use this crop saved a crop", ((try? store.edit(videoId: clip))?.crop) != nil || { EditorModel.flushLiveAndWait(); return ((try? store.edit(videoId: clip))?.crop) != nil }())
@@ -298,12 +316,38 @@ enum TextLayersScript {
       guard let e = editor else { return }
       let d = e.trim.duration
       note(String(format: "trim %.2f s", d))
+      // A sloppy press on a whole-clip bar moves nothing, so it must write nothing.
+      let untouched = raw()
+      if let f = probe("text-bar-1") {
+        await drag(from: NSPoint(x: f.midX, y: f.midY), to: NSPoint(x: f.midX + 6, y: f.midY))
+      }
+      check("a stray drag on a whole-clip bar pins no window (\(raw()?.textStart ?? -1) – \(raw()?.textEnd ?? -1))",
+            raw()?.textStart == untouched?.textStart && raw()?.textEnd == untouched?.textEnd)
+
+      // The ringed swatch is the default: a tap changes nothing, so nothing gets written.
+      await click("swatch text colour Black")
+      check("tapping the default colour writes no look", raw()?.textLook == nil)
+
       // The first text ends at 4 s, so the others have room.
       if let f = probe("text-end-1"), let x = xFor(4) {
         await drag(from: NSPoint(x: f.midX, y: f.midY), to: NSPoint(x: x, y: f.midY))
       }
       var r = saved()
       check("dragging the first text's end grip saved its end near 4 s (\(r?.textEnd ?? -1))", near(r?.textEnd, 4))
+      window.makeFirstResponder(nil)
+      await wait(200)
+      await commandZ()
+      check("⌘Z takes the grip drag back in the store, on a clip that had no version row (\(raw()?.textEnd ?? -1))", raw()?.textEnd == nil)
+      e.redo()
+      await wait(500)
+      check("Redo puts it back", near(raw()?.textEnd, 4))
+      check("the first text's timing can go back to the default", await click("Back to the default timing"))
+      check("↺ clears the first text's window", raw()?.textStart == nil && raw()?.textEnd == nil)
+      window.makeFirstResponder(nil)
+      await wait(200)
+      await commandZ()
+      r = saved()
+      check("⌘Z undoes ↺", near(r?.textEnd, 4))
 
       await seek(6)
       check("the playhead is at 6 s", near(e.playback.time - e.trim.start, 6, 0.3))
@@ -421,6 +465,25 @@ enum TextLayersScript {
       await click("Index Text")
       check("the switcher selects too", await click("Text 1") && e.selectedText == TextLayer.firstId)
       await shot("switcher")
+
+      // A hidden selected text at the same place as a showing one: the pointer belongs to the one on screen.
+      await click("Text 2")
+      await seek(2)
+      let start = saved()
+      let firstY = start?.posY ?? 0, secondY = start?.moreText.first?.posY
+      check("only the first text shows at 2 s", e.textImages.filter { $0.shows(at: e.playback.time) }.map(\.id) == [TextLayer.firstId])
+      if let f = probe("canvas-text-\(TextLayer.firstId)") {
+        await drag(from: NSPoint(x: f.midX, y: f.midY), to: NSPoint(x: f.midX, y: f.midY - 60))
+      }
+      r = saved()
+      check("the drag moved the text on screen (\(firstY) → \(r?.posY ?? -1))", (r?.posY ?? 0) > firstY + 0.03)
+      check("not the hidden one under it", r?.moreText.first?.posY == secondY)
+      check("and selected the one it moved", e.selectedIsFirst)
+      await shot("hidden-text-gave-way")
+      window.makeFirstResponder(nil)
+      await wait(200)
+      await commandZ()
+      check("⌘Z puts it back", saved()?.posY == firstY)
       stageHolds("after the canvas")
     }
 
@@ -543,14 +606,22 @@ enum TextLayersScript {
       stageHolds("after undo")
     }
 
-    func capAndClipChange(_ other: String) async {
+    func capAndClipChange(_ other: String, third: String, broken: String) async {
       guard let e = editor else { return }
       let selected = e.selectedText
       check("a text is selected before leaving the clip", !selected.isEmpty)
       let open = EditorDisclosures.shared.open
-      e.selectText(e.resolved.moreText.first?.id ?? TextLayer.firstId)
-      e.load(other)
+      // A time typed and not committed belongs to this clip, whatever comes next.
+      await click("Index Text")
+      await click("Text 1")
+      let otherBefore = raw(other), endBefore = saved()?.textEnd
+      await typeInField("Show from", "1.5")
+      check("a click on Next clip is there", await click("Next clip"))
       await wait(2500)
+      check("the header went to the next clip", e.videoId == other)
+      let a = saved(clip), b = raw(other)
+      check("a typed Show from stays on its clip (\(a?.textStart ?? -1))", near(a?.textStart, 1.5, 0.02) && near(a?.textEnd, endBefore ?? -1, 0.02))
+      check("and never reaches the next one (\(b?.textStart ?? -1))", b?.textStart == otherBefore?.textStart && b?.textEnd == otherBefore?.textEnd)
       check("the selection is on the first text of the next clip", e.selectedIsFirst)
       check("open rows stay open across clips", EditorDisclosures.shared.open == open)
       await click("Index Text")
@@ -567,9 +638,102 @@ enum TextLayersScript {
       await shot("twelve-texts-four-lanes")
       check("no more than four lanes", e.textBars.laneCount <= TextTimeline.maxLanes)
       if let f = ProbeFrames.frames["canvas-output"] { check("the canvas keeps its height at 1440×900 (\(Int(f.height)) pt)", f.height >= 300) }
+
+      // The selected bar comes up over the others sharing the last lane, so it can be picked up.
+      let shared = e.textBars.bars.filter { $0.lane == TextTimeline.maxLanes - 1 }
+      if shared.count > 1, let b = shared.first {
+        e.selectText(b.id)
+        await wait(400)
+        if let f = probe("text-bar-\(b.number)") { await clickAt(NSPoint(x: f.minX + 30, y: f.midY)) }
+        check("a click lands on the selected bar in a shared lane", e.selectedText == b.id)
+      }
+
+      // An emptied first text stays empty across No text, and the cover says what it shows.
+      await click("Text 1")
+      e.focusTextField += 1
+      await wait(400)
+      if let field = window.firstResponder as? NSTextView {
+        field.selectAll(nil)
+        field.delete(nil)
+      }
+      await wait(600)
+      window.makeFirstResponder(nil)
+      await wait(300)
+      let images = e.textImages.count
+      check("the emptied first text is stored empty", raw(other)?.text == "")
+      e.setNoText(true)
+      await wait(400)
+      check("with No text the cover has no text to show", !e.coverHasText)
+      await shot("no-text-timing-fields")
+      e.setNoText(false)
+      await wait(600)
+      check("No text off leaves the first text empty", raw(other)?.text == "")
+      check("and the Title doesn't come back on the video (\(e.textImages.count) of \(images))", e.textImages.count == images)
+
       e.flushAndWait()
+      await versionsAndTrim(third)
+      await readOnlyRows(broken)
       e.load(clip)
       await wait(2500)
+    }
+
+    /// Trim commits, new versions and an inherited list, on a clip of its own.
+    func versionsAndTrim(_ id: String) async {
+      guard let e = editor else { return }
+      e.load(id)
+      await wait(2500)
+      await click("Index Text")
+      let d = e.trim.duration
+      await seek(d * 0.8)
+      await click("Add text")
+      await type("Late text")
+      guard let late = e.resolved.moreText.last else { check("a late text", false); return }
+      check("a text late in the clip", near(late.start, d * 0.8, 0.3))
+      // Through the call the O key makes; dragging the trim handle is a SwiftUI gesture.
+      e.setTrimOut(e.trim.start + d * 0.5)
+      await wait(600)
+      let inside = raw(id)?.moreText?.last, short = e.trim.duration
+      check("a committed trim pulls the text inside it", (inside?.end ?? 99) <= short + 0.01 && (inside?.start ?? 99) < short)
+      e.undo()
+      await wait(600)
+      check("⌘Z takes the trim and the clamp back", near(raw(id)?.moreText?.last?.start, late.start ?? -1, 0.01))
+
+      e.newVersion(copying: nil)
+      await wait(600)
+      check("a new version inherits the list and stores none", raw(id, version: 2)?.moreText == nil && e.resolved.moreText.count == 1)
+      e.selectText(late.id)
+      await wait(300)
+      e.setSelectedSize(90)  // the slider's own call: its drag is a SwiftUI gesture
+      await wait(600)
+      check("the first edit copies the list into that version", raw(id, version: 2)?.moreText?.last?.size == 90)
+      check("and leaves the earlier version alone", raw(id)?.moreText?.last?.size == late.size)
+      e.newVersion(copying: 1)
+      await wait(600)
+      check("a copy of an older version carries its texts", raw(id, version: 3)?.moreText == raw(id)?.moreText)
+
+      await typeInField("Show from", "1.5")
+      e.selectVersion(1)
+      await wait(800)
+      check("a typed time stays on its version", near(raw(id, version: 3)?.moreText?.last?.start, 1.5, 0.02))
+      check("and doesn't reach the one selected next", raw(id)?.moreText?.last?.start == late.start)
+    }
+
+    /// A read-only clip can still be read: rows open, and what's in them stays off.
+    func readOnlyRows(_ id: String) async {
+      guard let e = editor else { return }
+      _ = try? store.db.run("INSERT OR REPLACE INTO edits(video_id,json,updated_at) VALUES(?,'not json',0)", [id])
+      e.load(id)
+      await wait(2500)
+      check("the clip is read only", e.readOnly)
+      EditorDisclosures.shared.closeAll()
+      await wait(400)
+      check("Advanced opens on a read-only clip", await click("Advanced") && EditorDisclosures.shared.isOpen(.advanced))
+      check("Size and position too", await click("Size and position") && EditorDisclosures.shared.isOpen(.sizeAndPosition))
+      let n = e.texts.count
+      await click("Add text")
+      check("and what's in them stays off", e.texts.count == n)
+      await shot("read-only-rows")
+      await click("Size and position")
     }
 
     func listPreview() async {
