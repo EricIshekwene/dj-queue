@@ -96,6 +96,7 @@ djq overlay remove <video> <number|id> [--version N]
 
 - `--start` and `--end` are seconds from the trim start. No `--start` = from the start of the trim, no `--end` = to its end.
 - Address a text by number (1 = first) or by the `id` in `djq overlay list`. Numbers shift when one is removed, ids don't.
+  An id is tried before a number.
 - `--background` is the box fill, the outline colour or the shadow colour, by style. `--tracking` is letter spacing as a
   share of the font size. Fonts: `default rounded serif mono impact futura avenir-next helvetica-neue arial-black georgia didot
   marker-felt american-typewriter`.
@@ -107,8 +108,10 @@ djq overlay remove <video> <number|id> [--version N]
   `resolved_v1`, present only when used. `drawn` is false for an empty text, under No text, or when the window misses the trim.
 - A per-platform trim that ends before a text starts just leaves that text out of that platform's video.
 - Bulk Apply defaults (text section) clears the extras and the look too; `djq bulk undo` brings them back.
-- Editing texts never moves a clip between stages and never sends it to the Queue. It does change the edit hash, so a
-  scheduled clip renders again before it posts.
+- Editing texts never sends a clip to the Queue. The one move it can cause is out of the Queue: a Queue clip left with no
+  text to show goes to Edit with the reason "No text", as with `djq text ""`, and `djq overlay` prints that it left (on stderr
+  with `--json`). Only Eric's Send to Queue brings it back. Edits also change the edit hash, so a scheduled clip renders again
+  before it posts.
 
 ### Captions, hashtag groups, YouTube titles (round 7)
 

@@ -35,7 +35,7 @@ enum OverlayCommand {
 
     static func parse() throws -> Options {
       var o = Options()
-      let seconds = 0...Double(86_400)
+      let seconds = 0...TextLayers.farEnd
       o.start = try cleared(option("--start")) { try number($0, "--start", seconds) }
       o.end = try cleared(option("--end")) { try number($0, "--end", seconds) }
       o.x = try option("--x").map { try number($0, "--x", 0...1) }
@@ -69,8 +69,10 @@ enum OverlayCommand {
     func apply(to l: inout TextLayer) throws {
       if let start { l.start = start }
       if let end { l.end = end }
-      if let s = l.start, let e = l.end, e <= s {
-        throw CLIError(String(format: "the text would end (%.2f s) before it starts (%.2f s)", e, s))
+      // Only when asked: a first text can already hold an inverted window (it means the whole clip), and that mustn't
+      // stop an unrelated edit.
+      if start != nil || end != nil, let e = l.end, e <= max(0, l.start ?? 0) {
+        throw CLIError(String(format: "the text would end (%.2f s) before it starts (%.2f s)", e, max(0, l.start ?? 0)))
       }
       if let x { l.posX = x }
       if let y { l.posY = y }
@@ -116,9 +118,20 @@ enum OverlayCommand {
       try store.save(next, videoId: v.id)
       wrote = true
       let after = try store.resolvedVersion(videoId: v.id, number: number, settings: settings) ?? r
-      if json { try printJSON(AgentAPI.overlays(after, trimDuration: trim.duration)); return 0 }
+      // A clip that no longer passes leaves the Queue on its own (`refreshState`, as `djq text ""` does). Say so.
+      var left: String?
+      if ClipStage.of(v) == .queue, let now = try store.video(id: v.id), ClipStage.of(now) == .edit {
+        let why = try Validation.issues(video: now, store: store).map(\.chipText).joined(separator: " · ")
+        left = "\(v.tag) left the Queue for Edit: \(why). Add a text or use djq text --none, then Send to Queue."
+      }
+      if json {
+        try printJSON(AgentAPI.overlays(after, trimDuration: trim.duration))
+        if let left { FileHandle.standardError.write(Data((left + "\n").utf8)) }
+        return 0
+      }
       print(message)
       if after.noText { print("  No text is on, so nothing shows until it's off (djq text)") }
+      if let left { print("  " + left) }
       return 0
     }
 

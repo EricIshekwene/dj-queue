@@ -251,6 +251,7 @@ private final class Layered {
     try fails("overlay", "add", "clip-0", "T", "--x", "2", contains: "--x")
     try fails("overlay", "add", "clip-0", "T", "--opacity", "0", contains: "--opacity")
     try fails("overlay", "add", "clip-0", "T", "--start", "3", "--end", "2", contains: "before it starts")
+    try fails("overlay", "add", "clip-0", "T", "--end", "0", contains: "before it starts")  // no start counts as 0
     try fails("overlay", "set", "clip-0", "9", "--x", "0.1", contains: "no text 9")
     try fails("overlay", "wiggle", "clip-0", contains: "unknown overlay command")
     try fails("overlay", "add", "clip-0", "T", "--version", "3", contains: "doesn't exist yet")
@@ -261,6 +262,35 @@ private final class Layered {
     }
     try fails("overlay", "add", "clip-0", "Thirteen", contains: "already has 12")
     #expect(try list(env).count == 12)
+  }
+
+  @Test func anInvertedWindowDoesntBlockOtherEdits() throws {
+    let env = try Env(clips: 1)
+    var v = try #require(try env.store.versions(videoId: "clip-0").first)
+    v.textStart = 3; v.textEnd = 1  // valid on a first text: the whole clip
+    try env.store.save(v, videoId: "clip-0")
+    var r = try env.djq("overlay", "set", "clip-0", "1", "--y", "0.2")
+    #expect(r.status == 0, "\(r.err)")
+    #expect(try env.store.versions(videoId: "clip-0").first?.posY == 0.2)
+    r = try env.djq("overlay", "set", "clip-0", "1", "--end", "2")  // asking for a bad window is still refused
+    #expect(r.status != 0 && r.err.contains("before it starts"))
+
+    // The promoted text this used to trip on.
+    try env.djq("overlay", "set", "clip-0", "1", "--start", "1", "--end", "2")
+    try env.djq("overlay", "add", "clip-0", "Two")
+    try env.djq("overlay", "remove", "clip-0", "1")
+    r = try env.djq("overlay", "set", "clip-0", "1", "--y", "0.3")
+    #expect(r.status == 0, "\(r.err)")
+  }
+
+  @Test func anAllDigitIdCanBeAddressed() throws {
+    let env = try Env(clips: 1)
+    var v = try #require(try env.store.versions(videoId: "clip-0").first)
+    v.moreText = [TextLayer(id: "12345678", text: "Digits")]
+    try env.store.save(v, videoId: "clip-0")
+    let r = try env.djq("overlay", "remove", "clip-0", "12345678")
+    #expect(r.status == 0, "\(r.err)")
+    #expect(try list(env).count == 1)
   }
 
   @Test func versionsAndNoText() throws {
@@ -281,7 +311,33 @@ private final class Layered {
     #expect(try list(env).allSatisfy { $0["drawn"] as? Bool == true })
   }
 
-  /// S1-R10: overlay edits never move a clip. Only Send to Queue does that.
+  /// A Queue clip left with no text to show goes to Edit, like `djq text ""`, and the command says so. Nothing brings it back
+  /// but Send to Queue.
+  @Test func aQueueClipLeftWithNoTextLeavesAndSaysSo() throws {
+    let env = try Env(clips: 2)
+    func stage(_ id: String) throws -> ClipStage? { ClipStage.of(try #require(try env.store.video(id: id))) }
+    #expect(try stage("clip-0") == .queue)
+    var r = try env.djq("overlay", "set", "clip-0", "1", "")
+    #expect(r.status == 0 && r.out.contains("left the Queue for Edit") && r.out.contains("No text"), "\(r.out)\(r.err)")
+    #expect(try stage("clip-0") == .edit)
+    #expect(try env.store.video(id: "clip-0")?.sentToQueue == false)
+
+    r = try env.djq("overlay", "set", "clip-0", "1", "Back")  // valid again, still Edit, and nothing to report
+    #expect(r.status == 0 && !r.out.contains("left the Queue"), "\(r.out)\(r.err)")
+    #expect(try stage("clip-0") == .edit)
+
+    // Removing the last extra of a clip whose first text is empty. --json keeps stdout parseable.
+    var v = try #require(try env.store.versions(videoId: "clip-1").first)
+    v.text = ""; v.moreText = [TextLayer(id: "a", text: "Only this")]
+    try env.store.save(v, videoId: "clip-1")
+    #expect(try stage("clip-1") == .queue)
+    r = try env.djq("overlay", "remove", "clip-1", "a", "--json")
+    #expect(r.status == 0 && r.err.contains("left the Queue for Edit"), "\(r.out)\(r.err)")
+    #expect(try JSONSerialization.jsonObject(with: Data(r.out.utf8)) is [[String: Any]])
+    #expect(try stage("clip-1") == .edit)
+  }
+
+  /// S1-R10: an overlay edit that leaves the clip valid moves nothing. Only Send to Queue moves a clip to the Queue.
   @Test func overlayEditsNeverMoveAClip() throws {
     let env = try Env(clips: 2)
     // A clip in the Queue stays there, sent.

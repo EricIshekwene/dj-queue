@@ -39,15 +39,17 @@ the second branch.
     unchanged: an extra that starts past the trim or is inverted isn't drawn, because a per-platform trim shouldn't turn a timed text
     into a whole-clip one.
 15. **On a committed trim change an extra is pulled inside the trim** (`EditorLogic.clampLayer`), the first text's rule. Only
-    per-platform trims leave it out.
+    per-platform trims leave it out. An inverted extra stays as it is: it isn't drawn, and a trim shouldn't make it appear.
 16. **Cover (S1-R6):** `coverLayers` takes what shows at the cover frame, else the first text, so one text always looks as it did.
     An empty first text with nothing showing means no text on the cover.
 17. **Promotion takes the next text with words,** look and window included, and writes the whole remaining list. A blank extra is
-    skipped: `text = ""` would fall back to the Title. A promoted text with no window gets `textStart = 0` so the default "first
-    seconds" can't apply, and `textEnd = 0` (inverted = whole clip) when an end would otherwise carry over from an earlier version.
+    skipped: `text = ""` would fall back to the Title. A promoted text with no start gets `textStart = 0` so the default "first
+    seconds" can't apply, and one with no end gets `TextLayers.farEnd` when an end would otherwise carry over. An inverted window
+    would have lost a late start, and the next trim commit would have made it a 0.3 s flash.
 18. **Removing the only text is refused,** in `djq` and in `TextLayers.removing` (nil). "No text" is the way to say that.
 19. **`TextLayers.updating` writes only what changed on the first text,** so moving it doesn't stop it following the Title. Changing
-    its words turns No text off, the same as `djq text`.
+    its words turns No text off, the same as `djq text`. A window is written whole: setting only the start of a default 0-3 s
+    window would drop its end.
 20. **`textKey` keys the windows too once there are extras,** because then they decide what shows; for one text it stays pixels only.
     `layerKey` is pixels only, and equals `textKey` for a plain first text, so an overlay cache can hold both.
 
@@ -62,23 +64,32 @@ the second branch.
 
 24. **`overlay add` starts from the first text's look,** so a new text matches unless told otherwise. It takes no default position
     beyond that, and the agent guide says to give `--y`.
-25. **`"default"` clears `--start`, `--end` and the look options.** The numeric range checks stay on everything else.
+25. **`"default"` clears `--start`, `--end` and the look options.** The numeric range checks stay on everything else. The
+    window is checked only when `--start` or `--end` is given, with no start counting as 0: a first text can hold an inverted
+    window (it means the whole clip), and that mustn't block an unrelated edit.
 26. **`overlays` in `djq video --json` is a new field**, and `moreText` / `textLook` also appear as stored. Nothing was renamed.
+    A text is addressed by id first, then by number, because an id can be all digits.
+27. **Overlay edits never send a clip to the Queue, but a Queue clip left with no text to show goes to Edit.** That's `djq text ""`
+    since rounds 4 and 13, and Eric's rule is that nothing moves Edit → Queue. Refusing would make overlays stricter than the text
+    field for no gain, so `djq overlay` keeps the behaviour and prints the move. This is the exception to S1-R10's "never changes".
 
 ## Proof
 
-27. **Lossless:** every clip of a copy of the newest backup compared between a build of `main` and this branch: stored and resolved
+28. **Lossless:** every clip of a copy of the newest backup compared between a build of `main` and this branch: stored and resolved
     JSON, `textKey`, text window, overlay PNG hash, edit hash for all six platforms and validation issues are byte-identical.
-28. **The render test can fail.** With the enable window forced to `between(t,0.000,99.000)`, 4 of the 6 `R16RenderTests` failed
+29. **The render test can fail.** With the enable window forced to `between(t,0.000,99.000)`, 4 of the 6 `R16RenderTests` failed
     (10 expectations, among them "outside all windows" at 2.75 s); restored, all 47 R16 tests passed.
-29. **The PNG golden runs only on the macOS build that recorded it.** System fonts change with macOS and the auto-update gate must
+30. **The PNG golden runs only on the macOS build that recorded it.** System fonts change with macOS and the auto-update gate must
     not fail for that. The edit-hash and `textKey` goldens have no such dependency, so they always run.
 
 ## For the editor branch
 
 - Edit through `TextLayers.updating / adding / removing`; for "Duplicate" use `TextLayers.new(text:like:start:end:)`.
 - `EditorModel.newVersion(copying:)` needs `TextLayers.copyAdvanced(into:from:)` in its older-version branch.
-- On a committed trim, map `r.moreText` through `EditorLogic.clampLayer` and save, next to the existing text-timing clamp.
+- On a committed trim, map the raw `versions[i].moreText` through `EditorLogic.clampLayer`, only where it's non-nil: the resolved
+  list would turn inherited lists into frozen copies and nil into []. Widen the `where` in `EditorModel.keepInsideTrim`, which
+  skips a version with no first-text timing.
+- Promotion changes a text's id to `TextLayer.firstId`, so a selection on the promoted text must follow it.
 - `EditorModel` line "if !r.hasText && !r.noText" and `EditorTimeline`'s `r.hasText` should become `hasDrawnText` or per-layer.
 - `.look` on a layer is normalised when resolved; `TextLook.defaultColor(style)` and `defaultAccent(style)` give what a swatch shows
   with no custom colour. `TextLook.swatches`, `opacityRange` and `trackingRange` are the control limits.

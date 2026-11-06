@@ -194,6 +194,9 @@ extension ResolvedVersion {
 public enum TextLayers {
   /// Most texts on a clip, the first text included.
   public static let maxCount = 12
+  /// An end past any trim, for "to the end of the clip" where nil would inherit one. `PreviewKeys.textWindow` and
+  /// `EditorLogic.clampTextTiming` bring it back to the trim.
+  public static let farEnd = 86_400.0
 
   public static func canAdd(_ r: ResolvedVersion) -> Bool { r.allLayers.count < maxCount }
 
@@ -204,11 +207,12 @@ public enum TextLayers {
     return l
   }
 
-  /// `ref` as `djq overlay` takes it: a number (1 = the first text) or a layer id.
+  /// `ref` as `djq overlay` takes it: a layer id, else a number (1 = the first text). Ids come first because an id can be
+  /// all digits.
   public static func layer(_ ref: String, in r: ResolvedVersion) -> TextLayer? {
     let all = r.allLayers
-    if let n = Int(ref) { return all.indices.contains(n - 1) ? all[n - 1] : nil }
-    return all.first { $0.id == ref }
+    if let l = all.first(where: { $0.id == ref }) { return l }
+    return Int(ref).flatMap { all.indices.contains($0 - 1) ? all[$0 - 1] : nil }
   }
 
   /// `v` with `layer` appended; nil at the cap.
@@ -221,7 +225,8 @@ public enum TextLayers {
 
   /// `v` with the text `id` changed. For the first text only what `change` actually changed is written, so everything
   /// else keeps following its default or the earlier version (Title-follow survives). Changing the first text's words
-  /// is the same as `djq text`: it turns "No text" off.
+  /// is the same as `djq text`: it turns "No text" off. A window is written whole, because setting one end stops the
+  /// other following the default.
   public static func updating(_ id: String, in v: Version, resolved r: ResolvedVersion, _ change: (inout TextLayer) -> Void) -> Version {
     var out = v
     if id == TextLayer.firstId {
@@ -234,8 +239,7 @@ public enum TextLayers {
       if l.posX != old.posX { out.posX = l.posX }
       if l.posY != old.posY { out.posY = l.posY }
       if l.align != old.align { out.align = l.align }
-      if l.start != old.start { out.textStart = l.start }
-      if l.end != old.end { out.textEnd = l.end }
+      if l.start != old.start || l.end != old.end { out.textStart = l.start; out.textEnd = l.end }
       if l.look != old.look { out.textLook = l.look ?? TextLook() }
     } else {
       guard let i = r.moreText.firstIndex(where: { $0.id == id }) else { return v }
@@ -264,10 +268,10 @@ public enum TextLayers {
     out.text = next.text
     if r.noText { out.noText = true }
     out.style = next.style; out.size = next.size; out.posX = next.posX; out.posY = next.posY; out.align = next.align
-    // nil would fall back to the default or an earlier version's timing. A start of 0 stops that for the default,
-    // and an inverted window is the first text's way of saying "whole clip" when an end would otherwise carry over.
+    // nil would fall back to the default or an earlier version's timing: a start of 0 stops that for the default, and
+    // an explicit far end stops an end carrying over.
     out.textStart = next.start ?? 0
-    out.textEnd = next.end ?? (r.textEnd == nil ? nil : 0)
+    out.textEnd = next.end ?? (r.textEnd == nil ? nil : farEnd)
     out.textLook = next.look ?? TextLook()
     out.moreText = r.moreText.filter { $0.id != next.id }
     return out

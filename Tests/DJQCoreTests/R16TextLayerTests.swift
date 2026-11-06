@@ -223,6 +223,28 @@ private func resolve(_ vs: [Version], _ n: Int? = nil, video: Video? = nil) -> R
     #expect(TextLayers.layer("3", in: r) == nil && TextLayers.layer("0", in: r) == nil && TextLayers.layer("zzz", in: r) == nil)
   }
 
+  @Test func anAllDigitIdIsAnId() {
+    let r = resolve([version(1) { $0.text = "First"; $0.moreText = [extra("A", id: "12345678"), extra("B", id: "2")] }])
+    #expect(TextLayers.layer("12345678", in: r)?.text == "A")
+    #expect(TextLayers.layer("2", in: r)?.text == "B")  // the id wins over number 2
+    #expect(TextLayers.layer("3", in: r)?.text == "B")
+  }
+
+  @Test func movingOneEndOfADefaultWindowKeepsTheOther() throws {
+    var s = Settings()
+    s.defaults.textTiming = .firstSeconds
+    let raw = version(1) { $0.text = "First" }
+    let r = VersionResolver.resolve([raw], number: 1, settings: s)
+    #expect(r.textStart == 0 && r.textEnd == 3)
+    let moved = TextLayers.updating(TextLayer.firstId, in: raw, resolved: r) { $0.start = 1 }
+    let after = VersionResolver.resolve([moved], number: 1, settings: s)
+    #expect(after.textStart == 1 && after.textEnd == 3)
+    #expect(PreviewKeys.textWindow(after, trimDuration: 10) == 1...3)
+    // Nothing timed changed: the window keeps following the default.
+    let other = TextLayers.updating(TextLayer.firstId, in: raw, resolved: r) { $0.posY = 0.2 }
+    #expect(other.textStart == nil && other.textEnd == nil)
+  }
+
   @Test func updatingTheFirstTextWritesOnlyWhatChanged() {
     let v = Video.sample(title: "A Title")
     let raw = version(1)
@@ -291,6 +313,31 @@ private func resolve(_ vs: [Version], _ n: Int? = nil, video: Video? = nil) -> R
     let hidden = version(1) { $0.text = "First"; $0.noText = true; $0.moreText = [extra("Next", id: "a")] }
     let p = try #require(TextLayers.promotingNext(hidden, resolved: resolve([hidden])))
     #expect(resolve([p]).noText && resolve([p]).text == "Next" && resolve([p]).layers.isEmpty)
+  }
+
+  @Test func promotionKeepsALateStart() throws {
+    let v1 = version(1) { $0.text = "First"; $0.textStart = 1; $0.textEnd = 2; $0.moreText = [extra("Late", id: "a", start: 3)] }
+    let out = try #require(TextLayers.promotingNext(v1, resolved: resolve([v1])))
+    #expect(PreviewKeys.textWindow(resolve([out]), trimDuration: 10) == 3...11)
+
+    var s = Settings()
+    s.defaults.textTiming = .firstSeconds  // resolves to an end too
+    let one = version(1) { $0.moreText = [extra("Late", id: "a", start: 4)] }
+    let p = try #require(TextLayers.promotingNext(one, resolved: VersionResolver.resolve([one], number: 1, settings: s)))
+    #expect(PreviewKeys.textWindow(VersionResolver.resolve([p], number: 1, settings: s), trimDuration: 10) == 4...11)
+  }
+
+  @Test func aTrimCommitAfterPromotionKeepsTheWindow() throws {
+    let v1 = version(1) { $0.text = "First"; $0.textStart = 1; $0.textEnd = 2 }
+    let v2 = version(2) { $0.moreText = [extra("Whole clip", id: "a"), extra("Late", id: "b", start: 3)] }
+    let whole = try #require(TextLayers.promotingNext(v2, resolved: resolve([v1, v2])))
+    let w = EditorLogic.afterTrimCommit(textStart: whole.textStart, textEnd: whole.textEnd, cover: nil, trim: TrimRange(start: 2, end: 10))
+    #expect(w.textStart == 0 && w.textEnd == 8)  // the whole trim, not a 0.3 s flash
+
+    let v3 = version(3) { $0.moreText = [extra("Late", id: "b", start: 3)] }
+    let late = try #require(TextLayers.promotingNext(v3, resolved: resolve([v1, v3])))
+    let l = EditorLogic.afterTrimCommit(textStart: late.textStart, textEnd: late.textEnd, cover: nil, trim: TrimRange(start: 2, end: 10))
+    #expect(l.textStart == 3 && l.textEnd == 8)
   }
 
   @Test func removingAnExtraIsExplicitInThisVersion() throws {
@@ -377,6 +424,16 @@ private func resolve(_ vs: [Version], _ n: Int? = nil, video: Video? = nil) -> R
     #expect(open.start == 1 && open.end == nil)  // nil stays nil
     let whole = EditorLogic.clampLayer(extra("A"), trimDuration: 5)
     #expect(whole.start == nil && whole.end == nil)
+  }
+
+  @Test func trimCommitLeavesAnInvertedExtraAlone() {
+    let r = resolve([version(1) { $0.moreText = [extra("Hidden", id: "a", start: 5, end: 3)] }])
+    let l = r.moreText[0]
+    #expect(EditorLogic.clampLayer(l, trimDuration: 10) == l)
+    #expect(EditorLogic.clampLayer(l, trimDuration: 2) == l)
+    let noStart = extra("Hidden", end: 0)
+    #expect(EditorLogic.clampLayer(noStart, trimDuration: 10) == noStart)
+    #expect(PreviewKeys.layerWindows(r, trimDuration: 10).allSatisfy { $0.layer.id != "a" })  // still not drawn
   }
 
   @Test func overlayGraphForOneTextIsTheGraphEveryRenderUsed() {
