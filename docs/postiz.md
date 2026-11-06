@@ -211,11 +211,10 @@ from when it happened (the job's `remoteDate`), not from when the Mac noticed:
 | 4th | +1 day (a calendar day: same clock time across a DST change) |
 | 5th | +1 day |
 
-The YouTube quota skips those: every try goes to the first reset after the failure (midnight Pacific), at 8:00 am New
-York that day, whatever Settings' time zone says. A failure at 7:00 am New York is after that day's reset, so it goes
-the next day. A retry never lands within `retryStaggerHours` of another post on the platform that went out or still
-will (a failed or skipped post doesn't count, so +1 h isn't pushed away from its own failure). A quota retry moves
-earlier if it must, down to the reset; any other moves later.
+The YouTube quota skips those: every try goes to the next 07:30 UTC after the failure, whatever Settings' time zone says
+(§5a). A retry never lands within `retryStaggerHours` of another post on the platform that went out or still will (a
+failed or skipped post doesn't count, so +1 h isn't pushed away from its own failure). A quota retry moves earlier if it
+must, down to the reset; any other moves later.
 
 **Ahead of time.** The sync step that reads the `ERROR` makes the new attempt in the same transaction, through
 `PostActions.fixed`, with `scheduledAt` = that time. The publish step submits it, so Postiz sends it with the Mac off. If
@@ -248,7 +247,7 @@ forces test mode for it), even after Test run is turned off. Doctor (`postiz.aut
 every retry with its time or what it waits for. Manual posts never retry by themselves.
 
 The quota error that started this is Postiz's shared Google project (`defaultVideoInsertPerDayPerProject`), not Eric's
-channel. It resets at midnight Pacific.
+channel (§5a).
 
 **Missed slots.** A Postiz post isn't "missed" while Postiz still holds it: the overdue/shift logic applies only to
 manual posts and to Postiz posts that never got a job (they fall back to the Calendar). Eric's `fixed` makes a new
@@ -263,6 +262,27 @@ A week of clips on 6 platforms is 6–7 uploads + 42 creates, so it spreads over
 render horizon. A plan that re-lays (posts/day or Queue sort changed) cancels and re-creates what moved, in the same budget;
 a slot with a post less than an hour away stays where it is, and nothing is created for a clip + platform until the delete
 of its earlier copy is confirmed.
+
+## 5a. YouTube's quota and the quiet window
+
+Postiz support, 2026-11-05: YouTube uploads share one Postiz-wide quota. It resets at 07:00 UTC and is often used up hours
+before. They said to avoid 02:00–07:00 UTC, and that a failed upload never reached YouTube, so a retry can't duplicate it.
+
+Our own results: quota failures at 15:00, 16:27 and 18:00 New York on three days; success at 05:00 and 08:00 New York. The
+safe time is the morning after the reset, not just outside their window.
+
+| What | Rule |
+|---|---|
+| Reset | 07:00 UTC, fixed. UTC doesn't move with DST; the old midnight Pacific rule did. |
+| Quiet window | From 02:00 up to 07:00 UTC, nothing on YouTube is scheduled. A time that lands there moves to 07:30 UTC (`YouTubeWindow.clear`, the one helper). In New York that's 9 pm–2 am in winter and 10 pm–3 am in summer. Other platforms don't change. |
+| Quota retry | The next 07:30 UTC after the failure, then the usual stagger. |
+| Where it applies | Slot times, staggered extras, retries, a plan shift, and every create (`remoteDate`), so a late slot or Post now on YouTube inside the window waits for 07:30 UTC too. A retry whose 07:30 passed while the Mac slept goes at now + 3 min, unless that's inside the window. |
+
+`djq slot youtube 08:00` puts the slot there and moves the unposted future posts with it (`PostActions.setSlot`, undo with
+`djq bulk undo`). The publish step replaces the copies Postiz holds, as for any move. Pinned posts, posts within 10 minutes
+of going out (Postiz's 5-minute hold plus a margin for a tick), automatic retries and posts whose new time has passed
+stay where they are, and the command names each one. The Settings control changes only the slot; `djq slot` at the same
+time then brings the existing posts onto it.
 
 ## 6. Test mode (one switch)
 

@@ -123,7 +123,7 @@ struct CalendarDayClip: View {
   }
 
   private func planText(_ p: Platform) -> String {
-    let at = model.dm.at(day, minutes: model.settings.slot(for: p) + (group.slot?.position ?? 0) * model.settings.secondPostOffsetMinutes)
+    let at = model.settings.slotTime(p, date: day, position: group.slot?.position ?? 0, model.dm)
     return AppModel.clockText(at, tz: model.tz)
   }
 }

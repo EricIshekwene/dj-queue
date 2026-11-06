@@ -160,21 +160,19 @@ import Testing
     #expect(next(ny("2027-03-13", 22), 3) == ny("2027-03-14", 8))
   }
 
-  @Test func theYouTubeQuotaGoesToTheNextResetAt8AmNewYork() {
-    // Midnight Pacific is 3:00 am New York.
-    #expect(next(ny("2026-11-04", 15), 1, .youtube) == ny("2026-11-05", 8))
-    #expect(next(ny("2026-11-04", 23, 30), 1, .youtube) == ny("2026-11-05", 8))
-    #expect(next(ny("2026-11-05", 2, 59), 1, .youtube) == ny("2026-11-05", 8))
-    // After that day's reset: the quota is gone again, so the next one.
-    #expect(next(ny("2026-11-05", 3, 1), 1, .youtube) == ny("2026-11-06", 8))
-    #expect(next(ny("2026-11-05", 7), 1, .youtube) == ny("2026-11-06", 8))
-    // Every try skips to a reset, never +1 h.
-    #expect(next(ny("2026-11-04", 15), 3, .youtube) == ny("2026-11-05", 8))
-    // New York, whatever Settings says.
-    #expect(next(ny("2026-11-04", 15), 1, .youtube, "Europe/London") == ny("2026-11-05", 8))
-    // Both DST nights.
-    #expect(next(ny("2026-10-31", 20), 1, .youtube) == ny("2026-11-01", 8))
-    #expect(next(ny("2027-03-13", 20), 1, .youtube) == ny("2027-03-14", 8))
+  @Test func theYouTubeQuotaGoesToTheNext0730UTC() {
+    // 07:30 UTC is 2:30 am New York in winter.
+    #expect(next(ny("2026-11-04", 15), 1, .youtube) == ny("2026-11-05", 2, 30))
+    #expect(next(ny("2026-11-04", 23, 30), 1, .youtube) == ny("2026-11-05", 2, 30))
+    #expect(next(ny("2026-11-05", 2, 29), 1, .youtube) == ny("2026-11-05", 2, 30))
+    #expect(next(ny("2026-11-05", 2, 30), 1, .youtube) == ny("2026-11-06", 2, 30))
+    // Every try skips to it, never +1 h.
+    #expect(next(ny("2026-11-04", 15), 3, .youtube) == ny("2026-11-05", 2, 30))
+    // UTC, whatever Settings says.
+    #expect(next(ny("2026-11-04", 15), 1, .youtube, "Europe/London") == ny("2026-11-05", 2, 30))
+    // Both DST nights: an hour later by New York's clock in summer.
+    #expect(next(ny("2026-10-31", 20), 1, .youtube) == ny("2026-11-01", 2, 30))  // 2:30 am EST, after the clocks went back
+    #expect(next(ny("2027-03-13", 20), 1, .youtube) == ny("2027-03-14", 3, 30))
   }
 
   @Test func theTimeIsStoredAndCountsFromTheFailureNotFromWhenTheMacSawIt() throws {
@@ -186,13 +184,13 @@ import Testing
     #expect(a.scheduledAt == j.remoteDate.addingTimeInterval(3600))
   }
 
-  @Test func quotaGoesAt8NotInALateSlot() throws {
+  @Test func quotaGoesAfterTheResetNotInALateSlot() throws {
     let (rig, yt) = try xRig([.youtube])
     try fail(rig, yt, Self.quota)
     let a = try #require(try attempts(rig, yt).last)
-    #expect(a.scheduledAt == ny("2026-11-03", 8))
+    #expect(a.scheduledAt == ny("2026-11-03", 2, 30))
     rig.tick(2)
-    #expect(try rig.job(a)?.remoteDate == ny("2026-11-03", 8))
+    #expect(try rig.job(a)?.remoteDate == ny("2026-11-03", 2, 30))
   }
 
   // MARK: R2 stagger
@@ -288,7 +286,7 @@ import Testing
     #expect(!rig.notifier.delivered.contains { $0.postId == a.id })
   }
 
-  /// A quota failure the Mac sees two days late goes out at once, not on another 8:00.
+  /// A quota failure the Mac sees two days late goes out at once, not on another 07:30 UTC.
   @Test func aQuotaFailureSeenLateGoesRightAway() throws {
     let (rig, yt) = try xRig([.youtube])
     try fail(rig, yt, Self.quota, seenAfter: 2 * 86400)
@@ -328,7 +326,7 @@ import Testing
     let (rig, yt) = try xRig([.youtube])
     try fail(rig, yt, Self.quota)
     let a = try #require(try attempts(rig, yt).last)
-    #expect(try rig.service.displayState(for: a) == .retrying("Retrying Tue 8:00 am (try 1 of 5)"))
+    #expect(try rig.service.displayState(for: a) == .retrying("Retrying Tue 2:30 am (try 1 of 5)"))
   }
 
   @Test func fiveRetriesThenLoud() throws {

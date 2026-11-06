@@ -48,7 +48,7 @@ extension PostizPendingRetry {
 
 /// When a failed post goes out again (DECISIONS-R9.md). Pure, so every time can be tested with a clock.
 public enum PostizRetrySchedule {
-  /// "Morning" in Settings' time zone, and the hour a YouTube quota retry aims for.
+  /// "Morning" in Settings' time zone.
   public static let morningHour = 8
   /// "Next morning" is never sooner than this after the failure.
   public static let morningGap: TimeInterval = 3600
@@ -70,19 +70,11 @@ public enum PostizRetrySchedule {
     }
   }
 
-  /// YouTube's quota resets at midnight Pacific. The retry goes at 8:00 am New York on the day of the first reset after
-  /// the failure, whatever Settings' time zone says: a failure at 7:00 am New York is after that day's reset, so it
-  /// waits for the next one.
+  /// Postiz's YouTube quota resets at 07:00 UTC (`YouTubeWindow`). The retry goes at the next 07:30 UTC after the failure,
+  /// whatever Settings' time zone says, and `reset` is the 07:00 before it.
   public static func youTubeQuota(after failedAt: Date) -> (reset: Date, retry: Date) {
-    var pacific = Calendar(identifier: .gregorian)
-    pacific.timeZone = TimeZone(identifier: "America/Los_Angeles")!
-    var newYork = Calendar(identifier: .gregorian)
-    newYork.timeZone = TimeZone(identifier: "America/New_York")!
-    let reset = pacific.nextDate(after: failedAt, matching: DateComponents(hour: 0, minute: 0, second: 0), matchingPolicy: .nextTime)
-      ?? failedAt.addingTimeInterval(86400)
-    var day = newYork.dateComponents([.year, .month, .day], from: reset)
-    day.hour = morningHour
-    return (reset, newYork.date(from: day) ?? reset)
+    let retry = YouTubeWindow.nextSafe(after: failedAt)
+    return (retry.addingTimeInterval(YouTubeWindow.reset - YouTubeWindow.safe), retry)
   }
 }
 

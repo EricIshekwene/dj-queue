@@ -472,12 +472,14 @@ public final class PostizService: @unchecked Sendable {
   var afterCreateHook: (() throws -> Void)?
 
   /// A past slot goes out at now + 3 min, rounded up to a whole minute (so Postiz's copy is easy to match).
-  /// Two open jobs on one channel never share a minute (+1 min each), so a Postiz post always matches one job.
-  func remoteDate(for scheduledAt: Date, integrationId: String) throws -> Date {
+  /// Two open jobs on one channel never share a minute (+1 min each), so a Postiz post always matches one job. Every create
+  /// comes through here, so nothing reaches Postiz inside YouTube's quiet window, a late slot or Post now included.
+  func remoteDate(for scheduledAt: Date, platform: Platform, integrationId: String) throws -> Date {
     let earliest = now.addingTimeInterval(Self.leadTime)
     var d = scheduledAt >= earliest ? scheduledAt : Date(timeIntervalSince1970: (earliest.timeIntervalSince1970 / 60).rounded(.up) * 60)
+    d = YouTubeWindow.clear(d, platform)
     let taken = Set(try store.openPostizJobs().filter { $0.integrationId == integrationId }.map { Int($0.remoteDate.timeIntervalSince1970 / 60) })
-    while taken.contains(Int(d.timeIntervalSince1970 / 60)) { d.addTimeInterval(60) }
+    while taken.contains(Int(d.timeIntervalSince1970 / 60)) { d = YouTubeWindow.clear(d.addingTimeInterval(60), platform) }
     return d
   }
 
@@ -502,7 +504,7 @@ public final class PostizService: @unchecked Sendable {
           budget.remaining(now: now, limit: settings.publishing.hourlyBudget) - PostizCallKind.create.reserve >= needed else {
       throw PostizError.overBudget
     }
-    let date = try remoteDate(for: p.scheduledAt, integrationId: integrationId)
+    let date = try remoteDate(for: p.scheduledAt, platform: p.platform, integrationId: integrationId)
     var job = PostizJob(postId: p.id, videoId: p.videoId, platform: p.platform, integrationId: integrationId,
                         renderId: spec.renderId, contentHash: spec.contentHash, scheduledAt: p.scheduledAt, remoteDate: date,
                         testMode: spec.testMode, postType: spec.type, createdAt: now, updatedAt: now)

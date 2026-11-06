@@ -515,7 +515,7 @@ public final class Planner: @unchecked Sendable {
     let positions = Dictionary(uniqueKeysWithValues: newSlots.map { ($0.id, $0.position) })
     for (var p, delta) in regular.sorted(by: { $0.0.scheduledAt < $1.0.scheduledAt }) {
       let pos = positions[p.planSlotId ?? ""] ?? 0
-      let planned = Sched.planDay(p.scheduledAt, position: pos, offsetMinutes: settings.secondPostOffsetMinutes, dm)
+      let planned = Sched.planDay(p.scheduledAt, position: pos, platform: p.platform, settings: settings, dm)
       let day = placer.place(p.platform, position: pos, from: dm.addDays(planned, delta))
       p.scheduledAt = Sched.slotTime(settings, dm, date: day, position: pos, platform: p.platform)
       if p.state == .due || p.state == .overdue { p.state = p.renderId == nil ? .planned : .rendered }

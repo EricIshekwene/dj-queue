@@ -226,6 +226,22 @@ log [--run]` shows what happened. Leave `on`/`off`, `run` and `rollback` to Eric
 they change which app is installed. `rollback` is refused when the database is newer than the kept build unless
 `--restore-db`, which loses changes since that backup — never run it on your own.
 
+## Slot times
+
+```sh
+djq slot <platform>                 # show it
+djq slot youtube 08:00 --dry-run    # what would move
+djq slot youtube 08:00              # set it and re-time; prints `djq bulk undo <batch>`
+```
+
+Sets the slot (Settings → Schedule) and moves that platform's unposted future posts onto it, one undo. The publish step
+replaces what Postiz holds. Pinned posts, automatic retries, posts within 10 minutes of going out and posts whose new time
+has passed stay put, and the command lists each with why. Other platforms don't move. Only when Eric asks.
+
+YouTube has a quiet window: nothing is scheduled from 02:00 up to 07:00 UTC, and a slot landing there goes at 07:30 UTC.
+Postiz's shared YouTube quota resets at 07:00 UTC and is usually gone by the afternoon (`docs/postiz.md` §5a), so a morning
+slot is the safe one.
+
 ## Rules the app applies (so you don't fight them)
 
 - Clips store only overrides; everything else follows Settings → New clip defaults (trim = Eric's markers, text

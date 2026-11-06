@@ -367,7 +367,7 @@ public final class PostActions: @unchecked Sendable {
     if let time {
       at = time
     } else if dm.key(p.scheduledAt) > today {
-      at = p.scheduledAt
+      at = YouTubeWindow.clear(p.scheduledAt, p.platform)
     } else {
       at = try Sched.staggered(store: store, platform: p.platform, day: dm.addDays(today, 1), settings: settings, dm: dm)
     }

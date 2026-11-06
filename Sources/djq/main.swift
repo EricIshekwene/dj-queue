@@ -56,6 +56,8 @@ usage: djq <command> [args]
   repost <video> <platform> | longform-posted <video> <url>
   score <video> <0-100|clear> | exclude <video> | include <video>
   posts-per-day [1-5] [--dry-run]      show or set posts per day (Settings → General); undo with bulk undo
+  slot <platform> [HH:MM] [--dry-run]  show or set a platform's slot (Settings → Schedule) and re-time its unposted future
+                                      posts, not pinned ones or any within 10 minutes of going out; undo with bulk undo
   pause [platform] | resume [platform]
   intake | tick [--force] | doctor [--json] [--live] | health [--days N]
   render <video> [--version N] [--platform P]
@@ -122,6 +124,15 @@ func validDate(_ raw: String) throws -> String {
 func intArg(_ raw: String, _ what: String, _ range: ClosedRange<Int>) throws -> Int {
   guard let n = Int(raw), range.contains(n) else { throw CLIError("\(what) must be a whole number \(range.lowerBound)–\(range.upperBound) (got \(raw))") }
   return n
+}
+
+/// "08:00" or "8:00" as minutes after midnight.
+func clockArg(_ raw: String) throws -> Int {
+  let bad = CLIError("\(raw) isn't a time — use HH:MM, e.g. 08:00")
+  guard raw.range(of: #"^\d{1,2}:\d{2}$"#, options: .regularExpression) != nil else { throw bad }
+  let p = raw.split(separator: ":").compactMap { Int($0) }
+  guard p[0] < 24, p[1] < 60 else { throw bad }
+  return p[0] * 60 + p[1]
 }
 
 func pad(_ s: String, _ n: Int) -> String { s.count >= n ? s : s + String(repeating: " ", count: n - s.count) }
@@ -198,7 +209,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "posts-per-day", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -226,8 +237,9 @@ func run() throws -> Int32 {
                              "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted",
                              "score", "exclude", "include", "pause", "resume", "intake", "tick", "render",
                              "title", "suggest", "text", "caption", "kind", "bulk", "unqueue", "requeue", "stage",
-                             "youtube-title", "hashtag-groups", "title-templates", "caption-templates"]
+                             "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "slot"]
   var wrote = writes.contains(cmd)
+    && !(cmd == "slot" && (args.contains("--dry-run") || args.filter { !$0.hasPrefix("--") }.count < 2))
     && !(cmd == "bulk" && (args.contains("--dry-run") || args.first == "batches"))
     && !((cmd == "unqueue" || cmd == "requeue" || cmd == "stage") && args.contains("--dry-run"))
     && !(cmd == "stage" && !args.contains("back") && !args.contains("forward"))
@@ -784,6 +796,34 @@ func run() throws -> Int32 {
     let r = try BulkActions(store: store).record("posts-per-day", settings: true) { try store.save(s) }
     wrote = true
     print("posts per day \(before) → \(n) · undo: djq bulk undo \((r.batchId ?? "").prefix(8))")
+
+  case "slot":
+    let dryRun = flag("--dry-run")
+    let p = try platform(try arg(0, "platform"))
+    func clock(_ m: Int) -> String { String(format: "%02d:%02d", m / 60, m % 60) }
+    func quietNote(_ s: Settings) {
+      let today = dm.key(store.clock.now)
+      let moved = (0..<max(1, s.postsPerDay)).contains {
+        s.slotTime(p, date: today, position: $0, dm) != dm.at(today, minutes: s.slot(for: p) + $0 * s.secondPostOffsetMinutes)
+      }
+      if moved { print("  \(YouTubeWindow.settingsNote)") }
+    }
+    guard args.count > 1 else {
+      print("\(p.displayName) slot \(clock(settings.slot(for: p)))")
+      quietNote(settings)
+      break
+    }
+    let minutes = try clockArg(args[1])
+    let c = try actions.setSlot(p, minutes: minutes, dryRun: dryRun)
+    let posts = "\(c.moved.count) post\(c.moved.count == 1 ? "" : "s")"
+    let head = "\(p.displayName) slot \(clock(c.before)) → \(clock(minutes))"
+    if dryRun { print("[dry run] \(head) · would re-time \(posts)") }
+    else if let id = c.batchId { print("\(head) · re-timed \(posts) · undo: djq bulk undo \(id.prefix(8))") }
+    else { print("\(p.displayName) slot is already \(clock(minutes)), and its posts are on it") }
+    wrote = !dryRun && c.batchId != nil
+    for m in c.moved { print("  \(short(m.post.id))  \(fmt(m.post.scheduledAt, settings)) → \(fmt(m.to, settings))  \(tagOf(store, m.post.videoId))") }
+    for k in c.kept { print("  \(short(k.post.id))  \(fmt(k.post.scheduledAt, settings)) stays: \(k.why)  \(tagOf(store, k.post.videoId))") }
+    quietNote({ var s = settings; s.slotMinutes[p] = minutes; return s }())
 
   case "pause", "resume":
     var s = settings

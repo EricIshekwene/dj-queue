@@ -192,14 +192,14 @@ extension AppModel {
     let limit = now.addingTimeInterval(Planner.autoScheduleLead)
     let dm = self.dm
     return (0..<max(1, settings.postsPerDay)).contains { pos in
-      !used.contains(pos) && (settings.activePlatforms.map { dm.at(day, minutes: settings.slot(for: $0) + pos * settings.secondPostOffsetMinutes) }.min() ?? limit) >= limit
+      !used.contains(pos) && (settings.activePlatforms.map { settings.slotTime($0, date: day, position: pos, dm) }.min() ?? limit) >= limit
     }
   }
 
   /// When a clip's post goes out on `p`: the post's time, or the slot's time while it has no post yet.
   func calendarTime(_ c: CalendarClip, _ p: Platform) -> Date {
     c.dayPosts[p]?.scheduledAt
-      ?? dm.at(c.slot.date, minutes: settings.slot(for: p) + c.slot.position * settings.secondPostOffsetMinutes)
+      ?? settings.slotTime(p, date: c.slot.date, position: c.slot.position, dm)
   }
 
   /// "12:30 PM – 7 PM" across the platforms shown (one time when they're all the same).
@@ -369,7 +369,7 @@ extension AppModel {
     let pos = position ?? openPosition(on: day, for: videoId)
     let dm = self.dm
     return settings.activePlatforms.filter { p in
-      (posts.isEmpty || live[p] != nil) && dm.at(day, minutes: settings.slot(for: p) + pos * settings.secondPostOffsetMinutes) < limit
+      (posts.isEmpty || live[p] != nil) && settings.slotTime(p, date: day, position: pos, dm) < limit
     }
   }
 
