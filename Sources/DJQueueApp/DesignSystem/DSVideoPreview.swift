@@ -94,6 +94,17 @@ extension EnvironmentValues {
   }
 }
 
+/// One text over a playing preview: transparent, at the video's aspect, shown while the player time is inside `window`
+/// (seconds of the proxy's timeline; nil = the whole time). `key` says it's the same image, so a redraw is never needed.
+struct DSTimedOverlay: Equatable {
+  var key: String
+  var image: CGImage
+  var window: ClosedRange<Double>?
+
+  func shows(at t: Double) -> Bool { window.map { t >= $0.lowerBound - 0.01 && t <= $0.upperBound + 0.01 } ?? true }
+  static func == (a: Self, b: Self) -> Bool { a.key == b.key && a.window == b.window }
+}
+
 /// Muted looping preview of a proxy file with poster fallback (DESIGN-v2 §2.6/§4). Plays only while visible,
 /// `isActive` and granted a slot; releases the decoder when scrolled away. The proxy fades in over the poster in
 /// 200 ms. Mute toggle on hover. `unmuteOnHover`: while the pointer is over the preview or its card (`isHovered`) it
@@ -101,9 +112,9 @@ extension EnvironmentValues {
 /// `DSPlaybackBudget` keeps one clip audible at a time. Hover here and in cards comes from `dsPlaybackHover`, so an
 /// exit SwiftUI doesn't report still stops the clip. When it stops, the player is released at once.
 ///
-/// S6 (the clip as it will post): `overlay` — the on-video text — is drawn over the playing proxy only while the
-/// player time is inside `textWindow` (like the editor and the renderer); never over the poster (the cover already
-/// has the text when "cover includes text" is on). `isUpdating`: the edit changed and the new proxy isn't ready,
+/// S6 (the clip as it will post): `overlays` — the on-video texts — are drawn over the playing proxy, each only while the
+/// player time is inside its window (like the editor and the renderer); never over the poster (the cover already has
+/// the text when "cover includes text" is on). `isUpdating`: the edit changed and the new proxy isn't ready,
 /// so the (new) poster shows with a quiet "Updating preview".
 struct DSVideoPreview: View {
   let url: URL?
@@ -122,10 +133,8 @@ struct DSVideoPreview: View {
   /// Thin scrub bar on hover (Single view).
   var showsScrubber = false
   var cornerRadius: CGFloat = 0
-  /// On-video text at the video's aspect (transparent), shown during `textWindow`.
-  var overlay: CGImage? = nil
-  /// Seconds of the proxy's timeline while `overlay` shows (nil with an overlay = the whole time).
-  var textWindow: ClosedRange<Double>? = nil
+  /// The on-video texts, in stacking order.
+  var overlays: [DSTimedOverlay] = []
   var isUpdating = false
   var updatingStyle: DSPreviewUpdatingStyle = .label
   /// The clip has text whose overlay isn't loaded: `onNeedsOverlay` runs when this preview starts playing (so only
@@ -156,8 +165,8 @@ struct DSVideoPreview: View {
     ZStack {
       posterView
       if playing, let url {
-        DSPlayerLayerView(url: url, loopRange: loopRange, muted: !audible, gravity: gravity, overlay: overlay,
-                          textWindow: textWindow, progress: progress) { r in ready = r }
+        DSPlayerLayerView(url: url, loopRange: loopRange, muted: !audible, gravity: gravity, overlays: overlays,
+                          progress: progress) { r in ready = r }
           .id(playerGeneration)
           .opacity(ready ? 1 : 0)
           .animation(DS.motion.fade, value: ready)
@@ -236,9 +245,11 @@ struct DSVideoPreview: View {
       Image(nsImage: poster).resizable().aspectRatio(contentMode: gravity == .resizeAspect ? .fit : .fill)
         .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
         .overlay {
-          if overlayOnPoster, let overlay {
-            Image(decorative: overlay, scale: 1).resizable().aspectRatio(contentMode: gravity == .resizeAspect ? .fit : .fill)
-              .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+          if overlayOnPoster {
+            ForEach(Array(overlays.enumerated()), id: \.offset) { _, o in
+              Image(decorative: o.image, scale: 1).resizable().aspectRatio(contentMode: gravity == .resizeAspect ? .fit : .fill)
+                .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+            }
           }
         }
     } else {
@@ -281,8 +292,7 @@ private struct DSPlayerLayerView: NSViewRepresentable {
   let loopRange: ClosedRange<Double>?
   let muted: Bool
   let gravity: AVLayerVideoGravity
-  let overlay: CGImage?
-  let textWindow: ClosedRange<Double>?
+  let overlays: [DSTimedOverlay]
   let progress: DSPlaybackProgress
   let onReady: (Bool) -> Void
 
@@ -298,7 +308,7 @@ private struct DSPlayerLayerView: NSViewRepresentable {
     v.progress = progress
     progress.view = v
     v.configure(url: url, loopRange: loopRange, muted: muted, gravity: gravity)
-    v.setOverlay(overlay, window: textWindow, gravity: gravity)
+    v.setOverlays(overlays, gravity: gravity)
   }
 
   static func dismantleNSView(_ v: DSPlayerNSView, coordinator: ()) { v.teardown() }
@@ -306,10 +316,9 @@ private struct DSPlayerLayerView: NSViewRepresentable {
 
 final class DSPlayerNSView: NSView {
   private let playerLayer = AVPlayerLayer()
-  /// The text overlay, shown only while the time is inside `textWindow` (toggled by `textObs`, no SwiftUI redraws).
-  private let overlayLayer = CALayer()
-  private var textWindow: ClosedRange<Double>?
-  private var overlayImage: CGImage?
+  /// One layer per text, each shown only while the time is inside its window (toggled by `textObs`, no SwiftUI redraws).
+  private var overlayLayers: [CALayer] = []
+  private var overlays: [DSTimedOverlay] = []
   private var textObs: Any?
   private var player: AVQueuePlayer?
   private var looper: AVPlayerLooper?
@@ -326,6 +335,9 @@ final class DSPlayerNSView: NSView {
   /// Evidence runs (DSHoverProbe): what the player is really doing, and how many exist anywhere.
   var isPlayingWithSound: Bool { (player?.rate ?? 0) > 0 && player?.isMuted == false }
   var isPlaying: Bool { (player?.rate ?? 0) > 0 }
+  /// Evidence runs: which of this preview's texts are showing right now, and the player time.
+  var debugShownTexts: [Bool] { overlayLayers.map { !$0.isHidden } }
+  var debugTime: Double { player?.currentTime().seconds ?? .nan }
   @MainActor static var debugLivePlayers = 0
   @MainActor static var debugPlayersBuilt = 0
 
@@ -334,9 +346,6 @@ final class DSPlayerNSView: NSView {
     wantsLayer = true
     layer = CALayer()
     layer?.addSublayer(playerLayer)
-    overlayLayer.isHidden = true
-    overlayLayer.actions = ["hidden": NSNull(), "contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
-    layer?.addSublayer(overlayLayer)
   }
 
   required init?(coder: NSCoder) { fatalError() }
@@ -346,7 +355,7 @@ final class DSPlayerNSView: NSView {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     playerLayer.frame = bounds
-    overlayLayer.frame = bounds
+    for l in overlayLayers { l.frame = bounds }
     CATransaction.commit()
   }
 
@@ -386,13 +395,30 @@ final class DSPlayerNSView: NSView {
     player?.isMuted = muted
   }
 
-  /// Sets the overlay image and its time window. Same gravity as the video, so it lands on the same pixels.
-  func setOverlay(_ image: CGImage?, window: ClosedRange<Double>?, gravity: AVLayerVideoGravity) {
-    if overlayImage !== image { overlayImage = image; overlayLayer.contents = image }
-    overlayLayer.contentsGravity = gravity == .resizeAspect ? .resizeAspect : gravity == .resize ? .resize : .resizeAspectFill
-    textWindow = window
-    if image == nil {
-      overlayLayer.isHidden = true
+  /// Sets the texts and their windows. Same gravity as the video, so they land on the same pixels. Called on every SwiftUI
+  /// update of the preview, so an unchanged list costs a comparison and nothing else.
+  func setOverlays(_ list: [DSTimedOverlay], gravity: AVLayerVideoGravity) {
+    let contentsGravity: CALayerContentsGravity = gravity == .resizeAspect ? .resizeAspect : gravity == .resize ? .resize : .resizeAspectFill
+    if list != overlays || overlayLayers.first?.contentsGravity != contentsGravity {
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      while overlayLayers.count > list.count { overlayLayers.removeLast().removeFromSuperlayer() }
+      while overlayLayers.count < list.count {
+        let l = CALayer()
+        l.isHidden = true
+        l.frame = bounds
+        l.actions = ["hidden": NSNull(), "contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        layer?.addSublayer(l)
+        overlayLayers.append(l)
+      }
+      for (l, o) in zip(overlayLayers, list) {
+        l.contents = o.image
+        l.contentsGravity = contentsGravity
+      }
+      overlays = list
+      CATransaction.commit()
+    }
+    if list.isEmpty {
       if let textObs { player?.removeTimeObserver(textObs) }
       textObs = nil
     } else if textObs == nil, let p = player {
@@ -404,9 +430,14 @@ final class DSPlayerNSView: NSView {
   }
 
   @MainActor private func updateText(_ t: Double) {
-    guard overlayImage != nil, t.isFinite else { overlayLayer.isHidden = true; return }
-    let on = textWindow.map { t >= $0.lowerBound - 0.01 && t <= $0.upperBound + 0.01 } ?? true
-    if overlayLayer.isHidden == on { overlayLayer.isHidden = !on }
+    guard t.isFinite else {
+      for l in overlayLayers where !l.isHidden { l.isHidden = true }
+      return
+    }
+    for (l, o) in zip(overlayLayers, overlays) {
+      let on = o.shows(at: t)
+      if l.isHidden == on { l.isHidden = !on }
+    }
   }
 
   @MainActor private func report(_ t: CMTime) {
@@ -435,7 +466,7 @@ final class DSPlayerNSView: NSView {
     timeObs = nil
     if let textObs { player?.removeTimeObserver(textObs) }
     textObs = nil
-    overlayLayer.isHidden = true
+    for l in overlayLayers { l.isHidden = true }
     readyObs = nil
     player?.pause()
     looper?.disableLooping()

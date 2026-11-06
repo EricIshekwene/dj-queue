@@ -72,8 +72,10 @@ struct BulkCropDialog: View {
          let cut = Self.cut(image, crop, source: source) {
         ZStack {
           Image(decorative: cut, scale: 1).resizable()
-          if let v = model.video(p.id), let overlay = model.clipPreview(v).overlay {
-            Image(decorative: overlay, scale: 1).resizable()
+          if let v = model.video(p.id) {
+            ForEach(Array(model.textOverlays(v, at: p.frameTime).enumerated()), id: \.offset) { _, overlay in
+              Image(decorative: overlay, scale: 1).resizable()
+            }
           }
         }
         .aspectRatio(crop.w / crop.h, contentMode: .fit)

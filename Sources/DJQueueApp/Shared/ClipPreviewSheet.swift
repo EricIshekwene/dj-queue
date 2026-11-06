@@ -45,7 +45,7 @@ struct EditedClipPlayer: View {
         if edited {
           let url = renderURL ?? p.proxyURL
           DSVideoPreview(url: url, poster: p.cover, isActive: !model.frozen, isPriority: true, showsScrubber: true,
-                         cornerRadius: DS.radius.md, overlay: renderURL == nil ? p.overlay : nil, textWindow: p.textWindow,
+                         cornerRadius: DS.radius.md, overlays: renderURL == nil ? p.overlays : [],
                          isUpdating: url == nil, needsOverlay: renderURL == nil && p.overlayMissing,
                          onNeedsOverlay: { model.reloadOverlay(v.id) }, gravity: .resizeAspect)
             .aspectRatio(p.aspectRatio, contentMode: .fit)

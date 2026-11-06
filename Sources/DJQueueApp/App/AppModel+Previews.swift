@@ -4,8 +4,8 @@ import SwiftUI
 
 /// What a list shows for one clip, or for one post's text version (round 4 S6: "lists show the edited clip").
 ///
-/// Draw it like the editor does: loop `proxyURL` (crop + aspect + trim, 540 px) and put `overlay` on top only while
-/// the player time is inside `textWindow`. Until the proxy lands show `cover` (cover frame + text when "cover
+/// Draw it like the editor does: loop `proxyURL` (crop + aspect + trim, 540 px) and put each of `overlays` on top only
+/// while the player time is inside its window. Until the proxy lands show `cover` (cover frame + text when "cover
 /// includes text" is on), and when `isUpdating` say so quietly — never loop an older proxy or the raw source.
 /// `DSVideoPreview` / `DSClipCard` already do all of this from these fields.
 struct ClipPreview {
@@ -16,10 +16,9 @@ struct ClipPreview {
   var proxyURL: URL?
   /// The cover as posted (a current render's own cover for a post when there is one).
   var cover: NSImage?
-  /// The on-video text, ≤540 px wide, transparent, at the clip's aspect (nil = no text, or not loaded yet).
-  var overlay: CGImage?
-  /// When `overlay` shows, in seconds of the proxy's own timeline (0 = the start of the loop).
-  var textWindow: ClosedRange<Double>?
+  /// The on-video texts, ≤540 px wide, transparent, at the clip's aspect, in stacking order, each with when it shows in
+  /// seconds of the proxy's own timeline (0 = the start of the loop). Empty = no text, or not loaded yet.
+  var overlays: [DSTimedOverlay] = []
   /// The part of the proxy that loops (nil = the whole proxy, which is what every proxy is today).
   var loopRange: ClosedRange<Double>?
   /// The edit changed and its new proxy is still being made: show `cover` with an "Updating preview" state.
@@ -28,7 +27,7 @@ struct ClipPreview {
   var isRenderCover = false
   /// Width ÷ height of the clip as posted (9:16 unless its edit says otherwise).
   var aspectRatio: Double = Aspect.r9x16.ratio
-  /// The clip has text but its overlay image was evicted from the cache: a PLAYING preview calls
+  /// The clip has text but an overlay image was evicted from the cache: a PLAYING preview calls
   /// `model.reloadOverlay(videoId, version:)` (DSVideoPreview's `onNeedsOverlay`). The cover already carries the text.
   var overlayMissing = false
   /// The text version this preview shows.
@@ -40,16 +39,16 @@ struct PreviewInfo: Sendable {
   var stamp: String
   var aspect: Aspect
   var trimIn: Double
-  /// Relative to the trim start (the renderer's rule).
-  var textWindow: ClosedRange<Double>?
+  /// One entry per drawn text, in stacking order: its image's `overlayCache` key, and when it shows relative to the trim
+  /// start (the renderer's rule).
+  var layers: [(key: String, window: ClosedRange<Double>)]
   var textKey: String
   var version: ResolvedVersion?
-  var overlayKey: String { "\(textKey)" }
 }
 
 extension AppModel {
-  /// Overlay images (≤540 wide), least recently used evicted past 64 MB. Keyed by `PreviewKeys.textKey` (which
-  /// covers text, style, size, position and aspect), so clips with the same text share one image.
+  /// Overlay images (≤540 wide), least recently used evicted past 64 MB. Keyed by `PreviewKeys.layerKey` (text, look,
+  /// style, size, position and aspect), so clips with the same text share one image.
   nonisolated static let overlayCache = CostCappedCache<String, CGImage>(costLimit: 64 << 20)
   /// Overlay + timing loads run here, two at a time.
   nonisolated static let previewWork = DispatchQueue(label: "djq.previews", qos: .userInitiated, attributes: .concurrent)
@@ -123,19 +122,30 @@ extension AppModel {
   func clipPreview(_ v: Video, version: Int = 1) -> ClipPreview {
     let stamp = previewStamp(v.id, version: version)
     let proxy = v.missing || v.type != .short ? nil : proxyURLs[v.id]
-    var p = ClipPreview(stamp: stamp, proxyURL: proxy, cover: version == 1 ? poster(v) : poster(v, version: version),
-                        overlay: nil, textWindow: nil, loopRange: nil,
+    var p = ClipPreview(stamp: stamp, proxyURL: proxy, cover: version == 1 ? poster(v) : poster(v, version: version), loopRange: nil,
                         isUpdating: proxy == nil && previewUpdating.contains(v.id), version: version)
     if v.type == .short, let info = previewInfo[Self.infoKey(v.id, version)], info.stamp == stamp {
       p.aspectRatio = info.aspect.ratio
       guard info.textKey != "none" else { return p }
-      p.overlay = Self.overlayCache.value(info.overlayKey)
-      // Evicted from the LRU while still on screen (review L2): only a playing tile (≤4) asks for it again.
-      p.overlayMissing = p.overlay == nil
       let offset = playback.loop == .wholeFile ? info.trimIn : 0
-      p.textWindow = info.textWindow.map { ($0.lowerBound + offset)...($0.upperBound + offset) }
+      p.overlays = info.layers.compactMap { l in
+        Self.overlayCache.value(l.key).map {
+          DSTimedOverlay(key: l.key, image: $0, window: (l.window.lowerBound + offset)...(l.window.upperBound + offset))
+        }
+      }
+      // Evicted from the LRU while still on screen (review L2): only a playing tile (≤4) asks for it again.
+      p.overlayMissing = p.overlays.count < info.layers.count
     }
     return p
+  }
+
+  /// The texts over a still of `v` at `time` (seconds of the clip file): the ones showing then, else the first, which is the
+  /// cover's rule (S1-R6).
+  func textOverlays(_ v: Video, at time: Double) -> [CGImage] {
+    guard v.type == .short, let info = previewInfo[Self.infoKey(v.id, 1)], info.stamp == previewStamp(v.id) else { return [] }
+    let t = time - info.trimIn
+    let showing = info.layers.filter { $0.window.contains(t) }
+    return (showing.isEmpty ? Array(info.layers.prefix(1)) : showing).compactMap { Self.overlayCache.value($0.key) }
   }
 
   /// A post's preview: its own text version, and its current render's cover when the render is current (editHash
@@ -201,8 +211,8 @@ extension AppModel {
   /// Draws an evicted overlay again for a preview that is playing now (throttled to once per 2 s per text).
   func reloadOverlay(_ videoId: String, version: Int = 1) {
     guard let v = videoById[videoId], let info = previewInfo[Self.infoKey(videoId, version)] else { return }
-    guard Date().timeIntervalSince(overlayReloadedAt[info.overlayKey] ?? .distantPast) > 2 else { return }
-    overlayReloadedAt[info.overlayKey] = Date()
+    guard Date().timeIntervalSince(overlayReloadedAt[info.textKey] ?? .distantPast) > 2 else { return }
+    overlayReloadedAt[info.textKey] = Date()
     requestPreviewInfo(v, version: version)
   }
 
@@ -211,7 +221,7 @@ extension AppModel {
     guard v.type == .short, !v.missing else { return }
     let key = Self.infoKey(v.id, version)
     let stamp = previewStamp(v.id, version: version)
-    if let i = previewInfo[key], i.stamp == stamp, i.textKey == "none" || Self.overlayCache.value(i.overlayKey) != nil { return }
+    if let i = previewInfo[key], i.stamp == stamp, i.layers.allSatisfy({ Self.overlayCache.value($0.key) != nil }) { return }
     let pending = "\(key)|\(stamp)"
     guard !previewInfoPending.contains(pending) else { return }
     previewInfoPending.insert(pending)
@@ -233,19 +243,20 @@ extension AppModel {
 
   nonisolated static func infoKey(_ id: String, _ version: Int) -> String { "\(id)|v\(version)" }
 
-  /// Resolves the edit + version and draws the overlay into `overlayCache` (if not there yet).
+  /// Resolves the edit + version and draws each text into `overlayCache` (those not there yet).
   nonisolated static func loadPreviewInfo(store: Store, videoId: String, version: Int, stamp: String) -> PreviewInfo? {
     guard let settings = try? store.settings(), let re = try? store.resolvedEdit(videoId: videoId, settings: settings) else { return nil }
     let rv = (try? store.resolvedVersion(videoId: videoId, number: version, settings: settings)) ?? nil
     let trim = re.trim()
-    let textKey = PreviewKeys.textKey(rv, aspect: re.aspect)
-    let info = PreviewInfo(stamp: stamp, aspect: re.aspect, trimIn: trim.start,
-                           textWindow: PreviewKeys.textWindow(rv, trimDuration: trim.end - trim.start), textKey: textKey, version: rv)
-    if let rv, textKey != "none", overlayCache.value(info.overlayKey) == nil,
-       let img = TextOverlay.image(for: rv, aspect: re.aspect, maxWidth: overlayWidth) {
-      overlayCache.set(img, for: info.overlayKey, cost: img.bytesPerRow * img.height)
+    let shown = PreviewKeys.layerWindows(rv, trimDuration: trim.end - trim.start)
+      .map { (layer: $0.layer, key: PreviewKeys.layerKey($0.layer, aspect: re.aspect), window: $0.window) }
+    for s in shown where overlayCache.value(s.key) == nil {
+      if let img = TextOverlay.image(for: s.layer, aspect: re.aspect, maxWidth: overlayWidth) {
+        overlayCache.set(img, for: s.key, cost: img.bytesPerRow * img.height)
+      }
     }
-    return info
+    return PreviewInfo(stamp: stamp, aspect: re.aspect, trimIn: trim.start, layers: shown.map { (key: $0.key, window: $0.window) },
+                       textKey: PreviewKeys.textKey(rv, aspect: re.aspect), version: rv)
   }
 
   /// A 16:9 frame of the source at the clip's marker in-point ("Original" in Quick look / Library), no I/O.

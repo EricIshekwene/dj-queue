@@ -54,8 +54,7 @@ extension AppModel {
   func applyPreview(_ p: ClipPreview, to c: inout DSClip) {
     c.poster = p.cover
     c.proxyURL = p.proxyURL
-    c.overlay = p.overlay
-    c.textWindow = p.textWindow
+    c.overlays = p.overlays
     c.loopRange = p.loopRange
     c.isUpdatingPreview = p.isUpdating
     c.previewStamp = p.stamp
