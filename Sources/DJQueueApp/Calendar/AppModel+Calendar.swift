@@ -85,7 +85,7 @@ extension AppModel {
   var noOverlayOpen: Bool {
     editor == nil && !showSettings && !showPalette && !showShortcuts && pendingBulk == nil && pendingConfirm == nil
       && previewVideo == nil && markPostedTarget == nil && reportTarget == nil && longformTarget == nil && scorePrompt == nil
-      && pinPrompt == nil && captionDialogIds == nil && !ListPrefs.shared.screenDialogOpen && BrowseUI.shared.quickLook == nil
+      && pinPrompt == nil && captionDialogIds == nil && cropDialogIds == nil && !ListPrefs.shared.screenDialogOpen && BrowseUI.shared.quickLook == nil
       && BrowseUI.shared.longformTargets.isEmpty && BrowseUI.shared.scoreTargets.isEmpty && BrowseUI.shared.pendingPostBulk == nil
   }
 

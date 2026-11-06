@@ -153,6 +153,7 @@ djq bulk undo <batch> [--force]
 Actions: `make-ready` (Send to Queue with defaults, Eric's word only: confirms the default crop, sends every clip with nothing left to fix, and reports what's still missing) · `apply-defaults
 [--sections frame,trim,text,cover,caption,platforms]` (clear overrides) · `score <n|clear>` · `score-adjust <±n>` ·
 `kind <k>` · `exclude` · `include` · `caption-template <id|default>` (rewrites a written caption from the template) ·
+`crop-offset <percent> [--own]` (moves the crop from the frame's centre, negative = left; clips with a crop keep it unless `--own`; clips with a post that went out are skipped) ·
 `caption [--template <id|default>] [--add a,b] [--remove c]` (template and several groups as one undo; `--add` keeps the clip's other
 groups and puts these after them in the order given; `--template` replaces a written caption; clips with scheduled or posted posts are skipped) ·
 `hashtags <group,group|default>` · `extra-hashtags "<#a #b>"|default` · `youtube-title-template <id|default>` ·

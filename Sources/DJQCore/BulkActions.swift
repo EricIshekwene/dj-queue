@@ -727,6 +727,12 @@ public final class BulkActions: @unchecked Sendable {
             planTied = planTied || cur.held != b.held || (b.sent != nil && cur.sent != b.sent)
             continue
           }
+          // A crop this batch moved can't go back once a platform could post it: the platforms would end up on different pictures.
+          if !force, rec.action == Self.cropOffsetAction, rec.videoIds.contains(b.id),
+             let why = try cropLock(try store.posts(where: "video_id=?", [b.id], order: "id")) {
+            result.skipped[b.id] = why
+            continue
+          }
           restored.insert(b.id)
           // The sent flag comes back only when this batch changed it: anything else that took a clip out of the Queue
           // since (a limit, a missing file) still stands, and only Send to Queue reverses it.
@@ -1008,7 +1014,7 @@ public final class BulkActions: @unchecked Sendable {
     return .changed
   }
 
-  private func cachedOrProbedSize(_ v: Video) throws -> CGSize? {
+  func cachedOrProbedSize(_ v: Video) throws -> CGSize? {
     if let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { return CGSize(width: w, height: h) }
     guard let s = sourceSize(store, v) else { return nil }
     try store.setSourceSize(v.id, width: Int(s.width), height: Int(s.height))

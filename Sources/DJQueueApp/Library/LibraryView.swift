@@ -255,6 +255,8 @@ struct LibraryView: View {
       Button(shorts.isEmpty ? "Copy agent prompt — select short clips"
              : "Copy agent prompt to find titles (\(shorts.count) clip\(shorts.count == 1 ? "" : "s"))") { model.copyAgentPrompt(shorts) }
         .disabled(shorts.isEmpty)
+      Button(shorts.isEmpty ? "Crop — select short clips" : "Crop \(shorts.count) clip\(shorts.count == 1 ? "" : "s")…") { model.cropDialogIds = shorts }
+        .disabled(shorts.isEmpty)
       Button("Re-render \(sel.count) clip\(sel.count == 1 ? "" : "s")…") { reRender(sel) }
       Button(shorts.isEmpty ? "Apply defaults — select short clips"
              : "Apply defaults (frame, trim, text, caption) to \(shorts.count) clip\(shorts.count == 1 ? "" : "s")…") { applyDefaults(shorts) }

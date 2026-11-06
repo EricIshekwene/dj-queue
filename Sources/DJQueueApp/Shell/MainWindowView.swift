@@ -85,6 +85,9 @@ struct MainWindowView: View {
     if let ids = model.captionDialogIds {
       ModalHost(onDismiss: { model.dismissCaptionDialog() }) { BulkCaptionDialog(model: model, ids: ids) }
     }
+    if let ids = model.cropDialogIds {
+      ModalHost(onDismiss: { model.cropDialogIds = nil }) { BulkCropDialog(model: model, ids: ids) }
+    }
     // PLANNING: post dialogs in-window (DSDialog over the scrim; they also render in snapshots).
     if let p = model.markPostedTarget {
       ModalHost(onDismiss: { model.markPostedTarget = nil }) { MarkPostedSheet(model: model, post: p).id(p.id) }
@@ -191,7 +194,7 @@ struct ShortcutButtons: View {
   }
 
   private var anyOverlay: Bool {
-    model.showPalette || model.showSettings || model.pendingBulk != nil || model.captionDialogIds != nil || model.previewVideo != nil
+    model.showPalette || model.showSettings || model.pendingBulk != nil || model.captionDialogIds != nil || model.cropDialogIds != nil || model.previewVideo != nil
       || model.showShortcuts || model.editor != nil
   }
 

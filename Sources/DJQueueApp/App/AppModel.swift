@@ -218,6 +218,11 @@ final class AppModel {
   let bulk: BulkActions
   /// Bulk confirmation sheet currently shown (AppModel+Bulk.swift).
   var pendingBulk: PendingBulk?
+  /// Clips the last bulk edit touched, per screen. They stay selected when that edit takes them out of a filter, for as long as the
+  /// list takes to catch up: a search or filter Eric changes afterwards drops hidden clips as usual.
+  var bulkEdited: [Screen: (ids: Set<String>, until: Date)] = [:]
+  /// The clips the Crop dialog is open for (nil = closed).
+  var cropDialogIds: [String]?
   /// The clips the Caption dialog is open for (nil = closed).
   var captionDialogIds: [String]?
   /// Its Save as template form is open: Esc and a click outside go back to the dialog, so the picks survive.
@@ -441,6 +446,7 @@ final class AppModel {
     queueList = planned + l.ordered.filter { !seenPlanned.contains($0.id) }
     toScore = l.toScore
     needsEdit = l.needsEdit
+    pruneSelection()
     excluded = videos.filter { $0.excluded && $0.type == .short }
     upcomingSlots = l.upcomingSlots
     var next: [String: PlanSlot] = [:]
@@ -689,7 +695,7 @@ final class AppModel {
 
   /// An in-window overlay is over the editor: ⌘Z is the app's, not the hidden clip's.
   var overlayCoversEditor: Bool {
-    editor != nil && (showSettings || showPalette || showShortcuts || pendingConfirm != nil || pendingBulk != nil || captionDialogIds != nil || previewVideo != nil)
+    editor != nil && (showSettings || showPalette || showShortcuts || pendingConfirm != nil || pendingBulk != nil || captionDialogIds != nil || cropDialogIds != nil || previewVideo != nil)
   }
 
   /// Deletes a hashtag group after asking (Settings and the editor), through the core path: clips with scheduled or posted

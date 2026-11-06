@@ -124,7 +124,7 @@ struct EditView: View {
   }
 }
 
-/// Edit bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Top title · Caption (template + several hashtag groups) · Kind ▾ ·
+/// Edit bulk bar (DESIGN-v2 §5, fitted to the 720 pt bar): Top title · Caption (template + several hashtag groups) · Crop (one offset, checked clip by clip) ·
 /// More (Back to Score, agent prompt, apply defaults per section, skip platform, re-render) ·
 /// **Send to Queue** (with defaults).
 private struct EditBulkBar: View {
@@ -151,7 +151,14 @@ private struct EditBulkBar: View {
       Button("Caption", systemImage: "text.alignleft") { model.captionDialogIds = ids }
         .dsTooltip("Set a template and hashtag groups for the selected clips")
         .background(ScriptAnchor("Caption"))
-      PipelineBulkMenu("Kind", tooltip: "Set DJ vid or Talking") {
+      Button("Crop", systemImage: "crop") { model.cropDialogIds = ids }
+        .dsTooltip("Move the crop for the selected clips and check each one")
+        .background(ScriptAnchor("Crop"))
+    } more: {
+      // Native items show no tooltip: titles carry the consequence.
+      Button("Back to Score (clears their scores)", systemImage: "chevron.left") { model.stageBack(ids) }
+      Divider()
+      Menu("Kind") {
         ForEach(Kind.allCases, id: \.self) { k in
           Button(k.displayName) {
             let ids = ids
@@ -160,10 +167,6 @@ private struct EditBulkBar: View {
           }
         }
       }
-    } more: {
-      // Native items show no tooltip: titles carry the consequence.
-      Button("Back to Score (clears their scores)", systemImage: "chevron.left") { model.stageBack(ids) }
-      Divider()
       Button("Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") { model.copyAgentPrompt(ids) }
       EditApplyDefaultsMenu(model: model, ids: ids)
       Menu("Skip platform") {

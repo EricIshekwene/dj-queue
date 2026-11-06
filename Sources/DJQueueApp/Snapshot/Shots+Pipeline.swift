@@ -67,6 +67,14 @@ extension SnapshotShots {
         m.setSelection(ids, screen: .edit)
         m.captionDialogIds = ids
       },
+      c.main("16d-edit-bulk-crop") { m in
+        SampleData.pipelineEditExtras(m)
+        mode(m, .edit, .wide)
+        let ids = Array(m.editList.prefix(3).map(\.id))
+        m.visibleIds[.edit] = m.editList.map(\.id)
+        m.setSelection(ids, screen: .edit)
+        m.cropDialogIds = ids
+      },
       // The toast stacks above the bulk bar (here a selection is still showing) and states make-ready's real result.
       c.main("16b-edit-toast-sent-to-queue") { m in
         SampleData.pipelineEditExtras(m)

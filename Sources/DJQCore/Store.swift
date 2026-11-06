@@ -494,8 +494,9 @@ public final class Store: @unchecked Sendable {
     try db.one("SELECT 1 AS x FROM edits WHERE video_id=?", [videoId]) != nil
   }
 
-  public func save(_ e: Edit, videoId: String) throws {
-    if let c = e.crop, let v = try video(id: videoId), let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0,
+  /// `remembersCrop`: this crop becomes "last crop" for the `.lastUsed` anchor. A bulk pass isn't one crop Eric chose for the next clip.
+  public func save(_ e: Edit, videoId: String, remembersCrop: Bool = true) throws {
+    if remembersCrop, let c = e.crop, let v = try video(id: videoId), let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0,
        try edit(videoId: videoId).crop != c {
       struct P: Codable { var x: Double; var y: Double }
       try setKV("defaults.lastCropCentre", P(x: (c.x + c.w / 2) / Double(w), y: (c.y + c.h / 2) / Double(h)))
