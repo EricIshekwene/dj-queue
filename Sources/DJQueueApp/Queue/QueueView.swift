@@ -140,6 +140,7 @@ private struct QueueBulkBar: View {
       .disabled(removeWhy != nil)
       Divider()
       Button("Caption…", systemImage: "text.alignleft") { model.captionDialogIds = ids }
+      Button("Crop…", systemImage: "crop") { model.cropDialogIds = ids }
       Menu("Skip platform") {
         ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { setPlatform(p, skipped: true) } }
       }

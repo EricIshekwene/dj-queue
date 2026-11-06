@@ -95,21 +95,23 @@ enum BulkCaptionScript {
     await wait(800)
     await shot("dialog-open")
     let before = caption(ids[0])
-    check("nothing is written by opening it", captionBatches() == 0)
+    let batches = captionBatches()
+    check("nothing is written by opening it", captionBatches() == batches && caption(ids[0]) == before)
     for name in ["DJ lovd", "General mashup", "Afrobeats"] where sets.contains(where: { $0.name == name }) {
       check("clicked \(name)", await click(name))
     }
     await wait(600)
     await shot("three-groups")
-    check("still nothing written", captionBatches() == 0 && caption(ids[0]) == before)
+    check("still nothing written", captionBatches() == batches && caption(ids[0]) == before)
     check("clicked the template", await click("Text + hashtags"))
     await wait(600)
     await shot("template-and-groups")
     await key("\r", code: 36)
     await wait(1000)
     await shot("applied")
-    check("↩ applied one batch", captionBatches() == 1)
+    check("↩ applied one batch", captionBatches() == batches + 1)
     check("the dialog closed", app.captionDialogIds == nil)
+    check("the selection stayed", app.selected(.edit).count == 2)
     let want = "#djlovd #djtransition #mashup #mix #afrobeats"
     for id in ids {
       let title = (try? store.video(id: id)?.displayName) ?? ""
@@ -123,8 +125,6 @@ enum BulkCaptionScript {
     check("one Undo takes it all back", caption(ids[0]) == before && undo > 0)
 
     // Way 1: save the picks as a template, then use it. The Save button clicks through the real form.
-    app.selectAll(.edit, ids: ids)  // Apply cleared the selection, as it should.
-    await wait(800)
     check("the dialog opens again", await click("Caption") && app.captionDialogIds?.count == 2)
     await wait(800)
     for name in ["DJ lovd", "General mashup", "Afrobeats"] { _ = await click(name) }

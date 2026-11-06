@@ -36,6 +36,7 @@ usage: djq <command> [args]
   bulk <action> [args] (--ids a,b,c | --filter F) [--dry-run] [--json]
        actions: make-ready (Send to Queue with defaults: Eric's word only) | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
        | score-adjust <±n> | kind <k> | exclude | include | caption-template <id|default> | hashtags <group ids a,b|default>
+       | crop-offset <percent, -40…40> [--own]   move the crop left (-) or right of centre, as % of the frame; --own also moves clips with a crop
        | caption [--template <id|default>] [--add a,b] [--remove c]   template and groups together, one undo; --add keeps the clip's other groups
        | extra-hashtags "<#a #b>"|default | youtube-title-template <id|default> | drop-hashtags <P>
        | skip-platform <P> | unskip-platform <P>
@@ -982,6 +983,10 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
   case "hashtags":
     let t = try arg(0, "set ids|default")
     r = try bulk.setHashtagSets(ids, t == "default" ? nil : t.split(separator: ",").map(String.init), dryRun: dry)
+  case "crop-offset":
+    let own = flag("--own")
+    guard let pct = Double(try arg(0, "percent")), abs(pct) <= 40 else { throw CLIError("crop-offset takes a percent of the frame, -40 to 40") }
+    r = try bulk.setCropOffset(ids, CropChange(offset: pct / 100, movesOwnCrops: own), dryRun: dry)
   case "caption":
     func list(_ name: String) -> [String] { option(name)?.split(separator: ",").map(String.init) ?? [] }
     var change = CaptionChange(addGroups: list("--add"), removeGroups: list("--remove"))

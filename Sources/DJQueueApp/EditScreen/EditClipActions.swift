@@ -274,6 +274,7 @@ struct EditClipMenu: View {
       }
     }
     Button("Caption…", systemImage: "text.alignleft") { model.captionDialogIds = targets }
+    Button("Crop…", systemImage: "crop") { model.cropDialogIds = targets }
     Button(targets.count == 1 ? "Copy agent prompt" : "Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") {
       model.copyAgentPrompt(targets)
     }

@@ -1008,7 +1008,7 @@ public final class BulkActions: @unchecked Sendable {
     return .changed
   }
 
-  private func cachedOrProbedSize(_ v: Video) throws -> CGSize? {
+  func cachedOrProbedSize(_ v: Video) throws -> CGSize? {
     if let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { return CGSize(width: w, height: h) }
     guard let s = sourceSize(store, v) else { return nil }
     try store.setSourceSize(v.id, width: Int(s.width), height: Int(s.height))

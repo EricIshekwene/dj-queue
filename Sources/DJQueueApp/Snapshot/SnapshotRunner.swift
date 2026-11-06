@@ -155,6 +155,7 @@ struct SnapshotContext {
     m.showShortcuts = false
     m.pendingBulk = nil
     m.captionDialogIds = nil
+    m.cropDialogIds = nil
     m.pendingConfirm = nil
     m.previewVideo = nil
     m.toast = nil

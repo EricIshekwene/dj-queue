@@ -23,8 +23,6 @@ struct BulkRequest {
   var changes: [DSChangeList.Change] = []
   /// Toast after applying; nil = "Updated N clips" (make-ready: its outlook, "3 sent to the Queue · 58 still need a title").
   var doneMessage: String? = nil
-  /// Clear the screen's selection once the batch changed something (the bulk bar hides, the toast is unobstructed).
-  var clearsSelection = true
   /// Ask first even for one clip (e.g. Remove from queue when it would remove scheduled days, Back to Score).
   var alwaysConfirm = false
   /// Sheet: a titled list built from the dry run (e.g. "Scheduled days removed" → "Thu 5 Nov · 6 platforms").
@@ -70,7 +68,6 @@ extension AppModel {
   func apply(_ r: BulkRequest, then: (() -> Void)? = nil) {
     splitEditorSession()
     let run = r.run
-    let screen = self.screen
     Task.detached(priority: .userInitiated) {
       let out: Result<BulkResult, Error> = Result { try run(false) }
       await MainActor.run {
@@ -91,7 +88,6 @@ extension AppModel {
                                    detail: res.outlook.map { "\($0.summary)" } ?? res.skipped.values.sorted().first, duration: 4))
             return
           }
-          if r.clearsSelection { self.clearSelection(screen) }
           let custom = r.doneText?(res)
           let msg = custom?.0 ?? r.doneMessage ?? res.outlook.map { Self.outlookMessage($0, changed: n) } ?? "Updated \(n) clip\(n == 1 ? "" : "s")"
           if let b = res.batchId { self.undoHistory.push(b, label: msg) }
@@ -119,8 +115,7 @@ extension AppModel {
   /// undoable batch), then re-checks the pending action so the sheet's counts are true again.
   func useRawTagAsTitle(_ ids: [String]) {
     let b = bulk
-    apply(BulkRequest(title: "", verb: "", ids: ids, doneMessage: "Raw tag set as the title for \(AppModel.pipelineClips(ids.count))",
-                      clearsSelection: false) { dry in try b.useRawTagAsTitle(ids, dryRun: dry) }) { [weak self] in
+    apply(BulkRequest(title: "", verb: "", ids: ids, doneMessage: "Raw tag set as the title for \(AppModel.pipelineClips(ids.count))") { dry in try b.useRawTagAsTitle(ids, dryRun: dry) }) { [weak self] in
       self?.recheckPendingBulk()
     }
   }
@@ -211,8 +206,7 @@ extension AppModel {
   /// Sets a clip's Title from a suggestion chip (undoable like any batch).
   func acceptSuggestion(_ videoId: String, _ text: String) {
     let b = bulk
-    requestBulk(BulkRequest(title: "Set title?", verb: "Set title", ids: [videoId], doneMessage: "Title set",
-                            clearsSelection: false) { dry in
+    requestBulk(BulkRequest(title: "Set title?", verb: "Set title", ids: [videoId], doneMessage: "Title set") { dry in
       try b.setTitle([videoId], text, dryRun: dry)
     })
   }
