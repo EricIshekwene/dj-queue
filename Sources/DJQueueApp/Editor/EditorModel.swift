@@ -1361,6 +1361,8 @@ final class EditorModel: ObservableObject {
   /// Writes only the flag (`Store.setRepostReady`: no `updated_at`, so list previews don't redraw) and records it as
   /// saved, so the next save of that version carries it and nothing else is re-saved for it.
   private func writeRepostReady(_ n: Int, _ on: Bool) {
+    // A version that isn't saved yet (just made, its save pending) gets the mark with that save.
+    if pendingVersions.contains(n) || (n != 1 && !syncedVersions.contains { $0.number == n }) { return }
     if let i = syncedVersions.firstIndex(where: { $0.number == n }) {
       syncedVersions[i].repostReady = on ? true : nil
     } else if n == 1 {
@@ -1484,10 +1486,15 @@ final class EditorModel: ObservableObject {
     }
     if s.edit == edit, unready(s.versions) == unready(versions), s.title == video?.title, s.titleTracks == video?.titleTracks,
        s.kind == nil || s.kind == video?.kind {
-      for v in s.versions where (v.repostReady == true) != isRepostReady(v.number) { writeRepostReady(v.number, v.repostReady == true) }
+      // Both sides' numbers: a v1 that only existed for its mark is in `versions` but not in the earlier state.
+      for n in Set(s.versions.map(\.number)).union(versions.map(\.number)) {
+        let want = s.versions.first { $0.number == n }?.repostReady == true
+        if want != isRepostReady(n) { writeRepostReady(n, want) }
+      }
       versions = s.versions
       versionNo = s.versions.contains { $0.number == s.versionNo } ? s.versionNo : 1
       fieldRevision &+= 1
+      refreshOverlay()
       return
     }
     let gone = Set(versions.map(\.number)).subtracting(s.versions.map(\.number)).filter { $0 > 1 }
@@ -1553,9 +1560,10 @@ final class EditorModel: ObservableObject {
             guard let self, self.videoId == id else { return }
             for m in merged {
               if let i = self.syncedVersions.firstIndex(where: { $0.number == m.number }) { self.syncedVersions[i] = m }
-              if let i = self.versions.firstIndex(where: { $0.number == m.number }),
-                 VersionMerge.keepingOutsideChanges(self.versions[i], base: vs.first { $0.number == m.number }, stored: m) == m {
-                self.versions[i] = m
+              // The outside fields go into the editor's copy too, keeping anything Eric changed since this save began;
+              // otherwise the next save would read their absence as his change.
+              if let i = self.versions.firstIndex(where: { $0.number == m.number }) {
+                self.versions[i] = VersionMerge.keepingOutsideChanges(self.versions[i], base: vs.first { $0.number == m.number }, stored: m)
               }
             }
           }
