@@ -72,7 +72,7 @@ enum EditorCaptionScript {
       check("Piano chip → #amapiano #piano appear in the field", f.string.hasSuffix("#amapiano #piano"))
       await shot("group-on")
       f.setSelectedRange(NSRange(location: 0, length: 0))
-      for ch in "Hook: " { f.insertText(String(ch), replacementRange: f.selectedRange()); try? await Task.sleep(for: .milliseconds(5)) }
+      for ch in "Hook: " { f.insertText(String(ch), replacementRange: f.selectedRange()); try? await Task.sleep(for: .milliseconds(40)) }
       try? await Task.sleep(for: .milliseconds(600))
       check("typing at the start → Custom with the typed text", model.captionIsWritten && model.resolved.caption.hasPrefix("Hook: "))
       model.setHashtagSets(["cs-piano", "cs-sa"])
@@ -118,9 +118,10 @@ enum EditorCaptionScript {
     for ch in "TYPED-MID-TEXT-0123456789-abcdefghijklmn" {
       let t0 = CFAbsoluteTimeGetCurrent()
       tv.insertText(String(ch), replacementRange: tv.selectedRange())
-      try? await Task.sleep(for: .milliseconds(1))
+      await Task.yield()
       window.displayIfNeeded()
       costs.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+      try? await Task.sleep(for: .milliseconds(40))  // 25 keys a second, past anyone's typing
     }
     try? await Task.sleep(for: .milliseconds(800))
     let sorted = costs.sorted()
@@ -131,7 +132,7 @@ enum EditorCaptionScript {
     await shot("typed-mid-text")
 
     // 3. Delete 10 characters (backspace).
-    for _ in 0..<10 { tv.deleteBackward(nil); try? await Task.sleep(for: .milliseconds(1)) }
+    for _ in 0..<10 { tv.deleteBackward(nil); try? await Task.sleep(for: .milliseconds(40)) }
     try? await Task.sleep(for: .milliseconds(800))
     let delOK = model.resolved.caption.contains("TYPED-MID-TEXT-0123456789-abcd") && !model.resolved.caption.contains("abcde")
     note("\(delOK ? "PASS" : "FAIL") backspace ×10 reached the caption")

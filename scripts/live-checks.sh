@@ -22,8 +22,11 @@ case "$BIN" in
 esac
 [[ -x "$BIN" ]] || { echo "live-checks: no binary at $BIN (run swift build)" >&2; exit 2; }
 HOME_DIR=$(mktemp -d "$DEV/scratch-live-XXXXXX") || exit 2
-trap 'rm -rf "$HOME_DIR"' EXIT
-# A copy of the newest backup: the scripts need clips waiting in Edit, which a fresh database doesn't have.
+FRESH_DIR=$(mktemp -d "$DEV/scratch-live-XXXXXX") || exit 2
+trap 'rm -rf "$HOME_DIR" "$FRESH_DIR"' EXIT
+# A copy of the newest backup: most checks need clips waiting in Edit, which a fresh database doesn't have. The ones in
+# `fresh` expect clips just read from the session folders instead.
+fresh=(editor-selftest search send-to-queue editor-caption editor-template)
 seed=("$DEV"/backups/real-queue-*.sqlite(Nom[1]))
 [[ -n "${seed[1]:-}" ]] || { echo "live-checks: no backup in $DEV/backups" >&2; exit 2; }
 mkdir -p "$HOME_DIR/support"
@@ -66,7 +69,9 @@ for name in $order; do
   mkdir -p "$dir"
   vars=("${(@s: :)checks[$name]}")
   vars=("${vars[@]//@/$dir}")
-  env DJQ_HOME="$HOME_DIR" DJQ_ROOT="$DEV/DJ Video" $vars "$BIN" --snapshot "$dir" > "$dir/run.log" 2>&1
+  home=$HOME_DIR
+  (( ${fresh[(Ie)${name%-dark}]} )) && home=$FRESH_DIR
+  env DJQ_HOME="$home" DJQ_ROOT="$DEV/DJ Video" $vars "$BIN" --snapshot "$dir" > "$dir/run.log" 2>&1
   code=$?
   want=0 verdict="^screen-guard: clean"
   # The guard's own proof: its test window must fail the run.
