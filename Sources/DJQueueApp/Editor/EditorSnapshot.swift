@@ -15,6 +15,7 @@ import SwiftUI
 /// - `DJQ_EDITOR_GROUP_SCRIPT=<dir>` makes a hashtag group in the real editor (`EditorGroupScript`);
 ///   `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption field (`EditorCaptionScript`);
 ///   `DJQ_SETTINGS_GROUP_SCRIPT=<dir>` drives the real Settings group rows (`SettingsGroupScript`);
+///   `DJQ_EDITOR_KEYS_SCRIPT=<dir>` drives the editor's keys and the arrow step (`EditorKeysScript`, round 19);
 ///   `DJQ_EDITOR_TEMPLATE_SCRIPT=<dir>` drives the template actions and part chips (`EditorTemplateScript`);
 ///   `DJQ_TEXT_LAYERS_SCRIPT=<dir>` drives timed texts end to end, export included (`TextLayersScript`).
 @MainActor
@@ -69,6 +70,10 @@ enum EditorSnapshot {
       }
       if let dir = env["DJQ_SETTINGS_GROUP_SCRIPT"] {
         return await SettingsGroupScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
+      }
+      if let dir = env["DJQ_EDITOR_KEYS_SCRIPT"] {
+        return await EditorKeysScript.run(store: store, video: pick.id, ids: ids, dir: dir,
+                                          appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
       }
       if let dir = env["DJQ_EDITOR_CAPTION_SCRIPT"] {
         return await EditorCaptionScript.run(store: store, video: pick.id, ids: ids, dir: dir,

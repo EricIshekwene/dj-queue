@@ -120,15 +120,38 @@ struct EditorTransport: View {
         }
       }
       HStack(spacing: 4) {
-        DSIconButton("gobackward.5", tooltip: "Jump back 5 seconds", size: .sm) { playback.skip(-5) }
+        let step = model.arrowStep
+        DSIconButton(step.backSymbol, tooltip: "Jump back \(step.title)", size: .sm, shortcut: "←") { jump(-1) }
         DSIconButton(playback.isPlaying ? "pause.fill" : "play.fill", tooltip: playback.isPlaying ? "Pause" : "Play the trim",
                      variant: .secondary, size: .md, shortcut: "Space",
                      disabledReason: playback.player == nil ? "The clip isn't loaded" : nil) { playback.toggle() }
-        DSIconButton("goforward.5", tooltip: "Jump forward 5 seconds", size: .sm) { playback.skip(5) }
+        DSIconButton(step.forwardSymbol, tooltip: "Jump forward \(step.title)", size: .sm, shortcut: "→") { jump(1) }
         EditorTimeLabel(playback: playback, duration: model.duration).padding(.leading, 6)
+        EditorArrowStepPicker(model: model).padding(.leading, 2)
       }
     }
     .frame(height: 34)
+  }
+}
+
+extension EditorTransport {
+  private func jump(_ d: Int) {
+    playback.jump(d, step: model.arrowStep, fine: false, fps: model.fps, duration: model.duration)
+  }
+}
+
+/// "↔ 2 s" beside the time: how far ← / → and the jump buttons move (round 19). Changing it here works at once on
+/// the clip that's open, so Eric can try a step with the arrows straight away; Settings → Playback holds the same choice.
+struct EditorArrowStepPicker: View {
+  @ObservedObject var model: EditorModel
+
+  var body: some View {
+    DSSelect(selection: Binding(get: { model.arrowStep }, set: { model.setArrowStep($0) }),
+             options: ArrowStep.allCases.map { DSSelectOption(value: $0, title: $0.short) },
+             size: .sm, variant: .ghost, fullWidth: false)
+      .background(ScriptAnchor("Arrow step"))
+      .dsTooltip("How far ← → jump (⇧ ← → one frame). Try it with the arrows; Settings → Playback has it too")
+      .accessibilityLabel("Arrow keys jump")
   }
 }
 

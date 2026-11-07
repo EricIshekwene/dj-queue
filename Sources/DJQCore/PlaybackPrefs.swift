@@ -19,6 +19,8 @@ public struct PlaybackPrefs: Codable, Equatable, Sendable {
   public var gridHoverOnly = true
   /// True once Eric set that switch himself (same one-time migration as `unmuteOnHoverChosen`).
   public var gridHoverOnlyChosen = false
+  /// How far ← / → move the editor's playhead (round 19; ⇧ moves one frame). Also the jump buttons beside Play.
+  public var arrowStep: ArrowStep = .standard
 
   public init() {}
 
@@ -27,7 +29,7 @@ public struct PlaybackPrefs: Codable, Equatable, Sendable {
   public var hoverSound: Bool { autoplay && unmuteOnHover }
 
   enum CodingKeys: String, CodingKey {
-    case autoplay, unmuteOnHover, unmuteOnHoverChosen, focusOnly, loop, gridHoverOnly, gridHoverOnlyChosen
+    case autoplay, unmuteOnHover, unmuteOnHoverChosen, focusOnly, loop, gridHoverOnly, gridHoverOnlyChosen, arrowStep
   }
 
   /// Lenient: missing keys keep their defaults; an unchosen "Unmute on hover" becomes the new default (on).
@@ -42,6 +44,7 @@ public struct PlaybackPrefs: Codable, Equatable, Sendable {
     gridHoverOnlyChosen = (try? c.decodeIfPresent(Bool.self, forKey: .gridHoverOnlyChosen)) ?? false
     let grid = (try? c.decodeIfPresent(Bool.self, forKey: .gridHoverOnly)) ?? nil
     gridHoverOnly = gridHoverOnlyChosen ? (grid ?? true) : true
+    arrowStep = (try? c.decodeIfPresent(ArrowStep.self, forKey: .arrowStep)) ?? .standard
   }
 
   /// Eric's own choice from Settings (marks it chosen).
@@ -54,6 +57,86 @@ public struct PlaybackPrefs: Codable, Equatable, Sendable {
   public mutating func chooseUnmuteOnHover(_ on: Bool) {
     unmuteOnHover = on
     unmuteOnHoverChosen = true
+  }
+}
+
+/// How far ← / → move the editor's playhead (round 19). Before it they moved one frame, which Eric found far too
+/// small for 15–60 s clips; the default is now 2 seconds and ⇧ keeps the one-frame nudge.
+public enum ArrowStep: String, Codable, CaseIterable, Sendable {
+  case frame, halfSecond, oneSecond, twoSeconds, fiveSeconds, tenSeconds
+
+  public static let standard: ArrowStep = .twoSeconds
+
+  /// Unknown stored values (a newer build's) load as the default instead of failing the whole prefs blob.
+  public init(from decoder: Decoder) throws {
+    let raw = try decoder.singleValueContainer().decode(String.self)
+    self = ArrowStep(rawValue: raw) ?? .standard
+  }
+
+  /// Seconds for one press at `fps` (a frame is 1/fps).
+  public func seconds(fps: Double) -> Double {
+    switch self {
+    case .frame: return 1 / max(fps, 1)
+    case .halfSecond: return 0.5
+    case .oneSecond: return 1
+    case .twoSeconds: return 2
+    case .fiveSeconds: return 5
+    case .tenSeconds: return 10
+    }
+  }
+
+  /// "2 seconds" — menus and Settings.
+  public var title: String {
+    switch self {
+    case .frame: return "1 frame"
+    case .halfSecond: return "½ second"
+    case .oneSecond: return "1 second"
+    case .twoSeconds: return "2 seconds"
+    case .fiveSeconds: return "5 seconds"
+    case .tenSeconds: return "10 seconds"
+    }
+  }
+
+  /// "2 s" — the compact chip in the editor's transport.
+  public var short: String {
+    switch self {
+    case .frame: return "1 frame"
+    case .halfSecond: return "0.5 s"
+    case .oneSecond: return "1 s"
+    case .twoSeconds: return "2 s"
+    case .fiveSeconds: return "5 s"
+    case .tenSeconds: return "10 s"
+    }
+  }
+
+  /// SF Symbols for the jump buttons beside Play (numbered ones exist only for 5 and 10).
+  public var backSymbol: String {
+    switch self {
+    case .frame: return "backward.frame"
+    case .fiveSeconds: return "gobackward.5"
+    case .tenSeconds: return "gobackward.10"
+    default: return "gobackward"
+    }
+  }
+
+  public var forwardSymbol: String {
+    switch self {
+    case .frame: return "forward.frame"
+    case .fiveSeconds: return "goforward.5"
+    case .tenSeconds: return "goforward.10"
+    default: return "goforward"
+    }
+  }
+}
+
+/// Where an arrow press puts the playhead: `direction` −1 / +1, `fine` (⇧) moves one frame whatever the step.
+/// Clamped to the clip (0 … duration; an unknown duration of 0 only clamps at 0).
+public enum EditorSeek {
+  public static func target(from time: Double, step: ArrowStep, fps: Double, direction: Int, fine: Bool,
+                            duration: Double) -> Double {
+    let amount = fine ? ArrowStep.frame.seconds(fps: fps) : step.seconds(fps: fps)
+    let t = max(0, time + Double(direction.signum()) * amount)
+    return duration > 0 ? min(t, duration) : t
   }
 }
 

@@ -94,6 +94,10 @@ CROP=iw*0.245:ih*0.62:iw*0.755:0 gif editor-caption $C/caption-01-group-on-light
 Q=send-to-queue
 gif send-to-queue $Q/send-1-edit-before $Q/send-2-editor-open $Q/send-3-editor-nothing-to-fix $Q/send-4-edit-after-save \
                  $Q/send-5-queue-after-send
+K=editor-keys
+still settings-arrow-keys $K/keys-08-settings-try-it-light
+gif editor-keys      $K/keys-01-space-plays-light $K/keys-02-typing-title-light $K/keys-03-click-away-then-space-light \
+                 $K/keys-04-arrow-2s-light $K/keys-05-arrow-5s-light $K/keys-06-down-next-clip-light
 
 du -sh "$OUT"
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }
