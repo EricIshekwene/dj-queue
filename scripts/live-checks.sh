@@ -27,8 +27,14 @@ trap 'rm -rf "$HOME_DIR" "$FRESH_DIR"' EXIT
 # A copy of the newest backup: most checks need clips waiting in Edit, which a fresh database doesn't have. The ones in
 # `fresh` expect clips just read from the session folders instead.
 fresh=(editor-selftest search send-to-queue editor-caption editor-template)
-seed=("$DEV"/backups/real-queue-*.sqlite(Nom[1]))
-[[ -n "${seed[1]:-}" ]] || { echo "live-checks: no backup in $DEV/backups" >&2; exit 2; }
+# The newest backup that still has clips waiting in Edit: once every clip is in the Queue (7 Nov), the newest has none.
+seed=()
+for b in "$DEV"/backups/real-queue-*.sqlite(Nom); do
+  n=$(sqlite3 "$b" "SELECT count(*) FROM videos WHERE type='short-form' AND excluded=0 AND missing=0 AND state='needs_edit'" 2>/dev/null)
+  (( ${n:-0} >= 4 )) && { seed=("$b"); break; }
+done
+[[ -n "${seed[1]:-}" ]] || { echo "live-checks: no backup in $DEV/backups with clips in Edit" >&2; exit 2; }
+echo "live-checks: seed ${seed[1]:t}"
 mkdir -p "$HOME_DIR/support"
 SEED_DB="$HOME_DIR/support/queue.sqlite"
 cp "$seed[1]" "$SEED_DB"
