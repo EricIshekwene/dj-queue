@@ -468,9 +468,10 @@ struct ArrowStepTryIt: View {
 
 /// The try-it strip's playhead and whether its arrows are armed (a reference, so the window key monitor and the view
 /// share one value).
+@MainActor
 final class TryItState: ObservableObject {
   /// The newest strip, for the live check (`EditorKeysScript`) to read.
-  nonisolated(unsafe) static weak var latest: TryItState?
+  static weak var latest: TryItState?
   init() { Self.latest = self }
   @Published var time = 0.0
   @Published var armed = false
@@ -502,9 +503,11 @@ private struct TryItKeys: NSViewRepresentable {
       strip?.armed = false
       guard window != nil else { return }
       if let m = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] e in
-        guard let self, let strip = self.strip, strip.armed, e.window === self.window, !(self.window?.firstResponder is NSTextView),
+        guard let self, let strip = self.strip, strip.armed, e.window === self.window else { return e }
+        // Any other key (Tab to another control, typing) lets go: the arrows are the strip's only while it's in use.
+        guard !(self.window?.firstResponder is NSTextView),
               e.modifierFlags.intersection([.command, .option, .control]).isEmpty,
-              e.keyCode == EditorKeys.left || e.keyCode == EditorKeys.right else { return e }
+              e.keyCode == EditorKeys.left || e.keyCode == EditorKeys.right else { strip.armed = false; return e }
         strip.move(e.keyCode == EditorKeys.left ? -1 : 1, step: self.step, fine: e.modifierFlags.contains(.shift))
         return nil
       }) { monitors.append(m) }

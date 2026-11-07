@@ -176,7 +176,8 @@ enum EditorGroupScript {
     await shot("duplicate-name")
     _ = await click(.save)
     check("a duplicate name doesn't save", groups().count == 1 && model.groupForm != nil)
-    await press("\u{1b}", code: 53)
+    // Through the app's event path, so the editor's key monitor sees it first (round 19: one Esc still closes).
+    await sendKey("\u{1b}", code: 53, flags: [])
     await wait(300)
     check("Esc closes the form", model.groupForm == nil)
     check("Esc discards it", groups().count == 1)

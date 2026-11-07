@@ -15,6 +15,7 @@ public enum EditorKeyAction: Equatable, Sendable {
 
 public enum EditorKeys {
   /// Where the keyboard is: a text field or text view takes typing; a list (table/outline) takes ↑ / ↓ for its rows.
+  /// Esc in a text field: the app lets a form's Cancel take it first, then leaves the field.
   public enum Focus: Sendable { case none, text, list }
 
   public static let space: UInt16 = 49, left: UInt16 = 123, right: UInt16 = 124, down: UInt16 = 125, up: UInt16 = 126
@@ -39,7 +40,6 @@ public enum EditorKeys {
     case right: return .seek(direction: 1, fine: shift)
     default: break
     }
-    if shift { return nil }
     switch characters?.lowercased() {
     case "i": return .trimIn
     case "o": return .trimOut

@@ -1847,20 +1847,10 @@ final class EditorPlayback: ObservableObject {
     }
   }
 
-  func step(_ frames: Int, fps: Double) {
-    pause()
-    seek(max(0, time + Double(frames) / max(fps, 1)), exact: true)
-  }
-
-  func skip(_ seconds: Double) {
-    pause()
-    seek(max(0, time + seconds), exact: true)
-  }
-
-  /// One ← / → press (or a jump button): `fine` (⇧) steps a single frame and pauses, like any frame step; a bigger
-  /// jump keeps playing if it was, so Eric can hop through a clip while listening.
+  /// One ← / → press (or a jump button): a frame step (⇧, or a step of one frame) pauses, like any frame step; a
+  /// bigger jump keeps playing if it was, so Eric can hop through a clip while listening.
   func jump(_ direction: Int, step: ArrowStep, fine: Bool, fps: Double, duration: Double) {
-    if fine { pause() }
+    if fine || step == .frame { pause() }
     seek(EditorSeek.target(from: time, step: step, fps: fps, direction: direction, fine: fine, duration: duration), exact: true)
   }
 }

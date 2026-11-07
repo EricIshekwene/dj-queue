@@ -15,6 +15,8 @@ import SwiftUI
 /// ```
 struct EditorView: View {
   @StateObject private var model: EditorModel
+  /// The editor's own window (from its key monitor), for letting go of a field when another clip opens.
+  @State private var hostWindow = EditorHostWindow()
   private let videoIds: [String]
   private let onDone: () -> Void
   /// Drawn in the header after the status chip for the clip being edited (the app's stage control).
@@ -52,12 +54,12 @@ struct EditorView: View {
             DSAttentionCard(title: e, tone: .danger).padding(.horizontal, DS.space.md).padding(.top, DS.space.sm)
           }
           EditorCanvas(model: model, playback: model.playback)
-            .background(EditorClickAway())
+            .background(EditorClickAway(isCovered: { model.isCovered?() == true }))
             .allowsHitTesting(!model.readOnly)
             // Read-only canvas ignores the pointer; this layer only says why on hover.
             .overlay { if model.readOnly { Color.clear.contentShape(Rectangle()).dsTooltip(nil, disabledReason: Self.readOnlyReason) } }
           EditorTimeline(model: model, playback: model.playback)
-            .background(EditorClickAway())
+            .background(EditorClickAway(isCovered: { model.isCovered?() == true }))
             .disabled(model.fileMissing || model.video == nil || model.readOnly)
             .dsTooltip(nil, disabledReason: timelineOff)
             .background(DS.color.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous))
@@ -77,10 +79,10 @@ struct EditorView: View {
       }
     }
     .dsAnimation(DS.motion.popover, value: model.toast)
-    .background(EditorKeyMonitor(handle: handleKey))
+    .background(EditorKeyMonitor(handle: handleKey, onWindow: { hostWindow.window = $0 }))
     // A new clip starts with the keyboard on the player, as the first one does (a field kept from the last clip
     // would take Space).
-    .onChange(of: model.videoId) { _, _ in if model.isCovered?() != true { EditorFocus.leaveText(in: NSApp.keyWindow) } }
+    .onChange(of: model.videoId) { _, _ in if model.isCovered?() != true { EditorFocus.leaveText(in: hostWindow.window) } }
     // Don't start with the cursor in the Title field (Space should play, not type).
     .onAppear {
       DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
@@ -125,7 +127,10 @@ struct EditorView: View {
     case .clip(let d): Self.open(d, model: model, in: videoIds)
     case .trimIn: model.setTrimIn(min(pb.time, model.trim.end - 0.5))
     case .trimOut: model.setTrimOut(max(pb.time, model.trim.start + 0.5))
-    case .leaveTextField: EditorFocus.leaveText(in: e.window)
+    case .leaveTextField:
+      // A form's Cancel (the group and template forms, `.cancelAction`) takes Esc first: one press closes it.
+      if e.window?.performKeyEquivalent(with: e) == true { return true }
+      EditorFocus.leaveText(in: e.window)
     }
     return true
   }
@@ -136,6 +141,11 @@ struct EditorView: View {
     model.playback.pause()
     model.load(videoIds[i + d])
   }
+}
+
+/// A weak hold on the editor's window, set by `EditorKeyMonitor`.
+final class EditorHostWindow {
+  weak var window: NSWindow?
 }
 
 /// Where the keyboard is in the editor's window, and letting go of a text field (round 19). Space only reaches the
@@ -337,9 +347,12 @@ extension EditorHeader {
 /// Put behind the picture and the timeline: a click there takes the cursor out of any text field first (round 19),
 /// so Space plays right after typing a title or caption. Clicks on a text field itself (an inline editor) keep it.
 struct EditorClickAway: NSViewRepresentable {
-  func makeNSView(context: Context) -> ZoneView { ZoneView() }
-  func updateNSView(_ v: ZoneView, context: Context) {}
+  /// True while an overlay (Settings, ⌘K) is over the editor: its clicks are its own.
+  var isCovered: () -> Bool = { false }
+  func makeNSView(context: Context) -> ZoneView { let v = ZoneView(); v.isCovered = isCovered; return v }
+  func updateNSView(_ v: ZoneView, context: Context) { v.isCovered = isCovered }
   final class ZoneView: NSView {
+    var isCovered: () -> Bool = { false }
     private var monitor: Any?
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
@@ -351,10 +364,10 @@ struct EditorClickAway: NSViewRepresentable {
       }
     }
     private func mouseDownAnywhere(_ e: NSEvent) {
-      guard let w = window, e.window === w, w.firstResponder is NSTextView, !isHiddenOrHasHiddenAncestor,
+      guard let w = window, e.window === w, w.firstResponder is NSTextView, !isHiddenOrHasHiddenAncestor, !isCovered(),
             bounds.contains(convert(e.locationInWindow, from: nil)) else { return }
-      if let content = w.contentView, let hit = content.hitTest(content.convert(e.locationInWindow, from: nil)),
-         Self.isText(hit) { return }
+      // hitTest takes the point in the superview's coordinates: the frame view's are the window's.
+      if let hit = w.contentView?.hitTest(e.locationInWindow), Self.isText(hit) { return }
       EditorFocus.leaveText(in: w)
     }
     static func isText(_ v: NSView) -> Bool {
@@ -373,13 +386,17 @@ struct EditorClickAway: NSViewRepresentable {
 /// Local key monitor active while the editor is in a window.
 struct EditorKeyMonitor: NSViewRepresentable {
   var handle: (NSEvent) -> Bool
-  func makeNSView(context: Context) -> MonitorView { let v = MonitorView(); v.handle = handle; return v }
-  func updateNSView(_ v: MonitorView, context: Context) { v.handle = handle }
+  /// Told the window the monitor lives in (nil when it leaves one).
+  var onWindow: ((NSWindow?) -> Void)? = nil
+  func makeNSView(context: Context) -> MonitorView { let v = MonitorView(); v.handle = handle; v.onWindow = onWindow; return v }
+  func updateNSView(_ v: MonitorView, context: Context) { v.handle = handle; v.onWindow = onWindow }
   final class MonitorView: NSView {
     var handle: ((NSEvent) -> Bool)?
+    var onWindow: ((NSWindow?) -> Void)?
     private var monitor: Any?
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
+      onWindow?(window)
       if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
       guard window != nil else { return }
       monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in

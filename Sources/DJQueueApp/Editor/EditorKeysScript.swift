@@ -163,6 +163,19 @@ enum EditorKeysScript {
       await press("\u{F700}", code: EditorKeys.up)
       try? await Task.sleep(for: .seconds(2))
       check("↑ opens the previous clip", model.videoId == ids[i])
+      // Another clip opened while typing (⌘] or the header arrow) starts with nothing focused, and the Title typed so
+      // far stays with the clip it was typed on.
+      let titleBefore = model.title
+      _ = await focusTitle()
+      EditorView.open(1, model: model, in: ids)
+      try? await Task.sleep(for: .seconds(2))
+      check("another clip opened while typing lets go of the field", !typing() && model.videoId == ids[i + 1])
+      await space()
+      check("…so Space plays it", pb.isPlaying)
+      await pause()
+      EditorView.open(-1, model: model, in: ids)
+      try? await Task.sleep(for: .seconds(2))
+      check("the first clip's Title is unchanged", model.title == titleBefore)
     } else {
       note("skip ↑ / ↓: only one clip")
     }

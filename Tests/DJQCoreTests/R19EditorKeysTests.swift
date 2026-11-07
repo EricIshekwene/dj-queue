@@ -45,6 +45,7 @@ import Testing
   @Test func trimKeys() {
     #expect(act(31, "i") == .trimIn)
     #expect(act(31, "o") == .trimOut)
+    #expect(act(34, "I", shift: true) == .trimIn)
     #expect(act(31, "o", focus: .text) == nil)
   }
 
