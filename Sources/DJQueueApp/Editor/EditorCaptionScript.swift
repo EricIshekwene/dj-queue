@@ -24,8 +24,7 @@ enum EditorCaptionScript {
     let host = NSHostingView(rootView: EditorView(model: model, videoIds: ids, onDone: {}))
     window.contentView = host
     window.isReleasedWhenClosed = false
-    if let screen = NSScreen.main { window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX, y: screen.visibleFrame.minY)) }
-    window.orderBack(nil)
+    Backstage.show(window)
     defer { window.orderOut(nil); window.close() }
     try? await Task.sleep(for: .seconds(3))
     model.scrollTarget = .caption
@@ -73,7 +72,7 @@ enum EditorCaptionScript {
       check("Piano chip → #amapiano #piano appear in the field", f.string.hasSuffix("#amapiano #piano"))
       await shot("group-on")
       f.setSelectedRange(NSRange(location: 0, length: 0))
-      for ch in "Hook: " { f.insertText(String(ch), replacementRange: f.selectedRange()); try? await Task.sleep(for: .milliseconds(5)) }
+      for ch in "Hook: " { f.insertText(String(ch), replacementRange: f.selectedRange()); try? await Task.sleep(for: .milliseconds(40)) }
       try? await Task.sleep(for: .milliseconds(600))
       check("typing at the start → Custom with the typed text", model.captionIsWritten && model.resolved.caption.hasPrefix("Hook: "))
       model.setHashtagSets(["cs-piano", "cs-sa"])
@@ -122,6 +121,7 @@ enum EditorCaptionScript {
       try? await Task.sleep(for: .milliseconds(1))
       window.displayIfNeeded()
       costs.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+      try? await Task.sleep(for: .milliseconds(40))  // about 20 keys a second
     }
     try? await Task.sleep(for: .milliseconds(800))
     let sorted = costs.sorted()
@@ -132,7 +132,7 @@ enum EditorCaptionScript {
     await shot("typed-mid-text")
 
     // 3. Delete 10 characters (backspace).
-    for _ in 0..<10 { tv.deleteBackward(nil); try? await Task.sleep(for: .milliseconds(1)) }
+    for _ in 0..<10 { tv.deleteBackward(nil); try? await Task.sleep(for: .milliseconds(40)) }
     try? await Task.sleep(for: .milliseconds(800))
     let delOK = model.resolved.caption.contains("TYPED-MID-TEXT-0123456789-abcd") && !model.resolved.caption.contains("abcde")
     note("\(delOK ? "PASS" : "FAIL") backspace ×10 reached the caption")
@@ -143,6 +143,18 @@ enum EditorCaptionScript {
     let selOK = tv.selectedRange().length == (tv.string as NSString).length && tv.selectedRange().length > 2000
     note("\(selOK ? "PASS" : "FAIL") select-all selects all \(tv.selectedRange().length) characters")
     await shot("select-all")
+
+    // 5. A burst at the old speed, reported and not judged: which of field or model lost keys, if any.
+    let burst = "BURST-0123456789-abcdefghijklmnopqrstuvwxyz"
+    tv.setSelectedRange(NSRange(location: 0, length: 0))
+    for ch in burst {
+      tv.insertText(String(ch), replacementRange: tv.selectedRange())
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    try? await Task.sleep(for: .milliseconds(800))
+    let inField = burst.filter { tv.string.prefix(burst.count + 8).contains($0) }.count
+    note("burst of \(burst.count) keys at about 500 a second: field \(tv.string.hasPrefix(burst) ? "has all" : "lost keys, starts “\(tv.string.prefix(40))” (\(inField))"), "
+      + "model \(model.resolved.caption.hasPrefix(burst) ? "has all" : "lost keys, starts “\(model.resolved.caption.prefix(40))”")")
 
     try? log.joined(separator: "\n").write(to: out.appendingPathComponent("timing-\(appearance).txt"), atomically: true, encoding: .utf8)
     model.flushAndWait()

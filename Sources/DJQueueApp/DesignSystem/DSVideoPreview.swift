@@ -169,7 +169,7 @@ struct DSVideoPreview: View {
                           progress: progress) { r in ready = r }
           .id(playerGeneration)
           .opacity(ready ? 1 : 0)
-          .animation(DS.motion.fade, value: ready)
+          .dsAnimation(DS.motion.fade, value: ready)
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -370,6 +370,7 @@ final class DSPlayerNSView: NSView {
       let item = AVPlayerItem(url: url)
       let p = AVQueuePlayer()
       p.isMuted = true
+      Backstage.silenceForChecks(p)
       p.preventsDisplaySleepDuringVideoPlayback = false
       p.automaticallyWaitsToMinimizeStalling = false
       if let r = loopRange, r.upperBound > r.lowerBound {

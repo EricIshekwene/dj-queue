@@ -20,13 +20,13 @@ You are the session parent for one DJ Queue session. You own the outcome: unders
 - Never build in the `~/code/dj-queue` checkout itself. It only receives merges.
 
 ## Execute
-Give every child its goal, requirement IDs, owned files, worktree and branch, relevant SESSION sections, decisions, exact checks (`swift build`, `swift test`, snapshot command, dev root env) and its return format. Keep corrections with the same implementation owner. Use a [watchdog](../djq-watchdog/SKILL.md) on every child that runs in the background. Continue other ready work while children run.
+Give every child its goal, requirement IDs, owned files, worktree and branch, relevant SESSION sections, decisions, exact checks (`swift build`, `swift test`, `scripts/live-checks.sh`) and its return format. Keep corrections with the same implementation owner. Use a [watchdog](../djq-watchdog/SKILL.md) on every child that runs in the background. Continue other ready work while children run.
 
 ## Review and verify
 - At each milestone, one **fresh, read-only, independent reviewer** checks spec fidelity and repo standards on the actual diff (`git diff main...agent/r<N>-<name>`). Its verdict is written to `<session>/reviews/<name>.md`. Send in-scope defects back to the owner as one batch. Re-review when a fix changes behaviour or risk materially.
 - Focused checks during implementation; `swift build` (0 warnings) and `swift test` on each candidate before review, and again on `main` after integration.
 - Migrations: prove they're lossless on a copy of the newest real-DB backup.
-- UI: take light and dark snapshots for every changed screen and compare them with DESIGN-v2. Hover behaviour Eric must try by hand goes in the report.
+- UI: run `scripts/live-checks.sh` for every changed screen and flow, and compare the light and dark shots with DESIGN-v2. It runs hidden: nothing may appear on Eric's screen or take focus, and any `screen-guard: FAIL` is a failed check ([djq.md](references/djq.md), Background verification). Hover behaviour Eric must try by hand goes in the report.
 - After two materially different fixes fail on the same defect, stop and rethink the approach; a product tradeoff goes to Eric as one batched question while other work continues.
 
 ## Ship

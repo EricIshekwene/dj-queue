@@ -12,10 +12,16 @@ import SwiftUI
 /// renders the editor (EditorSnapshot, incl. `DJQ_EDITOR_SELFTEST`).
 ///
 /// Rendering uses real AppKit windows (NSHostingController + window capture / `cacheDisplay`) instead of
-/// `ImageRenderer`, because ImageRenderer can't draw AppKit-backed controls.
+/// `ImageRenderer`, because ImageRenderer can't draw AppKit-backed controls. Every window goes to `Backstage`, off every
+/// display, and `ScreenGuard` fails the run if one shows up on a screen.
 @MainActor
 enum SnapshotRunner {
   static func run(outputDir: String) async -> Int32 {
+    // Every run starts from the dev root: `Store` migrates what it opens, and that must never be the real database.
+    guard Paths.hasDevEnvironment(ProcessInfo.processInfo.environment) else {
+      FileHandle.standardError.write(Data("snapshot refused: set DJQ_HOME and DJQ_ROOT to the dev root\n".utf8))
+      return 2
+    }
     // Every snapshot and scripted run: a throwaway database must never make the installed app reload or tick.
     setenv("DJQ_NO_SIGNAL", "1", 1)
     if ProcessInfo.processInfo.environment["DJQ_SEARCH_PROBE"] != nil { return await SearchProbe.run(outputDir: outputDir) }
@@ -209,10 +215,9 @@ struct Shot {
       window.contentView = hv
     }
     window.isReleasedWhenClosed = false
-    if let screen = NSScreen.main { window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX, y: screen.visibleFrame.minY)) }
     for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
       window.appearance = NSAppearance(named: appearance)
-      window.orderBack(nil)
+      Backstage.show(window)
       try await Task.sleep(for: .milliseconds(suffix == "light" ? 1600 : 800))
       window.displayIfNeeded()
       // Default: AppKit draws the view tree (deterministic, works with the display asleep; no AVPlayer frames).
@@ -244,6 +249,8 @@ final class SnapshotWindow: NSWindow {
   override var isKeyWindow: Bool { true }
   override var isMainWindow: Bool { true }
   override var canBecomeKey: Bool { true }
+  /// AppKit pulls titled windows back onto a display; these stay on `Backstage.stage`.
+  override func constrainFrameRect(_ r: NSRect, to screen: NSScreen?) -> NSRect { r }
 
   static func make(_ r: NSRect, _ style: NSWindow.StyleMask) -> NSWindow {
     SnapshotWindow(contentRect: r, styleMask: style, backing: .buffered, defer: false)
@@ -260,11 +267,15 @@ enum WindowCapture {
     return unsafeBitCast(sym, to: Fn.self)
   }()
 
-  static func png(_ w: NSWindow) -> Data? {
+  static func image(_ w: NSWindow) -> CGImage? {
     let includingWindow: UInt32 = 1 << 3
     let ignoreFraming: UInt32 = 1 << 0, nominal: UInt32 = 1 << 4
-    guard let fn, let img = fn(.null, includingWindow, UInt32(w.windowNumber), ignoreFraming | nominal)?.takeRetainedValue(),
-          img.width > 10 else { return nil }
+    guard let fn, let img = fn(.null, includingWindow, UInt32(w.windowNumber), ignoreFraming | nominal)?.takeRetainedValue() else { return nil }
+    return img
+  }
+
+  static func png(_ w: NSWindow) -> Data? {
+    guard let img = image(w), img.width > 10 else { return nil }
     return NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])
   }
 }

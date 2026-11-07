@@ -117,7 +117,7 @@ djq autoupdate rollback [--restore-db]     # back to the kept previous build
 djq autoupdate log [--run]                 # the log, or the last run's build and test output
 ```
 
-The app reads session folders at `~/Movies/DJ Video/Sessions/<date – name>/videos.json` (written by my CapCut export scripts). To run against a scratch copy instead of real data, set `DJQ_ROOT` (the "DJ Video" folder) and `DJQ_HOME` (database and logs) and launch the binary inside the bundle directly. `DJQueueApp --snapshot <dir>` renders every screen in light and dark.
+The app reads session folders at `~/Movies/DJ Video/Sessions/<date – name>/videos.json` (written by my CapCut export scripts). To run against a scratch copy instead of real data, set `DJQ_ROOT` (the "DJ Video" folder) and `DJQ_HOME` (database and logs) and launch the binary inside the bundle directly. `scripts/live-checks.sh <dir>` renders every screen in light and dark and runs the click-through checks, all off screen.
 
 ## Layout
 

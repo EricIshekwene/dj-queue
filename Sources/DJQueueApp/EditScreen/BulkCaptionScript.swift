@@ -31,8 +31,7 @@ enum BulkCaptionScript {
     let host = NSHostingView(rootView: MainWindowView(model: app))
     window.contentView = host
     window.isReleasedWhenClosed = false
-    if let screen = NSScreen.main { window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX, y: screen.visibleFrame.minY)) }
-    window.orderBack(nil)
+    Backstage.show(window)
     defer { window.orderOut(nil); window.close() }
     await wait(2000)
 

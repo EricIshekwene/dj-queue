@@ -8,8 +8,8 @@ import SwiftUI
 ///   (stills stand in for the player). Needs the one-line hook in `SnapshotRunner.run`.
 ///   `DJQ_EDITOR_VIDEO=<id prefix>` picks the clip (default: the first short clip with suggestions, else with markers);
 ///   `DJQ_SNAPSHOT_ONLY=<substring>` filters shots.
-/// - `DJQ_EDITOR_LIVE=<seconds>` instead opens the real editor (live player) in a window for that long and prints
-///   `editor-live: window <number>` so it can be captured with `screencapture -l <number>`.
+/// - `DJQ_EDITOR_LIVE=<seconds>` instead opens the real editor (live player) in a backstage window for that long and prints
+///   `editor-live: window <number>`. `DJQ_EDITOR_LIVE_PNG=<file>` captures it.
 /// - `DJQ_BULK_CAPTION_SCRIPT=<dir>` drives the main window's Caption dialog (`BulkCaptionScript`).
 /// - `DJQ_BULK_CROP_SCRIPT=<dir>` drives the Crop dialog (`BulkCropScript`).
 /// - `DJQ_EDITOR_GROUP_SCRIPT=<dir>` makes a hashtag group in the real editor (`EditorGroupScript`);
@@ -460,11 +460,10 @@ enum EditorSnapshot {
     return failures == 0 ? 0 : 1
   }
 
-  /// Opens the real editor (live AVPlayer) in a normal window for `seconds`, printing its window number.
+  /// Opens the real editor (live AVPlayer) in a backstage window for `seconds`, printing its window number.
   private static func live(store: Store, video: String, ids: [String], seconds: Double) async -> Int32 {
-    let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 1440, height: 900),
-                          styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
-                          backing: .buffered, defer: false)
+    let window = SnapshotWindow.make(NSRect(x: 0, y: 0, width: 1440, height: 900),
+                                     [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView])
     window.titlebarAppearsTransparent = true
     window.title = "DJ Queue — Editor (dev)"
     let env = ProcessInfo.processInfo.environment
@@ -472,11 +471,11 @@ enum EditorSnapshot {
     window.contentView = NSHostingView(rootView: EditorView(model: model, videoIds: ids, onDone: {}))
     window.isReleasedWhenClosed = false
     if let a = env["DJQ_EDITOR_LIVE_APPEARANCE"] { window.appearance = NSAppearance(named: a == "dark" ? .darkAqua : .aqua) }
-    NSApp.setActivationPolicy(.regular)
-    // `DJQ_EDITOR_LIVE_SECTIONS=<dir>`: one window-server capture per inspector section (`live-<section>.png`), with the
-    // window shown without taking focus from whatever app is in front.
+    // Off every display, like every other run: nothing here shows on the screen or takes focus.
+    Backstage.show(window)
+    window.makeKey()
+    // `DJQ_EDITOR_LIVE_SECTIONS=<dir>`: one window-server capture per inspector section (`live-<section>.png`).
     if let dir = env["DJQ_EDITOR_LIVE_SECTIONS"] {
-      window.orderFrontRegardless()
       print("editor-live: window \(window.windowNumber)")
       try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
       try? await Task.sleep(for: .seconds(6))
@@ -495,8 +494,6 @@ enum EditorSnapshot {
       window.close()
       return 0
     }
-    window.makeKeyAndOrderFront(nil)
-    NSApp.activate(ignoringOtherApps: true)
     print("editor-live: window \(window.windowNumber)")
     fflush(stdout)
     // Optional in-process capture of our own window (window-server image: shows the live player frame; needs no
@@ -510,6 +507,8 @@ enum EditorSnapshot {
         print("editor-live: captured \(png)")
       } else {
         print("editor-live: window capture unavailable")
+        window.close()
+        return 1
       }
       // The window server returns a blank image while the display sleeps, so also let AppKit draw the live view tree
       // (the live player layer doesn't draw this way; everything else is the real, non-snapshot editor).

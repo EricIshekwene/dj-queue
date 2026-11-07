@@ -11,9 +11,12 @@ Watch identified work without adding an acceptance gate. Record each watchdog's 
 - a new commit on the child's branch (`git -C <worktree> rev-parse HEAD`);
 - files modified in its worktree (`find <worktree> -newer <marker> -not -path '*/.build/*'`);
 - its review or evidence file appearing or growing;
-- new downloads in `refs/` or the evidence folder during research.
+- new downloads in `refs/` or the evidence folder during research;
+- a `run.log` growing under `<evidence>/live/<check>/` during `scripts/live-checks.sh`.
 
 **How:** use one background shell loop per child (or the host's Monitor tool) that exits on the first meaningful event: a new commit, the result file written, or no signal for **30 minutes** (45 for research or reviews that only read). Exiting wakes the parent, which decides what to do. Silence during one long tool call isn't a stall.
+
+**Background verification:** a child's live checks must stay off Eric's screen. Watch their logs for `screen-guard: FAIL` or exit 3 and wake the parent on the first one. If a child launches the app any way other than `scripts/live-checks.sh`, or runs the installed `DJQueue` binary, stop it and wake the parent ([djq.md](../djq-daddy/references/djq.md), Background verification).
 
 **On a stall:** inspect the worktree and the child's status before acting. If the child is still working, restart the watchdog with a wider window. If it's dead, preserve its work (commit a WIP checkpoint on its branch through the task parent) and send the same owner, or a fresh one, the remaining steps. Never start a second writer on the same files while the first might be alive.
 

@@ -16,7 +16,7 @@ enum DSTooltipPass {
     var screen: Screen
     var mode: DSViewMode? = nil
     var setup: (AppModel) -> Void = { _ in }
-    /// A view in its own window instead of the main window (the menu-bar popover).
+    /// A view in its own window instead of the main window (the menu-bar popover, the pin sheet's view).
     var standalone: ((AppModel) -> AnyView)? = nil
     var size = CGSize(width: 1440, height: 900)
   }
@@ -53,7 +53,10 @@ enum DSTooltipPass {
         Case(name: "21-library-single", screen: .library, mode: .single),
         Case(name: "22-edit-list", screen: .edit, mode: .list),
         Case(name: "23-posts-inspector", screen: .posts) { m in m.postsSelection = m.posts.first { !$0.state.isTerminal }?.id },
-        Case(name: "24-sheet-pin", screen: .queue) { m in m.pinPrompt = m.queueClips.first },
+        // The sheet's own view in a backstage window: a real `.sheet` pulls its window onto a display.
+        Case(name: "24-sheet-pin", screen: .queue, standalone: { m in
+          AnyView(m.queueClips.first.map { PinPromptSheet(model: m, video: $0) })
+        }, size: CGSize(width: 360, height: 340)),
         Case(name: "25-sheet-mark-posted", screen: .calendar) { m in m.calendarMode = .day; m.markPostedTarget = m.dueNow.first ?? m.nextPost },
         Case(name: "26-sheet-bulk-confirm", screen: .edit, mode: .wide) { m in
           let ids = Array(m.editList.prefix(3).map(\.id))
@@ -78,7 +81,6 @@ enum DSTooltipPass {
       var summary: [[String: String]] = []
       let c = DSTooltipController.shared
       c.requireActiveApp = false
-      let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
       for k in cases where only.map({ k.name.contains($0) }) ?? true {
         for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
           SnapshotContext.resetUI(model)
@@ -99,9 +101,7 @@ enum DSTooltipPass {
           }
           w.isReleasedWhenClosed = false
           w.appearance = NSAppearance(named: appearance)
-          w.setFrameOrigin(NSPoint(x: screen.midX - 720, y: screen.midY - 450))
-          w.ignoresMouseEvents = true  // in front but inert: a covered window's SwiftUI layers aren't drawn (DSTooltipProbe)
-          w.orderFrontRegardless()
+          Backstage.show(w)
           try await Task.sleep(for: .milliseconds(1400))
           // Hover the first tile of the screen, then let it redraw.
           if let first = model.visibleIds[k.screen]?.first, model.editor == nil, !model.showSettings, !model.showPalette {
@@ -125,6 +125,7 @@ enum DSTooltipPass {
           let image = DSTooltipProbe.captureImage(w, panel: c.debugPanelWindow)
           c.hide(resetGroup: true)
           let name = "\(k.name)-\(suffix)"
+          if image == nil { DSTooltipProbe.blankCaptures += 1 }
           if let image {
             try annotate(image, window: w, anchors: anchors, dark: appearance == .darkAqua)?
               .write(to: out.appendingPathComponent("\(name).png"))
@@ -140,6 +141,7 @@ enum DSTooltipPass {
             summary.append(["case": k.name, "anchors": "\(anchors.count)", "distinct": "\(Set(anchors.map(legendText)).count)"])
           }
           print("tooltip-pass: \(name) · \(anchors.count) tooltips")
+          if k.name == "24-sheet-pin" { print("tooltip-pass:   NOT DRIVEN a real .sheet: macOS pulls it onto a display, so this is the sheet's view in its own window") }
           w.orderOut(nil)
           w.close()
           model.editor = nil
@@ -159,6 +161,10 @@ enum DSTooltipPass {
                                  options: [.prettyPrinted, .sortedKeys])
         .write(to: sumURL)
       DSClipCardDebug.hoverIds = []
+      if DSTooltipProbe.blankCaptures > 0 {
+        print("tooltip-pass: FAIL \(DSTooltipProbe.blankCaptures) captures were blank")
+        return 1
+      }
       return 0
     } catch {
       FileHandle.standardError.write(Data("tooltip-pass failed: \(error)\n".utf8))

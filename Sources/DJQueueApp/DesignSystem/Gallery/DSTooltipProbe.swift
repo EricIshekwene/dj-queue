@@ -6,13 +6,12 @@ import SwiftUI
 /// `DJQ_SNAPSHOT_GALLERY=1 DJQ_TOOLTIP_PROBE=1 DJQueueApp --snapshot <dir>`.
 ///
 /// Builds the real AppModel on a throwaway copy of the dev DB (same seeding as SnapshotRunner), opens the real main
-/// window in front, click-through and without activating the app (it never steals focus or answers the user's
-/// cursor), then drives the tooltip through synthetic mouse-moved events posted to the app's own queue — the same
+/// window off every display (`Backstage`, so it never shows, steals focus or answers the user's cursor), then drives the tooltip through synthetic mouse-moved events posted to the app's own queue — the same
 /// hover path a real pointer takes.
 /// For each case it captures the window server's composite of the main window + the tooltip panel and records
 /// the frames (`probe.json`). Cases: toolbar at the window's top edge (must flip below), sidebar status near the
-/// bottom edge, the delay group hand-off, Escape, dark mode, and the window pushed into the screen's top-right
-/// corner (must flip + shift and stay on screen). Then every tooltip type on every page — video-preview buttons on
+/// bottom edge, the delay group hand-off, Escape, dark mode, and the window pushed into the stage's top-right
+/// corner (must flip + shift and stay on the stage). Then every tooltip type on every page — video-preview buttons on
 /// a hovered tile, disabled (label + why), keycaps, plain — each captured on hover and after leaving; the run fails
 /// if a bubble doesn't open, renders no text (`textPixels`) or stays after the pointer leaves.
 @MainActor
@@ -41,6 +40,7 @@ enum DSTooltipProbe {
       try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
       var problems = try await nested(out: out)
       if ProcessInfo.processInfo.environment["DJQ_TOOLTIP_PROBE"] == "nested" {
+        if blankCaptures > 0 { problems.append("\(blankCaptures) captures were blank") }
         problems.forEach { print("tooltip-probe: FAIL \($0)") }
         return problems.isEmpty ? 0 : 1
       }
@@ -48,13 +48,9 @@ enum DSTooltipProbe {
       let w = WindowManager.makeMainWindow(model: model, make: SnapshotWindow.make)
       w.isReleasedWhenClosed = false
       w.appearance = NSAppearance(named: .aqua)
-      let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
-      w.setFrameOrigin(NSPoint(x: screen.midX - 720, y: screen.midY - 450))
-      // In front but inert: macOS stops drawing a fully covered window's SwiftUI layers (the capture comes back blank),
-      // so the window is shown without activating the app and lets every real click and hover pass through to
-      // whatever is under it — the user's pointer never drives it, only the probe's posted events do.
-      w.ignoresMouseEvents = true
-      w.orderFrontRegardless()
+      // Off every display (`Backstage`): the user's pointer can't reach it, only the probe's posted events do.
+      let screen = Backstage.stage
+      Backstage.show(w)
       let c = DSTooltipController.shared
       c.requireActiveApp = false
       c.simulatedPointer = offscreen
@@ -78,7 +74,7 @@ enum DSTooltipProbe {
         try await Task.sleep(for: .milliseconds(250))  // let the 120 ms fade/slide finish
         let rect = a.visibleScreenRect ?? .zero
         let b = c.debugPanelFrame
-        let vis = (w.screen ?? NSScreen.main)?.frame ?? screen
+        let vis = screen
         records.append(Record(name: name, label: a.content.label ?? a.content.disabledReason ?? "", side: c.debugSide?.rawValue ?? "-",
                               anchor: arr(rect), bubble: b.map(arr), window: arr(w.frame),
                               insideWindow: b.map { w.frame.contains($0) } ?? false, insideScreen: b.map { vis.contains($0) } ?? false,
@@ -185,7 +181,11 @@ enum DSTooltipProbe {
           try await settle(1600)
           let before = anchors(in: w)
           var picks: [DSTooltipAnchorView] = []
-          if mode == .grid || mode == .wide, let first = model.visibleIds[scr]?.first {
+          // On Edit, a clip with nothing to fix: a clip with a fix to offer shows that instead of the editor button.
+          let plain = scr == .edit ? model.visibleIds[scr]?.first { id in
+            model.videos.first { $0.id == id }.map { model.editFixes($0, ids: []).isEmpty } ?? false
+          } : nil
+          if mode == .grid || mode == .wide, let first = plain ?? model.visibleIds[scr]?.first {
             DSClipCardDebug.hoverIds = [first]
             model.screen = scr == .library ? .health : .library
             try await Task.sleep(for: .milliseconds(50))
@@ -363,6 +363,10 @@ enum DSTooltipProbe {
             + "real-cursor hovers dropped: \(c.debugRealCursorHovers))")
       w.orderOut(nil)
       w.close()
+      if blankCaptures > 0 {
+        print("tooltip-probe: FAIL \(blankCaptures) captures were blank")
+        return 1
+      }
       return problems.isEmpty ? 0 : 1
     } catch {
       FileHandle.standardError.write(Data("tooltip-probe failed: \(error)\n".utf8))
@@ -377,17 +381,15 @@ enum DSTooltipProbe {
     let c = DSTooltipController.shared
     c.requireActiveApp = false
     c.simulatedPointer = offscreen
-    let fixture = DS.color.surface.frame(width: 320, height: 200)
+    let fixture = Color.teal.frame(width: 320, height: 200)
       .overlay { DS.color.hover.frame(width: 90, height: 44).dsTooltip("Inner trigger") }
       .dsTooltip("Outer trigger")
       .frame(width: 420, height: 280)
-    .background(DS.color.surfaceRaised)
-    let screen = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
-    let w = SnapshotWindow.make(NSRect(x: screen.midX - 210, y: screen.midY - 140, width: 420, height: 280), [.borderless])
+    .background(Color.gray)  // not tokens: in dark, surface, hover and raised are one colour, and the capture would read as blank
+    let w = SnapshotWindow.make(NSRect(x: 0, y: 0, width: 420, height: 280), [.borderless])
     w.isReleasedWhenClosed = false
     w.contentView = NSHostingView(rootView: fixture)
-    w.ignoresMouseEvents = true
-    w.orderFrontRegardless()
+    Backstage.show(w)
     defer { w.orderOut(nil); w.close() }
     try await Task.sleep(for: .milliseconds(900))
     w.displayIfNeeded()
@@ -564,13 +566,7 @@ enum DSTooltipProbe {
   /// Counts the panel's pixels that contrast with the bubble's own fill (its median luminance): the text and keycaps.
   /// An empty bubble — the round-5 bug — scores ~0.
   static func textPixels(_ panel: NSWindow?) -> Int {
-    guard let panel, panel.isVisible, let fromArray else { return 0 }
-    var ids: [UnsafeRawPointer?] = [UnsafeRawPointer(bitPattern: UInt(panel.windowNumber))]
-    guard let arr = CFArrayCreate(nil, &ids, 1, nil) else { return 0 }
-    let primaryH = NSScreen.screens.first?.frame.height ?? 0
-    let r = panel.frame
-    guard let img = fromArray(CGRect(x: r.minX, y: primaryH - r.maxY, width: r.width, height: r.height), arr, 1 << 4)?
-      .takeRetainedValue() else { return 0 }
+    guard let panel, panel.isVisible, let img = WindowCapture.image(panel) else { return 0 }
     let rep = NSBitmapImageRep(cgImage: img)
     var lums: [CGFloat] = []
     for y in stride(from: 0, to: rep.pixelsHigh, by: 1) {
@@ -584,34 +580,48 @@ enum DSTooltipProbe {
     return lums.filter { abs($0 - bg) > 0.35 }.count
   }
 
-  /// Window-server composite of the main window plus the tooltip panel (own windows: no permission needed).
-  private typealias FromArray = @convention(c) (CGRect, CFArray, UInt32) -> Unmanaged<CGImage>?
-  private static let fromArray: FromArray? = {
-    guard let h = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW),
-          let sym = dlsym(h, "CGWindowListCreateImageFromArray") else { return nil }
-    return unsafeBitCast(sym, to: FromArray.self)
-  }()
-
   private static func capture(_ w: NSWindow, panel: NSWindow?) -> Data? {
     guard let img = captureImage(w, panel: panel) else { return WindowCapture.png(w) }
     return NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])
   }
 
-  /// The window server's image of `w` (plus `panel` when visible), framed by the window: own windows need no
-  /// Screen Recording permission.
+  /// Captures where the window itself came back as one colour. Any of these fails the run: an empty page can't show
+  /// that a tooltip sits right on it. On a locked Mac every capture is empty, so rerun once it's unlocked.
+  static var blankCaptures = 0
+
+  /// The window server's image of `w`, with any sheet and `panel` (when visible) drawn over it where they sit. Each window
+  /// is captured on its own, which needs no permission and works off every display, where a region capture comes back empty.
   static func captureImage(_ w: NSWindow, panel: NSWindow?) -> CGImage? {
-    // The tooltip panel, any sheet on the window, then the window itself (front to back).
-    let wins = [panel?.isVisible == true ? panel : nil, w.attachedSheet, w].compactMap { $0 }
-    var ids: [UnsafeRawPointer?] = wins.map { UnsafeRawPointer(bitPattern: UInt($0.windowNumber)) }
-    guard let fromArray, let arr = CFArrayCreate(nil, &ids, ids.count, nil) else { return nil }
-    let primaryH = NSScreen.screens.first?.frame.height ?? 0
-    var r = w.frame
-    if let s = w.attachedSheet { r = r.union(s.frame) }
-    let cg = CGRect(x: r.minX, y: primaryH - r.maxY, width: r.width, height: r.height)
-    guard let img = fromArray(cg, arr, 1 << 4)?.takeRetainedValue(), img.width > 10 else { return nil }
-    return img
+    guard let base = WindowCapture.image(w), base.width > 10 else { return nil }
+    if pageIsEmpty(base) {
+      blankCaptures += 1
+      print("tooltip-probe: blank capture of a \(base.width)×\(base.height) window")
+    }
+    var frame = w.frame
+    if let s = w.attachedSheet { frame = frame.union(s.frame) }
+    guard let ctx = CGContext(data: nil, width: Int(frame.width), height: Int(frame.height), bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    for win in [w, w.attachedSheet, panel?.isVisible == true ? panel : nil].compactMap({ $0 }) {
+      guard let img = win === w ? base : WindowCapture.image(win) else { continue }
+      ctx.draw(img, in: CGRect(x: win.frame.minX - frame.minX, y: win.frame.minY - frame.minY, width: win.frame.width, height: win.frame.height))
+    }
+    return ctx.makeImage()
   }
 
+  /// Same test as the hover and search probes: fewer than three colours means nothing drew.
+  private static func pageIsEmpty(_ img: CGImage) -> Bool {
+    let rep = NSBitmapImageRep(cgImage: img)
+    var seen = Set<Int>()
+    for y in stride(from: 8, to: rep.pixelsHigh, by: 24) {
+      for x in stride(from: 8, to: rep.pixelsWide, by: 24) {
+        if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) {
+          seen.insert(Int(c.redComponent * 15) * 256 + Int(c.greenComponent * 15) * 16 + Int(c.blueComponent * 15))
+        }
+      }
+    }
+    return seen.count < 3
+  }
 }
 
 private extension JSONEncoder {

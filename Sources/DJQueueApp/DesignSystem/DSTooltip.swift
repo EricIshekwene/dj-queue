@@ -281,7 +281,7 @@ final class DSTooltipController {
   // MARK: Hover
 
   /// SwiftUI's hover for a trigger. In an evidence run (`simulatedPointer` set) an event that disagrees with the probe's
-  /// pointer is dropped: SwiftUI keeps tracking the real cursor even in the click-through probe window, and re-checks
+  /// pointer is dropped: SwiftUI keeps tracking the real cursor even in the off-display probe window, and re-checks
   /// it whenever the view tree changes (a tile turning hot), so the user's resting cursor would end the probe's hover
   /// (v0.7.1). The probe checks z-order itself (`DSTooltipProbe.coveringView`). Never set in the app.
   func swiftUIHover(_ a: DSTooltipAnchorView, inside: Bool) {
@@ -352,7 +352,8 @@ final class DSTooltipController {
     host?.rootView = AnyView(bubble)
     let fit = host?.fittingSize ?? .zero
     let size = CGSize(width: ceil(fit.width), height: ceil(fit.height))
-    let screen = (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
+    // Probe windows sit off every display: their stage is the screen, or the bubble would land on the user's real one.
+    let screen = AppModel.isSnapshotRun ? Backstage.stage : (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
     var bounds = window.frame.intersection(screen).insetBy(dx: edgePadding, dy: edgePadding)
     // A bubble too big for the window (menu bar popover, tiny sheet) may use the whole screen instead.
     if bounds.width < size.width || bounds.height < size.height * 3 { bounds = screen.insetBy(dx: edgePadding, dy: edgePadding) }
@@ -369,7 +370,7 @@ final class DSTooltipController {
     let wasShown = shown != nil
     shown = a
     group.opened()
-    if animated && !wasShown {
+    if animated && !wasShown && !dsAnimationsOff {
       // Fade in 120 ms with a 4 pt slide away from the trigger; Reduce Motion = fade only.
       var start = placed.frame
       if !reduceMotion {
@@ -418,7 +419,7 @@ final class DSTooltipController {
     p.isOpaque = false
     p.backgroundColor = .clear
     p.ignoresMouseEvents = true
-    p.hidesOnDeactivate = true
+    p.hidesOnDeactivate = !AppModel.isSnapshotRun  // a run never activates, and this would hide the panel from its capture
     p.isReleasedWhenClosed = false
     p.becomesKeyOnlyIfNeeded = true
     p.animationBehavior = .none

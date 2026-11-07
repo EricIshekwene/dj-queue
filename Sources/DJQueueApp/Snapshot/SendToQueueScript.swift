@@ -34,9 +34,8 @@ enum SendToQueueScript {
     let window = WindowManager.makeMainWindow(model: model, make: SnapshotWindow.make)
     window.setContentSize(Shot.standard.nsSize)
     window.isReleasedWhenClosed = false
-    if let screen = NSScreen.main { window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX, y: screen.visibleFrame.minY)) }
     window.appearance = NSAppearance(named: .aqua)
-    window.orderBack(nil)
+    Backstage.show(window)
     defer { window.orderOut(nil); window.close() }
 
     func shot(_ file: String) async {

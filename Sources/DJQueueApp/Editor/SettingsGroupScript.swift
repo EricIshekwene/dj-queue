@@ -48,8 +48,7 @@ enum SettingsGroupScript {
       return host
     }
     var host = await open()
-    if let screen = NSScreen.main { window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX, y: screen.visibleFrame.minY)) }
-    window.orderBack(nil)
+    Backstage.show(window)
     defer { window.orderOut(nil); window.close() }
 
     var step = 0

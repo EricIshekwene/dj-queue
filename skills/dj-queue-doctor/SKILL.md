@@ -45,9 +45,9 @@ Doctor itself never calls Postiz: its `postiz.*` checks read stored state (setti
 channel list, the "key refused" flag). Use `--live` only when a fresh answer matters; it spends one of the 25
 calls per hour.
 
-If `djq` isn't on PATH, build it from the repo
-(`swift build`, then `.build/debug/djq`). Ids can be shortened to a unique prefix.
-For a development copy set `DJQ_ROOT` (the "DJ Video" folder) and `DJQ_HOME` (app support + logs).
+If `djq` isn't on PATH, the app isn't installed. A dev build (`swift build`, then `.build/debug/djq`) refuses to start
+without `DJQ_ROOT` (the "DJ Video" folder) and `DJQ_HOME` (app support + logs), so it only reads a development copy.
+Ids can be shortened to a unique prefix.
 
 Each finding: `id`, `severity` (error / warning / info), `title`, `detail`, `where` (ids, paths), `fix`.
 Work through errors first. Re-run `djq doctor` after each fix.
