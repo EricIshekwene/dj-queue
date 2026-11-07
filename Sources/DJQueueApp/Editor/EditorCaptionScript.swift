@@ -118,10 +118,10 @@ enum EditorCaptionScript {
     for ch in "TYPED-MID-TEXT-0123456789-abcdefghijklmn" {
       let t0 = CFAbsoluteTimeGetCurrent()
       tv.insertText(String(ch), replacementRange: tv.selectedRange())
-      await Task.yield()
+      try? await Task.sleep(for: .milliseconds(1))
       window.displayIfNeeded()
       costs.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
-      try? await Task.sleep(for: .milliseconds(40))  // 25 keys a second, past anyone's typing
+      try? await Task.sleep(for: .milliseconds(40))  // about 20 keys a second
     }
     try? await Task.sleep(for: .milliseconds(800))
     let sorted = costs.sorted()
@@ -143,6 +143,18 @@ enum EditorCaptionScript {
     let selOK = tv.selectedRange().length == (tv.string as NSString).length && tv.selectedRange().length > 2000
     note("\(selOK ? "PASS" : "FAIL") select-all selects all \(tv.selectedRange().length) characters")
     await shot("select-all")
+
+    // 5. A burst at the old speed, reported and not judged: which of field or model lost keys, if any.
+    let burst = "BURST-0123456789-abcdefghijklmnopqrstuvwxyz"
+    tv.setSelectedRange(NSRange(location: 0, length: 0))
+    for ch in burst {
+      tv.insertText(String(ch), replacementRange: tv.selectedRange())
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    try? await Task.sleep(for: .milliseconds(800))
+    let inField = burst.filter { tv.string.prefix(burst.count + 8).contains($0) }.count
+    note("burst of \(burst.count) keys at about 500 a second: field \(tv.string.hasPrefix(burst) ? "has all" : "lost keys, starts “\(tv.string.prefix(40))” (\(inField))"), "
+      + "model \(model.resolved.caption.hasPrefix(burst) ? "has all" : "lost keys, starts “\(model.resolved.caption.prefix(40))”")")
 
     try? log.joined(separator: "\n").write(to: out.appendingPathComponent("timing-\(appearance).txt"), atomically: true, encoding: .utf8)
     model.flushAndWait()

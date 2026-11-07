@@ -16,7 +16,7 @@ enum DSTooltipPass {
     var screen: Screen
     var mode: DSViewMode? = nil
     var setup: (AppModel) -> Void = { _ in }
-    /// A view in its own window instead of the main window (the menu-bar popover).
+    /// A view in its own window instead of the main window (the menu-bar popover, the pin sheet's view).
     var standalone: ((AppModel) -> AnyView)? = nil
     var size = CGSize(width: 1440, height: 900)
   }
@@ -125,6 +125,7 @@ enum DSTooltipPass {
           let image = DSTooltipProbe.captureImage(w, panel: c.debugPanelWindow)
           c.hide(resetGroup: true)
           let name = "\(k.name)-\(suffix)"
+          if image == nil { DSTooltipProbe.blankCaptures += 1 }
           if let image {
             try annotate(image, window: w, anchors: anchors, dark: appearance == .darkAqua)?
               .write(to: out.appendingPathComponent("\(name).png"))
@@ -140,6 +141,7 @@ enum DSTooltipPass {
             summary.append(["case": k.name, "anchors": "\(anchors.count)", "distinct": "\(Set(anchors.map(legendText)).count)"])
           }
           print("tooltip-pass: \(name) · \(anchors.count) tooltips")
+          if k.name == "24-sheet-pin" { print("tooltip-pass:   NOT DRIVEN a real .sheet: macOS pulls it onto a display, so this is the sheet's view in its own window") }
           w.orderOut(nil)
           w.close()
           model.editor = nil

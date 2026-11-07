@@ -169,7 +169,7 @@ struct DSVideoPreview: View {
                           progress: progress) { r in ready = r }
           .id(playerGeneration)
           .opacity(ready ? 1 : 0)
-          .animation(DS.motion.fade, value: ready)
+          .dsAnimation(DS.motion.fade, value: ready)
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))

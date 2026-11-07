@@ -30,7 +30,16 @@ fresh=(editor-selftest search send-to-queue editor-caption editor-template)
 seed=("$DEV"/backups/real-queue-*.sqlite(Nom[1]))
 [[ -n "${seed[1]:-}" ]] || { echo "live-checks: no backup in $DEV/backups" >&2; exit 2; }
 mkdir -p "$HOME_DIR/support"
-cp "$seed[1]" "$HOME_DIR/support/queue.sqlite"
+SEED_DB="$HOME_DIR/support/queue.sqlite"
+cp "$seed[1]" "$SEED_DB"
+# The database stores absolute paths. Point every one at the dev root, or checks would open the real footage.
+REAL_ROOT="$HOME/Movies/DJ Video"
+columns=("${(@f)$(sqlite3 "$SEED_DB" "SELECT m.name || '.' || p.name FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND p.type LIKE '%TEXT%'")}")
+for col in $columns; do
+  sqlite3 "$SEED_DB" "UPDATE \"${col%%.*}\" SET \"${col#*.}\" = replace(\"${col#*.}\", '$REAL_ROOT', '$DEV/DJ Video') WHERE instr(\"${col#*.}\", '$REAL_ROOT') > 0" || exit 2
+  left=$(sqlite3 "$SEED_DB" "SELECT count(*) FROM \"${col%%.*}\" WHERE instr(\"${col#*.}\", '$REAL_ROOT') > 0")
+  [[ "$left" == 0 ]] || { echo "live-checks: $col still points at the real footage" >&2; exit 2; }
+done
 
 typeset -A checks
 checks=(

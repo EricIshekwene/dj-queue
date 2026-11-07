@@ -381,11 +381,11 @@ enum DSTooltipProbe {
     let c = DSTooltipController.shared
     c.requireActiveApp = false
     c.simulatedPointer = offscreen
-    let fixture = DS.color.surface.frame(width: 320, height: 200)
+    let fixture = Color.teal.frame(width: 320, height: 200)
       .overlay { DS.color.hover.frame(width: 90, height: 44).dsTooltip("Inner trigger") }
       .dsTooltip("Outer trigger")
       .frame(width: 420, height: 280)
-    .background(Color.gray)  // not a token: in dark, surface, hover and raised are one colour, and the capture would read as blank
+    .background(Color.gray)  // not tokens: in dark, surface, hover and raised are one colour, and the capture would read as blank
     let w = SnapshotWindow.make(NSRect(x: 0, y: 0, width: 420, height: 280), [.borderless])
     w.isReleasedWhenClosed = false
     w.contentView = NSHostingView(rootView: fixture)
@@ -609,6 +609,7 @@ enum DSTooltipProbe {
     return ctx.makeImage()
   }
 
+  /// Same test as the hover and search probes: fewer than three colours means nothing drew.
   private static func pageIsEmpty(_ img: CGImage) -> Bool {
     let rep = NSBitmapImageRep(cgImage: img)
     var seen = Set<Int>()
@@ -619,7 +620,7 @@ enum DSTooltipProbe {
         }
       }
     }
-    return seen.count < 2
+    return seen.count < 3
   }
 }
 

@@ -220,21 +220,22 @@ enum DSHoverProbe {
       await move(to: restPoint)
     }
 
-    /// Leaving inside an animation, as a card's hover does: the player goes at once and no other is built for the
-    /// view that's fading out. Coming straight back during the fade plays again.
+    /// Leaving a card, then coming straight back. Animations are off in hidden runs, so neither happens during a fade:
+    /// that case is on the list to try by hand.
     func fadeOut(_ a: Card) async {
+      say("  NOT DRIVEN a real hover fade: animations are off in hidden runs")
       await hover(a)
       let built = DSPlayerNSView.debugPlayersBuilt
       withAnimation(.easeOut(duration: 0.12)) { guardian.debugPointerMoved(to: restPoint, in: w) }
       await settle(350)
       check(state().nothing && DSPlayerNSView.debugPlayersBuilt == built,
-            "leave during a hover fade: no player built for the fading view (\(DSPlayerNSView.debugPlayersBuilt - built) built, \(state().words))")
+            "leave a card: no player built after it (no fade here) (\(DSPlayerNSView.debugPlayersBuilt - built) built, \(state().words))")
       await hover(a)
       withAnimation(.easeOut(duration: 0.12)) { guardian.debugPointerMoved(to: restPoint, in: w) }
       await settle(40)
       await move(to: a.center)
       let back = await until(1500) { [self] in state().only(in: a) }
-      check(back != nil, "come straight back during the fade: it plays again (\(state().words))")
+      check(back != nil, "come straight back: it plays again (no fade here) (\(state().words))")
       await move(to: restPoint)
       _ = await until(1500) { [self] in state().nothing }
     }

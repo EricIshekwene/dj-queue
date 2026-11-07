@@ -25,8 +25,8 @@ problems use the `dj-queue-doctor` skill.
   Postiz **drafts** (`djq postiz test <video> --draft`, nothing reaches a platform). Never read, print or ask for the
   Postiz API key (Keychain only; Eric enters it in Settings → Publishing).
 
-`djq` is on PATH when the app is installed (else `swift build` in the repo → `.build/debug/djq`). Dev copies:
-`DJQ_ROOT` (the "DJ Video" folder) + `DJQ_HOME`. Ids can be shortened to a unique prefix.
+`djq` is on PATH when the app is installed. A dev build (`swift build`, `.build/debug/djq`) refuses to start without
+`DJQ_ROOT` (the "DJ Video" folder) + `DJQ_HOME`, so it only works on a dev copy. Ids can be shortened to a unique prefix.
 
 ## Read (JSON)
 
