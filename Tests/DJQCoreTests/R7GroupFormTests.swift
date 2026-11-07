@@ -340,7 +340,9 @@ import Testing
   // MARK: ChangeSignal
 
   /// A hang here is the bug: a local post from the main actor once deadlocked on a `.main` observer.
-  @MainActor @Test(.timeLimit(.minutes(1))) func localSignalFromTheMainActorReturnsAndArrives() async throws {
+  /// The limit is generous on purpose: the auto-update gate runs the suite under load, where the main actor can be busy
+  /// with other tests for minutes (1 min tripped it on 2026-11-06 and 2026-11-07). A real deadlock still never returns.
+  @MainActor @Test(.timeLimit(.minutes(5))) func localSignalFromTheMainActorReturnsAndArrives() async throws {
     _ = try Fixture()  // sets DJQ_NO_SIGNAL
     #expect(ChangeSignal.isLocal)
     await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
