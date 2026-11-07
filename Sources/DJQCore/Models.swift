@@ -398,6 +398,14 @@ public struct Version: Codable, Sendable, Hashable {
   /// Round 7: the YouTube title template this version chose (`Settings.youtubeTitleTemplates` id); nil = the default.
   /// A typed `youtubeTitle` still wins over any template.
   public var youtubeTitleTemplateId: String?
+  /// Round 20: Eric marked this version ready for the repost cycle. Per version, never carried forward, never part of
+  /// how the clip looks or posts (no render, preview or caption reads it), and never moves the clip between stages.
+  /// nil/false = not ready. `RepostReady` reads it.
+  public var repostReady: Bool?
+  /// Round 20: this version keeps its own caption. Caption fields (caption, templates, hashtag groups, extras, YouTube
+  /// title, per-platform captions) don't carry forward into it from earlier versions; what it doesn't set follows the
+  /// defaults. Set by a bulk caption change on v1, after copying in what the version showed, so the change stays on v1.
+  public var captionsOwn: Bool?
 
   public init(number: Int) { self.number = number }
 }

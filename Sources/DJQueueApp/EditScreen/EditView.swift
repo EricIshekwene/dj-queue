@@ -174,7 +174,8 @@ private struct EditBulkBar: View {
           Button(p.displayName) {
             let ids = ids
             model.pipelineBulk("Skip \(p.displayName) for \(n)?", verb: "Skip \(p.displayName)", ids: ids,
-                               changes: [.init(field: p.displayName, value: "Skipped — these clips won't post there")]) { b, dry in
+                               changes: [.init(field: p.displayName, value: "Skipped — these clips won't post there")],
+                               versionScope: .every) { b, dry in
               try b.setPlatform(ids, p, skipped: true, dryRun: dry)
             }
           }
@@ -225,7 +226,7 @@ struct EditApplyDefaultsMenu: View {
       : BulkSection.allCases.filter(sections.contains).map { Self.title($0).lowercased() }.joined(separator: ", ")
     model.pipelineBulk("Apply defaults (\(what)) to \(AppModel.pipelineClips(ids.count))?", verb: "Apply defaults", ids: ids,
                        changes: BulkSection.allCases.filter(sections.contains).map { .init(field: Self.title($0), value: "Default") },
-                       done: "Defaults applied") { b, dry in
+                       done: "Defaults applied", versionScope: .of(sections), keepsWords: sections.contains(.text)) { b, dry in
       try b.applyDefaults(ids, sections: sections, dryRun: dry)
     }
   }

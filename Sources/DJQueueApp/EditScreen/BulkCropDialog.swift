@@ -22,6 +22,7 @@ struct BulkCropDialog: View {
     DSDialog("Crop for \(AppModel.pipelineClips(ids.count))", description: "Move them all, then check each one. Drag a crop to change just that clip",
              icon: "crop", width: 720, onClose: close) {
       VStack(alignment: .leading, spacing: DS.space.md) {
+        BulkVersionNote(model: model, ids: ids, scope: .every)
         stage
         walker
         slider
@@ -205,9 +206,11 @@ struct BulkCropDialog: View {
   private func apply() {
     let b = model.bulk, ids = ids, change = change
     model.cropDialogIds = nil
-    model.apply(BulkRequest(title: "", verb: "", ids: ids, doneMessage: "Crop moved for \(AppModel.pipelineClips(changing))") { dry in
+    var r = BulkRequest(title: "", verb: "", ids: ids, doneMessage: "Crop moved for \(AppModel.pipelineClips(changing))") { dry in
       try b.setCropOffset(ids, change, dryRun: dry)
-    })
+    }
+    r.versionScope = .every
+    model.apply(r)
   }
 }
 

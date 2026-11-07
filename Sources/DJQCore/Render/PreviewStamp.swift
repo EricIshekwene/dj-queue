@@ -27,7 +27,8 @@ public struct PreviewStampTable: Sendable, Equatable {
   /// The preview stamp of `v` shown at text `version` (1 for every list; the post's version for Posts/Week).
   /// `Int.max` covers every version (change detection).
   public func stamp(for v: Video, version: Int = 1) -> String {
-    let vs = (versionAt[v.id] ?? [:]).filter { $0.key <= version }.sorted { $0.key < $1.key }
+    // A row stamped 0 changes nothing that shows (round 20: a v1 written only to mark it ready to repost).
+    let vs = (versionAt[v.id] ?? [:]).filter { $0.key <= version && $0.value != 0 }.sorted { $0.key < $1.key }
     let versions = vs.map { "\($0.key)@\($0.value)" }.joined(separator: ",")
     let raw = "\(v.id)|e\(editAt[v.id] ?? 0)|\(versions)|\(defaultsGeneration)|\(Self.videoPart(v))"
     return PreviewKeys.short(raw)

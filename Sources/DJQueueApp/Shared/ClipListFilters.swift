@@ -12,6 +12,25 @@ enum ListFilterKey {
   static let score = "score"
   static let stage = "stage"
   static let platform = "platform"
+  /// Round 20: has a version marked ready to repost (`RepostFilter`).
+  static let repost = "repost"
+}
+
+/// Round 20: the Filters popover's Reposts section. Only filters: it never moves or schedules a clip.
+enum RepostFilter: String, CaseIterable {
+  case ready, none
+  var title: String {
+    switch self {
+    case .ready: "Ready to repost"
+    case .none: "No version ready"
+    }
+  }
+  var help: String {
+    switch self {
+    case .ready: "Has a version you marked ready to repost"
+    case .none: "No version is marked ready to repost yet"
+    }
+  }
 }
 
 /// Clip orders offered by the sort menus. `natural` is the page's own order (Score: set order; Edit: score, worst
@@ -25,8 +44,8 @@ extension ListPage {
   var filterKeys: [String] {
     switch self {
     case .score: [ListFilterKey.kind]
-    case .edit, .queue: [ListFilterKey.session, ListFilterKey.kind, ListFilterKey.score]
-    case .library: [ListFilterKey.session, ListFilterKey.kind, ListFilterKey.score, ListFilterKey.stage]
+    case .edit, .queue: [ListFilterKey.session, ListFilterKey.kind, ListFilterKey.score, ListFilterKey.repost]
+    case .library: [ListFilterKey.session, ListFilterKey.kind, ListFilterKey.score, ListFilterKey.stage, ListFilterKey.repost]
     case .posts: [ListFilterKey.platform, ListFilterKey.session, ListFilterKey.kind, ListFilterKey.score]
     }
   }
@@ -96,6 +115,7 @@ extension AppModel {
     case ListFilterKey.kind: v.kind.rawValue == value
     case ListFilterKey.score: v.type == .short && (LibraryScoreFilter(rawValue: value)?.matches(v.score) ?? true)
     case ListFilterKey.stage: ClipStage.of(v)?.rawValue == value
+    case ListFilterKey.repost: v.type == .short && (repostReady[v.id] != nil) == (value == RepostFilter.ready.rawValue)
     default: true
     }
   }
@@ -138,6 +158,13 @@ extension AppModel {
         title = "Stage"
         options = ClipStage.allCases.map { st in
           DSFilterOption(id: st.rawValue, title: st.displayName, count: n { ClipStage.of($0) == st }, tooltip: Self.stageHelp(st))
+        }
+      case ListFilterKey.repost:
+        title = "Reposts"
+        options = RepostFilter.allCases.map { f in
+          DSFilterOption(id: f.rawValue, title: f.title,
+                         count: n { $0.type == .short && (repostReady[$0.id] != nil) == (f == .ready) },
+                         tooltip: f.help)
         }
       case ListFilterKey.platform:
         title = "Platform"

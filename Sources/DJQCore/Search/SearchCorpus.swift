@@ -7,6 +7,8 @@ public struct SearchClipText: Sendable, Hashable {
   public var platformCaptions: [String] = []
   public var hashtags: [String] = []
   public var youtubeTitle = ""
+  /// Round 20: versions marked ready to repost ("ready to repost" finds the clip).
+  public var repostReady: [Int] = []
   public init() {}
 }
 
@@ -118,6 +120,7 @@ public enum SearchCorpus {
       for c in text.platformCaptions { add("Caption", c) }
       add("Hashtags", text.hashtags.joined(separator: " "))
       add("YouTube title", text.youtubeTitle)
+      if !text.repostReady.isEmpty { add("Reposts", "Ready to repost " + RepostReady.label(text.repostReady)) }
     }
     for t in v.titleTracks ?? [] { add("Track", [t.title, t.artist].compactMap { $0 }.joined(separator: " · ")) }
     add("Notes", v.notes)
@@ -254,6 +257,7 @@ extension Store {
       t.platformCaptions = r.platformCaptions.keys.sorted().compactMap { r.platformCaptions[$0] }
       t.hashtags = Captions.hashtags(r, sets: sets)
       t.youtubeTitle = r.youtubeTitle
+      if video.type == .short { t.repostReady = RepostReady.numbers(chain) }
       out[video.id] = t
     }
     return out

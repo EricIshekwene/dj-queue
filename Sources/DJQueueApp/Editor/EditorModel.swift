@@ -1331,6 +1331,54 @@ final class EditorModel: ObservableObject {
     refreshOverlay()
   }
 
+  // MARK: Ready to repost (round 20)
+
+  /// Why "Ready to repost" can't change on this clip (nil = it can).
+  var repostReadyOff: String? {
+    if readOnly { return EditorView.readOnlyReason }
+    if video?.type == .long { return "Long-form is never reposted" }
+    return nil
+  }
+
+  func isRepostReady(_ n: Int) -> Bool { versions.first { $0.number == n }?.repostReady == true }
+
+  /// Marks version `n` ready for the repost cycle (or not). Only the flag: the clip's stage, Queue and schedule stay
+  /// as they are. Its own undo step.
+  func setRepostReady(_ n: Int, _ on: Bool) {
+    guard repostReadyOff == nil, video != nil, isRepostReady(n) != on else { return }
+    commitCaptionDraft()
+    var all = versions
+    let addsV1 = !all.contains { $0.number == 1 }
+    if addsV1 { all.insert(Version(number: 1), at: 0) }
+    guard let i = all.firstIndex(where: { $0.number == n }) else { return }
+    markUndo(coalesce: false)
+    all[i].repostReady = on ? true : nil
+    versions = all.sorted { $0.number < $1.number }
+    writeRepostReady(n, on)
+    show(on ? "v\(n) is ready to repost. Nothing was queued or scheduled." : "v\(n) is no longer ready to repost")
+  }
+
+  /// Writes only the flag (`Store.setRepostReady`: no `updated_at`, so list previews don't redraw) and records it as
+  /// saved, so the next save of that version carries it and nothing else is re-saved for it.
+  private func writeRepostReady(_ n: Int, _ on: Bool) {
+    if let i = syncedVersions.firstIndex(where: { $0.number == n }) {
+      syncedVersions[i].repostReady = on ? true : nil
+    } else if n == 1 {
+      var v1 = Version(number: 1)
+      v1.repostReady = on ? true : nil
+      syncedVersions.append(v1)
+    }
+    let store = store, id = videoId
+    Self.saveQueue.async {
+      do {
+        try store.setRepostReady(videoId: id, number: n, on)
+        ChangeSignal.post()
+      } catch {
+        Log.shared.error("editor repost-ready failed: \(error)")
+      }
+    }
+  }
+
   func deleteVersion(_ n: Int) {
     guard n > 1, !readOnly else { return }
     commitTimeDraft()
@@ -1429,6 +1477,19 @@ final class EditorModel: ObservableObject {
       canUndo = !undoStack.isEmpty
       canRedo = !redoStack.isEmpty
     }
+    // Round 20: undoing (or redoing) only a Ready to repost toggle writes just those flags, so nothing is re-saved and
+    // list previews don't redraw.
+    func unready(_ vs: [Version]) -> [Version] {
+      (vs.contains { $0.number == 1 } ? vs : [Version(number: 1)] + vs).map { var v = $0; v.repostReady = nil; return v }
+    }
+    if s.edit == edit, unready(s.versions) == unready(versions), s.title == video?.title, s.titleTracks == video?.titleTracks,
+       s.kind == nil || s.kind == video?.kind {
+      for v in s.versions where (v.repostReady == true) != isRepostReady(v.number) { writeRepostReady(v.number, v.repostReady == true) }
+      versions = s.versions
+      versionNo = s.versions.contains { $0.number == s.versionNo } ? s.versionNo : 1
+      fieldRevision &+= 1
+      return
+    }
     let gone = Set(versions.map(\.number)).subtracting(s.versions.map(\.number)).filter { $0 > 1 }
     edit = s.edit
     pendingEdit = true
@@ -1472,6 +1533,7 @@ final class EditorModel: ObservableObject {
     pendingEdit = false
     pendingVersions = []
     saving = true
+    let bases = Dictionary(syncedVersions.map { ($0.number, $0) }, uniquingKeysWith: { a, _ in a })
     for v in vs {
       syncedVersions.removeAll { $0.number == v.number }
       syncedVersions.append(v)
@@ -1479,7 +1541,25 @@ final class EditorModel: ObservableObject {
     Self.saveQueue.async { [weak self] in
       do {
         if let e { try store.save(e, videoId: id) }
-        for v in vs { try store.save(v, videoId: id) }
+        let stored = Dictionary(try store.versions(videoId: id).map { ($0.number, $0) }, uniquingKeysWith: { a, _ in a })
+        var merged: [Version] = []
+        for v in vs {
+          let out = VersionMerge.keepingOutsideChanges(v, base: bases[v.number], stored: stored[v.number])
+          try store.save(out, videoId: id)
+          if out != v { merged.append(out) }
+        }
+        if !merged.isEmpty {
+          DispatchQueue.main.async {
+            guard let self, self.videoId == id else { return }
+            for m in merged {
+              if let i = self.syncedVersions.firstIndex(where: { $0.number == m.number }) { self.syncedVersions[i] = m }
+              if let i = self.versions.firstIndex(where: { $0.number == m.number }),
+                 VersionMerge.keepingOutsideChanges(self.versions[i], base: vs.first { $0.number == m.number }, stored: m) == m {
+                self.versions[i] = m
+              }
+            }
+          }
+        }
         let fresh = try store.video(id: id) ?? video
         let issues = try Validation.issues(video: fresh, store: store)
         ChangeSignal.post()

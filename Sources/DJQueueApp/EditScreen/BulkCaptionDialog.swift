@@ -30,6 +30,7 @@ struct BulkCaptionDialog: View {
              icon: "text.alignleft", width: 560, onClose: { model.dismissCaptionDialog() }) {
       if form == nil {
         VStack(alignment: .leading, spacing: DS.space.md) {
+          BulkVersionNote(model: model, ids: ids, scope: .captionsV1Only)
           templatePicker
           groups
           preview
@@ -277,9 +278,11 @@ struct BulkCaptionDialog: View {
   private func apply() {
     let b = model.bulk, ids = ids, change = change
     model.captionDialogIds = nil
-    model.apply(BulkRequest(title: "", verb: "", ids: ids, doneMessage: "Caption set for \(AppModel.pipelineClips(changing))") { dry in
+    var r = BulkRequest(title: "", verb: "", ids: ids, doneMessage: "Caption set for \(AppModel.pipelineClips(changing))") { dry in
       try b.setCaption(ids, change, dryRun: dry)
-    })
+    }
+    r.versionScope = .captionsV1Only
+    model.apply(r)
   }
 }
 

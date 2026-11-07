@@ -182,7 +182,8 @@ public final class BulkActions: @unchecked Sendable {
       if sections.contains(.platforms) { e.skippedPlatforms = []; e.includedPlatforms = [] }
       var changed = false
       if e != e0 { try store.save(e, videoId: v.id); changed = true }
-      if var v1 = try store.versions(videoId: v.id).first(where: { $0.number == 1 }) {
+      let all = try store.versions(videoId: v.id)
+      if var v1 = all.first(where: { $0.number == 1 }) {
         let o = v1
         if sections.contains(.text) {
           v1.text = nil; v1.noText = nil; v1.style = nil; v1.size = nil; v1.posX = nil; v1.posY = nil
@@ -192,7 +193,21 @@ public final class BulkActions: @unchecked Sendable {
           v1.caption = nil; v1.captionTemplateId = nil; v1.hashtagSetIds = nil; v1.extraHashtags = nil
           v1.youtubeTitle = nil; v1.platformCaptions = nil; v1.youtubeTitleTemplateId = nil
         }
-        if v1 != o { try store.save(v1, videoId: v.id); changed = true }
+        if v1 != o {
+          // Round 20: captions reset on v1 only; v2 and later keep theirs.
+          if sections.contains(.caption) { try keepLaterCaptions(v, all: all, newV1: v1, s) }
+          try store.save(v1, videoId: v.id)
+          changed = true
+        }
+      }
+      // Round 20: the text's look, place and timing reset on every version; each version keeps its own words.
+      if sections.contains(.text) {
+        for var later in try store.versions(videoId: v.id) where later.number > 1 {
+          let o = later
+          later.style = nil; later.size = nil; later.posX = nil; later.posY = nil; later.align = nil
+          later.textStart = nil; later.textEnd = nil; later.textLook = nil
+          if later != o { try store.save(later, videoId: v.id); changed = true }
+        }
       }
       return changed ? .changed : .unchanged
     }
@@ -833,7 +848,7 @@ public final class BulkActions: @unchecked Sendable {
 
   // MARK: Selection helper
 
-  /// Clip ids for a filter: a VideoState raw value (`needs_edit`, `ready`, …), `unscored`, `scored`, `all`
+  /// Clip ids for a filter: a VideoState raw value (`needs_edit`, `ready`, …), `unscored`, `scored`, `repost-ready`, `all`
   /// (short-form only, posting order not implied).
   public func ids(filter: String) throws -> [String] {
     let base = "type='short-form'"
@@ -843,9 +858,14 @@ public final class BulkActions: @unchecked Sendable {
     case "unscored", "to-score": clause = "\(base) AND excluded=0 AND missing=0 AND score IS NULL"
     case "scored": clause = "\(base) AND score IS NOT NULL"
     case "needs-edit": clause = "\(base) AND excluded=0 AND missing=0 AND score IS NOT NULL AND state='needs_edit'"
+    case "repost-ready":
+      // Round 20: clips with a version Eric marked ready to repost.
+      let ids = Set(try store.repostReadyVersions().keys)
+      return try store.videos(where: base).filter { ids.contains($0.id) }
+        .sorted { ($0.part ?? 0, $0.start ?? 0, $0.name) < ($1.part ?? 0, $1.start ?? 0, $1.name) }.map(\.id)
     default:
       guard let s = VideoState(rawValue: filter) else {
-        throw EngineError("Unknown filter \(filter) — use all, unscored, scored, needs-edit or a state (\(VideoState.allCases.map(\.rawValue).joined(separator: ", ")))")
+        throw EngineError("Unknown filter \(filter) — use all, unscored, scored, needs-edit, repost-ready or a state (\(VideoState.allCases.map(\.rawValue).joined(separator: ", ")))")
       }
       clause = "\(base) AND state='\(s.rawValue)'"
     }
@@ -883,7 +903,18 @@ public final class BulkActions: @unchecked Sendable {
   static func same(_ cur: ClipSnap, _ a: ClipSnap) -> Bool {
     var c = cur
     if a.sent != false { c.sent = a.sent }
-    return c == a
+    // Round 20: Ready to repost isn't part of an edit: marking a version after a batch doesn't block its undo.
+    c.versions = c.versions.mapValues(withoutReady)
+    var b = a
+    b.versions = b.versions.mapValues(withoutReady)
+    return c == b
+  }
+
+  /// A version's JSON without `repostReady` (unreadable JSON is left as it is).
+  static func withoutReady(_ json: String) -> String {
+    guard var v = try? JSONCoding.decoder.decode(Version.self, from: Data(json.utf8)), v.repostReady != nil else { return json }
+    v.repostReady = nil
+    return JSONCoding.string(v)
   }
 
   struct PlanSnap: Codable, Equatable {
@@ -991,13 +1022,60 @@ public final class BulkActions: @unchecked Sendable {
     return result
   }
 
+  /// Every caller is a caption change: it lands on v1 only (v2 and later keep theirs, `keepLaterCaptions`).
   private func updateV1(_ v: Video, _ change: (inout Version) -> Void) throws -> Outcome {
-    var v1 = try store.versions(videoId: v.id).first { $0.number == 1 } ?? Version(number: 1)
+    let all = try store.versions(videoId: v.id)
+    var v1 = all.first { $0.number == 1 } ?? Version(number: 1)
     let o = v1
     change(&v1)
     guard v1 != o else { return .unchanged }
+    try keepLaterCaptions(v, all: all, newV1: v1, try store.settings())
     try store.save(v1, videoId: v.id)
     return .changed
+  }
+
+  /// Round 20 (Eric: a bulk edit applies to every version except captions). Before a caption change on v1, each later
+  /// version whose caption would change with it keeps what it shows now: the caption fields it took from an earlier
+  /// version are copied in and it stops inheriting captions (`Version.captionsOwn`). Its text, look and everything
+  /// else still follow v1 as before. Returns how many versions were kept.
+  @discardableResult
+  func keepLaterCaptions(_ v: Video, all: [Version], newV1: Version, _ s: Settings) throws -> Int {
+    let later = all.filter { $0.number > 1 }.sorted { $0.number < $1.number }
+    guard !later.isEmpty else { return 0 }
+    var after = all.filter { $0.number != 1 } + [newV1]
+    var kept = 0
+    let captionKeys: Set<String> = ["caption", "captionTemplateId", "hashtagSetIds", "extraHashtags", "youtubeTitle",
+                                    "platformCaptions", "youtubeTitleTemplateId"]
+    for ver in later where ver.captionsOwn != true {
+      let before = VersionResolver.resolve(all, number: ver.number, settings: s, video: v)
+      let changes = CaptionFace(before) != CaptionFace(VersionResolver.resolve(after, number: ver.number, settings: s, video: v))
+      // A version that follows a kept one is kept too, so deleting the kept one later can't hand it v1's new caption.
+      guard changes || (kept > 0 && !before.inherited.isDisjoint(with: captionKeys)) else { continue }
+      var p = ver
+      p.captionsOwn = true
+      let from = before.inherited
+      if from.contains("caption") { p.caption = before.caption }
+      if from.contains("captionTemplateId") { p.captionTemplateId = before.captionTemplateId }
+      if from.contains("hashtagSetIds") { p.hashtagSetIds = before.hashtagSetIds }
+      if from.contains("extraHashtags") { p.extraHashtags = before.extraHashtags }
+      if from.contains("youtubeTitle") { p.youtubeTitle = before.youtubeTitle }
+      if from.contains("platformCaptions") { p.platformCaptions = before.platformCaptions }
+      if from.contains("youtubeTitleTemplateId") { p.youtubeTitleTemplateId = before.youtubeTitleTemplateId }
+      try store.save(p, videoId: v.id)
+      after = after.map { $0.number == p.number ? p : $0 }
+      kept += 1
+    }
+    return kept
+  }
+
+  /// What a version's caption is made of: the fields a bulk caption change can reach.
+  public struct CaptionFace: Equatable, Sendable {
+    public var caption: String, template: String?, groups: [String], extra: [String], youtube: String, perPlatform: [Platform: String]
+    public var youtubeTemplate: String?
+    public init(_ r: ResolvedVersion) {
+      caption = r.caption; template = r.captionTemplateId; groups = r.hashtagSetIds; extra = r.extraHashtags
+      youtube = r.youtubeTitle; perPlatform = r.platformCaptions; youtubeTemplate = r.youtubeTitleTemplateId
+    }
   }
 
   /// `updateV1` for a hashtag change: a written v1 caption gets its hashtags swapped in place (round 7, WYSIWYG).
@@ -1010,6 +1088,7 @@ public final class BulkActions: @unchecked Sendable {
     let before = VersionResolver.resolve(all.isEmpty ? [o] : all, number: 1, settings: s, video: v)
     let after = VersionResolver.resolve([v1], number: 1, settings: s, video: v)
     Captions.retag(&v1, before: before, after: after, sets: try store.hashtagSets())
+    try keepLaterCaptions(v, all: all, newV1: v1, s)
     try store.save(v1, videoId: v.id)
     return .changed
   }
@@ -1050,9 +1129,17 @@ public final class BulkActions: @unchecked Sendable {
     } else {
       try db.run("DELETE FROM edits WHERE video_id=?", [c.id])
     }
+    // Round 20: each version keeps the Ready to repost it has now (undo takes back edits, not that mark).
+    let ready = Set(try store.repostReadyVersions(videoId: c.id))
     try db.run("DELETE FROM versions WHERE video_id=?", [c.id])
     for (n, json) in c.versions {
-      try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?)", [c.id, Int(n) ?? 1, json, store.clock.now])
+      let number = Int(n) ?? 1
+      var out = json
+      if var v = try? JSONCoding.decoder.decode(Version.self, from: Data(json.utf8)), (v.repostReady == true) != ready.contains(number) {
+        v.repostReady = ready.contains(number) ? true : nil
+        out = JSONCoding.string(v)
+      }
+      try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?)", [c.id, number, out, store.clock.now])
     }
     for r in c.renders ?? [] {
       if r.deletedAt == nil {

@@ -53,7 +53,8 @@ extension AppModel {
         let id = v.id
         out.append(EditFix(id: "drop-\(p.rawValue)", title: "Drop hashtags for \(name)", icon: "number",
                            tooltip: "Post the caption without its hashtags on \(name) only", disabledReason: why) { [self] in
-          pipelineBulk("Drop hashtags for \(name)?", verb: "Drop hashtags", ids: [id], done: "Hashtags dropped for \(name)") { b, dry in
+          pipelineBulk("Drop hashtags for \(name)?", verb: "Drop hashtags", ids: [id], done: "Hashtags dropped for \(name)",
+                       versionScope: .captionsV1Only) { b, dry in
             try b.dropHashtags([id], platform: p, dryRun: dry)
           }
         })

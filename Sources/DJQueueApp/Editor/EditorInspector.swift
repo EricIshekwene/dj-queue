@@ -21,6 +21,10 @@ struct EditorInspector: View {
           // Full-width hairlines between sections (the Framer / Webflow / Figma inspector pattern) so each section
           // reads as its own block.
           VStack(alignment: .leading, spacing: 0) {
+            if model.versionNumbers.count > 1 || model.isRepostReady(model.versionNo) {
+              EditorRepostReadyRow(model: model)
+              DSSeparator()
+            }
             // Fields go off section by section, not on this column: the collapsible rows must still open on a read-only clip.
             EditorTitleSection(model: model).disabled(model.fieldsOff)
             DSSeparator()
@@ -108,7 +112,7 @@ struct EditorVersionList: View {
     VStack(alignment: .leading, spacing: 2) {
       Text("Versions").font(DS.type.headline).foregroundStyle(DS.color.text)
         .padding(.horizontal, DS.space.sm).padding(.top, DS.space.sm).padding(.bottom, DS.space.xxs)
-      Text("A new version changes the text and caption for a repost. Empty fields carry forward from the version before.")
+      Text("A new version changes the text and caption for a repost. Empty fields carry forward from the version before. Turn on each version that's ready to repost.")
         .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, DS.space.sm).padding(.bottom, DS.space.xs)
       ForEach(model.versionNumbers, id: \.self) { n in row(n) }
@@ -119,7 +123,7 @@ struct EditorVersionList: View {
         .padding(.horizontal, DS.space.xxs).padding(.bottom, DS.space.xs)
     }
     .padding(DS.space.xxs)
-    .frame(width: 300)
+    .frame(width: 340)
     .background(DS.color.surfaceRaised)
   }
 
@@ -132,10 +136,27 @@ struct EditorVersionList: View {
         if !u.posted.isEmpty { Text("Posted on " + u.posted.map(\.displayName).joined(separator: ", ")) }
         if !u.planned.isEmpty { Text("Planned on " + u.planned.map(\.displayName).joined(separator: ", ")) }
         if u.posted.isEmpty && u.planned.isEmpty { Text(n == 1 ? "Not posted yet" : "Not used yet") }
+        if model.isRepostReady(n) {
+          Label("Ready to repost", systemImage: "checkmark.circle.fill").foregroundStyle(DS.color.success)
+        }
       }
       .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
       Spacer()
       if selected { DSBadge("Editing", style: .soft(.neutral), size: .sm, help: "The version you're editing") }
+      // A button around the switch: one click target, and the row's own tap (select the version) never sees it.
+      Button { model.setRepostReady(n, !model.isRepostReady(n)) } label: {
+        DSSwitch(isOn: .constant(model.isRepostReady(n)), disabled: model.repostReadyOff != nil, small: true).allowsHitTesting(false)
+      }
+      .buttonStyle(.plain)
+      .disabled(model.repostReadyOff != nil)
+      .accessibilityLabel("Ready to repost v\(n)")
+      .accessibilityValue(model.isRepostReady(n) ? "On" : "Off")
+        .dsTooltip(model.repostReadyOff == nil
+                   ? (model.isRepostReady(n) ? "v\(n) is ready to repost: turn off to leave it out of the repost cycle"
+                                             : "Mark v\(n) ready to repost (nothing is queued or scheduled)")
+                   : nil,
+                   disabledReason: model.repostReadyOff)
+        .background(ScriptAnchor("Repost ready v\(n)"))
       Menu {
         Button("Duplicate as new version") { model.newVersion(copying: n) }
         if n > 1 { Button("Delete v\(n)…", role: .destructive) { requestDelete(n) } }
@@ -143,10 +164,36 @@ struct EditorVersionList: View {
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .dsTooltip("More actions for v\(n)")
     }
-    .padding(.horizontal, DS.space.sm).frame(height: 40)
+    .padding(.horizontal, DS.space.sm).frame(minHeight: 40).padding(.vertical, model.isRepostReady(n) ? 3 : 0)
     .background(selected ? DS.color.selected : .clear, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
     .contentShape(Rectangle())
     .onTapGesture { model.selectVersion(n) }
     .dsTooltip(selected ? nil : "Edit v\(n)'s text and caption")
+  }
+}
+
+/// Round 20: "Ready to repost" for the version being edited (shown once a clip has a second version, or this one is
+/// marked). The same switch sits on every row of the version list.
+struct EditorRepostReadyRow: View {
+  @ObservedObject var model: EditorModel
+
+  var body: some View {
+    let n = model.versionNo
+    // The whole row is one button (label, description and switch), like a settings row.
+    Button { model.setRepostReady(n, !model.isRepostReady(n)) } label: {
+      DSToggle("Ready to repost", description: model.isRepostReady(n)
+                 ? "v\(n) is in the repost cycle. Nothing is queued or scheduled by this."
+                 : "Turn on when v\(n) is finished, to include it in the repost cycle.",
+               isOn: .constant(model.isRepostReady(n)), disabledReason: model.repostReadyOff, size: .sm)
+        .allowsHitTesting(false)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(model.repostReadyOff != nil)
+    .accessibilityLabel("Ready to repost v\(n)")
+    .accessibilityValue(model.isRepostReady(n) ? "On" : "Off")
+      .background(ScriptAnchor("Repost ready"))
+      .dsTooltip(model.repostReadyOff == nil ? "Each version you mark ready joins the repost cycle; the clip's stage doesn't change" : nil)
+      .padding(.horizontal, DS.space.md).padding(.vertical, DS.space.sm)
   }
 }

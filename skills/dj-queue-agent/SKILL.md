@@ -131,6 +131,24 @@ djq overlay remove <video> <number|id> [--version N]
   `delete` · `default <id>`), default `{text} | DJ Lovd`. `djq youtube-title <video> --template <id>` picks one for a
   clip; a typed title (`djq youtube-title <video> "…"`) wins over any template.
 
+### Versions: ready to repost, and bulk edits (round 20)
+
+```sh
+djq repost-ready <video> [--version N] [--off]   # mark (or unmark) a text version ready to repost; default v1
+djq repost-ready --list [--json]                 # every clip with a version ready to repost
+djq videos --repost-ready [--json]               # same filter on the clip list (also --state repost-ready, bulk --filter repost-ready)
+```
+
+- Marking a version ready only marks it: the clip's stage, Queue, slots and posts don't change, and nothing is scheduled.
+  The repost round will pick ready versions a platform hasn't had yet. Mark versions only when Eric asks.
+- `repost_ready_versions` is on every clip in `djq videos --json`; `repostReady: true` on the version in `djq video --json`.
+- Long-form is never reposted (refused). A version that doesn't exist is refused.
+- Bulk edits on a clip with several versions reach every version except captions. Crop, trim, cover, aspect and
+  platforms are one edit per clip. Caption changes (template, groups, extras, YouTube title, parts, drop hashtags) land
+  on v1; a later version that took its caption from v1 keeps it as it was (`captionsOwn: true` on that version: it
+  stops inheriting captions, and anything it doesn't set follows the defaults). `apply-defaults --sections text`
+  resets the text look and place on every version and keeps each version's words.
+
 ## Stages: move a clip back or forward
 
 A short clip's stage: **Score** (no score) → **Edit** (scored, something still missing, sent back, or its file is

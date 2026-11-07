@@ -832,8 +832,12 @@ public enum VersionResolver {
     let chain = versions.filter { $0.number <= number }.sorted { $0.number < $1.number }
     var inherited = Set<String>()
     var defaulted = Set<String>()
-    func pick<T>(_ key: String, _ kp: KeyPath<Version, T?>) -> T? {
-      for v in chain.reversed() {
+    // Round 20: a version that keeps its own caption (`captionsOwn`, set when a bulk caption change on v1 must not reach
+    // it) inherits caption fields from itself and later versions only; what it doesn't set follows the defaults.
+    let captionCut = chain.last { $0.captionsOwn == true }?.number ?? Int.min
+    let captionChain = chain.filter { $0.number >= captionCut }
+    func pick<T>(_ key: String, _ kp: KeyPath<Version, T?>, captions: Bool = false) -> T? {
+      for v in (captions ? captionChain : chain).reversed() {
         if let x = v[keyPath: kp] {
           if let s = x as? String, s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
           if v.number != number { inherited.insert(key) }
@@ -883,16 +887,16 @@ public enum VersionResolver {
       align: pick("align", \.align) ?? d.textAlign,
       textStart: timingDefault ? d.textWindow.start : start,
       textEnd: timingDefault ? d.textWindow.end : end,
-      caption: pick("caption", \.caption) ?? "",
-      captionTemplateId: pick("captionTemplateId", \.captionTemplateId),
-      hashtagSetIds: pick("hashtagSetIds", \.hashtagSetIds) ?? d.hashtagSetIds,
-      extraHashtags: pick("extraHashtags", \.extraHashtags) ?? d.extraHashtags,
-      youtubeTitle: pick("youtubeTitle", \.youtubeTitle) ?? "",
-      platformCaptions: pick("platformCaptions", \.platformCaptions) ?? [:],
+      caption: pick("caption", \.caption, captions: true) ?? "",
+      captionTemplateId: pick("captionTemplateId", \.captionTemplateId, captions: true),
+      hashtagSetIds: pick("hashtagSetIds", \.hashtagSetIds, captions: true) ?? d.hashtagSetIds,
+      extraHashtags: pick("extraHashtags", \.extraHashtags, captions: true) ?? d.extraHashtags,
+      youtubeTitle: pick("youtubeTitle", \.youtubeTitle, captions: true) ?? "",
+      platformCaptions: pick("platformCaptions", \.platformCaptions, captions: true) ?? [:],
       inherited: inherited,
       defaulted: defaulted)
     // Round 7: a chosen YouTube title template that no longer exists follows the default one.
-    let yt = pick("youtubeTitleTemplateId", \.youtubeTitleTemplateId)
+    let yt = pick("youtubeTitleTemplateId", \.youtubeTitleTemplateId, captions: true)
     r.youtubeTitleTemplateId = yt
     r.youtubeTitleTemplate = settings.youtubeTitleTemplate(id: yt)
     // Round 16: carried like the rest, but a clip without them leaves `defaulted` and the resolved JSON as they were.
