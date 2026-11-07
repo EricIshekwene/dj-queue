@@ -139,6 +139,13 @@ enum RepostReadyScript {
       return (try? store.repostReadyVersions(videoId: clip)) ?? []
     }
 
+    /// The clip's preview identity over every version (what lists redraw on).
+    func stamp() -> String {
+      EditorModel.flushLiveAndWait()
+      guard let v = (try? store.video(id: clip)) ?? nil, let t = try? store.previewStampTable() else { return "?" }
+      return t.stamp(for: v, version: .max)
+    }
+
     func now() -> Baseline? {
       guard let v = (try? store.video(id: clip)) ?? nil else { return nil }
       return Baseline(state: v.state, sent: v.sentToQueue, stage: ClipStage.of(v),
@@ -193,10 +200,12 @@ enum RepostReadyScript {
       check("two versions: the row shows for v2, off", e.versionNo == 2 && has("Repost ready") && !e.isRepostReady(2))
       await shot("v2-row-off")
 
-      // 3. A real click turns v2 on: stored on v2 only; nothing else about the clip moves.
+      // 3. A real click turns v2 on: stored on v2 only; nothing else about the clip moves, and list previews don't redraw.
+      let stampBefore = stamp()
       await click("Repost ready")
       check("click → v2 ready to repost in the store", ready() == [2])
       check("v1 isn't marked by v2's switch", !e.isRepostReady(1))
+      check("the clip's preview stamp didn't move (no preview redraw)", stamp() == stampBefore)
       stageHolds("after marking v2")
       await shot("v2-ready")
 
@@ -207,8 +216,10 @@ enum RepostReadyScript {
       check("click on v1's row → v1 and v2 ready", ready() == [1, 2])
       await click("Repost ready")
       check("click again → v1 off, v2 still ready", ready() == [2])
+      let stampMid = stamp()
       await commandZ()
       check("⌘Z → v1 ready again", ready() == [1, 2])
+      check("…and the undo didn't re-save the versions (preview stamp unchanged)", stamp() == stampMid)
       stageHolds("after v1 on, off and undo")
       e.selectVersion(2)
       await wait(600)

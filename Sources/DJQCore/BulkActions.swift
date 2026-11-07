@@ -903,7 +903,18 @@ public final class BulkActions: @unchecked Sendable {
   static func same(_ cur: ClipSnap, _ a: ClipSnap) -> Bool {
     var c = cur
     if a.sent != false { c.sent = a.sent }
-    return c == a
+    // Round 20: Ready to repost isn't part of an edit: marking a version after a batch doesn't block its undo.
+    c.versions = c.versions.mapValues(withoutReady)
+    var b = a
+    b.versions = b.versions.mapValues(withoutReady)
+    return c == b
+  }
+
+  /// A version's JSON without `repostReady` (unreadable JSON is left as it is).
+  static func withoutReady(_ json: String) -> String {
+    guard var v = try? JSONCoding.decoder.decode(Version.self, from: Data(json.utf8)), v.repostReady != nil else { return json }
+    v.repostReady = nil
+    return JSONCoding.string(v)
   }
 
   struct PlanSnap: Codable, Equatable {
@@ -1033,9 +1044,13 @@ public final class BulkActions: @unchecked Sendable {
     guard !later.isEmpty else { return 0 }
     var after = all.filter { $0.number != 1 } + [newV1]
     var kept = 0
-    for ver in later {
+    let captionKeys: Set<String> = ["caption", "captionTemplateId", "hashtagSetIds", "extraHashtags", "youtubeTitle",
+                                    "platformCaptions", "youtubeTitleTemplateId"]
+    for ver in later where ver.captionsOwn != true {
       let before = VersionResolver.resolve(all, number: ver.number, settings: s, video: v)
-      guard CaptionFace(before) != CaptionFace(VersionResolver.resolve(after, number: ver.number, settings: s, video: v)) else { continue }
+      let changes = CaptionFace(before) != CaptionFace(VersionResolver.resolve(after, number: ver.number, settings: s, video: v))
+      // A version that follows a kept one is kept too, so deleting the kept one later can't hand it v1's new caption.
+      guard changes || (kept > 0 && !before.inherited.isDisjoint(with: captionKeys)) else { continue }
       var p = ver
       p.captionsOwn = true
       let from = before.inherited
@@ -1114,9 +1129,17 @@ public final class BulkActions: @unchecked Sendable {
     } else {
       try db.run("DELETE FROM edits WHERE video_id=?", [c.id])
     }
+    // Round 20: each version keeps the Ready to repost it has now (undo takes back edits, not that mark).
+    let ready = Set(try store.repostReadyVersions(videoId: c.id))
     try db.run("DELETE FROM versions WHERE video_id=?", [c.id])
     for (n, json) in c.versions {
-      try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?)", [c.id, Int(n) ?? 1, json, store.clock.now])
+      let number = Int(n) ?? 1
+      var out = json
+      if var v = try? JSONCoding.decoder.decode(Version.self, from: Data(json.utf8)), (v.repostReady == true) != ready.contains(number) {
+        v.repostReady = ready.contains(number) ? true : nil
+        out = JSONCoding.string(v)
+      }
+      try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?)", [c.id, number, out, store.clock.now])
     }
     for r in c.renders ?? [] {
       if r.deletedAt == nil {

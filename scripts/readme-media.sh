@@ -95,5 +95,14 @@ Q=send-to-queue
 gif send-to-queue $Q/send-1-edit-before $Q/send-2-editor-open $Q/send-3-editor-nothing-to-fix $Q/send-4-edit-after-save \
                  $Q/send-5-queue-after-send
 
+R=repost-ready
+# Round 20: Ready to repost per version, and bulk edits on versions. Header and inspector only (the player isn't the point).
+CROP=iw*0.25:ih*0.5:iw*0.75:0 gif repost-ready $R/repost-02-v2-row-off-light $R/repost-03-v2-ready-light \
+                 $R/repost-04-header-check-v2-light
+still repost-versions  $R/repost-05-version-list-both-ready-light
+still repost-filter    $R/repost-07-library-filter-ready-light
+still bulk-versions    $R/repost-11-bulk-reset-versions-note-light
+still bulk-caption-versions $R/repost-10-bulk-caption-versions-note-light
+
 du -sh "$OUT"
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }

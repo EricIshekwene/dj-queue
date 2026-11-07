@@ -75,3 +75,20 @@ extension Store {
                            posts: try posts(where: "video_id=?", [videoId]), platform: platform).first
   }
 }
+
+/// Round 20: an open editor saving a version keeps what changed in the store since it last saved (`base`), where the
+/// editor didn't change it itself: the Ready to repost mark (`djq repost-ready`) and a bulk caption change's pin on a
+/// later version (`captionsOwn` and the caption fields copied in). Everything else is the editor's.
+public enum VersionMerge {
+  public static func keepingOutsideChanges(_ v: Version, base: Version?, stored: Version?) -> Version {
+    guard let base, let stored else { return v }
+    var out = v
+    func keep<T: Equatable>(_ kp: WritableKeyPath<Version, T>) { if v[keyPath: kp] == base[keyPath: kp] { out[keyPath: kp] = stored[keyPath: kp] } }
+    keep(\.repostReady)
+    if stored.captionsOwn == true, base.captionsOwn != true {
+      keep(\.captionsOwn); keep(\.caption); keep(\.captionTemplateId); keep(\.hashtagSetIds); keep(\.extraHashtags)
+      keep(\.youtubeTitle); keep(\.platformCaptions); keep(\.youtubeTitleTemplateId)
+    }
+    return out
+  }
+}

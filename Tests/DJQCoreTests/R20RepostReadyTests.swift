@@ -149,6 +149,28 @@ import Testing
 }
 
 /// Round 20 (Eric): a bulk edit on a clip with several versions applies to every version except captions.
+@Suite struct R20EditorMergeTests {
+  /// What the editor saves keeps the mark and a bulk pin made while it was open, unless the editor changed them itself.
+  @Test func outsideChangesSurviveTheEditorsSave() {
+    // The editor's own logic lives in the app target; this is the same rule (EditorModel.keepingOutsideChanges), in core terms.
+    var base = Version(number: 2)
+    base.text = "Hook"
+    var stored = base
+    stored.repostReady = true
+    stored.captionsOwn = true
+    stored.captionTemplateId = "short"
+    var editor = base
+    editor.text = "Hook, edited"
+    let out = VersionMerge.keepingOutsideChanges(editor, base: base, stored: stored)
+    #expect(out.text == "Hook, edited" && out.repostReady == true && out.captionsOwn == true && out.captionTemplateId == "short")
+    var unmarked = base
+    unmarked.repostReady = false
+    var marked = base
+    marked.repostReady = true
+    #expect(VersionMerge.keepingOutsideChanges(unmarked, base: marked, stored: marked).repostReady == false)
+  }
+}
+
 @Suite struct R20BulkVersionsTests {
   func setup() throws -> (Fixture, Settings) {
     let f = try Fixture.engine(3, ready: 2)
@@ -182,15 +204,25 @@ import Testing
     // Only v2 had to stop inheriting; v3 follows v2, which now holds what it showed.
     let raw = try f.store.versions(videoId: "clip-0")
     #expect(raw.first { $0.number == 2 }?.captionsOwn == true)
-    #expect(raw.first { $0.number == 3 }?.captionsOwn == nil)
+    #expect(raw.first { $0.number == 3 }?.captionsOwn == true)  // follows v2, so it's kept too
     // Text still follows v1 where a version doesn't set its own.
     #expect(try f.store.resolvedVersion(videoId: "clip-0", number: 3, settings: s)?.text == "Hook two")
     // A clip with only v1 gets nothing extra.
     #expect(try f.store.versions(videoId: "clip-1").allSatisfy { $0.captionsOwn == nil })
+    // Deleting v2 later doesn't hand v3 v1's new caption.
+    var copy = try f.store.versions(videoId: "clip-0")
+    try f.store.deleteVersion(videoId: "clip-0", number: 2)
+    #expect(try face(f, 3, s) == v3)
+    for v in copy where v.number == 2 { try f.store.save(v, videoId: "clip-0") }
+    copy = []
+    // Marking a version after the batch doesn't block its undo, and the undo keeps the mark.
+    try f.store.setRepostReady(videoId: "clip-0", number: 2, true)
     // Bulk undo takes all of it back.
     let batches = try b.batches()
-    for batch in batches { _ = try? b.undo(batch.id, force: true) }
+    for batch in batches { _ = try b.undo(batch.id) }
     #expect(try f.store.versions(videoId: "clip-0").allSatisfy { $0.captionsOwn == nil })
+    #expect(try f.store.repostReadyVersions(videoId: "clip-0") == [2])
+    #expect(try face(f, 1, s).template == "short")
   }
 
   @Test func resetToDefaultsTextReachesEveryVersionButKeepsWords() throws {
