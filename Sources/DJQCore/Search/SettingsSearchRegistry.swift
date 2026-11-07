@@ -153,6 +153,7 @@ public enum SettingsSearchRegistry {
     .row(.playback, "Small previews: play on hover only", description: "Calendar, Cards, Grid and List show covers; a clip plays only while the pointer is on it. Single view and full previews play by themselves."),
     .row(.playback, "Which clips play", description: "With hover-only off: all visible clips in Calendar, Cards and Grid play, at most 4 at once, or only the one you're on."),
     .row(.playback, "Loop", description: "The trim is what will post; the whole file shows everything around it."),
+    .row(.playback, "Arrow keys jump", description: "In the editor, ← and → move the playhead this far (⇧ moves one frame). The jump buttons beside Play match it."),
     // alerts
     .group(.alerts, "Queue"),
     .row(.alerts, "Low Queue alert", group: "Queue", description: "Card and notification when fewer days than this are scheduled and the Queue is about out."),

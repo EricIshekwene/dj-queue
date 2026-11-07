@@ -18,7 +18,9 @@ struct MainWindowView: View {
                      deleteGroup: { model.confirmDeleteGroup($0, undoHint: "Undo on the message that follows brings it back.") },
                      beforeGroupWrite: { model.splitEditorSession() },
                      afterGroupEdit: { model.groupEdited($0, message: $1) },
-                     isCovered: { model.overlayCoversEditor }),
+                     isCovered: { model.overlayCoversEditor },
+                     arrowStep: { model.playback.arrowStep },
+                     setArrowStep: { s in model.setPlayback { $0.arrowStep = s } }),
                    headerAccessory: { id in AnyView(EditorStageControl(model: model, videoId: id)) })
           .transition(.opacity)
       } else {
@@ -225,8 +227,10 @@ struct ShortcutSheet: View {
                ("0–9", "Type a score for the selected clips (Queue, Library)"), ("⌘⌫", "Exclude the clip (Score)")]),
     ("Calendar", [("D · 3 · W · M", "Day, 3 Day, Week, Month"), ("T", "Today"), ("← / →", "Previous / next day, week or month"),
                   ("Drag", "Move a clip to another day")]),
-    ("Editor", [("⌘Z / ⇧⌘Z", "Undo / redo the last change to this clip"), ("⌘[ / ⌘]", "Previous / next clip"), ("⌘↩", "Done"),
-                ("Space", "Play / pause"), ("I / O", "Set the trim start / end at the playhead")]),
+    ("Editor", [("⌘Z / ⇧⌘Z", "Undo / redo the last change to this clip"), ("↑ / ↓ or ⌘[ / ⌘]", "Previous / next clip"), ("⌘↩", "Done"),
+                ("Space", "Play / pause"), ("← / →", "Jump back / forward by your arrow step (set beside Play or in Settings → Playback)"),
+                ("⇧← / ⇧→", "One frame back / forward"), ("Esc", "Leave a text field so Space plays"),
+                ("I / O", "Set the trim start / end at the playhead")]),
   ]
 
   var body: some View {

@@ -1,3 +1,4 @@
+import AppKit
 import DJQCore
 import SwiftUI
 
@@ -382,7 +383,143 @@ struct PlaybackSettings: View {
         DSSelectOption(value: ProxyRange.wholeFile, title: "The whole file"),
       ])
     }
+    SettingsRow("Arrow keys jump", description: "In the editor, ← and → move the playhead this far (⇧ moves one frame). The jump buttons beside Play match it.",
+                stacked: true) {
+      VStack(alignment: .leading, spacing: DS.space.sm) {
+        SettingsSelect(label: "Arrow keys jump", selection: model.playbackBinding(\.arrowStep),
+                       options: ArrowStep.allCases.map { DSSelectOption(value: $0, title: $0.title) })
+        ArrowStepTryIt(step: model.playback.arrowStep)
+      }
+    }
     SettingsNote("Saved on this Mac. Changing Loop makes new preview copies the next time clips are on screen.")
+  }
+}
+
+/// Settings → Playback "Try it" (round 19): a 30-second strip that takes ← / → with the chosen step, so Eric can feel
+/// a step before going back to a clip. Click it (or Tab to it), then press the arrows; ⇧ moves one frame. A click arms
+/// it through a window key monitor as well as SwiftUI focus, so the arrows work the moment it's clicked; a click
+/// anywhere else lets go.
+struct ArrowStepTryIt: View {
+  let step: ArrowStep
+  static let length = 30.0
+  static let fps = 30.0
+  @StateObject private var strip = TryItState()
+  @State private var hovering = false
+  @FocusState private var focused: Bool
+
+  private var active: Bool { strip.armed || focused }
+  private var time: Double { strip.time }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: DS.space.xs) {
+        Text("Try it").font(DS.type.calloutMedium).foregroundStyle(DS.color.text)
+        Text(active ? "Press ← → (⇧ for one frame)" : "Click the strip, then press ← →")
+          .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+        Spacer()
+        Text("\(EditorGeometry.time(time, tenths: true)) / \(EditorGeometry.time(Self.length))")
+          .font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+      }
+      GeometryReader { g in
+        let w = g.size.width
+        let x = w * time / Self.length
+        ZStack(alignment: .leading) {
+          RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous).fill(DS.color.surfaceSunken)
+          // One tick per step (whole seconds when the step is under a second, so frames don't fill the strip).
+          let every = max(1, step.seconds(fps: Self.fps))
+          ForEach(Array(stride(from: every, to: Self.length, by: every)), id: \.self) { t in
+            Rectangle().fill(DS.color.borderStrong).frame(width: 1, height: 8)
+              .offset(x: w * t / Self.length, y: 0)
+          }
+          Rectangle().fill(DS.color.primary.opacity(0.08)).frame(width: max(0, x))
+          RoundedRectangle(cornerRadius: 1).fill(DS.color.primary).frame(width: 2).offset(x: max(0, min(w - 2, x - 1)))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous)
+          .strokeBorder(hovering && !active ? DS.color.borderStrong : DS.color.border))
+        .contentShape(Rectangle())
+        // A press (or drag) puts the playhead there and arms the arrows, like clicking a scrubber.
+        .gesture(DragGesture(minimumDistance: 0).onChanged { v in
+          strip.time = min(Self.length, max(0, Self.length * v.location.x / max(1, w)))
+          focused = true
+        })
+      }
+      .frame(height: 32)
+      .dsFocusRing(active, radius: DS.radius.sm)
+      .background(TryItKeys(strip: strip, step: step))
+      .background(ScriptAnchor("Arrow step try"))
+    }
+    .focusable()
+    .focusEffectDisabled()
+    .focused($focused)
+    .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
+      move(press.key == .leftArrow ? -1 : 1, fine: press.modifiers.contains(.shift))
+      return .handled
+    }
+    .onHover { hovering = $0 }
+    .accessibilityElement()
+    .accessibilityLabel("Try the arrow step")
+    .accessibilityValue(EditorGeometry.time(time, tenths: true))
+    .accessibilityAdjustableAction { d in move(d == .increment ? 1 : -1, fine: false) }
+  }
+
+  private func move(_ d: Int, fine: Bool) { strip.move(d, step: step, fine: fine) }
+}
+
+/// The try-it strip's playhead and whether its arrows are armed (a reference, so the window key monitor and the view
+/// share one value).
+final class TryItState: ObservableObject {
+  /// The newest strip, for the live check (`EditorKeysScript`) to read.
+  nonisolated(unsafe) static weak var latest: TryItState?
+  init() { Self.latest = self }
+  @Published var time = 0.0
+  @Published var armed = false
+  func move(_ d: Int, step: ArrowStep, fine: Bool) {
+    time = EditorSeek.target(from: time, step: step, fps: ArrowStepTryIt.fps, direction: d, fine: fine,
+                             duration: ArrowStepTryIt.length)
+  }
+}
+
+/// The try-it strip's arrows while it's armed: ← / → (⇧ one frame) in its window, unless a text field has the cursor.
+/// `TryItState` holds the armed flag: a mouse-down on the strip arms it and puts the playhead there, one anywhere else lets go (seen by a window
+/// monitor before the click is handled, so the arrows work straight after the click, focus or not).
+private struct TryItKeys: NSViewRepresentable {
+  let strip: TryItState
+  let step: ArrowStep
+  func makeNSView(context: Context) -> KeyView { KeyView() }
+  func updateNSView(_ v: KeyView, context: Context) {
+    v.strip = strip
+    v.step = step
+  }
+  final class KeyView: NSView {
+    weak var strip: TryItState?
+    var step = ArrowStep.standard
+    private var monitors: [Any] = []
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      monitors.forEach(NSEvent.removeMonitor)
+      monitors = []
+      strip?.armed = false
+      guard window != nil else { return }
+      if let m = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] e in
+        guard let self, let strip = self.strip, strip.armed, e.window === self.window, !(self.window?.firstResponder is NSTextView),
+              e.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+              e.keyCode == EditorKeys.left || e.keyCode == EditorKeys.right else { return e }
+        strip.move(e.keyCode == EditorKeys.left ? -1 : 1, step: self.step, fine: e.modifierFlags.contains(.shift))
+        return nil
+      }) { monitors.append(m) }
+      if let m = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] e in
+        guard let self, let strip = self.strip, e.window === self.window, !self.isHiddenOrHasHiddenAncestor else { return e }
+        let p = self.convert(e.locationInWindow, from: nil)
+        let inside = self.bounds.contains(p)
+        if inside != strip.armed { strip.armed = inside }
+        // The press puts the playhead there (a drag carries on through the strip's own gesture).
+        if inside { strip.time = ArrowStepTryIt.length * min(1, max(0, p.x / max(1, self.bounds.width))) }
+        return e
+      }) { monitors.append(m) }
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    deinit { monitors.forEach(NSEvent.removeMonitor) }
   }
 }
 

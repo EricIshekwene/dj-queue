@@ -83,6 +83,9 @@ struct EditorAppHooks {
   var afterGroupEdit: ((BulkResult, String) -> Void)?
   /// True while an overlay covers the editor.
   var isCovered: (() -> Bool)?
+  /// How far ← / → jump (Settings → Playback, or the step chip beside Play). Nil = the editor keeps its own (harness).
+  var arrowStep: (() -> ArrowStep)?
+  var setArrowStep: ((ArrowStep) -> Void)?
 }
 
 /// A caption length problem for one platform (live, from the in-memory version).
@@ -150,6 +153,14 @@ final class EditorModel: ObservableObject {
   var onDeleteGroup: ((HashtagSet) -> Void)? { appHooks.deleteGroup }
   var onDeleteTemplate: ((CaptionTemplate) -> Void)? { appHooks.deleteTemplate }
   var isCovered: (() -> Bool)? { appHooks.isCovered }
+  /// The editor's own arrow step when no app is attached (harness runs).
+  @Published private var localArrowStep = ArrowStep.standard
+  /// How far ← / → and the jump buttons move the playhead (Eric's choice, shared with Settings → Playback).
+  var arrowStep: ArrowStep { appHooks.arrowStep?() ?? localArrowStep }
+  func setArrowStep(_ s: ArrowStep) {
+    objectWillChange.send()
+    if let set = appHooks.setArrowStep { set(s) } else { localArrowStep = s }
+  }
   @Published var toast: String?
   /// Evidence runs: the Zones canvas shows just the output (no dimmed text, no handles), to set beside an exported frame.
   @Published var plainCanvasForScript = false
@@ -1844,5 +1855,12 @@ final class EditorPlayback: ObservableObject {
   func skip(_ seconds: Double) {
     pause()
     seek(max(0, time + seconds), exact: true)
+  }
+
+  /// One ← / → press (or a jump button): `fine` (⇧) steps a single frame and pauses, like any frame step; a bigger
+  /// jump keeps playing if it was, so Eric can hop through a clip while listening.
+  func jump(_ direction: Int, step: ArrowStep, fine: Bool, fps: Double, duration: Double) {
+    if fine { pause() }
+    seek(EditorSeek.target(from: time, step: step, fps: fps, direction: direction, fine: fine, duration: duration), exact: true)
   }
 }
