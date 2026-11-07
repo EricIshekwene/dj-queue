@@ -165,17 +165,24 @@ enum EditorKeysScript {
       check("↑ opens the previous clip", model.videoId == ids[i])
       // Another clip opened while typing (⌘] or the header arrow) starts with nothing focused, and the Title typed so
       // far stays with the clip it was typed on.
-      let titleBefore = model.title
+      let typed = (model.title ?? "Clip") + " r19"
+      let nextTitle = (try? store.video(id: ids[i + 1]))??.titleText
       _ = await focusTitle()
+      if let ed = window.firstResponder as? NSTextView {
+        ed.setSelectedRange(NSRange(location: (ed.string as NSString).length, length: 0))
+        ed.insertText(" r19", replacementRange: ed.selectedRange())
+      }
+      await wait(200)
       EditorView.open(1, model: model, in: ids)
       try? await Task.sleep(for: .seconds(2))
       check("another clip opened while typing lets go of the field", !typing() && model.videoId == ids[i + 1])
+      check("the typed Title didn't land on the next clip", model.title == nextTitle)
       await space()
       check("…so Space plays it", pb.isPlaying)
       await pause()
       EditorView.open(-1, model: model, in: ids)
       try? await Task.sleep(for: .seconds(2))
-      check("the first clip's Title is unchanged", model.title == titleBefore)
+      check("the typed Title stayed on its own clip (\(model.title ?? "nil"))", model.title == typed)
     } else {
       note("skip ↑ / ↓: only one clip")
     }
