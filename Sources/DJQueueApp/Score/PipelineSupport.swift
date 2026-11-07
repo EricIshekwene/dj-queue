@@ -44,9 +44,13 @@ extension AppModel {
   /// Bulk action through the shared flow (confirmation sheet for > 1 clip, dry run, undo toast). `body` runs off
   /// the main thread with the model's `BulkActions`.
   func pipelineBulk(_ title: String, verb: String, ids: [String], changes: [DSChangeList.Change] = [], done: String? = nil,
+                    versionScope: BulkVersionScope? = nil, keepsWords: Bool = false,
                     _ body: @escaping @Sendable (BulkActions, Bool) throws -> BulkResult) {
     let b = bulk
-    requestBulk(BulkRequest(title: title, verb: verb, ids: ids, changes: changes, doneMessage: done) { dry in try body(b, dry) })
+    var r = BulkRequest(title: title, verb: verb, ids: ids, changes: changes, doneMessage: done) { dry in try body(b, dry) }
+    r.versionScope = versionScope
+    r.keepsWords = keepsWords
+    requestBulk(r)
   }
 
   /// A disabled native menu item's reason, appended to its title (menu items show no tooltip): " — already posted

@@ -16,6 +16,7 @@ struct BulkConfirmSheet: View {
              onClose: { model.cancelPendingBulk() }) {
       VStack(alignment: .leading, spacing: DS.space.sm) {
         if !r.changes.isEmpty { DSChangeList(changes: r.changes) }
+        if let scope = r.versionScope { BulkVersionNote(model: model, ids: r.ids, scope: scope, keepsWords: r.keepsWords) }
         if let p = pending.preview, let lines = r.previewLines?(p), !lines.isEmpty { previewList(r.previewTitle, lines, icon: r.previewIcon) }
         preview
       }
@@ -127,6 +128,29 @@ struct BulkConfirmSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
       }
+    }
+  }
+}
+
+/// Round 20: the line every bulk dialog shows when the selection has clips with v2 or later, saying which versions the
+/// change reaches (everything but captions applies to every version). Nothing when no clip has a second version.
+struct BulkVersionNote: View {
+  let model: AppModel
+  let ids: [String]
+  let scope: BulkVersionScope
+  var keepsWords = false
+
+  var body: some View {
+    if let text = scope.note(multi: model.multiVersionCount(ids), keepsWords: keepsWords) {
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
+        Image(systemName: "square.stack").font(.system(size: 11, weight: .semibold)).foregroundStyle(DS.color.textSecondary)
+        Text(text).font(DS.type.caption).foregroundStyle(DS.color.text).fixedSize(horizontal: false, vertical: true)
+      }
+      .padding(.horizontal, DS.space.sm).padding(.vertical, DS.space.xs)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+      .background(ScriptAnchor("Bulk versions note"))
+      .accessibilityElement(children: .combine)
     }
   }
 }

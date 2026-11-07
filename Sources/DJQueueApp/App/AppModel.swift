@@ -75,6 +75,8 @@ final class AppModel {
   var runway = Runway(approvedDays: 0, readyDays: 0, totalDays: 0)
   var lastHeartbeat: Heartbeat?
   var versionCounts: [String: Int] = [:]
+  /// Round 20: versions marked ready to repost, per clip (clips with none are absent).
+  var repostReady: [String: [Int]] = [:]
   var relinked: Set<String> = []
   var keptRemoved: Set<String> = []
   var renderQueue = 0
@@ -337,6 +339,7 @@ final class AppModel {
     var runway = Runway(approvedDays: 0, readyDays: 0, totalDays: 0)
     var lastHeartbeat: Heartbeat?
     var versionCounts: [String: Int] = [:]
+    var repostReady: [String: [Int]] = [:]
     var relinked: Set<String> = []
     var keptRemoved: Set<String> = []
     var renderQueue = 0
@@ -380,6 +383,7 @@ final class AppModel {
       l.lastHeartbeat = try store.lastHeartbeat()
       l.versionCounts = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT video_id, COUNT(*) AS n FROM versions GROUP BY video_id")
         .compactMap { r in r.string("video_id").map { ($0, r.int("n") ?? 0) } })
+      l.repostReady = try store.repostReadyVersions()
       l.relinked = Set(try store.db.query("SELECT DISTINCT video_id FROM events WHERE kind='relink' AND video_id IS NOT NULL")
         .compactMap { $0.string("video_id") })
       l.keptRemoved = Set((try store.kv("ui.keptRemoved", as: [String].self)) ?? [])
@@ -467,6 +471,7 @@ final class AppModel {
     runway = l.runway
     lastHeartbeat = l.lastHeartbeat
     versionCounts = l.versionCounts
+    repostReady = l.repostReady
     relinked = l.relinked
     keptRemoved = l.keptRemoved
     renderBatchTotal = l.renderQueue == 0 ? 0 : max(renderBatchTotal, l.renderQueue)

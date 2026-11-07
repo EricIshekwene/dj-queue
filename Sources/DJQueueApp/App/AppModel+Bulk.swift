@@ -31,6 +31,10 @@ struct BulkRequest {
   var previewIcon = "calendar"
   /// Toast from the applied result (message, detail); nil falls back to `doneMessage`.
   var doneText: ((BulkResult) -> (String, String?))? = nil
+  /// Round 20: what the change does to versions; the sheet and toast say so when a clip has v2 or later.
+  var versionScope: BulkVersionScope? = nil
+  /// With `versionScope`: the change resets text, and each version keeps its own words.
+  var keepsWords = false
   var run: @Sendable (_ dryRun: Bool) throws -> BulkResult
 }
 
@@ -65,6 +69,11 @@ extension AppModel {
 
   func cancelPendingBulk() { pendingBulk = nil }
 
+  /// Round 20: how many of `ids` have a v2 or later.
+  func multiVersionCount<S: Sequence>(_ ids: S) -> Int where S.Element == String {
+    ids.filter { (versionCounts[$0] ?? 0) > 1 }.count
+  }
+
   func apply(_ r: BulkRequest, then: (() -> Void)? = nil) {
     splitEditorSession()
     let run = r.run
@@ -95,7 +104,8 @@ extension AppModel {
           if let b = res.batchId { self.undoHistory.push(b, label: msg) }
           let skipped = res.skipped.count
           let allReady = res.outlook.map { $0.needTitle.isEmpty && $0.other.isEmpty && $0.needScore.isEmpty } ?? true
-          let detail = [custom?.1, skipped > 0 ? "\(skipped) skipped" : nil].compactMap { $0 }.joined(separator: " · ")
+          let versions = r.versionScope.flatMap { self.multiVersionCount(res.changed) > 0 ? $0.short : nil }
+          let detail = [custom?.1, versions, skipped > 0 ? "\(skipped) skipped" : nil].compactMap { $0 }.joined(separator: " · ")
           self.show(DSToastModel(message: msg, detail: detail.isEmpty ? nil : detail, tone: allReady ? .success : .neutral,
                                  actionTitle: res.batchId == nil ? nil : "Undo",
                                  action: res.batchId.map { b in { self.undo(batch: b) } }, duration: 6))

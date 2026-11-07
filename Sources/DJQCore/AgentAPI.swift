@@ -36,6 +36,8 @@ public enum AgentAPI {
     public var reasons: [String] = []
     /// Round 5: how many on-video text suggestions the clip has (`text_suggestions` in `djq video`).
     public var text_suggestion_count: Int = 0
+    /// Round 20: the versions Eric marked ready to repost, in order (empty = none).
+    public var repost_ready_versions: [Int] = []
   }
 
   public struct SuggestionOut: Codable, Sendable {
@@ -162,7 +164,8 @@ public enum AgentAPI {
       suggestion_count: sugg.count, needs_title_help: AgentPrompts.needsTitleHelp(v, suggestions: sugg),
       issues: issues.map(\.message), held_in_edit: v.heldInEdit, sent_to_queue: v.sentToQueue, stage: ClipStage.of(v)?.rawValue,
       reasons: ClipStage.of(v) == .edit ? issues.sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText) : [],
-      text_suggestion_count: try store.suggestionCount(.text, videoId: v.id))
+      text_suggestion_count: try store.suggestionCount(.text, videoId: v.id),
+      repost_ready_versions: v.type == .short ? ((try? store.repostReadyVersions(videoId: v.id)) ?? []) : [])
   }
 
   static func suggestion(_ s: TitleSuggestion) -> SuggestionOut {

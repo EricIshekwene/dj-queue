@@ -180,7 +180,7 @@ private struct QueueBulkBar: View {
     let n = AppModel.pipelineClips(ids.count)
     model.pipelineBulk(skipped ? "Skip \(p.displayName) for \(n)?" : "Post \(n) on \(p.displayName) again?",
                        verb: skipped ? "Skip \(p.displayName)" : "Turn on \(p.displayName)", ids: ids,
-                       changes: [.init(field: p.displayName, value: skipped ? "Skipped" : "Posts again")]) { b, dry in
+                       changes: [.init(field: p.displayName, value: skipped ? "Skipped" : "Posts again")], versionScope: .every) { b, dry in
       try b.setPlatform(ids, p, skipped: skipped, dryRun: dry)
     }
   }

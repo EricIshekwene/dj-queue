@@ -299,10 +299,13 @@ struct LibraryView: View {
 
   private func applyDefaults(_ ids: [String]) {
     let bulk = model.bulk
-    model.requestBulk(BulkRequest(title: "Apply defaults to \(ids.count) clip\(ids.count == 1 ? "" : "s")?", verb: "Apply defaults",
-                                  ids: ids, changes: [.init(field: "Frame, trim, text, cover, caption, platforms", value: "Default")]) { dry in
+    var r = BulkRequest(title: "Apply defaults to \(ids.count) clip\(ids.count == 1 ? "" : "s")?", verb: "Apply defaults",
+                        ids: ids, changes: [.init(field: "Frame, trim, text, cover, caption, platforms", value: "Default")]) { dry in
       try bulk.applyDefaults(ids, dryRun: dry)
-    })
+    }
+    r.versionScope = .allButCaptions
+    r.keepsWords = true
+    model.requestBulk(r)
   }
 
   // MARK: Overlays (in-screen dialogs)

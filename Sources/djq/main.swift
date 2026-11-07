@@ -20,7 +20,7 @@ usage: djq <command> [args]
   posts [--problems] [--json]         upcoming/recent posts (or unresolved problems)
   week [--json] [YYYY-MM-DD]          the week's days, read-only (clips in the Queue schedule themselves)
   schedule [--dry-run] [--json]       put Queue clips on open days now (the engine does this on every tick)
-  videos [--stage S] [--state S] [--json]   clips (stage: score edit queue scheduled posted; state: a stored state, unscored, scored, needs-edit, all)
+  videos [--stage S] [--state S] [--repost-ready] [--json]   clips (stage: score edit queue scheduled posted; state: a stored state, unscored, scored, needs-edit, repost-ready, all)
   video <video> [--json]              one clip: title, suggestions, edit (+resolved), versions, captions, posts
   defaults [--json]                   new clip defaults (Settings → New clip defaults)
 
@@ -68,6 +68,9 @@ usage: djq <command> [args]
   fixed <post> | reset <post> | skip <post> | post-now <post> | shift-plan <post>
   copyright <post> reupload [N]|skip|accept
   repost <video> <platform> | longform-posted <video> <url>
+  repost-ready <video> [--version N] [--off]   mark a text version ready to repost (or not); default v1
+                                      it only marks the version: nothing is queued, scheduled or posted
+  repost-ready --list [--json]        every clip with a version ready to repost
   score <video> <0-100|clear> | exclude <video> | include <video>
   posts-per-day [1-5] [--dry-run]      show or set posts per day (Settings → General); undo with bulk undo
   slot <platform> [HH:MM] [--dry-run]  show or set a platform's slot (Settings → Schedule) and re-time its unposted future
@@ -223,7 +226,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -343,12 +346,14 @@ func run() throws -> Int32 {
       }
       return st
     }
-    let list = try AgentAPI.videos(store: store, filter: state, stage: stage)
+    var list = try AgentAPI.videos(store: store, filter: state, stage: stage)
+    if flag("--repost-ready") { list = list.filter { !$0.repost_ready_versions.isEmpty } }
     if flag("--json") { try printJSON(list); return 0 }
     for v in list {
       print("  \(short(v.id))  \(pad(stageLabel(v), 11)) \(pad(v.score.map(String.init) ?? "–", 4))\(v.display_name)"
             + (v.title == nil ? "" : "  (tag: \(v.raw_tag))") + (v.suggestion_count > 0 ? "  [\(v.suggestion_count) suggestion(s)]" : "")
-            + (v.reasons.isEmpty ? "" : "  — " + v.reasons.joined(separator: " · ")))
+            + (v.reasons.isEmpty ? "" : "  — " + v.reasons.joined(separator: " · "))
+            + (v.repost_ready_versions.isEmpty ? "" : "  [ready to repost: \(RepostReady.label(v.repost_ready_versions))]"))
     }
     print("  \(list.count) clip(s)")
 
@@ -369,6 +374,10 @@ func run() throws -> Int32 {
     print("  trim \(EditorLogic.time(re.trimIn, tenths: true))–\(EditorLogic.time(re.trimOut, tenths: true))\(re.isDefault(.trimIn) && re.isDefault(.trimOut) ? " (default)" : "") · aspect \(re.aspect.rawValue) · crop \(re.cropConfirmed ? "confirmed" : "not confirmed")")
     if let r = d.resolved_v1 { print("  text \(r.noText ? "(no text)" : "\"\(Captions.oneLine(r.text))\"")\(r.isDefault("text") ? " (default)" : "")") }
     if d.overlays.count > 1 { print("  \(d.overlays.count) texts on the video (djq overlay list \(short(v.id)))") }
+    if d.versions.count > 1 || !d.video.repost_ready_versions.isEmpty {
+      let nums = Set(d.versions.map(\.number)).union([1]).sorted()
+      print("  versions " + nums.map { "v\($0)" + (d.video.repost_ready_versions.contains($0) ? " (ready to repost)" : "") }.joined(separator: " · "))
+    }
     if let r = d.resolved_v1, v.type == .short {
       let groups = try store.hashtagSets().filter { r.hashtagSetIds.contains($0.id) }.map(\.name)
       print("  hashtag groups \(groups.isEmpty ? "none" : groups.joined(separator: ", "))\(r.isDefault("hashtagSetIds") ? " (default)" : "") · extra \(r.extraHashtags.isEmpty ? "none" : r.extraHashtags.joined(separator: " "))")
@@ -776,6 +785,24 @@ func run() throws -> Int32 {
     let n = try actions.repost(videoId: v.id, platform: try platform(try arg(1, "platform")))
     wrote = true
     print("repost v\(n.versionNo) on \(n.platform.displayName) · \(fmt(n.scheduledAt, settings))")
+  case "repost-ready":
+    if flag("--list") {
+      let map = try store.repostReadyVersions()
+      let vids = try map.keys.compactMap { try store.video(id: $0) }.sorted { ($0.sessionId, $0.part ?? 0, $0.start ?? 0, $0.name) < ($1.sessionId, $1.part ?? 0, $1.start ?? 0, $1.name) }
+      if flag("--json") {
+        struct Row: Encodable { var video_id: String; var display_name: String; var stage: String?; var versions: [Int] }
+        try printJSON(vids.map { Row(video_id: $0.id, display_name: $0.displayName, stage: ClipStage.of($0)?.rawValue, versions: map[$0.id] ?? []) })
+        return 0
+      }
+      for v in vids { print("  \(short(v.id))  \(pad(RepostReady.label(map[v.id] ?? []), 14))\(v.displayName)") }
+      print("  \(vids.count) clip(s) with a version ready to repost")
+      return 0
+    }
+    let v = try resolveVideo(store, try arg(0, "video id"))
+    let n = try option("--version").map { try intArg($0, "--version", 1...99) } ?? 1
+    let on = !flag("--off")
+    wrote = try store.setRepostReady(videoId: v.id, number: n, on)
+    print("\(v.tag) v\(n) \(on ? "ready to repost" : "not ready to repost")\(wrote ? "" : " (already)") · nothing queued or scheduled")
   case "longform-posted":
     let v = try resolveVideo(store, try arg(0, "video id"))
     try actions.markLongformPosted(videoId: v.id, url: try arg(1, "url"))

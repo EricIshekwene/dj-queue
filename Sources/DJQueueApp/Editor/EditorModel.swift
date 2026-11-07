@@ -1320,6 +1320,35 @@ final class EditorModel: ObservableObject {
     refreshOverlay()
   }
 
+  // MARK: Ready to repost (round 20)
+
+  /// Why "Ready to repost" can't change on this clip (nil = it can).
+  var repostReadyOff: String? {
+    if readOnly { return EditorView.readOnlyReason }
+    if video?.type == .long { return "Long-form is never reposted" }
+    return nil
+  }
+
+  func isRepostReady(_ n: Int) -> Bool { versions.first { $0.number == n }?.repostReady == true }
+
+  /// Marks version `n` ready for the repost cycle (or not). Only the flag: the clip's stage, Queue and schedule stay
+  /// as they are. Its own undo step.
+  func setRepostReady(_ n: Int, _ on: Bool) {
+    guard repostReadyOff == nil, video != nil, isRepostReady(n) != on else { return }
+    commitCaptionDraft()
+    var all = versions
+    let addsV1 = !all.contains { $0.number == 1 }
+    if addsV1 { all.insert(Version(number: 1), at: 0) }
+    guard let i = all.firstIndex(where: { $0.number == n }) else { return }
+    markUndo(coalesce: false)
+    all[i].repostReady = on ? true : nil
+    versions = all.sorted { $0.number < $1.number }
+    if addsV1 { pendingVersions.insert(1) }
+    pendingVersions.insert(n)
+    scheduleSave()
+    show(on ? "v\(n) is ready to repost. Nothing was queued or scheduled." : "v\(n) is no longer ready to repost")
+  }
+
   func deleteVersion(_ n: Int) {
     guard n > 1, !readOnly else { return }
     commitTimeDraft()
