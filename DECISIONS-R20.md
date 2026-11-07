@@ -10,8 +10,8 @@ captions, and the bulk UI says so.
    doesn't recompute the state. The ONLY way from Edit to Queue stays Send to Queue. Tests check stage, Queue flag, slots,
    posts and resolved versions on Edit, held, Queue and scheduled clips.
 3. **No preview or render churn.** The CLI keeps the version's `updated_at`; marking a v1 that was never saved writes a row
-   stamped 0, and preview stamps skip 0-stamped rows. Render hashes never read it. (A toggle in the editor saves through the
-   editor's normal path, so it refreshes list previews once; renders still don't change.)
+   stamped 0, and preview stamps skip 0-stamped rows. Render hashes never read it. The editor's switch writes through the
+   same call, and undoing only a toggle writes only the flags, so list previews don't redraw (the live check proves it).
 4. **Any version can be ready, v1 included.** A repost round may want to post the original again. Long-form is refused.
 5. **The repost round's inputs are ready-made, read-only:** `Store.nextRepostReadyVersion(videoId:platform:)` and
    `RepostReady.candidates` give the ready versions a platform hasn't had (a skipped post doesn't count as having had it).
@@ -32,3 +32,8 @@ captions, and the bulk UI says so.
 11. **The live check** (`repost-ready`) clicks the inspector row for real. The version list is a native popover, so the
     check shows it in a second backstage window as a stand-in; events don't reach that window, so its switches are pressed
     through their action. Said so in the log.
+12. **A version that follows a kept one is kept too.** Otherwise deleting the kept v2 later would hand v3 v1's new caption.
+    The cost: v3 then stops following v2's later caption edits. The pin doesn't show in the editor yet; a follow-up can show
+    "Keeps its own caption" with a way back to following v1.
+13. **An open editor keeps outside changes.** Its saves keep a `djq repost-ready` mark and a bulk caption pin made while it
+    was open, unless the editor changed those fields itself (`VersionMerge`).

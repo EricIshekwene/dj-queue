@@ -192,6 +192,17 @@ enum RepostReadyScript {
       check("one version: no Ready to repost row in the inspector", !has("Repost ready"))
       await shot("one-version")
 
+      // 1b. Undo of a mark on a clip whose v1 was never saved clears it again (review r2).
+      if ((try? store.versions(videoId: clip)) ?? []).isEmpty {
+        e.setRepostReady(1, true)
+        await wait(500)
+        check("v1 with no saved row: marked", ready() == [1])
+        await commandZ()
+        check("…⌘Z clears it in the store and the editor", ready().isEmpty && !e.isRepostReady(1))
+      } else {
+        note("clip already has a saved v1: the never-saved-v1 undo case isn't driven on this clip")
+      }
+
       // 2. A second version (stand-in: the model's New version; the list is a popover) shows the row, off.
       note("stand-in: New version through the model (the version list is a native popover)")
       e.newVersion(copying: 1)
