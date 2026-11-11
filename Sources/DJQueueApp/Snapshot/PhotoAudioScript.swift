@@ -346,7 +346,7 @@ enum PhotoAudioScript {
     check("Renderer.ensureRender makes an mp4 for it", rendered.0?.status == .done && rendered.0?.outputPath?.hasSuffix(".mp4") == true && rendered.0?.morePaths == nil)
     check("1080×1920 H.264 with an audio stream, 6 s long", rendered.1.map { $0.width == 1080 && $0.height == 1920 && $0.videoCodec == "h264" && $0.hasAudio
           && abs($0.duration - 6) < 0.15 } == true)
-    if let path = rendered.0?.outputPath, let frame = Media.frame(URL(fileURLWithPath: path), at: 2, maxSize: CGSize(width: 540, height: 960)) {
+    if let path = rendered.0?.outputPath, let frame = Media.frame(URL(fileURLWithPath: path), at: 2, maxSize: CGSize(width: 1080, height: 1920)) {
       try? Media.writePNG(frame, to: out.appendingPathComponent("render-frame-whole-at-2s-\(look).png"))
       note("shot render-frame-whole-at-2s-\(look).png (a frame of the rendered post: the whole photo over its blurred copy, with the timed text)")
       // The photo is a landscape frame, so it sits across the middle; above and below it is its blurred, darkened copy.
