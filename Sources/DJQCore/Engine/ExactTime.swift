@@ -242,23 +242,13 @@ extension Planner {
       throw EngineError("Already posted on \(p.platform.displayName) — it can't take a set time")
     }
     let v = try readyVideo(videoId, scheduled: !old.isEmpty)
+    try refuseSharedCard(videoId: videoId, leaving: old)
     try refuseTooLate(videoId: videoId)
-    // Its own in-flight posts, wherever they sit: a new id forgets a final Postiz job, so one of those stays put.
+    // A new id forgets a final Postiz job, so a post Eric removed there stays put.
     for p in try inFlight(videoId) where try store.finalPostizJob(postId: p.id) != nil {
       throw EngineError("\(v.displayName) has a post you removed from Postiz")
     }
-    for s in old {
-      // With a per-platform sort the card also holds another clip's post. That clip loses nothing: its post keeps its
-      // id, time and Postiz copy and only leaves the card (`Store.cardlessPosition` keeps its place in the `Placer`).
-      for var p in try store.slotPosts(s.id) where p.videoId != videoId && p.kind == .regular && !p.state.isTerminal {
-        p.planSlotId = nil
-        try store.save(p, note: "its card left the day: \(v.tag) took a set time")
-      }
-      try dropSlot(s)
-    }
-    // And its own posts on other clips' cards (the same per-platform sort) go too, so every platform is free for the
-    // set time. Without this that platform would stay on its regular day.
-    for p in try inFlight(videoId) where p.kind == .regular { try store.deletePost(p.id) }
+    for s in old { try dropSlot(s) }
     let day = dm.key(at)
     let week = dm.weekStart(of: dm.date(day))
     try approve(week: week, at: store.clock.now)
@@ -274,6 +264,24 @@ extension Planner {
     return (slot, old, true)
   }
 
+  /// When a platform has its own order, a day's card can carry another clip's post and the item's own post can sit on
+  /// another clip's card. Taking the item off its regular day would then delete or strand a post of another clip, or
+  /// leave that platform of the item on its regular day. Nothing is detached, deleted or guessed: it is refused, and
+  /// Back to Edit (which takes the whole day off, as it always did) is the way out. An item still in the Queue has no
+  /// card, and a set-time slot only ever holds its own clip's posts, so neither can be in this state.
+  private func refuseSharedCard(videoId: String, leaving old: [PlanSlot]) throws {
+    for s in old where !s.isExact {
+      if let p = try store.slotPosts(s.id).first(where: { $0.videoId != videoId && !$0.state.isTerminal }) {
+        throw EngineError(StageWording.sharedCard(p.platform))
+      }
+    }
+    for p in try inFlight(videoId) where p.kind == .regular {
+      if let s = try p.planSlotId.flatMap({ try store.planSlot(id: $0) }), s.videoId != videoId {
+        throw EngineError(StageWording.sharedCard(p.platform))
+      }
+    }
+  }
+
   /// The item's regular posts and retries that haven't gone out or ended.
   private func inFlight(_ videoId: String) throws -> [PlatformPost] {
     try store.posts(where: "video_id=? AND kind IN ('regular','retry')", [videoId]).filter { !$0.state.isTerminal }
@@ -284,14 +292,29 @@ extension Planner {
   /// while every screen showed the new one. So a copy that goes out within `exactLead` refuses the change, the way the
   /// relay, `setSlot` and a swap leave a post that is about to go out. A post Postiz doesn't hold can always change.
   func refuseTooLate(videoId: String) throws {
-    let now = store.clock.now
     for p in try inFlight(videoId) {
-      guard let job = try store.livePostizJob(postId: p.id) else { continue }
-      let goes = min(p.scheduledAt, job.remoteDate)
-      if goes <= now.addingTimeInterval(Self.exactLead) {
-        throw EngineError(StageWording.tooLateToChange(p.platform, seconds: goes.timeIntervalSince(now)))
-      }
+      if let why = try tooLate(p, to: "change") { throw EngineError(why) }
     }
+  }
+
+  /// The one test `refuseTooLate` and the undo of a set-time batch share: Postiz holds a copy of `p` that goes out
+  /// within `exactLead`. nil = it can still be taken back.
+  func tooLate(_ p: PlatformPost, to verb: String) throws -> String? {
+    guard !p.state.isTerminal, let job = try store.livePostizJob(postId: p.id) else { return nil }
+    let now = store.clock.now
+    let goes = min(p.scheduledAt, job.remoteDate)
+    return goes <= now.addingTimeInterval(Self.exactLead)
+      ? StageWording.tooLateToChange(p.platform, seconds: goes.timeIntervalSince(now), to: verb) : nil
+  }
+
+  /// What still goes out by itself after "Use the regular schedule": a retry on its way keeps its own time, and so does
+  /// one still to be made. For the note: "TikTok's retry still goes out Fri 6 Nov 10:00 AM".
+  func retriesLeft(videoId: String) throws -> [(platform: Platform, at: Date)] {
+    var out = try inFlight(videoId).filter { $0.kind == .retry }.map { (platform: $0.platform, at: $0.scheduledAt) }
+    for f in try store.posts(where: "video_id=? AND state='failed' AND resolution IS NULL", [videoId]) where try store.retryIsComing(f) {
+      if let at = try store.autoRetries(f).nextRetryAt { out.append((f.platform, at)) }
+    }
+    return out.sorted { $0.platform < $1.platform }
   }
 
   /// A platform that failed keeps one lineage: a retry on its way (the engine's own, or Eric's Fixed) moves to the set

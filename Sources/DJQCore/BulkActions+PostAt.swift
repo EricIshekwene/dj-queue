@@ -41,12 +41,14 @@ extension BulkActions {
   public func clearExact(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
     let planner = Planner(store: store)
     var moves: [String: StageMove] = [:]
-    var r = try run(Self.clearExactAction, ids: ids, dryRun: dryRun, plan: true) { _, v, _ in
+    var r = try run(Self.clearExactAction, ids: ids, dryRun: dryRun, plan: true) { _, v, s in
       guard try planner.exactSlot(videoId: v.id) != nil else { return .skipped(StageWording.noSetTime) }
       let from = ClipStage.of(v) ?? .scheduled
       try planner.clearExact(videoId: v.id)
       let to = try store.video(id: v.id).flatMap(ClipStage.of) ?? .queue
-      moves[v.id] = StageMove(from: from, to: to, note: StageWording.regularSchedule)
+      // A retry on its way keeps its own time, and the note says so (it reads the same in a dry run).
+      let stays = try planner.retriesLeft(videoId: v.id).map { StageWording.retryStays($0.platform, at: $0.at, settings: s) }
+      moves[v.id] = StageMove(from: from, to: to, note: ([StageWording.regularSchedule] + stays).joined(separator: " · "))
       return .changed
     }
     r.moves = moves.filter { r.changed.contains($0.key) }
@@ -58,6 +60,20 @@ extension BulkActions {
   /// left out; and `blocker` when it can't be set. Runs the real thing in a transaction that is rolled back.
   public func postAtPreview(_ id: String, at: Date) throws -> Planner.ExactPreview {
     try Planner(store: store).postAtPreview(videoId: id, at: at) { v, s in try self.openDoor(v, s) }
+  }
+
+  /// The undo of a set-time batch deletes or re-times posts, and from `PostizService.safety` before its time Postiz
+  /// keeps the copy it has: the undo would show the old plan while Postiz sent the set time. So it is refused while a
+  /// post it would delete or re-time has a copy going out within `Planner.exactLead` (`Planner.tooLate`, the test
+  /// `postAt`, `clearExact` and a move use). nil = the undo can go ahead.
+  func tooLateToUndo(_ action: String, before: PlanSnap, current: PlanSnap) throws -> String? {
+    guard [Self.postAtAction, Self.clearExactAction].contains(action) else { return nil }
+    let planner = Planner(store: store)
+    let was = Dictionary(before.posts.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    for p in current.posts where was[p.id]?.scheduledAt != p.scheduledAt {
+      if let why = try planner.tooLate(p, to: "undo") { return why }
+    }
+    return nil
   }
 
   /// What has to be true before the planner sets a time. An item in the Queue or scheduled passes as it is. An item in

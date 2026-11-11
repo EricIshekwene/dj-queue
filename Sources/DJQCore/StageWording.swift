@@ -174,10 +174,20 @@ public enum StageWording {
 
   /// Why a time can't be changed or cleared: Postiz holds a copy that is about to go out and keeps it from here on.
   /// "Facebook goes out in 3 minutes — too late to change".
-  public static func tooLateToChange(_ p: Platform, seconds: TimeInterval) -> String {
+  /// `verb`: "change", or "undo" for the undo of a set-time batch.
+  public static func tooLateToChange(_ p: Platform, seconds: TimeInterval, to verb: String = "change") -> String {
     let m = Int((seconds / 60).rounded(.up))
-    return m <= 0 ? "\(p.displayName) is going out now — too late to change"
-      : "\(p.displayName) goes out in \(m) minute\(m == 1 ? "" : "s") — too late to change"
+    return m <= 0 ? "\(p.displayName) is going out now — too late to \(verb)"
+      : "\(p.displayName) goes out in \(m) minute\(m == 1 ? "" : "s") — too late to \(verb)"
+  }
+  /// Why a scheduled item can't take a set time: a platform with its own order put another clip's post on its day's
+  /// card, or its own post on another clip's card. Back to Edit takes the day off; then the time can be set.
+  public static func sharedCard(_ p: Platform) -> String {
+    "\(p.displayName) has its own order, so this day is shared with another clip. Send it back to Edit, then set the time."
+  }
+  /// After "Use the regular schedule": "TikTok's retry still goes out Fri 6 Nov 10:00 AM".
+  public static func retryStays(_ p: Platform, at: Date, settings s: Settings) -> String {
+    "\(p.displayName)'s retry still goes out \(Sched.shortTime(at, s))"
   }
   /// A clock time the day doesn't have: "2:30 AM doesn't exist on Sun 14 Mar: the clocks go forward that night".
   public static func noSuchTime(minutes: Int, day: String, settings s: Settings) -> String {

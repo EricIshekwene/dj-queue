@@ -37,11 +37,12 @@ enum PostAtCommand {
       let r = try bulk.clearExact([v.id], dryRun: dry)
       wrote = !dry && !r.changed.isEmpty
       let why = r.skipped[v.id]
+      let note = r.moves?[v.id]?.note ?? StageWording.regularSchedule  // says when a retry keeps its own time
       let out = Out(dryRun: dry, changed: wrote, batchId: r.batchId, exactAt: try Planner(store: store).exactSlot(videoId: v.id)?.exactAt,
-                    plan: nil, note: why ?? StageWording.regularSchedule)
+                    plan: nil, note: why ?? note)
       if json { try printJSON(out); return why == nil ? 0 : 2 }
       if let why { print("\(v.tag): \(why)"); return 2 }
-      print("\(dry ? "[dry run] " : "")\(v.tag): \(StageWording.regularSchedule) (it gets the next open day)")
+      print("\(dry ? "[dry run] " : "")\(v.tag): \(note) (it gets the next open day)")
       if let b = r.batchId { print("  undo: djq bulk undo \(short(b))") }
       return 0
     }

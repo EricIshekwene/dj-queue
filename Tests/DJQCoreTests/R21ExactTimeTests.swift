@@ -38,6 +38,13 @@ enum ExactRig {
       .filter { !seen.insert("\($0.videoId)#\($0.platform.rawValue)").inserted }.map { "\($0.videoId) twice on \($0.platform.rawValue)" }
   }
 
+  /// Live regular posts with no card: nothing in round 21 may leave one behind.
+  static func cardless(_ f: Fixture) throws -> [String] {
+    let slots = Set(try f.store.planSlots().map(\.id))
+    return try f.store.posts(where: "kind='regular'").filter { !$0.state.isTerminal && !slots.contains($0.planSlotId ?? "") }
+      .map { "\($0.videoId) \($0.platform.rawValue)" }
+  }
+
   static func message(_ body: () throws -> Void) -> String? {
     do { try body(); return nil } catch { return "\(error)" }
   }
@@ -100,7 +107,7 @@ enum ExactRig {
     #expect(try planner.autoSchedule().scheduled == 1)
     #expect(try R.layout(f).contains("2026-11-03#0 clip-4"))
     #expect(try R.others(f, except: "clip-1", "clip-4") == before)
-    #expect(try R.twice(f).isEmpty && f.doublePosts().isEmpty)
+    #expect(try R.twice(f).isEmpty && f.doublePosts().isEmpty && R.cardless(f).isEmpty)
   }
 
   @Test func aFullDayStillTakesASetTimeAndItsClipsStay() throws {
@@ -192,7 +199,7 @@ enum ExactRig {
     try planner.autoSchedule()  // TikTok's own order goes on for the regular days, without clip-0
     #expect(try f.store.posts(where: "video_id='clip-0'").map(\.id).sorted() == own.map(\.id).sorted())
     #expect(try f.store.posts(where: "plan_slot_id=?", [own[0].planSlotId]).allSatisfy { $0.videoId == "clip-0" })
-    #expect(try R.twice(f).isEmpty && f.doublePosts().isEmpty)
+    #expect(try R.twice(f).isEmpty && f.doublePosts().isEmpty && R.cardless(f).isEmpty)
   }
 
   @Test func twoSetTimeItemsShareADayAndAMinute() throws {

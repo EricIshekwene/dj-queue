@@ -267,7 +267,7 @@ import Testing
     try planner.postToday(videoId: "clip-3")
     #expect(try R.layout(f) == ["2026-11-02#0 clip-3", "2026-11-03#0 clip-2", "2026-11-03#100 clip-1", "2026-11-05#0 clip-0"])
     #expect(try face(f, "clip-1") == face1)
-    #expect(try f.doublePosts().isEmpty && R.twice(f).isEmpty)
+    #expect(try f.doublePosts().isEmpty && R.twice(f).isEmpty && R.cardless(f).isEmpty)
   }
 
   // MARK: The week seams
@@ -440,7 +440,7 @@ import Testing
     #expect(!day.isExact && day.position == 0)
     d = try dates(rig, "clip-2")
     #expect(d.count == 6 && d["ch-tiktok"] == rig.f.at(day.date, "19:00"))
-    #expect(try rig.invariants().isEmpty)
+    #expect(try rig.invariants().isEmpty && R.cardless(rig.f).isEmpty)
   }
 
   @Test func aPostEricDeletedInPostizIsNeverSentBackBySettingATime() throws {

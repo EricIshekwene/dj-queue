@@ -2,103 +2,95 @@ import Foundation
 import Testing
 @testable import DJQCore
 
-/// Round 21, the fixes from the review of "Post at a set time": a per-platform sort (M1), a retry on its way (M2), a
-/// Postiz copy about to go out (M3), push and retries (m1), one channel and one minute (m2), the unchanged time inside
-/// the lead (m3) and the hour the clocks skip (m4).
+/// Round 21, the fixes from the two reviews of "Post at a set time": a day shared through a per-platform sort is refused
+/// (M1), a retry on its way (M2), a Postiz copy about to go out (M3) and its undo (N2), push and retries (m1), one
+/// channel and one minute (m2), the unchanged time inside the lead (m3), the hour the clocks skip (m4) and the retry
+/// "Use the regular schedule" leaves (N4).
 @Suite struct R21ExactTimeReviewTests {
   typealias R = ExactRig
   typealias Rig = R6PostizLifecycleTests.Rig
 
-  /// Every post that isn't one of `videos`': id → "clip platform time state". The card it sits on is left out.
-  func times(_ f: Fixture, except videos: String...) throws -> [String: String] {
-    Dictionary(uniqueKeysWithValues: try f.store.posts().filter { !videos.contains($0.videoId) }.map {
-      ($0.id, "\($0.videoId) \($0.platform.rawValue) \($0.scheduledAt.timeIntervalSince1970) \($0.state.rawValue)")
-    })
-  }
-
-  /// Live regular posts that share a platform and a minute.
-  func sameMinute(_ f: Fixture) throws -> [String] {
-    var seen = Set<String>()
-    return try f.store.posts(where: "kind='regular'").filter { !$0.state.isTerminal }
-      .map { "\($0.platform.rawValue) \(Int($0.scheduledAt.timeIntervalSince1970 / 60))" }.filter { !seen.insert($0).inserted }
-  }
-
   func slot(_ f: Fixture, _ video: String) throws -> PlanSlot { try #require(try f.store.planSlots(where: "video_id=?", [video]).first) }
 
-  // MARK: M1 — a per-platform sort
+  // MARK: M1 — a per-platform sort (second review: refused, nothing detached or guessed)
 
-  @Test func withAPerPlatformSortEveryPlatformGoesToTheSetTimeAndNoOtherClipLosesAPost() throws {
+  /// TikTok runs best first, four clips scheduled Monday to Thursday: clip-0's Monday card carries clip-3's TikTok post,
+  /// and clip-0's own TikTok post sits on clip-3's Thursday card.
+  func shared() throws -> (Fixture, mine: PlatformPost, theirs: PlatformPost) {
     let f = try Fixture.engine(5, ready: 4)
     try f.updateSettings { $0.sortOverrides[.tiktok] = .bestFirst }
-    let planner = Planner(store: f.store)
-    try planner.autoSchedule()
-    // TikTok runs best first: clip-0's TikTok post sits on clip-3's Thursday card, and clip-3's on clip-0's Monday card.
+    try Planner(store: f.store).autoSchedule()
     let mine = try #require(try f.store.posts(where: "video_id='clip-0' AND platform='tiktok'").first)
     let theirs = try #require(try f.store.posts(where: "video_id='clip-3' AND platform='tiktok'").first)
-    #expect(mine.scheduledAt == f.at("2026-11-05", "19:00") && theirs.scheduledAt == f.at("2026-11-02", "19:00"))
     #expect(try theirs.planSlotId == slot(f, "clip-0").id && mine.planSlotId == slot(f, "clip-3").id)
-    let before = try times(f, except: "clip-0")
-    let at = f.at("2026-11-14", "15:15")
-    let preview = try planner.postAtPreview(videoId: "clip-0", at: at)
-    #expect(preview.platforms.count == 6 && preview.skipped.isEmpty && preview.blocker == nil)
-    let set = try planner.postAt(videoId: "clip-0", at: at)
-    // Six posts at the set time, all its own.
-    let own = try f.store.posts(where: "video_id='clip-0'")
-    #expect(own.count == 6 && Set(own.map(\.platform)).count == 6)
-    #expect(own.allSatisfy { $0.scheduledAt == at && $0.planSlotId == set.id && $0.state == .planned })
-    #expect(try f.store.posts(where: "plan_slot_id=?", [set.id]).allSatisfy { $0.videoId == "clip-0" })
-    // No other clip lost or moved a post: clip-3's TikTok is the same post at the same time, off the card that left.
-    #expect(try times(f, except: "clip-0") == before)
-    #expect(try f.store.post(id: theirs.id)?.planSlotId == nil)
-    #expect(try f.store.video(id: "clip-3")?.state == .planned)
-    // It still holds TikTok's Monday; the place clip-0's TikTok left on Thursday is free.
-    let placer = try Placer(store: f.store, dm: f.dm)
-    #expect(placer.isTaken(.tiktok, day: "2026-11-02", position: 0) && !placer.isTaken(.tiktok, day: "2026-11-05", position: 0))
-    // The open Monday is filled from the Queue; its TikTok goes to the free Thursday, never onto Monday's minute.
-    #expect(try planner.autoSchedule().scheduled == 0)
-    try f.makeReady("clip-4", score: 50)
-    #expect(try planner.autoSchedule().scheduled == 1)
-    #expect(try slot(f, "clip-4").date == "2026-11-02")
-    #expect(try f.post(.tiktok, day: "2026-11-05", video: "clip-4") != nil)
-    #expect(try times(f, except: "clip-0", "clip-4") == before)
-    #expect(try sameMinute(f).isEmpty && R.twice(f).isEmpty)
+    return (f, mine, theirs)
   }
 
-  @Test func aPostThatLostItsCardKeepsItsPositionWithTwoADay() throws {
-    let f = try Fixture.engine(4)
-    try f.updateSettings { $0.postsPerDay = 2; $0.sortOverrides[.tiktok] = .bestFirst }
-    let planner = Planner(store: f.store)
-    try planner.autoSchedule()
-    // clip-1's card (Monday, second place) holds clip-2's TikTok at 10 pm; clip-1's own TikTok is on clip-2's card.
-    let theirs = try #require(try f.store.posts(where: "video_id='clip-2' AND platform='tiktok'").first)
-    #expect(try theirs.scheduledAt == f.at("2026-11-02", "22:00") && theirs.planSlotId == slot(f, "clip-1").id)
-    let before = try times(f, except: "clip-1")
+  static let sharedWords = "TikTok has its own order, so this day is shared with another clip. Send it back to Edit, then set the time."
+
+  /// Refused by every door, and the plan is exactly as it was.
+  func expectRefused(_ f: Fixture, _ id: String, _ c: SourceLocation = #_sourceLocation) throws {
+    let plan = try R.plan(f), events = try f.store.events().count
     let at = f.at("2026-11-14", "15:15")
-    try planner.postAt(videoId: "clip-1", at: at)
-    #expect(try f.store.posts(where: "video_id='clip-1'").count == 6)
-    #expect(try f.store.posts(where: "video_id='clip-1'").allSatisfy { $0.scheduledAt == at })
-    #expect(try times(f, except: "clip-1") == before)
-    let kept = try #require(try f.store.post(id: theirs.id))
-    #expect(try kept.planSlotId == nil && f.store.position(of: kept) == 1 && f.store.planDay(of: kept, dm: f.dm) == "2026-11-02")
-    let placer = try Placer(store: f.store, dm: f.dm)
-    #expect(placer.isTaken(.tiktok, day: "2026-11-02", position: 1) && placer.isTaken(.tiktok, day: "2026-11-02", position: 0))
-    #expect(!placer.isTaken(.tiktok, day: "2026-11-03", position: 0))  // where clip-1's TikTok was
-    // A slot-time change still finds it at its position.
-    try PostActions(store: f.store).setSlot(.tiktok, minutes: 18 * 60)
-    #expect(try f.store.post(id: theirs.id)?.scheduledAt == f.at("2026-11-02", "21:00"))
-    #expect(try sameMinute(f).isEmpty && R.twice(f).isEmpty)
+    let planner = Planner(store: f.store), bulk = BulkActions(store: f.store)
+    #expect(throws: EngineError(Self.sharedWords), sourceLocation: c) { try planner.postAt(videoId: id, at: at) }
+    #expect(try planner.postAtPreview(videoId: id, at: at).blocker == Self.sharedWords, sourceLocation: c)
+    #expect(try bulk.postAtPreview(id, at: at).blocker == Self.sharedWords, sourceLocation: c)
+    let r = try bulk.postAt([id], at: at)
+    #expect(r.changed.isEmpty && r.batchId == nil && r.skipped[id] == Self.sharedWords, sourceLocation: c)
+    #expect(try R.plan(f) == plan && f.store.events().count == events && R.cardless(f).isEmpty, sourceLocation: c)
   }
 
-  @Test func undoPutsTheOtherClipsPostBackOnItsCard() throws {
-    let f = try Fixture.engine(4)
-    try f.updateSettings { $0.sortOverrides[.tiktok] = .bestFirst }
-    try Planner(store: f.store).autoSchedule()
-    let plan = try R.plan(f)
+  @Test func aScheduledItemOnASharedDayIsRefusedAndNothingChanges() throws {
+    let (f, _, _) = try shared()
+    try expectRefused(f, "clip-0")
+    try expectRefused(f, "clip-3")
+  }
+
+  @Test func anotherClipsPostOnItsCardAloneRefusesIt() throws {
+    let (f, mine, theirs) = try shared()
+    try PostActions(store: f.store).skip(postId: mine.id)  // its own TikTok post is done with; clip-3's is still on its card
+    #expect(try f.store.post(id: theirs.id)?.state.isTerminal == false)
+    try expectRefused(f, "clip-0")
+  }
+
+  @Test func itsOwnPostOnAnotherClipsCardAloneRefusesIt() throws {
+    let (f, mine, theirs) = try shared()
+    try PostActions(store: f.store).skip(postId: theirs.id)  // nothing live of another clip on its card any more
+    #expect(try f.store.post(id: mine.id)?.state.isTerminal == false)
+    try expectRefused(f, "clip-0")
+  }
+
+  @Test func backToEditIsTheWayOutAndAQueueItemTakesASetTimeAsBefore() throws {
+    let (f, _, _) = try shared()
     let bulk = BulkActions(store: f.store)
-    let r = try bulk.postAt(["clip-0"], at: f.at("2026-11-14", "15:15"))
-    #expect(r.changed == ["clip-0"])
-    try bulk.undo(try #require(r.batchId))
-    #expect(try R.plan(f) == plan)
+    let at = f.at("2026-11-14", "15:15")
+    // The way the blocker names: Back to Edit takes the day off (as it always did), then the time can be set.
+    #expect(try bulk.back(["clip-0"]).changed == ["clip-0"])
+    let r = try bulk.postAt(["clip-0"], at: at)
+    #expect(r.changed == ["clip-0"] && r.moves?["clip-0"]?.from == .edit)
+    let own = try f.store.posts(where: "video_id='clip-0'").filter { !$0.state.isTerminal }
+    #expect(own.count == 6 && Set(own.map(\.platform)).count == 6 && own.allSatisfy { $0.scheduledAt == at })
+    // An item still in the Queue has no card: its own clip on every platform, no picker.
+    try f.makeReady("clip-4", score: 50)
+    let slot = try Planner(store: f.store).postAt(videoId: "clip-4", at: at)
+    let queued = try f.store.posts(where: "plan_slot_id=?", [slot.id])
+    #expect(queued.count == 6 && queued.allSatisfy { $0.videoId == "clip-4" && $0.scheduledAt == at })
+    // And a set time never carries another clip's post, so changing or clearing it isn't touched by the rule.
+    try Planner(store: f.store).autoSchedule()
+    #expect(try bulk.postAt(["clip-4"], at: f.at("2026-11-15", "15:15")).changed == ["clip-4"])
+    #expect(try bulk.clearExact(["clip-4"]).changed == ["clip-4"])
+    #expect(try R.cardless(f).isEmpty && R.twice(f).isEmpty)
+  }
+
+  @Test func aScheduledClipWithNoSharedCardStillTakesASetTime() throws {
+    let f = try Fixture.engine(4)
+    try f.updateSettings { $0.sortOverrides[.tiktok] = .worstFirst }  // an override equal to the main order shares nothing
+    try Planner(store: f.store).autoSchedule()
+    let at = f.at("2026-11-14", "15:15")
+    #expect(try BulkActions(store: f.store).postAt(["clip-1"], at: at).changed == ["clip-1"])
+    #expect(try f.store.posts(where: "video_id='clip-1'").count == 6 && f.store.posts(where: "video_id='clip-1'").allSatisfy { $0.scheduledAt == at })
+    #expect(try R.cardless(f).isEmpty)
   }
 
   // MARK: M2 — a retry on its way
@@ -127,9 +119,17 @@ import Testing
     try planner.move(slotId: slot.id, to: "2026-11-10")
     #expect(try f.store.post(id: retry.id)?.scheduledAt == f.at("2026-11-10", "12:00"))
     #expect(try f.store.posts(where: "video_id='clip-0'").filter { !$0.state.isTerminal }.allSatisfy { $0.scheduledAt == f.at("2026-11-10", "12:00") })
-    try planner.clearExact(videoId: "clip-0")
+    // "Use the regular schedule" says so: in the dry run, in the note, and the retry is still there afterwards.
+    let bulk = BulkActions(store: f.store)
+    let words = "Back on the regular schedule · TikTok's retry still goes out Tue 10 Nov 12:00 PM"
+    #expect(try bulk.clearExact(["clip-0"], dryRun: true).moves?["clip-0"]?.note == words)
+    #expect(try bulk.clearExact(["clip-0"]).moves?["clip-0"]?.note == words)
     let left = try #require(try f.store.post(id: retry.id))
     #expect(left.state == .planned && left.scheduledAt == f.at("2026-11-10", "12:00") && left.planSlotId == nil)
+    #expect(try R.cardless(f).isEmpty)  // a retry is no regular post; every live regular post has its card
+    // With nothing left over the note is the plain one.
+    try planner.postAt(videoId: "clip-1", at: to)
+    #expect(try bulk.clearExact(["clip-1"]).moves?["clip-1"]?.note == "Back on the regular schedule")
   }
 
   /// The reviewer's case: TikTok failed in Postiz and its automatic retry is queued when Eric picks a new time.
@@ -243,6 +243,39 @@ import Testing
     manual.setTime("2026-11-02", "12:22")
     try Planner(store: manual.store).clearExact(videoId: "clip-0")
     #expect(try manual.store.planSlots().isEmpty)
+  }
+
+  // MARK: N2 — undo in the last minutes
+
+  @Test func undoIsRefusedWhilePostizSendsTheSetTimeWithinTenMinutes() throws {
+    let rig = try Rig(2, approve: false)
+    rig.engine.autoSchedules = true
+    rig.settle()  // clip-0 has Monday on the regular schedule
+    let bulk = BulkActions(store: rig.store)
+    let at = rig.f.at("2026-11-02", "09:20")
+    let set = try bulk.postAt(["clip-0"], at: at)
+    rig.settle()
+    #expect(try R21ExactTimePostizTests().dates(rig, "clip-0").values.allSatisfy { $0 == at })
+    rig.f.setTime("2026-11-02", "09:17")
+    let plan = try R.plan(rig.f)
+    let batch = try #require(set.batchId)
+    #expect(R.message { try bulk.undo(batch) }?.hasSuffix("goes out in 3 minutes — too late to undo") == true)
+    #expect(R.message { try bulk.undo(batch, force: true) }?.hasSuffix("too late to undo") == true)  // force can't call it back either
+    #expect(try R.plan(rig.f) == plan && bulk.batch(id: batch)?.undoneAt == nil)
+    // With more than ten minutes to go the undo goes through and Postiz follows.
+    let early = try Rig(2, approve: false)
+    early.engine.autoSchedules = true
+    early.settle()
+    let regular = try R.plan(early.f)
+    let b = BulkActions(store: early.store)
+    let made = try b.postAt(["clip-0"], at: early.f.at("2026-11-02", "09:20"))
+    early.settle()
+    early.f.setTime("2026-11-02", "09:05")
+    try b.undo(try #require(made.batchId))
+    #expect(try R.plan(early.f) == regular)
+    early.settle()
+    #expect(try R21ExactTimePostizTests().dates(early, "clip-0")["ch-facebook"] == early.f.at("2026-11-02", "12:30"))
+    #expect(try early.invariants().isEmpty && R.cardless(early.f).isEmpty)
   }
 
   // MARK: m1 — push and Post today
