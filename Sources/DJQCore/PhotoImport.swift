@@ -145,7 +145,7 @@ public final class PhotoImport: @unchecked Sendable {
       throw EngineError("Reorder needs every photo of \(v.name) once")
     }
     guard ids != cur.map(\.id) else { return Change(video: v, batchId: nil) }
-    let byId = Dictionary(uniqueKeysWithValues: cur.map { ($0.id, $0) })
+    let byId = Dictionary(cur.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     return try change("photo-reorder", v.id, journal: journal) { _ in ids.compactMap { byId[$0] } }
   }
 
@@ -232,8 +232,10 @@ public final class PhotoImport: @unchecked Sendable {
     try fm.createDirectory(at: dir, withIntermediateDirectories: true)
     var items: [(item: PhotoItem, source: URL)] = [], skipped: [Skipped] = []
     var n = first
+    var taken = Set((try store.video(id: postId)?.photos ?? []).map(\.id))
     for src in files {
-      let pid = PhotoItem.newId()
+      var pid = PhotoItem.newId()
+      while !taken.insert(pid).inserted { pid = PhotoItem.newId() }  // ids are the keys of `Edit.photoCrops`
       let name = String(format: "%02d-%@.%@", n, pid, src.pathExtension.lowercased())
       let dest = dir.appendingPathComponent(name)
       do {

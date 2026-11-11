@@ -130,5 +130,5 @@ template is empty for a photo post. *Why:* "Photos" is a storage folder, not a n
 - **Agents' `djq photo add` sets `title_source: "agent"`**, the app's import `"app"`.
 - **`renders.more_paths` is stored with plain slashes** (`JSONCoding.pathList`), and `scripts/live-checks.sh` now also rewrites and checks
   the JSON-escaped form of the real root. *Why:* the live checks run on a copy of Eric's database with every stored path pointed at the
-  dev root by text replacement; an escaped path ("\\/Users\\/…") slipped through both the replacement and its check, and the scratch
+  dev root by text replacement; an escaped path (`\/a\/b`) slipped through both the replacement and its check, and the scratch
   engine would then have moved or deleted Eric's real rendered photos.

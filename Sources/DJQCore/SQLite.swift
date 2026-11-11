@@ -71,7 +71,7 @@ public enum JSONCoding {
     d.dateDecodingStrategy = .secondsSince1970
     return d
   }()
-  /// A list of absolute paths as stored JSON, with its slashes as written ("/Users/…", never "\/Users\/…"). A dev copy
+  /// A list of absolute paths as stored JSON, with its slashes as written ("/a/b", never "\/a\/b"). A dev copy
   /// of the database has every stored path pointed at the dev root by plain text replacement (`scripts/live-checks.sh`),
   /// and an escaped path would slip through it and still name the real file.
   public static func pathList(_ paths: [String]) -> String {

@@ -4,6 +4,9 @@ import Foundation
 /// `djq photo …` (round 21): make photo posts and list them. A photo post lands in Edit; nothing here sends anything
 /// to the Queue (that is Eric's Send to Queue, `djq requeue`, on Eric's word only).
 enum PhotoCommand {
+  /// The command word (`djq photo …`).
+  static let name = "photo"
+
   static let usage = """
     usage: djq photo <command>
 

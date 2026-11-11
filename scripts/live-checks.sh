@@ -41,7 +41,7 @@ cp "$seed[1]" "$SEED_DB"
 # The database stores absolute paths. Point every one at the dev root, or checks would open the real footage.
 REAL_ROOT="$HOME/Movies/DJ Video"
 DEV_ROOT="$DEV/DJ Video"
-# A JSON column can hold the same paths with escaped slashes ("\/Users\/…"): that form is rewritten and checked too.
+# A JSON column can hold the same paths with escaped slashes ("\/a\/b"): that form is rewritten and checked too.
 REAL_JSON="${REAL_ROOT//\//\\/}"
 DEV_JSON="${DEV_ROOT//\//\\/}"
 columns=("${(@f)$(sqlite3 "$SEED_DB" "SELECT m.name || '.' || p.name FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND p.type LIKE '%TEXT%'")}")

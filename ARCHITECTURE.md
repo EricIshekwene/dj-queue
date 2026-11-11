@@ -264,7 +264,8 @@ back to the Title only (`Captions.setValue`, `tagValue`, `textValue`). Bulk crop
 
 **Text on photos (D7).** Same `Version` fields and `TextLayer`s. A window is in photo units: photo *i* (0-based) is [*i*, *i*+1) and a text
 shows on it when `PreviewKeys.layerWindows(version, trimDuration: count)` overlaps that (`PhotoRules.shows`, `layers(_:onPhoto:of:)`).
-"Photos 2–4" is `start 1, end 4` (`PhotoRules.window(fromPhoto:toPhoto:)`); no window = every photo.
+"Photos 2–4" is `start 1, end 4` (`PhotoRules.window(fromPhoto:toPhoto:)`); no window = every photo. A window names positions, not photos:
+after a reorder or a removal the text stays on photos 2–4, whichever photos those now are.
 
 **Render (D6).** `PhotoRenderer` (`Render/PhotoRenderer.swift`): `load` reads a photo upright through ImageIO, `compose` cuts the crop with
 `Media.pixelCrop`, scales into the size with high interpolation on an opaque sRGB canvas and draws `TextOverlay.image(for: layers, aspect:)`.

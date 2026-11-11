@@ -127,6 +127,25 @@ import Testing
     #expect(ids.isDisjoint(with: ["photos.missing", "files.missing", "files.untracked", "files.duration", "plan.notReady", "renders.failed", "manifest.parse"]), "\(ids)")
   }
 
+  @Test func textAndTimedTextsWorkOnAPhotoPostFromTheCommandLine() throws {
+    let env = try Env(clips: 0)
+    let files = env.f.pictures(["t1.jpg", "t2.jpg", "t3.jpg"])
+    let added = try env.json("photo", "add", files[0].path, files[1].path, files[2].path)
+    let id = try #require((added["posts"] as? [[String: Any]])?.first?["id"] as? String)
+    // The first text on every photo; a second on photos 2–3 (photo N is the unit N-1…N).
+    #expect(try env.djq("text", id, "Everywhere").status == 0)
+    let second = try env.djq("overlay", "add", id, "Two and three", "--start", "1", "--end", "3")
+    #expect(second.status == 0, "\(second.out)\(second.err)")
+    let list = try objects(try env.djq("overlay", "list", id, "--json").out)
+    #expect(list.count == 2 && list.allSatisfy { $0["drawn"] as? Bool == true })
+    #expect(list[1]["shows_from"] as? Double == 1 && list[1]["shows_to"] as? Double == 3)
+    let r = try #require(try env.store.resolvedVersion(videoId: id, number: 1))
+    #expect((0..<3).map { PhotoRules.layers(r, onPhoto: $0, of: 3).count } == [1, 2, 2])
+    #expect(try env.djq("caption", id, "Out now").status == 0)
+    #expect(try env.djq("render", id).status == 0)
+    #expect(try env.store.video(id: id)?.state == .needsEdit, "editing never sends it to the Queue")
+  }
+
   @Test func agentAPIInProcess() throws {
     let f = try Fixture()
     try f.intake()
