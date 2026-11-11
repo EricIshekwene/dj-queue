@@ -96,7 +96,7 @@ extension PostActions {
     }
     // An automatic retry keeps its time unless a post just landed next to it. A YouTube one can go earlier, down to the reset.
     for retry in retries {
-      let earliest = p == .youtube ? max(PostizRetrySchedule.youTubeQuota(after: retry.scheduledAt.addingTimeInterval(-86400)).reset, soon) : nil
+      let earliest = p == .youtube ? max(YouTubeWindow.dayStart(retry.scheduledAt).addingTimeInterval(PostizRetrySchedule.resetGap), soon) : nil
       let to = try Sched.retrySlot(store: store, platform: p, target: retry.scheduledAt, earliest: earliest, settings: s, excluding: [retry.id])
       if to == retry.scheduledAt { change.kept.append(.init(post: retry, why: "an automatic retry has its own time")) }
       else if to > soon { try move(retry, to: to) }

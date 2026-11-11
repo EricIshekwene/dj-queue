@@ -94,6 +94,19 @@ struct PostsView: View {
     }
   }
 
+  /// Round 22: the sign-in and keeps-failing items that fit the search and the Platform filter (the rest of the filters
+  /// are about clips, and these are about a channel or a lineage).
+  private var scopedItems: (signIn: [PostizSignInProblem], stubborn: [PostizKeepsFailing], any: Bool) {
+    let s = prefs[.posts]
+    let q = s.search.trimmingCharacters(in: .whitespaces)
+    let platform = s.filters[ListFilterKey.platform]
+    func fits(_ p: Platform) -> Bool {
+      (platform == nil || p.rawValue == platform) && (q.isEmpty || p.displayName.localizedCaseInsensitiveContains(q))
+    }
+    let a = model.signInProblems.filter { fits($0.platform) }, b = model.keepsFailing.filter { fits($0.platform) }
+    return (a, b, !a.isEmpty || !b.isEmpty)
+  }
+
   /// Filters popover: Platform first (counted in posts), then the clip sections (counted in clips with posts).
   private var filterSections: [DSFilterSection] {
     let byPlatform = Dictionary(grouping: scoped(model.posts, except: ListFilterKey.platform), by: \.platform).mapValues(\.count)
@@ -129,7 +142,8 @@ struct PostsView: View {
   }
 
   private func statusChips(_ scope: [PlatformPost]) -> some View {
-    let problems = scoped(model.problems).count
+    // Round 22: one per channel to reconnect and one per retry that keeps failing, in the same scope as the posts.
+    let problems = scoped(model.problems).count + scopedItems.signIn.count + scopedItems.stubborn.count
     let opts = [PostsTab.problems, .scheduled, .posted].map { t in
       DSStatusChipOption(id: t.rawValue, title: t.title, count: t == .problems ? problems : scope.filter { inTab($0, t) }.count,
                          tone: t == .problems && problems > 0 ? .danger : nil, tooltip: t.blurb)
@@ -147,7 +161,7 @@ struct PostsView: View {
       } else if model.posts.isEmpty {
         DSEmptyState(icon: "paperplane", title: "No posts yet", message: "Posts appear once clips have a day on the Calendar.",
                      actionTitle: "Open Calendar") { model.screen = .calendar }
-      } else if list.isEmpty {
+      } else if list.isEmpty && !(tab == .problems && scopedItems.any) {
         if tab == .problems && !prefs[.posts].isNarrowed(ignoringStatus: true) {
           DSEmptyState(icon: "checkmark.circle", title: "No problems", message: "Every post went out or is on schedule.",
                        actionTitle: "Show all posts") { prefs.setStatus(.posts, nil) }
@@ -163,6 +177,11 @@ struct PostsView: View {
         ScrollViewReader { proxy in
           ScrollView {
             LazyVStack(spacing: DS.space.xs) {
+              // Round 22: a channel to reconnect is one card, above the posts, however many posts wait for it.
+              if tab == .problems {
+                ForEach(scopedItems.signIn) { item in PostizSignInCard(model: model, item: item) }
+                ForEach(scopedItems.stubborn) { item in PostizKeepsFailingCard(model: model, item: item) }
+              }
               ForEach(groups) { g in
                 PostGroupCard(model: model, group: g, ordered: ordered, compact: compact, problems: tab == .problems,
                               primaryProblemId: primaryId)
@@ -276,7 +295,7 @@ struct PostRowView: View {
           .frame(width: 36, alignment: .leading)
           .dsTooltip(PostText.attempt(post))
       }
-      PostStatePill(post: post).frame(width: 96, alignment: .leading)
+      PostStatePill(post: post, model: model).frame(width: 96, alignment: .leading)
       Text(PostText.date(post, model: model)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
         .lineLimit(1).frame(width: 104, alignment: .leading)
       Group {
@@ -318,8 +337,11 @@ struct PostRowView: View {
 /// The post's state as a pill (status = chip, never a sentence).
 struct PostStatePill: View {
   let post: PlatformPost
+  /// Round 22: with the model, a failure whose retry is coming (or that waits for its channel's sign-in) reads as one
+  /// calm "Retrying" pill, never a red Failed.
+  var model: AppModel? = nil
   var body: some View {
-    let s = PostText.pill(post)
+    let s = PostText.pill(post, retrying: model?.postizState(post)?.isRetrying == true)
     DSBadge(s.text, style: s.style, icon: s.icon, help: "\(post.platform.displayName): \(s.text.lowercased())")
   }
 }
@@ -328,7 +350,7 @@ extension PostsTab {
   /// What the chip holds, in one line (its tooltip).
   var blurb: String {
     switch self {
-    case .problems: "Failed, missed or copyright posts that need you"
+    case .problems: "What needs you: failed, missed or copyright posts, and channels to reconnect in Postiz"
     case .scheduled: "Posts still to go out (missed ones are in Problems)"
     case .posted: "Posts that went live"
     case .all: "Every attempt on every platform"
@@ -338,8 +360,9 @@ extension PostsTab {
 
 /// Shared wording for posts.
 enum PostText {
-  static func pill(_ p: PlatformPost) -> (text: String, style: DSBadgeStyle, icon: String?) {
+  static func pill(_ p: PlatformPost, retrying: Bool = false) -> (text: String, style: DSBadgeStyle, icon: String?) {
     let text = p.stateLabel
+    if retrying && p.state == .failed { return ("Retrying", .soft(.neutral), "clock.arrow.circlepath") }
     switch p.state {
     case .posted: return (text, .soft(.success), nil)
     case .failed: return (text, p.resolution == nil ? .soft(.danger) : .outline, nil)

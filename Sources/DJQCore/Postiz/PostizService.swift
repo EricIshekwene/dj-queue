@@ -181,7 +181,12 @@ public final class PostizService: @unchecked Sendable {
     }
     let route = Self.settingsAllow(p.platform, r.settings) ? r.route(p.platform) : .manual
     let base = PostizDisplayState.of(post: p, job: job, route: route, handedToToday: try handedToToday(p), now: now)
-    return try retryDisplay(p, base: base, router: r) ?? base
+    if let retry = try retryDisplay(p, base: base, router: r) { return retry }
+    // Round 22: not sent yet because its channel needs signing in again. A calm chip; the platform's one item says why.
+    if base == .queued || base == .sending, try waitsForSignIn(p, router: r) {
+      return .retrying(Self.signInBadge, line: "Goes out once \(p.platform.displayName) is reconnected in Postiz")
+    }
+    return base
   }
 
   /// nil when calls can be made; otherwise why not (no key / key refused). Asks the Keychain only for presence.
@@ -201,8 +206,10 @@ public final class PostizService: @unchecked Sendable {
   /// Decided from the post's history alone (sticky across re-renders and state changes) until Eric resets the post.
   public func handedToToday(_ p: PlatformPost) throws -> Bool { try Self.handedToToday(p, store: store) }
 
+  /// A reset, or a Post now that goes through Postiz (round 22), starts it over: only a hand-over after that counts.
   static func handedToToday(_ p: PlatformPost, store: Store) throws -> Bool {
-    let reset = try store.db.one("SELECT MAX(id) AS m FROM post_history WHERE post_id=? AND note='reset'", [p.id])?.int64("m") ?? 0
+    let reset = try store.db.one("SELECT MAX(id) AS m FROM post_history WHERE post_id=? AND note IN ('reset', ?)",
+                                 [p.id, PostActions.postNowPostizNote])?.int64("m") ?? 0
     return try store.db.one("""
       SELECT 1 AS x FROM post_history WHERE post_id=? AND id>? AND to_state IN ('due','overdue')
         AND (note IN ('due','post now') OR note LIKE 'missed%' OR note LIKE 'shift plan%')
@@ -317,7 +324,8 @@ public final class PostizService: @unchecked Sendable {
     try sweepSettling()  // also while Postiz is off, so no pending-change row outlives its job
     guard !settings.publishing.postizPlatforms.isEmpty || !open.isEmpty else { return "off" }
     let router = try router(settings)
-    var deleted = 0, created = 0, rejected = 0, waiting = 0, failed = 0, held = 0, blocked = 0, settling = 0
+    try reconcileSignIn(router)
+    var deleted = 0, created = 0, rejected = 0, waiting = 0, failed = 0, held = 0, blocked = 0, settling = 0, signIn = 0
     var stopped: String?
     if let k = try keyProblem() { stopped = k.message }
 
@@ -376,10 +384,15 @@ public final class PostizService: @unchecked Sendable {
         }
         if try !store.openPostizJobs(lineage: lineage).isEmpty { blocked += 1; continue }  // earlier copy not confirmed gone
         if stopped != nil { waiting += 1; continue }
+        // Round 22: the channel needs signing in again. The post waits (never Manual); after `signInRetryEvery` with no
+        // word from the channel list, one post goes to try it.
+        if try signInDown(p.platform, router: router) { signIn += 1; continue }
         do {
           guard let p = try retimeRetry(p, settings: settings) else { continue }
           switch try submit(p, integrationId: integration, provider: provider, settings: settings) {
-          case .created: created += 1
+          case .created:
+            created += 1
+            try noteSignInTry(p.platform)  // a timed try on a channel that waits: the next one waits its turn
           case .rejected: rejected += 1
           case .skipped: break
           case .waiting: waiting += 1
@@ -397,6 +410,7 @@ public final class PostizService: @unchecked Sendable {
     if held > 0 { parts.append("kept \(held) near the slot") }
     if settling > 0 { parts.append("waiting on edits for \(settling)") }
     if blocked > 0 { parts.append("waiting on \(blocked) earlier cop\(blocked == 1 ? "y" : "ies")") }
+    if signIn > 0 { parts.append("\(signIn) waiting for a channel sign-in") }
     if failed > 0 { parts.append("failed \(failed)") }
     if waiting > 0 { parts.append("waiting \(waiting)") }
     if let s = stopped { parts.append("paused: \(s)") }
@@ -497,7 +511,16 @@ public final class PostizService: @unchecked Sendable {
     let earliest = now.addingTimeInterval(Self.leadTime)
     var d = scheduledAt >= earliest ? scheduledAt : Date(timeIntervalSince1970: (earliest.timeIntervalSince1970 / 60).rounded(.up) * 60)
     d = YouTubeWindow.clear(d, platform)
-    let taken = Set(try store.openPostizJobs().filter { $0.integrationId == integrationId }.map { Int($0.remoteDate.timeIntervalSince1970 / 60) })
+    let jobs = try store.openPostizJobs().filter { $0.integrationId == integrationId }
+    // Round 22: just after a sign-in wait, posts whose time passed meanwhile keep the stagger gap from the channel's
+    // other posts in Postiz (the burst after an outage), instead of all going out within minutes.
+    if scheduledAt < earliest, try signInClearedRecently(platform) {
+      let gap = max(1, try store.settings().retryStaggerHours) * 3600
+      while let c = jobs.first(where: { abs($0.remoteDate.timeIntervalSince(d)) < gap - 1 }) {
+        d = YouTubeWindow.clear(c.remoteDate.addingTimeInterval(gap), platform)
+      }
+    }
+    let taken = Set(jobs.map { Int($0.remoteDate.timeIntervalSince1970 / 60) })
     while taken.contains(Int(d.timeIntervalSince1970 / 60)) { d = YouTubeWindow.clear(d.addingTimeInterval(60), platform) }
     return d
   }
@@ -517,8 +540,10 @@ public final class PostizService: @unchecked Sendable {
     }
     // A photo post uploads one file per photo (round 21), each cached per render like the video is.
     let kinds = Self.mediaKinds(spec)
-    var cachedMedia = try kinds.map { try store.postizMedia(renderId: spec.renderId, kind: $0.kind) }
-    let cachedCover = spec.uploadsCover ? try store.postizMedia(renderId: spec.renderId, kind: "cover") : nil
+    var cachedMedia = try kinds.map { try freshMedia(spec.renderId, $0.kind, for: p) }
+    let cachedCover = spec.uploadsCover ? try freshMedia(spec.renderId, "cover", for: p) : nil
+    // Media uploaded before this create (a cache hit): when Postiz refuses the create over its media, it goes up again.
+    var cacheUsed = cachedMedia.contains { $0 != nil } || cachedCover != nil
     let date = try remoteDate(for: p.scheduledAt, platform: p.platform, integrationId: integrationId)
     var job = PostizJob(postId: p.id, videoId: p.videoId, platform: p.platform, integrationId: integrationId,
                         renderId: spec.renderId, contentHash: spec.contentHash, scheduledAt: p.scheduledAt, remoteDate: date,
@@ -540,8 +565,8 @@ public final class PostizService: @unchecked Sendable {
       guard let lock = try uploadLock(spec.renderId) else { return .waiting }
       defer { flock(lock, LOCK_UN); close(lock) }
       for (i, k) in kinds.enumerated() where cachedMedia[i] == nil {
-        cachedMedia[i] = try store.postizMedia(renderId: spec.renderId, kind: k.kind)
-        if cachedMedia[i] != nil { continue }
+        cachedMedia[i] = try freshMedia(spec.renderId, k.kind, for: p)
+        if cachedMedia[i] != nil { cacheUsed = true; continue }
         guard try room() >= 1 else { return .waiting }
         do {
           _ = try upload(k.path, k.kind, spec.renderId, c, settings)
@@ -607,6 +632,26 @@ public final class PostizService: @unchecked Sendable {
       try afterCreateHook?()
     } catch let e as PostizError {
       switch e {
+      case .validation(let m) where cacheUsed && Self.isMediaProblem(m):
+        // Round 22 (R4c): Postiz couldn't use media uploaded earlier (its link expired). Quietly, once per post and
+        // render: the cache goes, and the next tick uploads it again and creates once more. A second refusal is a
+        // normal refusal.
+        guard try store.markNotified("postiz.mediaAgain:\(p.id):\(spec.renderId)") else { try reject(job, p, m, settings); return .rejected }
+        try store.deletePostizMedia(renderId: spec.renderId)
+        try store.closePostizJob(id: job.id, reason: .interrupted, note: "media refused, uploading it again: \(m)")
+        try store.logEvent("postiz", "\(p.platform.displayName): Postiz couldn't use the media uploaded earlier (\(m)) — uploading it again on the next pass",
+                           videoId: p.videoId, postId: p.id)
+        return .waiting
+      case .validation(let m) where Self.classify(m, on: p.platform) == .signIn
+                                    && (try? channels(refresh: true, settings: settings))?.first(where: { $0.id == integrationId })?.needsSignIn == true:
+        // Round 22 (R5): a refusal that reads as sign-in, and the channel list (read again now) agrees. The post waits for
+        // the channel; it never falls back to Manual. When the list says the channel is fine, it's the post's own
+        // problem: refused as usual (below), so one misread post never holds a whole platform.
+        try store.closePostizJob(id: job.id, reason: .interrupted, note: "the channel needs signing in: \(m)")
+        try noteSignInFailure(p.platform, message: m)
+        try store.logEvent("postiz", "\(p.platform.displayName): Postiz says the channel needs signing in again (\(m)) — its posts wait for it",
+                           videoId: p.videoId, postId: p.id)
+        return .waiting
       case .validation(let m): try reject(job, p, m, settings); return .rejected
       case .payloadTooLarge: try reject(job, p, "the post is too large for Postiz", settings); return .rejected
       case .unauthorized, .rateLimited, .overBudget, .noKey, .notSent:
@@ -676,6 +721,18 @@ public final class PostizService: @unchecked Sendable {
   /// "photo1", "photo2", … for a photo post.
   static func mediaKinds(_ spec: PostizPostSpec) -> [(kind: String, path: String)] {
     spec.isPhotoPost ? spec.photoPaths.enumerated().map { ("photo\($0.offset + 1)", $0.element) } : [("video", spec.renderPath)]
+  }
+
+  /// Cached media older than this is uploaded again instead of reused: Postiz's media links don't live forever (round 22).
+  public static let mediaFreshFor: TimeInterval = 3 * 86400
+
+  /// The render's cached upload of `kind`, when it may be reused for `p`: younger than `mediaFreshFor`, and for an
+  /// automatic retry uploaded after that retry was made (every retry sends its media fresh, R4a). nil: upload it.
+  func freshMedia(_ renderId: String, _ kind: String, for p: PlatformPost) throws -> PostizMediaRecord? {
+    guard let m = try store.postizMedia(renderId: renderId, kind: kind) else { return nil }
+    if now.timeIntervalSince(m.uploadedAt) > Self.mediaFreshFor { return nil }
+    if try isAutoAttempt(p), m.uploadedAt < p.createdAt { return nil }
+    return m
   }
 
   func upload(_ path: String, _ kind: String, _ renderId: String, _ c: PostizClient, _ settings: Settings) throws -> PostizMedia {
@@ -830,13 +887,17 @@ public final class PostizService: @unchecked Sendable {
     }
   }
 
+  /// Every 6 h, or every `signInChannelCheck` while a channel waits for its sign-in (so its posts resume soon after
+  /// Eric reconnects it). The new list is read for sign-in waits at once.
   @discardableResult
   func refreshChannelsIfDue(_ settings: Settings) throws -> String? {
     let cache: PostizChannelCache? = try store.kv(PostizChannelCache.kvKey)
-    if let cache, now.timeIntervalSince(cache.fetchedAt) < 6 * 3600 { return nil }
+    let every: TimeInterval = try anySignInWait() ? Self.signInChannelCheck : 6 * 3600
+    if let cache, now.timeIntervalSince(cache.fetchedAt) < every { return nil }
     guard keyStore.hasKey() else { return nil }
     do {
       _ = try channels(refresh: true, settings: settings)
+      try reconcileSignIn(try router(settings))
       return "channels refreshed"
     } catch {
       return nil
@@ -976,6 +1037,7 @@ public final class PostizService: @unchecked Sendable {
                                  postId: j.postId, videoId: j.videoId))
       return
     }
+    try clearSignIn(j.platform, why: "a post went out")
     let missing = r.releaseId == nil || r.releaseId == "missing" || (r.releaseURL ?? "").isEmpty
     // The post itself, or — when the planner re-created it under a new id — the clip's current post on that platform.
     var target = try store.post(id: j.postId)
@@ -1029,7 +1091,8 @@ public final class PostizService: @unchecked Sendable {
         try PostActions(store: store).reportProblem(postId: p.id, type: copyright ? .copyrightBlocked : .uploadFailed,
                                                     message: msg + note, raw: "postiz:\(r.id)")
         if promised {
-          try recordFailure(p, at: min(j.remoteDate, now))
+          if Self.classify(msg, on: p.platform) == .signIn { try noteSignInFailure(p.platform, message: msg) }
+          try recordFailure(p, at: min(j.remoteDate, now), message: msg)
           failed = p
         }
       }
@@ -1318,7 +1381,7 @@ public struct PostizStatus: Codable, Sendable {
     public var number: Int
     public var at: Date?
     public var waiting: String?
-    /// "Retrying Thu 8:00 am (try 2 of 5)".
+    /// "Retrying Thu 8:00 am".
     public var text: String
   }
   public var hasKey: Bool
@@ -1394,8 +1457,9 @@ public enum PostizDisplayState: Equatable, Sendable {
   /// Test-run TikTok: in the TikTok app's inbox; finish it there, then Mark posted.
   case inbox
   case failed(String)
-  /// A failure with an automatic retry coming, or that attempt on its way: nothing for Eric to do. The chip is whole
-  /// ("Retrying Thu 8:00 am (try 2 of 5)"); one that waits says why in `line`.
+  /// A failure with an automatic retry coming, or that attempt on its way, or a post waiting for its channel's sign-in:
+  /// nothing for Eric to do here. The chip is whole and calm ("Retrying Thu 8:00 am", "Waits for sign-in"), never a try
+  /// count or the error; one that waits says why in `line`.
   case retrying(String, line: String? = nil)
   case copyright(String)
   /// Set to Postiz but back on the Calendar (the sentence says why).

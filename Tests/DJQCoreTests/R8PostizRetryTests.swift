@@ -144,7 +144,7 @@ import Testing
     #expect(rig.fake.createCount == creates + 1)
     #expect(try rig.job(failed) == nil)
     #expect(try rig.invariants().isEmpty)
-    #expect(try events(rig, "automatic retry 1 of 5") == 1)
+    #expect(try events(rig, "automatic retry 1 on") == 1)
     #expect(!rig.notifier.delivered.contains { $0.key == "problem:\(yt.id)" })
   }
 
@@ -617,7 +617,7 @@ import Testing
     #expect(pending.map(\.post.id) == [retry.id] && pending[0].number == 1 && pending[0].queued)
     #expect(try rig.service.status().autoRetries == [retry.id])
     let finding = try #require(DoctorPostizTests.postiz(DoctorPostizTests.doctor(rig.store, keys: rig.keys).run())["postiz.auto_retry"])
-    #expect(finding.severity == .info && finding.where_ == [retry.id] && finding.detail.contains("(try 1 of 5)"))
+    #expect(finding.severity == .info && finding.where_ == [retry.id] && finding.detail.contains("Retrying ") && !finding.detail.contains("try 1"))
     // Once the attempt has gone out nothing is pending.
     rig.tick(2)
     rig.fake.publishDue(now: retry.scheduledAt.addingTimeInterval(60))

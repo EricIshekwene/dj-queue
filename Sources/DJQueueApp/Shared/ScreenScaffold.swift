@@ -126,10 +126,10 @@ struct AttentionStack: View {
   let screen: Screen
 
   var body: some View {
-    // Posts is where problems lead (no card there). "Posting paused" shows where posts are seen, Posts and Calendar
+    // Posts is where problems lead (no card there; round 22: nor for a channel to reconnect, whose card is in Problems). "Posting paused" shows where posts are seen, Posts and Calendar
     // (`C.P` Buffer: the banner over a schedule that stays visible); elsewhere the sidebar's status says it.
     let items = model.attentionItems.filter { i in
-      !(screen == .posts && i.id == "problems") && !(screen != .posts && screen != .calendar && i.id == "paused")
+      !(screen == .posts && (i.id == "problems" || i.id.hasPrefix("signin-"))) && !(screen != .posts && screen != .calendar && i.id == "paused")
     }
     if !items.isEmpty {
       VStack(spacing: DS.space.xs) {

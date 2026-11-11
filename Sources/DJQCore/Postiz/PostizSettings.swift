@@ -124,6 +124,18 @@ public struct PublishingSettings: Codable, Sendable, Hashable {
 
   public func publisher(for p: Platform) -> PublisherKind { publishers[p] ?? .manual }
 
+  /// Postiz's own web app, where a channel is reconnected: the cloud app for the cloud API, else the self-hosted
+  /// Postiz's own address (its API base without the path).
+  public var webURL: URL {
+    guard let u = URL(string: apiBase), let host = u.host?.lowercased() else { return URL(string: "https://platform.postiz.com")! }
+    if host == "api.postiz.com" { return URL(string: "https://platform.postiz.com")! }
+    var c = URLComponents()
+    c.scheme = u.scheme ?? "https"
+    c.host = u.host
+    c.port = u.port
+    return c.url ?? URL(string: "https://platform.postiz.com")!
+  }
+
   /// Platforms set to Postiz, in posting order.
   public var postizPlatforms: [Platform] { Platform.allCases.filter { publisher(for: $0) == .postiz }.sorted() }
 

@@ -198,6 +198,8 @@ public final class Engine: @unchecked Sendable {
     let stale = try store.dropStalePastDraftSlots(today: store.today(dm))
     if !stale.isEmpty { done.append("dropped \(stale.count) past day\(stale.count == 1 ? "" : "s")") }
     if autoSchedules { done.append(try planner.autoSchedule().summary) }
+    let moved = try store.moveOutOfYouTubeWindow()
+    if moved > 0 { done.append("moved \(moved) out of YouTube's quiet window") }
     return done.isEmpty ? "ok" : done.joined(separator: " · ")
   }
 
@@ -301,6 +303,7 @@ public final class Engine: @unchecked Sendable {
     let now = store.clock.now
     let today = dm.key(now)
     var n = 0
+    let router = try postiz.map { try $0.router(settings) }
     for c in try store.posts(where: "state IN ('planned','rendering','rendered','due') AND scheduled_at<?", [now]) {
       var outcome: (post: PlatformPost, days: Int)?
       try store.db.transaction {
@@ -312,6 +315,8 @@ public final class Engine: @unchecked Sendable {
         if try postiz?.isInTikTokInbox(p) == true { return }
         // An automatic retry is never "missed": it goes out as soon as it can, or waits for a pause to end.
         if try postiz?.isRetryAttempt(p) == true { return }
+        // Round 22: its channel needs signing in again in Postiz. It waits for that and goes out by itself, never "missed".
+        if let postiz, let router, try postiz.waitsForSignIn(p, router: router) { return }
         let again = try store.history(postId: p.id).contains { $0.toState == PostState.overdue.rawValue }
         let days = max(1, dm.days(from: dm.key(p.scheduledAt), to: today))
         p.state = .overdue

@@ -176,7 +176,7 @@ struct ScheduleSettings: View {
       SettingsNote("Every platform is off. Turn one on in Platforms.")
     }
     ForEach(model.settings.activePlatforms) { p in
-      SettingsRow(p.displayName, description: p == .youtube ? YouTubeWindow.settingsNote : nil, platform: p) {
+      SettingsRow(p.displayName, description: p == .youtube ? YouTubeWindow.settingsNote(model.tz, on: model.now) : nil, platform: p) {
         SettingsSelect(label: "\(p.displayName) slot time", selection: slotBinding(p),
                        options: SettingsFmt.timeOptions(current: model.settings.slot(for: p)))
       }

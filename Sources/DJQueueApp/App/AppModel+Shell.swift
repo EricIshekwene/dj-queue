@@ -27,6 +27,12 @@ extension AppModel {
       out.append(.init(id: "problems", tone: .danger, title: "\(n) post\(n == 1 ? "" : "s") need\(n == 1 ? "s" : "") attention",
                        message: problemParts, actionTitle: "Review", action: { [weak self] in self?.reviewProblems() }))
     }
+    // Round 22: one calm card per channel to reconnect; its posts wait (they're not problems) and go out by themselves.
+    for item in signInProblems {
+      out.append(.init(id: "signin-\(item.platform.rawValue)", tone: .warning, title: item.title,
+                       message: "\(item.waitingText) · they go out by themselves once you reconnect it", actionTitle: "Open Postiz",
+                       action: { [weak self] in self?.openPostiz() }))
+    }
     if settings.paused {
       out.append(.init(id: "paused", tone: .warning, title: "Posting paused", message: "Nothing is handed to you until you resume",
                        actionTitle: "Resume", action: { [weak self] in self?.setPaused(false) }))
@@ -68,7 +74,7 @@ extension AppModel {
     case .edit: n = editList.count
     case .queue: n = queueClips.count
     case .calendar: n = dueBadge
-    case .posts: n = problems.count
+    case .posts: n = attentionCount
     default: return nil
     }
     return n > 0 ? n : nil

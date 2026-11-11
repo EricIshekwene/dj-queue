@@ -210,6 +210,11 @@ final class AppHost {
         screen = .calendar  // retired alerts still sitting in Notification Center
       } else if key.hasPrefix("alert.record") {
         screen = .queue
+      } else if key.hasPrefix("postiz.signIn:") {
+        // Round 22: a channel to reconnect. Its one action: Postiz, where it's reconnected; the window shows the item.
+        model.openPostiz()
+        screen = .posts
+        model.reviewProblems()
       } else if key.hasPrefix("problem:") || key.hasPrefix("renderfail:") || post?.state.isProblem == true {
         screen = .posts
         model.postsSelection = postId

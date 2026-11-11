@@ -305,7 +305,9 @@ import Testing
     s.publishing.channels = [.tiktok: "ch-tt", .youtube: "ch-yt"]
     let r = PostizRouter(settings: s, hasKey: true, keyInvalid: false, channels: ch)
     #expect(r.route(.tiktok) == .postiz(integrationId: "ch-tt", provider: "tiktok-business"))
-    #expect(r.route(.youtube) == .fallback(.channelDisabled("YT chan")))
+    // Round 22: a channel that needs signing in again still routes to Postiz; its posts wait for it (never Manual).
+    #expect(r.route(.youtube) == .postiz(integrationId: "ch-yt", provider: "youtube"))
+    #expect(r.channelNeedingSignIn(.youtube)?.name == "YT chan" && r.channelNeedingSignIn(.tiktok) == nil)
     s.publishing.channels[.tiktok] = "gone"
     #expect(PostizRouter(settings: s, hasKey: true, keyInvalid: false, channels: ch).route(.tiktok) == .fallback(.channelMissing))
     #expect(PostizRouter(settings: s, hasKey: true, keyInvalid: false, channels: nil).route(.tiktok)

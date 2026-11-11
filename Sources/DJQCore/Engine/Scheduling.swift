@@ -8,36 +8,78 @@ public struct EngineError: LocalizedError, CustomStringConvertible, Equatable {
   public var description: String { message }
 }
 
-/// Postiz's shared YouTube upload quota (docs/postiz.md): it resets at 07:00 UTC, whatever the clocks do, and is often gone
-/// hours before. Nothing on YouTube is scheduled in the quiet window, 02:00 up to 07:00 UTC; it goes at 07:30 UTC instead.
+/// Postiz's shared YouTube upload quota (docs/postiz.md): Google resets it at midnight Pacific time (00:00
+/// America/Los_Angeles, so 07:00 UTC in summer and 08:00 UTC in winter), and it is often gone hours before. Nothing on
+/// YouTube is scheduled in the quiet window, 19:00 up to midnight Pacific; it goes at 00:30 Pacific instead. Every rule
+/// here reads the Pacific wall clock, so it holds across both DST changes (round 22: the old fixed 07:00 UTC landed every
+/// winter retry at 23:30 Pacific, on the day whose quota was gone).
 public enum YouTubeWindow {
-  public static let settingsNote = "02:00–07:00 UTC moves to 07:30 UTC (Postiz's quota)."
+  public static let pacific = TimeZone(identifier: "America/Los_Angeles")!
 
-  static let quietStart: TimeInterval = 2 * 3600
-  static let reset: TimeInterval = 7 * 3600
-  static let safe: TimeInterval = 7.5 * 3600
-  private static let day: TimeInterval = 86400
+  /// Pacific clock: the window starts here (minutes after midnight) and runs to midnight, the reset.
+  static let quietStartMinutes = 19 * 60
+  /// Pacific clock: where the window sends a time, 30 minutes after the reset.
+  static let movedMinutes = 30
 
-  /// Unix days are UTC days, so no calendar and no DST.
-  private static func midnightUTC(_ d: Date) -> TimeInterval { (d.timeIntervalSince1970 / day).rounded(.down) * day }
-
-  static func isQuiet(_ d: Date) -> Bool {
-    let second = d.timeIntervalSince1970 - midnightUTC(d)
-    return second >= quietStart && second < reset
+  static var calendar: Calendar {
+    var c = Calendar(identifier: .gregorian)
+    c.timeZone = pacific
+    return c
   }
 
-  /// `d` is 07:30 UTC, where the window sends a time.
-  public static func isMoved(_ d: Date) -> Bool { d.timeIntervalSince1970 - midnightUTC(d) == safe }
+  /// The Pacific wall clock in minutes (seconds kept as a fraction): 19:00 is 19:00 on a 23- or 25-hour day too.
+  private static func pacificMinutes(_ d: Date) -> Double {
+    let c = calendar.dateComponents([.hour, .minute, .second, .nanosecond], from: d)
+    return Double(c.hour! * 60 + c.minute!) + (Double(c.second!) + Double(c.nanosecond!) / 1e9) / 60
+  }
 
-  /// The first 07:30 UTC after `d`.
+  static func isQuiet(_ d: Date) -> Bool { pacificMinutes(d) >= Double(quietStartMinutes) }
+
+  /// `d` is 00:30 Pacific, where the window sends a time.
+  public static func isMoved(_ d: Date) -> Bool { abs(pacificMinutes(d) - Double(movedMinutes)) < 1.0 / 120 }
+
+  /// The Pacific midnight that starts `d`'s quota day.
+  static func dayStart(_ d: Date) -> Date { calendar.startOfDay(for: d) }
+
+  /// The first Pacific midnight after `d`: when the quota comes back. (Midnight is never inside a US clock change.)
+  public static func nextReset(after d: Date) -> Date {
+    let c = calendar
+    return c.date(byAdding: .day, value: 1, to: c.startOfDay(for: d)) ?? dayStart(d).addingTimeInterval(86400)
+  }
+
+  /// The first 00:30 Pacific after `d`.
   public static func nextSafe(after d: Date) -> Date {
-    let today = midnightUTC(d) + safe
-    return Date(timeIntervalSince1970: today > d.timeIntervalSince1970 ? today : today + day)
+    let today = dayStart(d).addingTimeInterval(Double(movedMinutes) * 60)
+    return today > d ? today : nextReset(after: d).addingTimeInterval(Double(movedMinutes) * 60)
   }
 
   /// The one rule, for slot times and retries alike: `d`, unless that's a YouTube time inside the quiet window.
   public static func clear(_ d: Date, _ p: Platform) -> Date {
     p == .youtube && isQuiet(d) ? nextSafe(after: d) : d
+  }
+
+  /// The same 00:30 Pacific `days` Pacific days later: a moved post stays moved across a DST change.
+  static func shiftMoved(_ d: Date, days: Int) -> Date {
+    calendar.date(byAdding: .day, value: days, to: d) ?? d.addingTimeInterval(Double(days) * 86400)
+  }
+
+  /// Settings → Slot times and `djq slot youtube`, in Eric's own clock: "10 pm–3 am moves to 3:30 am: Postiz's YouTube
+  /// quota resets at midnight Pacific." `on` picks the day (the offset to Pacific changes for a few weeks a year).
+  public static func settingsNote(_ tz: TimeZone, on day: Date = Date()) -> String {
+    let start = dayStart(day)
+    let from = start.addingTimeInterval(Double(quietStartMinutes) * 60)
+    let to = nextReset(after: day)
+    let moved = to.addingTimeInterval(Double(movedMinutes) * 60)
+    func t(_ d: Date) -> String {
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.timeZone = tz
+      f.amSymbol = "am"
+      f.pmSymbol = "pm"
+      f.dateFormat = Calendar(identifier: .gregorian).dateComponents(in: tz, from: d).minute == 0 ? "h a" : "h:mm a"
+      return f.string(from: d)
+    }
+    return "\(t(from))–\(t(to)) moves to \(t(moved)): Postiz's YouTube quota resets at midnight Pacific."
   }
 }
 
@@ -73,10 +115,10 @@ enum Sched {
     dm.calendar.date(byAdding: .day, value: days, to: d) ?? d.addingTimeInterval(Double(days) * 86400)
   }
 
-  /// `shift` for a platform's post: the local clock, out of the quiet window. 07:30 UTC stays 07:30 UTC, because a local
-  /// clock would walk off it across a DST change.
+  /// `shift` for a platform's post: the local clock, out of the quiet window. 00:30 Pacific stays 00:30 Pacific, because
+  /// a local clock would walk off it across a DST change that isn't Pacific's (or on the few days the two differ).
   static func shift(_ d: Date, days: Int, platform p: Platform, _ dm: DayMath) -> Date {
-    p == .youtube && YouTubeWindow.isMoved(d) ? d.addingTimeInterval(Double(days) * 86400) : YouTubeWindow.clear(shift(d, days: days, dm), p)
+    p == .youtube && YouTubeWindow.isMoved(d) ? YouTubeWindow.shiftMoved(d, days: days) : YouTubeWindow.clear(shift(d, days: days, dm), p)
   }
 
   /// A time on `day` for an extra post (retry / repost) on `platform`: that day's regular slot time
@@ -244,6 +286,37 @@ struct Placer {
 }
 
 extension Store {
+  /// Round 22: YouTube posts still to go whose time sits in the quiet window move out of it, to 00:30 Pacific. Posts
+  /// stored under the old fixed 07:00 UTC rule land there (07:30 UTC is 23:30 Pacific in winter). Pinned and set-time
+  /// posts too: the window has always applied to every YouTube time (`clear`), pins included. An automatic retry or a
+  /// repost keeps the stagger gap from the platform's other posts. The publish step then moves Postiz's copy. Returns
+  /// how many moved.
+  @discardableResult
+  public func moveOutOfYouTubeWindow() throws -> Int {
+    let now = clock.now
+    let candidates = try posts(where: "platform='youtube' AND state IN ('planned','rendering','rendered') AND scheduled_at>?", [now])
+      .filter { YouTubeWindow.clear($0.scheduledAt, .youtube) != $0.scheduledAt }
+      .sorted { ($0.kind == .regular ? 0 : 1, $0.scheduledAt) < ($1.kind == .regular ? 0 : 1, $1.scheduledAt) }
+    guard !candidates.isEmpty else { return 0 }
+    let s = try settings()
+    var n = 0
+    for c in candidates {
+      try db.transaction {
+        guard var p = try post(id: c.id), ["planned", "rendering", "rendered"].contains(p.state.rawValue), p.scheduledAt > now,
+              YouTubeWindow.clear(p.scheduledAt, .youtube) != p.scheduledAt else { return }
+        let out = YouTubeWindow.clear(p.scheduledAt, .youtube)
+        p.scheduledAt = p.kind == .regular ? out
+          : try Sched.retrySlot(store: self, platform: .youtube, target: out, settings: s, excluding: [p.id])
+        try save(p, note: "out of YouTube's quiet window → \(Sched.shortTime(p.scheduledAt, s))")
+        n += 1
+      }
+    }
+    if n > 0 {
+      try logEvent("plan", "\(n) YouTube post\(n == 1 ? "" : "s") moved out of the quiet window: Postiz's YouTube quota resets at midnight Pacific")
+    }
+    return n
+  }
+
   /// The plan position of a post (its slot's position; 0 when it has no slot).
   func position(of p: PlatformPost) throws -> Int {
     try p.planSlotId.flatMap { try planSlot(id: $0)?.position } ?? 0
@@ -264,8 +337,8 @@ extension Store {
   func postNowIds() throws -> Set<String> {
     Set(try db.query("""
       SELECT DISTINCT h.post_id AS id FROM post_history h JOIN platform_posts p ON p.id=h.post_id
-      WHERE h.note='post now' AND p.kind='regular' AND p.state IN ('due','overdue','posted')
-      """).compactMap { $0.string("id") })
+      WHERE h.note IN ('post now', ?) AND p.kind='regular' AND p.state IN ('due','overdue','posted')
+      """, [PostActions.postNowPostizNote]).compactMap { $0.string("id") })
   }
 }
 

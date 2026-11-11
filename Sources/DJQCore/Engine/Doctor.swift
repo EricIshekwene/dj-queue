@@ -392,7 +392,7 @@ public final class Doctor: @unchecked Sendable {
 extension Doctor {
   /// Every id the Postiz checks can report (skills/dj-queue-doctor/SKILL.md has the safe fix for each).
   public static let postizCheckIds = ["postiz.not_connected", "postiz.key_invalid", "postiz.mapping_missing",
-                                      "postiz.channel_disabled", "postiz.stuck", "postiz.link_missing", "postiz.rate_limited",
+                                      "postiz.sign_in", "postiz.stuck", "postiz.link_missing", "postiz.rate_limited",
                                       "postiz.fallback", "postiz.test_mode", "postiz.delete_pending", "postiz.create_unknown",
                                       "postiz.auto_retry"]
 
@@ -489,15 +489,16 @@ extension Doctor {
                        fix: "`djq postiz map --dry-run` shows the auto-mapping by provider; Eric runs `djq postiz map` (or picks the channel in Settings → Publishing)."))
     }
 
-    let disabled = used.compactMap { p -> (Platform, String)? in
-      guard let id = pub.channels[p], let c = cache?.integrations.first(where: { $0.id == id }), c.disabled else { return nil }
-      return (p, c.name)
-    }
-    if !disabled.isEmpty {
-      out.append(.init(id: "postiz.channel_disabled", severity: .error, title: "Postiz channel disabled or expired",
-                       detail: disabled.map { "\($0.0.displayName): \($0.1)" }.joined(separator: " · ") + ". Its posts go to the Calendar until it's reconnected.",
-                       where_: disabled.map(\.0.rawValue),
-                       fix: "Eric reconnects the channel in Postiz (Postiz → the channel → Reconnect); then `djq postiz channels` refreshes the list."))
+    // Round 22: one item per platform whose channel needs signing in again. Its posts wait (never Manual) and go out by
+    // themselves once it works.
+    let signIn = try svc.signInProblems(router: router)
+    if !signIn.isEmpty {
+      out.append(.init(id: "postiz.sign_in", severity: .error,
+                       title: signIn.map(\.title).joined(separator: " · "),
+                       detail: signIn.map { "\($0.platform.displayName)\($0.channelName.map { " (\($0))" } ?? ""): \($0.waitingText)\($0.message.map { " · \($0)" } ?? "")" }
+                         .joined(separator: " · ") + ". " + PostizSignInProblem.howItWorks,
+                       where_: signIn.map(\.platform.rawValue),
+                       fix: "Eric reconnects the channel in Postiz (Postiz → the channel → Reconnect). DJ Queue reads the channel list again within 30 minutes, or tries one post every 6 hours, and the waiting posts go out. Don't mark them Fixed or post them by hand (double post)."))
     }
 
     let stuck = try svc.stuckJobs()
@@ -582,14 +583,19 @@ extension Doctor {
     guard !retries.isEmpty else { return [] }
     let tag = { (id: String) in (try? self.store.video(id: id))?.tag ?? String(id.prefix(8)) }
     let waitingOnSettings = retries.contains(where: \.offPostiz)
-    return [.init(id: "postiz.auto_retry", severity: waitingOnSettings ? .warning : .info,
+    let stubborn = try svc.keepsFailing()
+    let settings = try store.settings()
+    return [.init(id: "postiz.auto_retry", severity: waitingOnSettings || !stubborn.isEmpty ? .warning : .info,
                   title: "\(retries.count) automatic retr\(retries.count == 1 ? "y" : "ies") pending",
                   detail: retries.map { "\($0.post.platform.displayName) · \(tag($0.post.videoId)) · \($0.text)" }.joined(separator: " · ")
-                    + ". It stays Failed for Eric only after \(PostizService.maxAutoRetries) tries.",
+                    + ". Each keeps re-queuing until it goes out (no limit)."
+                    + stubborn.map { " \($0.summary) (since \(Sched.shortTime($0.since, settings)))." }.joined(),
                   where_: retries.map(\.post.id),
                   fix: waitingOnSettings
                     ? "A retry waits for its platform to be back on Postiz: Eric sets that in Settings → Publishing, or posts it by hand and marks it posted. Don't change it for Eric."
-                    : "Nothing to do: the post goes out again by itself, at the time shown.")]
+                    : !stubborn.isEmpty
+                      ? "One keeps failing with the same error for a week; it keeps retrying. Tell Eric the reason: the fix may be in the clip (editor) or in Postiz. Don't mark it Fixed or post it by hand while it retries (double post)."
+                      : "Nothing to do: the post goes out again by itself, at the time shown.")]
   }
 }
 

@@ -1,15 +1,15 @@
 import DJQCore
 import Foundation
 
-/// Round 6 sample (throwaway snapshot DB only): Postiz connected with six sample channels (Threads' disabled), every
-/// platform but Facebook set to Postiz, and a Postiz job behind posts in every state — independent of the weekday:
-/// - today: Facebook posted by hand · Threads fell back to manual (channel disabled) · YouTube posting… · X scheduled ·
-///   Instagram a test-run draft;
+/// Round 6 sample (throwaway snapshot DB only): Postiz connected with six sample channels (Threads' sign-in expired),
+/// every platform but Facebook set to Postiz, and a Postiz job behind posts in every state — independent of the weekday:
+/// - today: Facebook posted by hand · Threads waits for its channel's sign-in (round 22: one "Reconnect Threads in
+///   Postiz" item, no fallback to manual) · YouTube posting… · X scheduled · Instagram a test-run draft;
 /// - yesterday (extra posts of the first planned clip): YouTube posted by Postiz with a link, X failed with Postiz's
 ///   message, Instagram © blocked, TikTok in the TikTok inbox (test run, overdue → back on Today);
 /// - tomorrow: X scheduled, the rest queued for Postiz.
-/// Round 9: today's TikTok failed and its automatic retry waits in Postiz for tomorrow 8:00 am; yesterday's Threads
-/// failed and its retry waits for the channel to come back.
+/// Round 9: today's TikTok failed and its automatic retry waits in Postiz for tomorrow 8:00 am ("Retrying Thu 8:00 am",
+/// no try count since round 22); yesterday's Threads failed and its retry waits for the channel's sign-in.
 extension SampleData {
   static func seedPostiz(store: Store, clock: FixedClock, now: Date) throws {
     clock.set(now)
@@ -46,7 +46,7 @@ extension SampleData {
     for p in posts where dm.key(p.scheduledAt) == today {
       var q = p
       switch p.platform {
-      case .threads:  // channel disabled → back on Today, by hand
+      case .threads:  // its channel needs a new sign-in: it waits for that, never by hand
         q.state = .due
         q.url = nil
         q.postedAt = nil
@@ -119,6 +119,10 @@ extension SampleData {
     waiting.nextRetryAt = th.scheduledAt.addingTimeInterval(3600)
     try store.setKV("postiz.autoRetry.\(th.videoId)#threads#v\(th.versionNo)", waiting)
     try store.db.run("UPDATE platform_posts SET raw_response='postiz:sample' WHERE id=?", [th.id])
+    // Round 22: the Threads outage, as the engine records it (one item for Eric, whatever waits behind it).
+    try store.setKV("postiz.signIn.threads", PostizSignInWait(since: now.addingTimeInterval(-5 * 3600), lastTry: now.addingTimeInterval(-3600),
+                                                              message: "Threads: the access token has expired, reconnect the channel",
+                                                              flagged: true))
     try store.refreshState(videoId: videoId)
   }
 
@@ -150,6 +154,9 @@ extension SampleData {
     r.lastPostId = attempt.id
     r.failedAt = failed.scheduledAt
     r.nextRetryAt = at
+    // Round 22: the same error for over a week, so Problems shows its one calm "Keeps failing on TikTok" card.
+    r.failingWith = msg
+    r.failingSince = now.addingTimeInterval(-8 * 86400)
     try store.setKV("postiz.autoRetry.\(failed.videoId)#tiktok#v\(failed.versionNo)", r)
   }
 }

@@ -282,13 +282,16 @@ func run() throws -> Int32 {
     let rw = try queue.runway()
     let today = try actions.dueToday(now: now)
     let problems = try actions.problems()
+    let signIn = try PostizService(store: store).signInProblems()
+    let stubborn = try PostizService(store: store).keepsFailing()
     print("DJ Queue · \(fmt(now, settings, "EEE d MMM yyyy HH:mm")) (\(settings.timeZone))")
     let waiting = try planner.schedulable(settings).count
     print("Calendar   \(StageWording.scheduledThrough(rw.scheduledThrough, settings: settings))\(PostAtCommand.statusNote(store)) · Queue \(waiting) waiting")
     print("Stages     Score \(try queue.toScore().count) · Edit \(try queue.needsEdit().count) · Queue \(waiting) · about \(rw.totalDays) d of clips left")
     let byState = Dictionary(grouping: today, by: \.state).map { "\($0.value.count) \($0.key.displayName.lowercased())" }.sorted()
     print("Today      \(today.count) post\(today.count == 1 ? "" : "s")\(byState.isEmpty ? "" : " (" + byState.joined(separator: ", ") + ")")")
-    print("Problems   \(problems.count)")
+    let items = signIn.map(\.summary) + stubborn.map(\.summary)
+    print("Problems   \(problems.count + items.count)\(items.isEmpty ? "" : " (" + items.joined(separator: "; ") + ")")")
     let hb = try store.lastHeartbeat()
     let paused = settings.paused ? "ALL" : (settings.pausedPlatforms.isEmpty ? "no" : settings.pausedPlatforms.map(\.displayName).sorted().joined(separator: ", "))
     print("Engine     \(hb.map { "last heartbeat \(Int(now.timeIntervalSince($0.at) / 60)) min ago" } ?? "never ran") · paused: \(paused)")
@@ -319,6 +322,13 @@ func run() throws -> Int32 {
     }
     if flag("--problems") {
       print("Problems")
+      // Round 22: a channel whose sign-in broke is one line, however many posts wait for it.
+      for item in try PostizService(store: store).signInProblems() {
+        print("  \(item.summary) — \(PostizSignInProblem.howItWorks)")
+      }
+      for item in try PostizService(store: store).keepsFailing() {
+        print("  \(item.summary) — it keeps retrying by itself (post \(short(item.postId)))")
+      }
       printPosts(store, try actions.problems(), settings)
     } else {
       let since = dm.date(dm.addDays(dm.key(store.clock.now), -7))
@@ -769,7 +779,7 @@ func run() throws -> Int32 {
     let p = try resolvePost(store, try arg(0, "post id"))
     try actions.postNow(postId: p.id)
     wrote = true
-    print("\(p.platform.displayName) is due now")
+    print(try actions.postNowGoesThroughPostiz(p) ? "\(p.platform.displayName) goes to Postiz to post within minutes" : "\(p.platform.displayName) is due now")
   case "shift-plan":
     let p = try resolvePost(store, try arg(0, "post id"))
     try actions.shiftPlan(postId: p.id)
@@ -860,7 +870,7 @@ func run() throws -> Int32 {
       let moved = (0..<max(1, s.postsPerDay)).contains {
         s.slotTime(p, date: today, position: $0, dm) != dm.at(today, minutes: s.slot(for: p) + $0 * s.secondPostOffsetMinutes)
       }
-      if moved { print("  \(YouTubeWindow.settingsNote)") }
+      if moved { print("  \(YouTubeWindow.settingsNote(s.tz, on: store.clock.now))") }
     }
     guard args.count > 1 else {
       print("\(p.displayName) slot \(clock(settings.slot(for: p)))")

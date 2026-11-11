@@ -56,8 +56,10 @@ import Testing
       return bad
     }
 
-    /// The clip a Postiz post carries (through its media id → render → video).
+    /// The clip a Postiz post carries (through its media id → render → video). Round 22: a retry uploads its media again,
+    /// which replaces the render's cached row, so a post made from an earlier upload is found through its job first.
     func video(of r: FakePostiz.Post) throws -> String {
+      if let v = try store.postizJobs(where: "postiz_id=? AND kind='post'", [r.id]).first?.videoId { return v }
       guard let m = r.image["id"] as? String,
             let rid = try store.db.one("SELECT render_id FROM postiz_media WHERE media_id=?", [m])?.string("render_id"),
             let v = try store.render(id: rid)?.videoId else { return "?" }

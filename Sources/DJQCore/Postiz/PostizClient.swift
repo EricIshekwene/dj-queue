@@ -239,10 +239,19 @@ public struct PostizIntegration: Codable, Sendable, Hashable, Identifiable {
   public var picture: String?
   public var disabled: Bool
   public var profile: String?
-  public init(id: String, name: String, identifier: String, picture: String? = nil, disabled: Bool = false, profile: String? = nil) {
+  /// Postiz's `refreshNeeded`: the channel's sign-in expired and it must be reconnected in Postiz. nil when the list
+  /// didn't say (an older Postiz, or a cache written before round 22).
+  public var refreshNeeded: Bool?
+  public init(id: String, name: String, identifier: String, picture: String? = nil, disabled: Bool = false, profile: String? = nil,
+              refreshNeeded: Bool? = nil) {
     self.id = id; self.name = name; self.identifier = identifier; self.picture = picture; self.disabled = disabled
     self.profile = profile
+    self.refreshNeeded = refreshNeeded
   }
+
+  /// Disabled, or its sign-in needs refreshing: nothing posts on it until Eric reconnects it in Postiz (round 22: its
+  /// posts wait for that, they don't fall back to Manual).
+  public var needsSignIn: Bool { disabled || refreshNeeded == true }
 
   /// The DJ Queue platform this provider posts to (nil for providers DJ Queue doesn't use).
   public var platform: Platform? { PostizPlatforms.platform(forProvider: identifier) }
@@ -385,7 +394,7 @@ public final class PostizClient: @unchecked Sendable {
       return PostizIntegration(id: id, name: o["name"] as? String ?? id,
                                identifier: o["identifier"] as? String ?? o["providerIdentifier"] as? String ?? "",
                                picture: o["picture"] as? String, disabled: o["disabled"] as? Bool ?? false,
-                               profile: o["profile"] as? String)
+                               profile: o["profile"] as? String, refreshNeeded: o["refreshNeeded"] as? Bool)
     }
   }
 

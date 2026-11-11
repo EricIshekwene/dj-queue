@@ -8,6 +8,8 @@ struct PostInspector: View {
   let post: PlatformPost
   @State private var views = ""
   @State private var likes = ""
+  /// Round 22: a retrying post keeps what went wrong behind Details, closed (no red banner for something that heals).
+  @State private var showFailure = false
 
   var body: some View {
     let v = model.video(post.videoId)
@@ -20,7 +22,14 @@ struct PostInspector: View {
           section("Details") { facts }
           if let pz = model.postizState(post) { section("Postiz") { postizSection(pz) } }
           if post.errorType != nil || post.errorMessage != nil {
-            section(model.postizState(post)?.isRetrying == true ? "Last failure" : "Problem") { problem }
+            if model.postizState(post)?.isRetrying == true {
+              section("Retry") {
+                Text("Nothing to do: it goes out by itself.").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+                DSDisclosure("Details", summary: "What Postiz said", isOpen: $showFailure) { problem }
+              }
+            } else {
+              section("Problem") { problem }
+            }
           }
           if post.state == .posted { section("Metrics") { metrics } }
           section("Attempts") { attempts }
@@ -60,7 +69,7 @@ struct PostInspector: View {
             if let pz = model.postizRowState(post) {
               PostizBadge(model: model, post: post, state: pz)
             } else {
-              PostStatePill(post: post)
+              PostStatePill(post: post, model: model)
             }
             if model.isTestRun(post) { TestRunBadge() }
             Text("v\(post.versionNo) · #\(post.attemptNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
@@ -213,7 +222,7 @@ struct PostInspector: View {
           Text("#\(a.attemptNo)").font(DS.type.captionMedium.monospacedDigit()).foregroundStyle(DS.color.text).frame(width: 24, alignment: .leading)
           Text("v\(a.versionNo)\(a.kind == .regular ? "" : " · \(a.kind.rawValue)")").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
           Spacer(minLength: 4)
-          PostStatePill(post: a)
+          PostStatePill(post: a, model: model)
           Text(Fmt.day(a.scheduledAt, tz: model.tz, style: "d MMM")).font(DS.type.caption.monospacedDigit())
             .foregroundStyle(DS.color.textTertiary).frame(width: 44, alignment: .trailing)
         }
