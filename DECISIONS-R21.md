@@ -100,3 +100,24 @@ template is empty for a photo post. *Why:* "Photos" is a storage folder, not a n
 - Filters or colour adjustment. The editor frames, crops and adds text; it doesn't retouch.
 - Real posts. Nothing was published or scheduled on Eric's accounts while building; Postiz payloads are tested
   against recorded shapes.
+
+## Decisions made while building (set time)
+
+- **A time that has passed or is under 10 minutes away fails the whole batch at once.** Every item would be skipped for the same reason; one error reads better than N.
+- **Seconds are dropped.** "That minute" is the promise, and a picker can hand over any second.
+- **Setting the time it already has changes nothing,** even inside the 10 minutes. New post ids would make Postiz cancel and re-create for no change.
+- **The slot keeps its id when it takes a set time or its time changes.** The Calendar's selection stays on the same card, as Post today already does.
+- **An Edit item that still has something to fix is left exactly as it was:** no crop confirmed, a hold not cleared. Send to Queue keeps that half-step; here Eric asked for a time and didn't get one, so nothing should have happened. The message lists what Eric has to fix (the crop confirms itself next time).
+- **An item with something already posted can't take a set time.** The rest of its platforms keep their days; Repost is the way to post it again.
+- **A platform the item already has a post on (one that failed or was skipped, or a retry on its way) gets no set-time post,** as with a move. Creating one would double up on a retry or bring back a post Eric skipped. The preview lists it with the reason.
+- **Automatic retries of the slot it leaves are dropped, as `remove` does.** A new time is a fresh start.
+- **A past slot whose posts were missed is replaced too** (the rule Back to Edit uses). Setting a time is also how a missed item gets a new one.
+- **`swap`, Skip next and Post today on a set-time item are refused: "It has a set time — change the time instead".** Each would trade or drop the time Eric chose without saying so.
+- **Shift plan on a missed set-time post is refused: "It has a set time — post it now or pick a new time".** It has no platform slot to shift into. Post now and Skip work as for any post.
+- **Moving a set-time slot to another day keeps its clock time and logs "Set for …"; the same day is a no-op.** A drag across days means "that time, another day". If that time on the new day is too close, it is refused and stays.
+- **Posts topped up for a set-time slot (a platform turned on later, through the approval seam) go at the set time and never in the past.** A slot time would break "the same minute".
+- **Set times aren't scheduled days in the runway.** "Scheduled through" is about the cadence; a one-off on the 20th doesn't mean the calendar is full to the 20th.
+- **"Use the regular schedule" doesn't run the scheduler itself.** The item is back in the Queue and the next tick gives it a day, like every other way into the Queue.
+- **The preview runs the real thing in a transaction and rolls it back.** A second copy of the rules would drift.
+- **`UnplanItem.setTime` is new and `pinned` stays true for a set-time slot.** Existing words still read right; the UI can say "set time 3:15 PM" instead of "pinned".
+- **`djq week --json` slots don't carry `exact_at` yet.** `AgentAPI.WeekOut.SlotOut` is in the photo builder's file this round; `position` 100 or more marks a set time there and `djq video --json` has `plan[].exactAt`. Two lines to add at integration.
