@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 9
+  public static let schemaVersion = 10
   /// Schema step that adds `videos.sent_to_queue` (`migrateSentToQueue`). `schemaVersion` stays a literal: build-app.sh
   /// reads the number from that line into the bundle, and `djq autoupdate rollback` relies on it.
   static let sentToQueueVersion = 8
@@ -95,6 +95,7 @@ public final class Store: @unchecked Sendable {
     if v < 7 { try migrateToV7(from: v) }
     if v < Self.sentToQueueVersion { try db.exec("PRAGMA user_version = \(Self.sentToQueueVersion)") }
     if v < 9 { try migrateToV9(from: v) }
+    if v < 10 { try migrateToV10(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -286,6 +287,25 @@ public final class Store: @unchecked Sendable {
     }
   }
 
+  /// Round 23, photo with audio: `videos.still` (what a made video was made from, NULL for every other row). Additive
+  /// and lossless: one nullable column, no existing row changes. A file database with data is copied to
+  /// `<app support>/backups/` first.
+  private func migrateToV10(from v: Int) throws {
+    if v >= 1, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-schema10-\(f.string(from: Date())).sqlite").path)
+    }
+    try db.transaction {
+      let cols = Set(try db.query("PRAGMA table_info(videos)").compactMap { $0.string("name") })
+      if !cols.contains("still") { try db.exec("ALTER TABLE videos ADD COLUMN still TEXT") }
+      try db.exec("PRAGMA user_version = 10")
+    }
+  }
+
   private func seedDefaults() throws {
     if try hashtagSets().isEmpty {
       for s in Defaults.hashtagSets { try save(s) }
@@ -402,8 +422,8 @@ public final class Store: @unchecked Sendable {
       INSERT INTO videos(id,session_id,name,tags,type,content_type,kind,file,fingerprint,file_size,duration,
         marked_start,marked_end,start,"end",grace,audio,part,score,state,excluded,missing,in_manifest,notes,
         already_posted_on,longform_url,created_at,updated_at,title,title_tracks,title_source,source_width,source_height,
-        held_in_edit,sent_to_queue,photos)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        held_in_edit,sent_to_queue,photos,still)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, name=excluded.name, tags=excluded.tags,
         type=excluded.type, content_type=excluded.content_type, kind=excluded.kind, file=excluded.file,
         fingerprint=excluded.fingerprint, file_size=excluded.file_size, duration=excluded.duration,
@@ -413,13 +433,13 @@ public final class Store: @unchecked Sendable {
         already_posted_on=excluded.already_posted_on, longform_url=excluded.longform_url, updated_at=excluded.updated_at,
         title=excluded.title, title_tracks=excluded.title_tracks, title_source=excluded.title_source,
         source_width=excluded.source_width, source_height=excluded.source_height, held_in_edit=excluded.held_in_edit,
-        sent_to_queue=excluded.sent_to_queue, photos=excluded.photos
+        sent_to_queue=excluded.sent_to_queue, photos=excluded.photos, still=excluded.still
       """, [v.id, v.sessionId, v.name, JSONCoding.string(v.tags), v.type.rawValue, v.contentType, v.kind.rawValue,
             v.file, v.fingerprint, v.fileSize, v.duration, v.markedStart, v.markedEnd, v.start, v.end, v.grace,
             v.audio, v.part, v.score, v.state.rawValue, v.excluded, v.missing, v.inManifest, v.notes,
             JSONCoding.string(v.alreadyPostedOn), v.longformURL, v.createdAt, v.updatedAt, v.title,
             v.titleTracks.map { JSONCoding.string($0) }, v.titleSource, v.sourceWidth, v.sourceHeight, v.heldInEdit,
-            v.sentToQueue, v.photos.map { JSONCoding.string($0) }])
+            v.sentToQueue, v.photos.map { JSONCoding.string($0) }, v.still.map { JSONCoding.string($0) }])
   }
 
   /// Updates only the fields that come from videos.json / the file (spec §4: never overwrite app-owned fields).
@@ -443,9 +463,9 @@ public final class Store: @unchecked Sendable {
   }
 
   /// Clearing a score takes the clip back past Edit: it has to be sent again. A photo post needs no score (round 21),
-  /// so clearing its score leaves it where it is.
+  /// nor does a video made from a photo (round 23), so clearing its score leaves it where it is.
   public func setScore(_ id: String, _ score: Int?) throws {
-    try db.run("UPDATE videos SET score=?, sent_to_queue=CASE WHEN ? AND photos IS NULL THEN 0 ELSE sent_to_queue END, updated_at=? WHERE id=?",
+    try db.run("UPDATE videos SET score=?, sent_to_queue=CASE WHEN ? AND NOT \(Self.noScoreSQL) THEN 0 ELSE sent_to_queue END, updated_at=? WHERE id=?",
                [score.map { min(100, max(0, $0)) }, score == nil, now, id])
     try logEvent("score", "Score \(score.map(String.init) ?? "cleared")", videoId: id)
   }
@@ -496,11 +516,15 @@ public final class Store: @unchecked Sendable {
           longformURL: r.string("longform_url"), createdAt: r.date("created_at")!, updatedAt: r.date("updated_at")!,
           title: r.string("title"), titleTracks: r.json("title_tracks"), titleSource: r.string("title_source"),
           sourceWidth: r.int("source_width"), sourceHeight: r.int("source_height"), heldInEdit: r.bool("held_in_edit"),
-          sentToQueue: r.bool("sent_to_queue"), photos: r.json("photos"))
+          sentToQueue: r.bool("sent_to_queue"), photos: r.json("photos"), still: r.json("still"))
   }
 
+  /// SQL for `Video.needsNoScore`: a photo post, or a video made from a photo (round 23).
+  static let noScoreSQL = "(photos IS NOT NULL OR still IS NOT NULL)"
+
   public func fileURL(for v: Video) throws -> URL? {
-    if v.isPhoto { return paths.photos.appendingPathComponent(v.file) }  // round 21: always this store's Photos folder
+    // Round 21: always this store's Photos folder. Round 23: a made video lives there too (`Stills/<id>/video.mp4`).
+    if v.isPhoto || v.isStill { return paths.photos.appendingPathComponent(v.file) }
     if v.file.hasPrefix("/") { return URL(fileURLWithPath: v.file) }  // relinked into another session's folder
     guard let s = try session(id: v.sessionId) else { return nil }
     return URL(fileURLWithPath: s.folder).appendingPathComponent(v.file)
@@ -538,9 +562,11 @@ public final class Store: @unchecked Sendable {
   /// A photo post's edit is stored with its no-photo platforms skipped (round 21, D8), and its crops never become "last crop".
   public func save(_ e: Edit, videoId: String, remembersCrop: Bool = true) throws {
     var e = e
-    let isPhoto = try db.one("SELECT photos IS NOT NULL AS photo FROM videos WHERE id=?", [videoId])?.bool("photo") == true
+    let kind = try db.one("SELECT photos IS NOT NULL AS photo, still IS NOT NULL AS still FROM videos WHERE id=?", [videoId])
+    let isPhoto = kind?.bool("photo") == true
     if isPhoto { Self.keepPhotoPlatforms(&e) }
-    if remembersCrop, !isPhoto, let c = e.crop, let v = try video(id: videoId), let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0,
+    // Round 23: a made video's crop isn't "last crop" either: its picture is a photo of any shape, not the camera's frame.
+    if remembersCrop, !isPhoto, kind?.bool("still") != true, let c = e.crop, let v = try video(id: videoId), let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0,
        try edit(videoId: videoId).crop != c {
       struct P: Codable { var x: Double; var y: Double }
       try setKV("defaults.lastCropCentre", P(x: (c.x + c.w / 2) / Double(w), y: (c.y + c.h / 2) / Double(h)))
@@ -816,7 +842,7 @@ public final class Store: @unchecked Sendable {
   /// The stored state says Queue (ready, scored, short, included) — the file flag aside, since intake sets
   /// `missing` before the state catches up.
   static func wasInQueue(_ v: Video) -> Bool {
-    v.state == .ready && v.type == .short && !v.excluded && (v.score != nil || v.isPhoto)
+    v.state == .ready && v.type == .short && !v.excluded && (v.score != nil || v.needsNoScore)
   }
 
   /// The held flag counts only for a short clip with nothing posted (regular/retry).
@@ -912,8 +938,9 @@ public enum VersionResolver {
     if !decided {
       defaulted.insert("text"); defaulted.insert("noText")
       if let video {
-        if video.isPhoto {
-          // Round 21 (D7): a photo post starts with no text. Texts added after the first still draw.
+        if video.isPhoto || video.isStill {
+          // Round 21 (D7): a photo post starts with no text. Texts added after the first still draw. Round 23 (D7): the
+          // same for a video made from a photo (a flyer carries its own words).
           noText = !(chain.last { $0.moreText != nil }?.moreText ?? []).contains { !$0.isBlank }
         } else if video.kind == .talking && d.noTextForTalking {
           noText = true
@@ -930,7 +957,8 @@ public enum VersionResolver {
     let timingDefault = defaulted.contains("textStart") && defaulted.contains("textEnd")
     // Round 21 (D7): the default timing is in seconds ("First 3 seconds"). On a photo post a window counts photos, so
     // the default there is no window: the text shows on every photo.
-    let defaultWindow: (start: Double?, end: Double?) = video?.isPhoto == true ? (nil, nil) : d.textWindow
+    // Round 23 (D2): on a video made from a photo a text shows for the whole clip until Eric times it.
+    let defaultWindow: (start: Double?, end: Double?) = video.map { $0.isPhoto || $0.isStill } == true ? (nil, nil) : d.textWindow
     var r = ResolvedVersion(
       number: number,
       text: text,

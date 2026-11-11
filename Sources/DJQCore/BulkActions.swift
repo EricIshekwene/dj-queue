@@ -139,14 +139,15 @@ public final class BulkActions: @unchecked Sendable {
     default: break
     }
     let after = try store.video(id: v.id) ?? cur
-    if !after.sentToQueue, after.score != nil || after.isPhoto, try Validation.issues(video: after, store: store).isEmpty {
+    if !after.sentToQueue, after.score != nil || after.needsNoScore, try Validation.issues(video: after, store: store).isEmpty {
       try store.setSentToQueue(v.id, true)
       changed = true
     }
     return changed ? .changed : .unchanged
   }
 
-  /// Confirms the default crop when none is set. For a photo post: the centred crop of every photo that has none.
+  /// Confirms the default crop when none is set. For a photo post: the centred crop of every photo that has none. For a
+  /// video made from a photo: centred too, whatever the anchor in Settings (round 23).
   func confirmDefaultCrop(_ v: Video, _ s: Settings) throws -> Outcome {
     guard v.type == .short else { return .skipped("long-form") }
     if v.missing { return .skipped("file missing") }
@@ -161,9 +162,9 @@ public final class BulkActions: @unchecked Sendable {
     }
     guard e.crop == nil else { return .unchanged }
     guard let size = try cachedOrProbedSize(v) else { return .skipped("can't read the clip's size to place the crop") }
-    e.crop = s.defaults.defaultCrop(source: size, aspect: e.aspectOverride ?? s.defaults.aspect,
+    e.crop = s.defaults.defaultCrop(for: v, source: size, aspect: e.aspectOverride ?? s.defaults.aspect,
                                     lastUsed: s.defaults.cropAnchor == .lastUsed ? try store.lastCropCentre() : nil)
-    try store.save(e, videoId: v.id)
+    try store.save(e, videoId: v.id, remembersCrop: !v.isStill)
     return .changed
   }
 
@@ -181,7 +182,7 @@ public final class BulkActions: @unchecked Sendable {
         e.photoCrops = [:]  // a photo post goes back to its centred crops
         if e.crop != nil {
           e.crop = try cachedOrProbedSize(v).map {
-            s.defaults.defaultCrop(source: $0, aspect: s.defaults.aspect,
+            s.defaults.defaultCrop(for: v, source: $0, aspect: s.defaults.aspect,
                                    lastUsed: s.defaults.cropAnchor == .lastUsed ? try store.lastCropCentre() : nil)
           }
         }
@@ -427,7 +428,7 @@ public final class BulkActions: @unchecked Sendable {
     var r = try run("unqueue", ids: ids, dryRun: dryRun, plan: true) { _, v, _ in
       guard v.type == .short else { return .skipped("long-form — it's uploaded by hand, never queued") }
       if v.excluded { return .skipped("excluded — it isn't in the queue") }
-      if v.score == nil, !v.isPhoto { return .skipped("not scored yet — it isn't in the queue") }
+      if v.score == nil, !v.needsNoScore { return .skipped("not scored yet — it isn't in the queue") }
       if v.heldInEdit { return .unchanged }
       if let why = try postedBlocker(v) { return .skipped(why) }
       let items = try hold(v, planner: planner)
@@ -473,7 +474,7 @@ public final class BulkActions: @unchecked Sendable {
     try run("requeue", ids: ids, dryRun: dryRun, plan: true) { _, v, s in
       guard v.type == .short else { return .skipped("long-form — it's uploaded by hand, never queued") }
       if v.excluded { return .skipped("excluded — include it first") }
-      if v.score == nil, !v.isPhoto { return .skipped("not scored yet — give it a score first") }
+      if v.score == nil, !v.needsNoScore { return .skipped("not scored yet — give it a score first") }
       guard ClipStage.of(v) == .edit else { return .unchanged }
       let sent = try send(v, s)
       guard case .unchanged = sent else { return sent }
@@ -672,6 +673,7 @@ public final class BulkActions: @unchecked Sendable {
       if x.edit != y.edit { out.before.clips[i].edit = y.edit }
       if x.versions != y.versions { out.before.clips[i].versions = y.versions }
       if x.photos != y.photos { out.before.clips[i].photos = y.photos }
+      if x.still != y.still { out.before.clips[i].still = y.still }
     }
     return out
   }
@@ -756,6 +758,11 @@ public final class BulkActions: @unchecked Sendable {
           // A crop this batch moved can't go back once a platform could post it: the platforms would end up on different pictures.
           if !force, rec.action == Self.cropOffsetAction, rec.videoIds.contains(b.id),
              let why = try cropLock(try store.posts(where: "video_id=?", [b.id], order: "id")) {
+            result.skipped[b.id] = why
+            continue
+          }
+          // Round 23 (D9): audio isn't added, changed or removed under a day or a post, by an undo either.
+          if let why = try stillUndoLock(rec.action, b.id) {
             result.skipped[b.id] = why
             continue
           }
@@ -867,9 +874,9 @@ public final class BulkActions: @unchecked Sendable {
     let clause: String
     switch filter {
     case "all": clause = base
-    case "unscored", "to-score": clause = "\(base) AND excluded=0 AND missing=0 AND score IS NULL AND photos IS NULL"
+    case "unscored", "to-score": clause = "\(base) AND excluded=0 AND missing=0 AND score IS NULL AND NOT \(Store.noScoreSQL)"
     case "scored": clause = "\(base) AND score IS NOT NULL"
-    case "needs-edit": clause = "\(base) AND excluded=0 AND missing=0 AND (score IS NOT NULL OR photos IS NOT NULL) AND state='needs_edit'"
+    case "needs-edit": clause = "\(base) AND excluded=0 AND missing=0 AND (score IS NOT NULL OR \(Store.noScoreSQL)) AND state='needs_edit'"
     case "repost-ready":
       // Round 20: clips with a version Eric marked ready to repost.
       let ids = Set(try store.repostReadyVersions().keys)
@@ -910,6 +917,9 @@ public final class BulkActions: @unchecked Sendable {
     var sent: Bool? = nil
     /// Round 21: a photo post's photos as stored (order included). nil for a video, and in every older journal.
     var photos: String? = nil
+    /// Round 23: a made video's media (`StillSnap`: what it was made from and its file). nil for every other clip, and
+    /// in every older journal, so those compare and restore exactly as before.
+    var still: String? = nil
   }
 
   /// `cur` is still what snapshot `a` recorded. A sent flag that went from on to off isn't Eric's later work: the engine
@@ -1006,7 +1016,7 @@ public final class BulkActions: @unchecked Sendable {
           if let v = try store.video(id: id), v.type == .short {
             let issues = (try? Validation.issues(video: v, store: store)) ?? []
             result.remainingIssues[id] = issues
-            rows.append((id, issues, v.titleText != nil, v.score != nil || v.isPhoto))
+            rows.append((id, issues, v.titleText != nil, v.score != nil || v.needsNoScore))
           }
         }
         if reportsAll { result.outlook = ReadyOutlook.classify(rows) }
@@ -1129,7 +1139,7 @@ public final class BulkActions: @unchecked Sendable {
                     excluded: r?.bool("excluded") ?? false, title: r?.string("title"), titleTracks: r?.string("title_tracks"),
                     titleSource: r?.string("title_source"), edit: edit, versions: versions, renders: rs,
                     held: r?.bool("held_in_edit") == true ? true : nil, sent: r?.bool("sent_to_queue") ?? false,
-                    photos: r?.string("photos"))
+                    photos: r?.string("photos"), still: try stillSnapshot(id))
   }
 
   private func restore(_ c: ClipSnap) throws {
@@ -1142,6 +1152,8 @@ public final class BulkActions: @unchecked Sendable {
     if let json = c.photos, let photos = try? JSONCoding.decoder.decode([PhotoItem].self, from: Data(json.utf8)) {
       try store.writePhotos(photos, videoId: c.id)
     }
+    // Round 23: a photo post that became a video (or a video that became a photo post again) goes back to what it was.
+    try restoreStill(c)
     if let e = c.edit {
       try db.run("INSERT INTO edits(video_id,json,updated_at) VALUES(?,?,?) ON CONFLICT(video_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",
                  [c.id, e, store.clock.now])

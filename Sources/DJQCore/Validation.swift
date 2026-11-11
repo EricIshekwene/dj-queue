@@ -138,6 +138,11 @@ public enum Validation {
         out.append(.init(kind: .titleTooLong, platform: .youtube, message: "YouTube title too long (\(t.count)/\(lim))",
                          count: Double(t.count), limit: Double(lim)))
       }
+      // Round 23 (D10): a video made from a photo has no marker tag to fall back on, so with no Title, no text on it
+      // and no YouTube title typed, YouTube would name it after the photo's file.
+      if v.isStill, v.titleText == nil, r.youtubeTitle.isEmpty, !r.hasText {
+        out.append(.init(kind: .noTitle, platform: .youtube, message: StillVideo.youtubeTitleIssue))
+      }
     }
     return out
   }

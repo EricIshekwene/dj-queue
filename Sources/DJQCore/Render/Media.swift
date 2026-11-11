@@ -191,7 +191,7 @@ public enum Media {
     let h = maxHeight
     let w = max(2, Int((Double(h) * edit.aspect.ratio).rounded()))
     let crop = raw.crop ?? settings.defaults.defaultCrop(
-      source: CGSize(width: frame.width, height: frame.height), aspect: edit.aspect, lastUsed: lastUsed)
+      for: video, source: CGSize(width: frame.width, height: frame.height), aspect: edit.aspect, lastUsed: lastUsed)
     guard let img = coverComposite(frame, crop: crop, aspect: edit.aspect, size: CGSize(width: w, height: h),
                                    layers: layers) else { return nil }
     do {

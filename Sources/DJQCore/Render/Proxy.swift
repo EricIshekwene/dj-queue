@@ -102,9 +102,12 @@ extension Media {
       a += ["-g", "30", "-c:a", "aac", "-b:a", "96k", "-ac", "2", "-map_metadata", "-1", "-movflags", "+faststart", tmp.path]
       return a
     }
-    var r = try Proc.run(ffmpeg, args(hw: true), timeout: timeout)
-    if r.status != 0 { r = try Proc.run(ffmpeg, args(hw: false), timeout: timeout) }
-    guard r.status == 0, fm.fileExists(atPath: tmp.path) else { throw MediaError("proxy failed for \(video.name): \(r.stderrTail)") }
+    // Round 23: a video made from a photo is one picture all the way through, so its proxy doesn't decode it.
+    if !(video.isStill && StillVideo.proxy(ffmpeg: ffmpeg, source: src, filter: vf, start: start, end: end, to: tmp, timeout: timeout)) {
+      var r = try Proc.run(ffmpeg, args(hw: true), timeout: timeout)
+      if r.status != 0 { r = try Proc.run(ffmpeg, args(hw: false), timeout: timeout) }
+      guard r.status == 0, fm.fileExists(atPath: tmp.path) else { throw MediaError("proxy failed for \(video.name): \(r.stderrTail)") }
+    }
     // Keep one proxy per clip and range.
     let prefix = "\(video.id)-\(range.rawValue)-"
     for f in (try? fm.contentsOfDirectory(atPath: store.paths.proxies.path)) ?? [] where f.hasPrefix(prefix) && f.hasSuffix(".mp4") {

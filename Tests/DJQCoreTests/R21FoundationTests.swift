@@ -53,7 +53,7 @@ import Testing
     }
     let s = try Store(paths: paths, clock: FixedClock(Fixture.monday9am), path: file.path)
     #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == Store.schemaVersion)
-    #expect(Store.schemaVersion == 9)
+    #expect(Store.schemaVersion >= 9)  // 10 since round 23 (videos.still)
     #expect(try dump(s.db, "videos", vcols, order: "id") == before[0])
     #expect(try dump(s.db, "plan_slots", scols, order: "id") == before[1])
     #expect(try dump(s.db, "renders", rcols, order: "id") == before[2])

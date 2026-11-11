@@ -143,13 +143,18 @@ public final class Doctor: @unchecked Sendable {
     for v in try store.videos(where: "photos IS NOT NULL") {
       for f in try importer.missingFiles(v) { w.append("\(v.id) · \(v.displayName) · \(store.paths.photos.appendingPathComponent(f).path)") }
     }
+    // Round 23: a video made from a photo, whose own file (`Photos/Stills/<id>/video.mp4`) is gone.
+    for v in try store.videos(where: "still IS NOT NULL") {
+      let url = store.paths.photos.appendingPathComponent(v.file)
+      if !FileManager.default.fileExists(atPath: url.path) { w.append("\(v.id) · \(v.displayName) · \(url.path)") }
+    }
     guard !w.isEmpty else { return [] }
-    return [.init(id: "photos.missing", severity: .error, title: "\(w.count) photo file(s) missing", detail: "A photo post can't render or post while one of its photos is gone. Records are kept.",
+    return [.init(id: "photos.missing", severity: .error, title: "\(w.count) photo file(s) missing", detail: "A photo post can't render or post while one of its photos is gone, nor a photo with audio while its video file is. Records are kept.",
                   where_: w, fix: "Put the file back at that path and run `djq intake` (the post comes back by itself). If the photo is gone for good, Eric removes it from the post in the editor, or excludes the post (`djq exclude <id>`). Never edit files under Photos/Originals by hand otherwise.")]
   }
 
   func missingFiles() throws -> [DoctorFinding] {
-    let vids = try store.videos(where: "missing=1 AND photos IS NULL")
+    let vids = try store.videos(where: "missing=1 AND photos IS NULL AND still IS NULL")  // those two are `photos.missing`
     guard !vids.isEmpty else { return [] }
     let w = try vids.map { "\($0.id) · \($0.name) · \(try store.fileURL(for: $0)?.path ?? $0.file)\($0.inManifest ? "" : " (removed from videos.json)")" }
     return [.init(id: "files.missing", severity: .error, title: "\(vids.count) video file(s) missing", detail: "Missing videos can't render or post. Records are kept.",

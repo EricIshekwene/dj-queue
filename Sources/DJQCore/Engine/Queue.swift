@@ -18,7 +18,7 @@ public final class Queue: @unchecked Sendable {
   /// Videos marked with "skip next" move one place later.
   ///
   /// Round 21 (D4): a photo post needs no score. Unscored photos come first, oldest import first; a photo with a score
-  /// sorts by it like a clip.
+  /// sorts by it like a clip. Round 23 (D6): the same for a video made from a photo (`Video.needsNoScore`).
   public func ordered(platform: Platform? = nil) throws -> [Video] {
     let settings = try store.settings()
     let slotted = try slottedVideoIds(settings)
@@ -38,9 +38,9 @@ public final class Queue: @unchecked Sendable {
     return try applySkips(out, slotted: slotted)
   }
 
-  /// Short-form, not excluded/missing, score == nil. Never a photo post: photos skip Score.
+  /// Short-form, not excluded/missing, score == nil. Never a photo post or a video made from one: they skip Score.
   public func toScore() throws -> [Video] {
-    try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND score IS NULL AND photos IS NULL")
+    try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND score IS NULL AND NOT \(Store.noScoreSQL)")
       .sorted { ($0.part ?? 0, $0.start ?? 0, $0.name) < ($1.part ?? 0, $1.start ?? 0, $1.name) }
   }
 
@@ -50,14 +50,14 @@ public final class Queue: @unchecked Sendable {
   /// before (score, part, start; a tie keeps the order they were read in).
   public func needsEdit() throws -> [Video] {
     try store.videos(where: """
-      type='short-form' AND excluded=0 AND (score IS NOT NULL OR photos IS NOT NULL) AND
+      type='short-form' AND excluded=0 AND (score IS NOT NULL OR \(Store.noScoreSQL)) AND
       ((missing=0 AND state='needs_edit') OR (missing=1 AND state IN ('needs_edit','ready','missing_file')))
       """)
       .sorted { a, b in
-        let ka = (a.score ?? (a.isPhoto ? -1 : 0), a.part ?? 0, a.start ?? 0), kb = (b.score ?? (b.isPhoto ? -1 : 0), b.part ?? 0, b.start ?? 0)
+        let ka = (a.score ?? (a.needsNoScore ? -1 : 0), a.part ?? 0, a.start ?? 0), kb = (b.score ?? (b.needsNoScore ? -1 : 0), b.part ?? 0, b.start ?? 0)
         if ka != kb { return ka < kb }
-        // A tie: clips stay as they were read (and ahead of photos); photos go oldest import first.
-        guard a.isPhoto, b.isPhoto else { return !a.isPhoto && b.isPhoto }
+        // A tie: clips stay as they were read (and ahead of photos); photos and made videos go oldest import first.
+        guard a.needsNoScore, b.needsNoScore else { return !a.needsNoScore && b.needsNoScore }
         return a.createdAt != b.createdAt ? a.createdAt < b.createdAt : a.id < b.id
       }
   }
@@ -103,9 +103,10 @@ public final class Queue: @unchecked Sendable {
 
   // MARK: Overlap (optional, default off)
 
-  /// Same session + part and overlapping source ranges.
+  /// Same session + part and overlapping source ranges. Never two videos made from photos (round 23): each is its own
+  /// file from 0 to its length, not a cut of one recording.
   public static func overlaps(_ a: Video, _ b: Video) -> Bool {
-    guard a.id != b.id, a.sessionId == b.sessionId, a.part == b.part,
+    guard a.id != b.id, !a.isStill, !b.isStill, a.sessionId == b.sessionId, a.part == b.part,
           let s1 = a.start, let e1 = a.end, let s2 = b.start, let e2 = b.end else { return false }
     return s1 < e2 && s2 < e1
   }
@@ -119,9 +120,9 @@ public final class Queue: @unchecked Sendable {
     return Set(try store.planSlots().filter { !stale.contains($0.id) }.map(\.videoId))
   }
 
-  /// Scored clips, and photo posts with or without a score.
+  /// Scored clips, and photo posts and videos made from a photo with or without a score.
   func candidates() throws -> [Video] {
-    try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND (score IS NOT NULL OR photos IS NOT NULL)")
+    try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND (score IS NOT NULL OR \(Store.noScoreSQL))")
   }
 
   /// Edit valid. `ready` already means valid; videos in other states (planned elsewhere, override posts) are re-checked.
@@ -135,8 +136,9 @@ public final class Queue: @unchecked Sendable {
 
   func sort(_ vids: [Video], direction: SortDirection, sessionDates: [String: String]) -> [Video] {
     vids.sorted { a, b in
-      // Round 21 (D4): unscored photo posts go ahead of everything scored, oldest import first.
-      let ua = a.isPhoto && a.score == nil, ub = b.isPhoto && b.score == nil
+      // Round 21 (D4): unscored photo posts go ahead of everything scored, oldest import first. Round 23 (D6): videos
+      // made from a photo sort with them.
+      let ua = a.needsNoScore && a.score == nil, ub = b.needsNoScore && b.score == nil
       if ua != ub { return ua }
       if ua, a.createdAt != b.createdAt { return a.createdAt < b.createdAt }
       let sa = a.score ?? 0, sb = b.score ?? 0

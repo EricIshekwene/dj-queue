@@ -43,6 +43,27 @@ public enum AgentAPI {
     public var media: String = "video"
     /// Round 21: a photo post's photos in posting order (empty for a video). The first is the cover.
     public var photos: [PhotoOut] = []
+    /// Round 23: set on a video DJ Queue made from one photo and an audio file ("Photo + audio"); absent on everything
+    /// else. Such an item is a clip (`media` is "video"): it needs no score and posts to YouTube Shorts like any clip.
+    public var still: StillOut? = nil
+  }
+
+  /// Round 23: what a "photo with audio" video was made from.
+  public struct StillOut: Codable, Sendable {
+    /// The audio file's name as Eric picked it.
+    public var audio_name: String
+    /// Its length, which is the video's length.
+    public var audio_seconds: Double
+    /// The photo the video holds.
+    public var photo: PhotoOut
+  }
+
+  public static func still(_ v: Video) -> StillOut? {
+    v.still.map { s in
+      StillOut(audio_name: s.audioName, audio_seconds: s.audioDuration,
+               photo: PhotoOut(id: s.photo.id, file: URL(fileURLWithPath: s.photo.file).lastPathComponent, width: s.photo.width,
+                               height: s.photo.height))
+    }
   }
 
   /// Round 21: one photo of a photo post. `id` stays the same when the order changes.
@@ -187,7 +208,7 @@ public enum AgentAPI {
       reasons: ClipStage.of(v) == .edit ? issues.sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText) : [],
       text_suggestion_count: try store.suggestionCount(.text, videoId: v.id),
       repost_ready_versions: v.type == .short ? ((try? store.repostReadyVersions(videoId: v.id)) ?? []) : [],
-      media: v.isPhoto ? "photo" : "video", photos: photos(v))
+      media: v.isPhoto ? "photo" : "video", photos: photos(v), still: still(v))
   }
 
   static func suggestion(_ s: TitleSuggestion) -> SuggestionOut {

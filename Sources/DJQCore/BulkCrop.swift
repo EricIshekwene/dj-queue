@@ -114,6 +114,7 @@ public extension BulkActions {
                           scheduled: false, skipped: nil, frameTime: 0)
     guard v.type == .short else { out.skipped = "Long-form clips have no crop"; return out }
     if v.isPhoto { out.skipped = PhotoRules.bulkCropReason; return out }  // round 21 (D17)
+    if v.isStill { out.skipped = StillVideo.bulkCropReason; return out }  // round 23: its picture is a photo of any shape
     if v.missing { out.skipped = "Its file is missing"; return out }
     let posts = try store.posts(where: "video_id=?", [v.id], order: "id")
     if let why = try cropLock(posts) { out.skipped = why; return out }

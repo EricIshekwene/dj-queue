@@ -72,7 +72,7 @@ public enum StageWording {
 
   /// Back label for `v`: "Back to Score" / "Back to Edit"; "Back" when it has no back move.
   public static func backTitle(_ v: Video) -> String {
-    if v.isPhoto, ClipStage.of(v) == .edit { return "Back" }  // a photo post has no Score stage to go back to
+    if v.needsNoScore, ClipStage.of(v) == .edit { return "Back" }  // a photo post (or a video made from one) has no Score stage to go back to
     return ClipStage.of(v)?.backTitle ?? "Back"
   }
 
@@ -81,7 +81,7 @@ public enum StageWording {
 
   /// Back tooltip for `v` (falls back to the blocker, then "Back a stage").
   public static func backHelp(_ v: Video) -> String {
-    if v.isPhoto, ClipStage.of(v) == .edit { return PhotoRules.noScoreStage }
+    if v.needsNoScore, ClipStage.of(v) == .edit { return noScoreStage(v) }
     return ClipStage.of(v)?.backHelp(score: v.score) ?? blocker(v, .back) ?? "Back a stage"
   }
 
@@ -97,7 +97,7 @@ public enum StageWording {
     guard let st = ClipStage.of(v) else { return noStageReason(v) }
     if v.missing, st == .edit { return fileMissing }
     switch (st, direction) {
-    case (.edit, .back) where v.isPhoto: return PhotoRules.noScoreStage
+    case (.edit, .back) where v.needsNoScore: return noScoreStage(v)
     case (.score, .back): return "Score is the first stage"
     case (.queue, .forward): return queueSchedulesItself
     case (.posted, .back): return "Posted — use Repost (next version) or Reset a wrongly marked post in Posts"
@@ -107,6 +107,9 @@ public enum StageWording {
   }
 
   public static let fileMissing = "File missing — relink it first"
+
+  /// Why Back from Edit doesn't apply to an item that needs no score: a photo post, or a video made from a photo.
+  static func noScoreStage(_ v: Video) -> String { v.isStill ? StillVideo.noScoreStage : PhotoRules.noScoreStage }
 
   /// Why a clip has no stage at all.
   public static func noStageReason(_ v: Video) -> String {

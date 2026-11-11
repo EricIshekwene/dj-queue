@@ -62,11 +62,13 @@ public enum Captions {
     return video.titleText ?? tagValue(video)
   }
 
-  /// `{tag}`: the raw marker tag. Empty for a photo post, whose tag is its file name.
-  public static func tagValue(_ video: Video) -> String { video.isPhoto ? "" : video.tag }
+  /// `{tag}`: the raw marker tag. Empty for a photo post, whose tag is its file name, and for a video made from a photo
+  /// (round 23, D7).
+  public static func tagValue(_ video: Video) -> String { video.isPhoto || video.isStill ? "" : video.tag }
 
   /// `{set}`: the session name without its date. Empty for a photo post (D18: "Photos" is a storage folder, not a night).
-  public static func setValue(_ sessionName: String, video: Video) -> String { video.isPhoto ? "" : setName(sessionName) }
+  /// The same for a video made from a photo (round 23, D7).
+  public static func setValue(_ sessionName: String, video: Video) -> String { video.isPhoto || video.isStill ? "" : setName(sessionName) }
 
   /// The template a platform's caption is built from when no caption is written: the version's chosen template,
   /// else the platform's default template, else the default template.

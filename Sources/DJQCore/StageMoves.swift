@@ -41,11 +41,11 @@ public enum ClipStage: String, Codable, Sendable, CaseIterable, Comparable {
       switch v.state {
       case .planned, .posting: return .scheduled
       case .posted, .partial: return .posted
-      default: return v.score == nil && !v.isPhoto ? nil : .edit
+      default: return v.score == nil && !v.needsNoScore ? nil : .edit
       }
     }
-    // Round 21 (D4): a photo post needs no score, so it is never in Score.
-    if v.score == nil && !v.isPhoto { return .score }
+    // Round 21 (D4): a photo post needs no score, so it is never in Score. Round 23 (D6): nor is a video made from one.
+    if v.score == nil && !v.needsNoScore { return .score }
     switch v.state {
     case .needsEdit: return .edit
     case .ready: return .queue

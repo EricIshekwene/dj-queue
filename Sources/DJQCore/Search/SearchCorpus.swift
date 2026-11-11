@@ -128,12 +128,17 @@ public enum SearchCorpus {
       // Round 21 (D18): a photo post says "Photo" or "Carousel · 5" where a clip names its night and kind.
       add("Type", v.photoLabel)
       for p in photos { add("File", URL(fileURLWithPath: p.file).lastPathComponent) }
+    } else if let still = v.still {
+      // Round 23: a video made from a photo says "Photo + audio" and is found by its audio's name and its photo's.
+      add("Type", v.photoLabel)
+      add("Audio", still.audioName)
+      add("File", URL(fileURLWithPath: still.photo.file).lastPathComponent)
     } else {
       add("Session", session.map { Captions.setName($0.name) })
       add("File", v.file)
     }
     add("File", v.name == v.tag ? nil : v.name)
-    if !v.isPhoto { add("Kind", v.kind.displayName) }
+    if !v.isPhoto, !v.isStill { add("Kind", v.kind.displayName) }
     add("Stage", ClipStage.of(v)?.displayName)
     if v.excluded { add("State", "Excluded") }
     if v.missing { add("State", "File missing") }

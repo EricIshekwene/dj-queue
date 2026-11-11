@@ -230,7 +230,8 @@ public final class PhotoImport: @unchecked Sendable {
         try store.logEvent("relink", "Photo file is back: \(v.name)", videoId: v.id)
       }
     }
-    return gone
+    // Round 23: a video made from a photo lives in the Photos folder too; its own file is what it posts.
+    return gone + (try StillVideo(store: store).checkFiles())
   }
 
   /// The files of `v` that aren't on disk (relative to the Photos folder).
@@ -311,7 +312,8 @@ public final class PhotoImport: @unchecked Sendable {
   /// A name no other photo post has ("IMG_1234", then "IMG_1234 2"): renders are named after it. Names are compared
   /// the way a file name would be: "Flyer" and "flyer" are one name on a Mac, and so are "a:b" and "a-b" once written.
   private func freeName(_ base: String) throws -> String {
-    let taken = Set(try store.videos(where: "photos IS NOT NULL").map { Self.fileNameKey($0.name) })
+    // Round 23: videos made from photos keep their names and render into the same folder.
+    let taken = Set(try store.videos(where: Store.noScoreSQL).map { Self.fileNameKey($0.name) })
     guard taken.contains(Self.fileNameKey(base)) else { return base }
     var n = 2
     while taken.contains(Self.fileNameKey("\(base) \(n)")) { n += 1 }

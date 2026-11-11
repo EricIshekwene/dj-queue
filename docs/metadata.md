@@ -14,6 +14,12 @@ DJ Queue's own copies) and are never read from, or written to, a manifest. Expor
 `djq videos --json` lists them with `media: "photo"` and their `photos`. Agents add text, titles and captions to one
 with the same `djq` commands as a clip, and never send it to the Queue unless Eric says so.
 
+**A photo with audio isn't in any `videos.json` either** (round 23). `djq photo add <photo> --audio <file>` or
+`djq photo audio <id> <file>` makes a video of one photo held for the length of an audio file
+(`Photos/Stills/<id>/video.mp4`, beside DJ Queue's own copy of the audio). `djq videos --json` lists it as a clip
+(`media: "video"`) with `still {audio_name, audio_seconds, photo}`. It has no marker tag, so `{tag}` and `{set}` are
+empty and its YouTube post needs a Title.
+
 ## Per-video fields DJ Queue reads
 
 Existing fields (unchanged): `id`, `name`, `tags`, `type` (`short-form` / `long-form`), `content-type`

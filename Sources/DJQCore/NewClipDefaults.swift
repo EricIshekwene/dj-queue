@@ -176,6 +176,15 @@ public struct NewClipDefaults: Codable, Sendable, Hashable {
     let px = Media.pixelCrop(r, sourceWidth: Int(sw), sourceHeight: Int(sh))
     return CropRect(x: px.minX, y: px.minY, w: px.width, h: px.height)
   }
+
+  /// The default crop for `v`. A video made from a photo (round 23) is always centred: the anchor in Settings is where
+  /// the DJ stands in the camera's frame, which says nothing about a flyer or a photo.
+  public func defaultCrop(for v: Video, source: CGSize, aspect: Aspect, lastUsed: CGPoint? = nil) -> CropRect {
+    guard v.isStill else { return defaultCrop(source: source, aspect: aspect, lastUsed: lastUsed) }
+    var centred = self
+    centred.cropAnchor = .centre
+    return centred.defaultCrop(source: source, aspect: aspect)
+  }
 }
 
 /// Edit fields that can follow the defaults (for "Default"/"Custom" badges and resets).
@@ -262,7 +271,7 @@ public enum EditResolver {
     var crop = e.crop
     if crop == nil {
       defaulted.insert(.crop)
-      if let size, size.width > 0, size.height > 0 { crop = d.defaultCrop(source: size, aspect: aspect, lastUsed: lastUsedCrop) }
+      if let size, size.width > 0, size.height > 0 { crop = d.defaultCrop(for: v, source: size, aspect: aspect, lastUsed: lastUsedCrop) }
     }
     let def = d.trim(for: v)
     if e.trimIn == nil { defaulted.insert(.trimIn) }

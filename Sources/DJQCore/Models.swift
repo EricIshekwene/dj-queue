@@ -258,6 +258,23 @@ public struct PhotoItem: Codable, Sendable, Hashable, Identifiable {
   public static func newId() -> String { String(UUID().uuidString.prefix(8)).lowercased() }
 }
 
+/// Round 23: what a "photo with audio" video was made from (`StillVideo`). The item is an ordinary clip whose file is the
+/// video DJ Queue made; this keeps the photo (so Remove audio can give the photo post back) and the audio's own copy.
+public struct StillSource: Codable, Sendable, Hashable {
+  /// The photo the video holds, as the photo post had it (DJ Queue's copy under `Paths.photos`).
+  public var photo: PhotoItem
+  /// DJ Queue's copy of the audio, relative to the Photos folder, e.g. "Stills/<video id>/audio.mp3".
+  public var audio: String
+  /// The picked file's name, e.g. "Friday mix.mp3" (what the editor's Audio row shows).
+  public var audioName: String
+  /// Seconds of audio, which is the video's length.
+  public var audioDuration: Double
+
+  public init(photo: PhotoItem, audio: String, audioName: String, audioDuration: Double) {
+    self.photo = photo; self.audio = audio; self.audioName = audioName; self.audioDuration = audioDuration
+  }
+}
+
 public struct Video: Codable, Sendable, Identifiable, Hashable {
   public var id: String  // = videos.json id
   public var sessionId: String
@@ -309,9 +326,20 @@ public struct Video: Codable, Sendable, Identifiable, Hashable {
   /// A photo post is a short-form item with `duration` 0 and `file` = its first photo; it lives in the Photos session
   /// (`Session.photosId`), never comes from videos.json (`inManifest` false) and needs no score.
   public var photos: [PhotoItem]? = nil
+  /// Round 23: set on a video DJ Queue made from one photo and an audio file ("Photo + audio"). Such an item is a clip
+  /// everywhere (`photos` is nil, `file` is the made video under `Paths.photos`, `duration` is the audio's length); it
+  /// stays in the Photos session, never comes from videos.json and needs no score. nil for every other video.
+  public var still: StillSource? = nil
 
   /// A photo post (single photo or carousel), not a video.
   public var isPhoto: Bool { photos != nil }
+
+  /// A video made from a photo and an audio file (round 23). A clip in every way but the four `StillVideo` lists.
+  public var isStill: Bool { still != nil }
+
+  /// Round 23: the one test for "this item skips Score": a photo post, or a video made from a photo. Stage and Queue
+  /// rules ask this; nothing else about a made video is photo-like.
+  public var needsNoScore: Bool { isPhoto || isStill }
 
   /// The marker tag (the part of the name after the session), e.g. "yayo x johnny".
   public var tag: String { tags.first ?? name }
