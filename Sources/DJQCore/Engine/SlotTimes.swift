@@ -58,7 +58,11 @@ extension PostActions {
       .filter { PostizService.openStates.contains($0.state) }
       .sorted { ($0.kind == .regular ? 0 : 1, $0.scheduledAt) < ($1.kind == .regular ? 0 : 1, $1.scheduledAt) }
     var days: [String: String] = [:]  // read under the slot the post was placed with
-    for post in future where post.kind == .regular { days[post.id] = try store.planDay(of: post, dm: dm) }
+    var positions: [String: Int] = [:]  // and so is the position of a post with no card (`cardlessPosition`)
+    for post in future where post.kind == .regular {
+      days[post.id] = try store.planDay(of: post, dm: dm)
+      positions[post.id] = try store.position(of: post)
+    }
     if s.slot(for: p) != minutes {  // a saved row reads as changed even when it isn't
       s.slotMinutes[p] = minutes
       try store.save(s)
@@ -83,7 +87,7 @@ extension PostActions {
       }
       let to: Date
       if let day = days[post.id] {
-        to = s.slotTime(p, date: day, position: try store.position(of: post), dm)
+        to = s.slotTime(p, date: day, position: try positions[post.id] ?? store.position(of: post), dm)
       } else {
         to = try Sched.staggered(store: store, platform: p, day: dm.key(post.scheduledAt), settings: s, dm: dm, excluding: [post.id])
       }

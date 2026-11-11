@@ -5,10 +5,12 @@ import Foundation
 ///
 /// The model is a `PlanSlot` with `exactAt` set:
 /// - always pinned, `date` = the local day of `exactAt`, `position` = the first free one from `PlanSlot.exactBase` up, so
-///   it never takes one of the day's regular positions (`0..<postsPerDay`) and two set-time items can share a day;
+///   it never takes one of the day's regular positions (`0..<postsPerDay`) and two set-time items can share a day
+///   (on the same minute Postiz sends one of them a minute later on a channel, and the preview says so);
 /// - its week is marked approved the way `autoSchedule` does, and it holds one regular `PlatformPost` per usable
 ///   platform at `exactAt`: always the slot's own clip, never another clip pulled by a per-platform sort. YouTube inside
-///   the quiet window goes through `YouTubeWindow.clear` like every other YouTube time;
+///   the quiet window goes through `YouTubeWindow.clear` like every other YouTube time. A platform that failed and has a
+///   retry on its way goes out at the set time as that retry (`carryRetries`), so the lineage never forks;
 /// - it sits outside the cadence: `openPositions`, `fill`, the relay, `push`, `reflow`, the `Placer` and the runway leave
 ///   it out, so no other clip moves because of it and nothing but `postAt`, `clearExact`, a move to another day, Back to
 ///   Edit and `remove` ever changes it.
@@ -24,6 +26,8 @@ extension Planner {
       public var at: Date
       /// YouTube's quiet window moved it off the set time.
       public var moved: Bool
+      /// It goes out as the retry of a post that failed, moved to the set time.
+      public var retry = false
     }
 
     public struct Skipped: Codable, Sendable, Equatable {
@@ -32,7 +36,13 @@ extension Planner {
         case off
         /// Marked as already posted there.
         case posted
-        /// It already has a post there (one that failed or was skipped, or a retry on its way).
+        /// Its post there failed and retries by itself: the retry is made for the set time on the engine's next pass.
+        case retrying
+        /// Its post there failed and waits for Eric (Fixed, or a copyright choice) in Posts.
+        case failed
+        /// Its post there was skipped.
+        case skipped
+        /// Anything else already on record there (taken down, blocked).
         case history
       }
       public var platform: Platform
@@ -52,7 +62,8 @@ extension Planner {
     public var skipped: [Skipped] = []
     /// The slots it takes the item off (its regular day, or the set time it had).
     public var replaces: [PlanSlot] = []
-    /// What Eric should read first: "YouTube moves to 2:30 AM (07:30 UTC)".
+    /// What Eric should read first: "YouTube moves to 2:30 AM (07:30 UTC)", "TikTok goes out at 7:01 PM: another post
+    /// has 7:00 PM" (Postiz never sends two posts on one channel in the same minute).
     public var notes: [String] = []
     /// It already has exactly this time: confirming changes nothing.
     public var unchanged = false
@@ -75,7 +86,19 @@ extension Planner {
     let dm = DayMath(settings: settings)
     let day = String(format: "%04d-%02d-%02d", n[0], n[1], n[2])
     guard dm.key(dm.date(day)) == day else { throw bad }  // 31 November rolls over
-    return dm.at(day, minutes: n[3] * 60 + n[4])
+    return try exactDate(day: day, minutes: n[3] * 60 + n[4], settings: settings)
+  }
+
+  /// `minutes` after midnight on `day` in the Settings time zone. Refused when that time doesn't exist there: the night
+  /// the clocks go forward has no 2:30 AM, and the calendar would quietly hand back 3:30.
+  public static func exactDate(day: String, minutes: Int, settings: Settings) throws -> Date {
+    let dm = DayMath(settings: settings)
+    let d = dm.at(day, minutes: minutes)
+    let c = dm.calendar.dateComponents([.hour, .minute], from: d)
+    guard dm.key(d) == day, (c.hour ?? 0) * 60 + (c.minute ?? 0) == minutes else {
+      throw EngineError(StageWording.noSuchTime(minutes: minutes, day: day, settings: settings))
+    }
+    return d
   }
 
   /// Why `at` can't be a set time (nil = it can): it has passed, or it's inside the lead.
@@ -112,7 +135,7 @@ extension Planner {
   }
 
   /// "Use the regular schedule": takes the set time off. The item is back in the Queue and the next `autoSchedule` gives
-  /// it the next open day. Refused once something posted.
+  /// it the next open day. Refused once something posted, or while Postiz holds a copy about to go out.
   public func clearExact(videoId: String) throws {
     try store.db.transaction {
       let slots = try store.planSlots(where: "video_id=? AND exact_at IS NOT NULL", [videoId])
@@ -121,6 +144,9 @@ extension Planner {
         try ensureNothingPosted(s)
         try ensureNothingFinal(s)
       }
+      try refuseTooLate(videoId: videoId)
+      // A retry on its way stays as it is, at its own time (`clearSlot` only takes it off the card): dropping it would
+      // leave its failure marked retried with nothing coming.
       for s in slots { try dropSlot(s) }
       try store.refreshState(videoId: videoId)
       try store.logEvent("plan", StageWording.regularSchedule, videoId: videoId)
@@ -148,17 +174,19 @@ extension Planner {
         let r = try replaceWithExact(videoId: videoId, at: at, settings: settings)
         out.unchanged = !r.changed
         out.replaces = r.replaced
-        let posts = try store.slotPosts(r.slot.id).filter { $0.kind == .regular && !$0.state.isTerminal }
-        out.platforms = posts.sorted { $0.platform < $1.platform }.map { ExactPreview.Line(platform: $0.platform, at: $0.scheduledAt, moved: $0.scheduledAt != at) }
+        let posts = try store.slotPosts(r.slot.id).filter { $0.kind != .repost && !$0.state.isTerminal }
+        out.platforms = posts.sorted { $0.platform < $1.platform }.map {
+          ExactPreview.Line(platform: $0.platform, at: $0.scheduledAt, moved: $0.scheduledAt != at, retry: $0.kind == .retry)
+        }
         let going = Set(posts.map(\.platform))
         let edit = try store.edit(videoId: videoId)
         for p in settings.activePlatforms.sorted() where !going.contains(p) {
-          let reason: ExactPreview.Skipped.Reason = v.alreadyPostedOn.contains(p) ? .posted
-            : edit.isSkipped(p, defaults: settings.defaults) ? .off : .history
-          out.skipped.append(.init(platform: p, reason: reason, why: Self.words(reason, p)))
+          let reason = try skipReason(v, p, edit: edit, settings: settings)
+          out.skipped.append(.init(platform: p, reason: reason, why: StageWording.noSetTimePost(reason, p)))
         }
         out.notes = out.platforms.filter { $0.moved && $0.platform == .youtube }
           .map { StageWording.youtubeMoves(to: $0.at, setFor: at, settings: settings) }
+        out.notes += try sameMinuteNotes(out.platforms, videoId: videoId, settings: settings)
         throw PreviewRollback()
       }
     } catch is PreviewRollback {
@@ -168,12 +196,37 @@ extension Planner {
     return out
   }
 
-  static func words(_ r: ExactPreview.Skipped.Reason, _ p: Platform) -> String {
-    switch r {
-    case .off: "\(p.displayName) is off for it"
-    case .posted: "Already posted on \(p.displayName)"
-    case .history: "It already has a post on \(p.displayName)"
+  /// Why an active platform gets no set-time post, from what's on record for the item there.
+  private func skipReason(_ v: Video, _ p: Platform, edit: Edit, settings: Settings) throws -> ExactPreview.Skipped.Reason {
+    if v.alreadyPostedOn.contains(p) { return .posted }
+    if edit.isSkipped(p, defaults: settings.defaults) { return .off }
+    guard let last = try store.platformHistory(videoId: v.id, platform: p).max(by: { $0.attemptNo < $1.attemptNo }) else { return .history }
+    switch last.state {
+    case .failed: return try store.retryIsComing(last) ? .retrying : .failed
+    case .skipped: return .skipped
+    default: return .history
     }
+  }
+
+  /// Postiz never holds two posts on one channel in the same minute: the later create goes a minute on
+  /// (`PostizService.remoteDate`). When another post already sits in Postiz on that minute, this one is the later create
+  /// and the note gives its real time; when neither is there yet, it says one of the two moves.
+  private func sameMinuteNotes(_ lines: [ExactPreview.Line], videoId: String, settings: Settings) throws -> [String] {
+    func minute(_ d: Date) -> Int { Int(d.timeIntervalSince1970 / 60) }
+    var notes: [String] = []
+    let jobs = try store.openPostizJobs().filter { $0.videoId != videoId }
+    for l in lines where settings.publishing.publisher(for: l.platform) == .postiz {
+      let held = Set(jobs.filter { $0.platform == l.platform }.map { minute($0.remoteDate) })
+      if held.contains(minute(l.at)) {
+        var d = l.at
+        while held.contains(minute(d)) { d = YouTubeWindow.clear(d.addingTimeInterval(60), l.platform) }
+        notes.append(StageWording.sameMinute(l.platform, goesAt: d, taken: l.at, settings: settings))
+      } else if try store.posts(where: "platform=? AND video_id<>? AND scheduled_at>=? AND scheduled_at<?",
+                                [l.platform.rawValue, videoId, l.at, l.at.addingTimeInterval(60)]).contains(where: { !$0.state.isTerminal }) {
+        notes.append(StageWording.sameMinute(l.platform, goesAt: nil, taken: l.at, settings: settings))
+      }
+    }
+    return notes
   }
 
   // MARK: Internals
@@ -189,25 +242,95 @@ extension Planner {
       throw EngineError("Already posted on \(p.platform.displayName) — it can't take a set time")
     }
     let v = try readyVideo(videoId, scheduled: !old.isEmpty)
-    for s in old { try ensureNothingFinal(s) }
-    for s in old { try dropSlot(s) }
-    guard try settings.activePlatforms.contains(where: { try usable(videoId, on: $0) }) else {
-      throw EngineError("\(v.tag) has nowhere left to post: every platform is done or off for it")
+    try refuseTooLate(videoId: videoId)
+    // Its own in-flight posts, wherever they sit: a new id forgets a final Postiz job, so one of those stays put.
+    for p in try inFlight(videoId) where try store.finalPostizJob(postId: p.id) != nil {
+      throw EngineError("\(v.displayName) has a post you removed from Postiz")
     }
+    for s in old {
+      // With a per-platform sort the card also holds another clip's post. That clip loses nothing: its post keeps its
+      // id, time and Postiz copy and only leaves the card (`Store.cardlessPosition` keeps its place in the `Placer`).
+      for var p in try store.slotPosts(s.id) where p.videoId != videoId && p.kind == .regular && !p.state.isTerminal {
+        p.planSlotId = nil
+        try store.save(p, note: "its card left the day: \(v.tag) took a set time")
+      }
+      try dropSlot(s)
+    }
+    // And its own posts on other clips' cards (the same per-platform sort) go too, so every platform is free for the
+    // set time. Without this that platform would stay on its regular day.
+    for p in try inFlight(videoId) where p.kind == .regular { try store.deletePost(p.id) }
     let day = dm.key(at)
     let week = dm.weekStart(of: dm.date(day))
     try approve(week: week, at: store.clock.now)
     let slot = PlanSlot(id: old.first?.id ?? newId(), date: day, position: try freeExactPosition(on: day), videoId: videoId,
                         pinned: true, weekStart: week, exactAt: at)
     try store.save(slot)
+    let waiting = try carryRetries(to: slot)
     try createExactPosts(slot, settings: settings)
+    guard try waiting > 0 || store.slotPosts(slot.id).contains(where: { !$0.state.isTerminal }) else {
+      throw EngineError("\(v.tag) has nowhere left to post: every platform is done or off for it")
+    }
     try store.refreshState(videoId: videoId)
     return (slot, old, true)
   }
 
-  /// `remove(slotId:)` without its checks: automatic retries dropped, un-posted posts deleted, history detached.
+  /// The item's regular posts and retries that haven't gone out or ended.
+  private func inFlight(_ videoId: String) throws -> [PlatformPost] {
+    try store.posts(where: "video_id=? AND kind IN ('regular','retry')", [videoId]).filter { !$0.state.isTerminal }
+  }
+
+  /// Changing or clearing a time deletes the post Postiz holds, and from `PostizService.safety` before its time Postiz
+  /// keeps its copy whatever the plan says (`decide`: "re-planned close to its slot"): it would go out at the old time
+  /// while every screen showed the new one. So a copy that goes out within `exactLead` refuses the change, the way the
+  /// relay, `setSlot` and a swap leave a post that is about to go out. A post Postiz doesn't hold can always change.
+  func refuseTooLate(videoId: String) throws {
+    let now = store.clock.now
+    for p in try inFlight(videoId) {
+      guard let job = try store.livePostizJob(postId: p.id) else { continue }
+      let goes = min(p.scheduledAt, job.remoteDate)
+      if goes <= now.addingTimeInterval(Self.exactLead) {
+        throw EngineError(StageWording.tooLateToChange(p.platform, seconds: goes.timeIntervalSince(now)))
+      }
+    }
+  }
+
+  /// A platform that failed keeps one lineage: a retry on its way (the engine's own, or Eric's Fixed) moves to the set
+  /// time as the same post, so nothing is created beside it, and a failure whose retry is still to be made has it made
+  /// for the set time on the engine's next pass. A failure is never left marked retried with no attempt. Returns how
+  /// many failures still wait for their attempt.
+  @discardableResult
+  func carryRetries(to slot: PlanSlot) throws -> Int {
+    guard let exact = slot.exactAt else { return 0 }
+    let settings = try store.settings()
+    for var a in try inFlight(slot.videoId) where a.kind == .retry {
+      let at = YouTubeWindow.clear(exact, a.platform)
+      var r = try store.autoRetries(a)
+      if r.lastPostId == a.id, r.nextRetryAt != at {
+        r.nextRetryAt = at  // or a day later it would count as stuck
+        try store.setKV(PostizService.autoRetryKey(a), r)
+      }
+      guard a.scheduledAt != at || a.planSlotId != slot.id else { continue }
+      a.scheduledAt = at
+      a.planSlotId = slot.id
+      if a.state == .due || a.state == .overdue { a.state = a.renderId == nil ? .planned : .rendered }
+      try store.save(a, note: "retry moved to the set time → \(Sched.shortTime(at, settings))")
+    }
+    var waiting = 0
+    for var f in try store.posts(where: "video_id=? AND state='failed' AND resolution IS NULL", [slot.videoId]) where try store.retryIsComing(f) {
+      var r = try store.autoRetries(f)
+      r.nextRetryAt = YouTubeWindow.clear(exact, f.platform)
+      try store.setKV(PostizService.autoRetryKey(f), r)
+      if f.planSlotId != slot.id {
+        f.planSlotId = slot.id  // the attempt takes its failure's card
+        try store.save(f, note: "its retry goes at the set time")
+      }
+      waiting += 1
+    }
+    return waiting
+  }
+
+  /// Un-posted posts deleted, history and retries taken off the card, the slot gone.
   func dropSlot(_ s: PlanSlot) throws {
-    try store.dropAutoRetries(slot: s)
     try clearSlot(s)
     try store.deletePlanSlot(s.id)
   }
@@ -223,7 +346,7 @@ extension Planner {
   /// One regular post of the slot's own clip per active platform it's usable on and has no post for yet, at the slot's
   /// set time (YouTube out of the quiet window). No `Placer`, no `PlatformPicker`: a set-time post takes no
   /// (platform, day, position) and never pulls another clip. `notBefore`: a platform whose time comes earlier gets none.
-  func createExactPosts(_ s: PlanSlot, settings: Settings, note: String = "set time", notBefore: Date? = nil) throws {
+  func createExactPosts(_ s: PlanSlot, settings: Settings, notBefore: Date? = nil) throws {
     guard let exact = s.exactAt else { return }
     let existing = Set(try store.slotPosts(s.id).filter { $0.kind == .regular }.map(\.platform))
     let now = store.clock.now
@@ -236,17 +359,19 @@ extension Planner {
         kind: .regular, planSlotId: s.id, scheduledAt: at,
         renderId: nil, state: .planned, publisher: "manual", externalId: nil, url: nil, postedAt: nil, errorType: nil,
         errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now),
-        note: at == exact ? note : "\(note) (YouTube's quiet window: 07:30 UTC)")
+        note: at == exact ? "set time" : "set time (YouTube's quiet window: 07:30 UTC)")
     }
     try store.refreshState(videoId: s.videoId)
   }
 
   /// A set-time slot moved to another day keeps its clock time there. It never swaps with or displaces another slot.
+  /// Refused when that clock time doesn't exist on the new day (the clocks go forward), rather than drift an hour for good.
   func moveExactSlot(_ s: inout PlanSlot, to date: String, settings: Settings, dm: DayMath) throws {
     guard let exact = s.exactAt, date != s.date else { return }
     let c = dm.calendar.dateComponents([.hour, .minute], from: exact)
-    let to = dm.at(date, minutes: (c.hour ?? 0) * 60 + (c.minute ?? 0))
+    let to = try Self.exactDate(day: date, minutes: (c.hour ?? 0) * 60 + (c.minute ?? 0), settings: settings)
     if let why = exactTimeProblem(to) { throw EngineError(why) }
+    try refuseTooLate(videoId: s.videoId)
     try clearSlot(s)
     let week = dm.weekStart(of: dm.date(date))
     try approve(week: week, at: store.clock.now)
@@ -256,7 +381,15 @@ extension Planner {
     s.exactAt = to
     s.pinned = true
     try store.save(s)
+    try carryRetries(to: s)
     try createExactPosts(s, settings: settings)
     try store.logEvent("plan", StageWording.setFor(to, settings: settings), videoId: s.videoId)
+  }
+}
+
+extension Store {
+  /// The post sits on a set-time slot.
+  func hasSetTime(_ p: PlatformPost) throws -> Bool {
+    try p.planSlotId.flatMap { try planSlot(id: $0) }?.isExact == true
   }
 }

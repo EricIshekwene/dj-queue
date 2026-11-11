@@ -154,8 +154,11 @@ import Testing
     #expect(missed.count == 6 && missed.allSatisfy { $0.state == .overdue && $0.scheduledAt == f.at("2026-11-03", "10:00") })
     #expect(try slot(f, "clip-3").exactAt == f.at("2026-11-03", "10:00"))
     #expect(try face(f, "clip-4") == later)  // a set time ahead never joins a shift
-    let body = try #require(n.delivered.first { $0.postId == missed[0].id }?.body)
-    #expect(body.contains("Nothing else moved."))
+    let notice = try #require(n.delivered.first { $0.postId == missed[0].id })
+    #expect(notice.body.contains("Nothing else moved."))
+    #expect(notice.actions == [.postNow, .skip])  // no Shift plan: a set time has no slot to shift into
+    let regular = try #require(try f.store.posts(where: "video_id='clip-0' AND state='overdue'").first)
+    #expect(n.delivered.first { $0.postId == regular.id }?.actions == [.postNow, .shiftPlan, .skip])
     #expect(try f.doublePosts().isEmpty)
     // It has no slot to shift into; Post now and Skip work as for any post, and still nothing else moves.
     let actions = PostActions(store: f.store)

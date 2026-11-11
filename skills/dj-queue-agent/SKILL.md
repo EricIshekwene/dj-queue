@@ -205,7 +205,8 @@ djq post-at <video> --clear [--dry-run] [--json]                # back on the re
 
 A set time sits outside posts per day: it takes none of the day's regular places, no other clip moves, and the scheduler
 never shifts it. The time must be 10 minutes ahead or more. YouTube from 02:00 to 07:00 UTC goes at 07:30 UTC, and
-`--dry-run` says so before anything is written (`plan.platforms[{platform, at, moved}]`, `plan.skipped`, `plan.blocker`).
+`--dry-run` says so before anything is written (`plan.platforms[{platform, at, moved, retry}]`, `plan.skipped`, `plan.notes`,
+`plan.blocker`). A time is refused when Postiz sends a copy within 10 minutes ("too late to change").
 A clip still in Edit is sent to the Queue by this command; if something is left to fix it stays in Edit and the blocker
 says what. Undo with the `djq bulk undo <batch>` it prints. `djq week` marks the slot "set time 3:15 PM", and `plan[].exactAt`
 in `djq video --json` carries the time (absent on a regular day).

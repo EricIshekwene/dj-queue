@@ -217,12 +217,13 @@ struct Placer {
   init(store: Store, dm: DayMath, excluding: Set<String> = []) throws {
     self.dm = dm
     let slots = Dictionary(uniqueKeysWithValues: try store.planSlots().map { ($0.id, $0) })
-    let offset = try store.settings().secondPostOffsetMinutes
+    let settings = try store.settings()
+    let offset = settings.secondPostOffsetMinutes
     let postedNow = try store.postNowIds()
     for p in try store.posts(where: "kind='regular'") where !excluding.contains(p.id) && Self.isLive(p) {
       let slot = slots[p.planSlotId ?? ""]
       if slot?.isExact == true { continue }
-      let pos = slot?.position ?? 0
+      let pos = slot?.position ?? store.cardlessPosition(p, settings: settings, dm: dm)
       let day = postedNow.contains(p.id) ? dm.key(p.scheduledAt)
         : dm.planDay(p.scheduledAt, position: pos, slotDate: slot?.date, platform: p.platform, offsetMinutes: offset)
       taken.insert(Self.key(p.platform, day, pos))
@@ -244,9 +245,24 @@ struct Placer {
 }
 
 extension Store {
-  /// The plan position of a post (its slot's position; 0 when it has no slot).
+  /// The plan position of a post (its slot's position; `cardlessPosition` when it has no slot).
   func position(of p: PlatformPost) throws -> Int {
-    try p.planSlotId.flatMap { try planSlot(id: $0)?.position } ?? 0
+    if let pos = try p.planSlotId.flatMap({ try planSlot(id: $0)?.position }) { return pos }
+    let s = try settings()
+    return cardlessPosition(p, settings: s, dm: DayMath(settings: s))
+  }
+
+  /// The plan position of a post with no card. A regular post can lose its card and keep its time (round 21: with a
+  /// per-platform sort it sat on the card of a clip that then took a set time), and it must go on holding its
+  /// (platform, day, position): it counts for the position whose slot time it sits on. Any other time is position 0, as
+  /// a post with no slot always was.
+  func cardlessPosition(_ p: PlatformPost, settings: Settings, dm: DayMath) -> Int {
+    guard p.kind == .regular else { return 0 }
+    for q in 0..<5 {  // posts per day goes up to 5
+      let day = dm.key(p.scheduledAt.addingTimeInterval(-Double(q * settings.secondPostOffsetMinutes) * 60))
+      if settings.slotTime(p.platform, date: day, position: q, dm) == p.scheduledAt { return q }
+    }
+    return 0
   }
 
   /// The plan day of a regular post (`DayMath.planDay`). Post now holds its local day: its time is the moment Eric pressed
@@ -256,8 +272,9 @@ extension Store {
     if try postNowIds().contains(p.id) { return dm.key(p.scheduledAt) }
     let slot = try p.planSlotId.flatMap { try planSlot(id: $0) }
     if let slot, slot.isExact { return slot.date }
-    return dm.planDay(p.scheduledAt, position: slot?.position ?? 0, slotDate: slot?.date, platform: p.platform,
-                      offsetMinutes: try settings().secondPostOffsetMinutes)
+    let s = try settings()
+    return dm.planDay(p.scheduledAt, position: slot?.position ?? cardlessPosition(p, settings: s, dm: dm), slotDate: slot?.date,
+                      platform: p.platform, offsetMinutes: s.secondPostOffsetMinutes)
   }
 
   /// Regular posts still at the time Post now gave them (a shift or a reset puts a post back on a slot time).

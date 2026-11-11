@@ -172,8 +172,8 @@ enum ExactRig {
     let at = f.at("2026-11-14", "15:15")
     let preview = try planner.postAtPreview(videoId: "clip-0", at: at)
     #expect(preview.platforms.map(\.platform) == [.facebook, .threads, .youtube])
-    #expect(preview.skipped.map(\.platform) == [.x, .instagram, .tiktok] && preview.skipped.map(\.reason) == [.off, .history, .posted])
-    #expect(preview.skipped.map(\.why) == ["X is off for it", "It already has a post on Instagram", "Already posted on TikTok"])
+    #expect(preview.skipped.map(\.platform) == [.x, .instagram, .tiktok] && preview.skipped.map(\.reason) == [.off, .failed, .posted])
+    #expect(preview.skipped.map(\.why) == ["X is off for it", "Instagram failed and waits for you in Posts", "Already posted on TikTok"])
     #expect(preview.replaces.map(\.date) == ["2026-11-02"])
     let slot = try planner.postAt(videoId: "clip-0", at: at)
     let live = try f.store.posts(where: "video_id='clip-0'").filter { !$0.state.isTerminal }
@@ -487,6 +487,11 @@ enum ExactRig {
     #expect(clear.status == 0 && clear.out.contains("Back on the regular schedule"), "\(clear.out)\(clear.err)")
     #expect(try env.store.planSlots().isEmpty && env.store.posts().isEmpty)
     #expect(try env.djq("post-at", "clip-0", "--clear").status == 2)
+    // One clock format in the rows, the summary's; and `--clear` takes no time.
+    let rows = try env.djq("post-at", "clip-1", text, "--dry-run")
+    #expect(rows.out.contains("3:15 PM") && !rows.out.contains("15:15"), "\(rows.out)")
+    let both = try env.djq("post-at", "clip-1", "--clear", text)
+    #expect(both.status != 0 && both.err.contains("--clear takes no time"), "\(both.out)\(both.err)")
   }
 
   @Test func refusalsAreReadable() throws {

@@ -24,22 +24,16 @@ enum PostAtCommand {
     var note: String?
   }
 
-  static func run(_ paths: Paths) throws -> Int32 {
+  /// `wrote` tells `run` to re-check the stages and signal the app, as after any write.
+  static func run(_ store: Store, _ settings: Settings, _ wrote: inout Bool) throws -> Int32 {
     let json = flag("--json"), dry = flag("--dry-run"), clear = flag("--clear")
     guard let first = args.first else { throw CLIError("usage:\n\(usage)") }
-    let store = try Store(paths: paths)
-    let settings = try store.settings()
     let v = try resolveVideo(store, first)
     let bulk = BulkActions(store: store)
-    var wrote = false
-    defer {
-      if wrote {
-        Revalidation.afterWrite(store: store, command: "post-at")
-        postChangeSignal()
-      }
-    }
+    func when(_ d: Date) -> String { StageWording.dayTime(d, settings: settings) }  // one clock format, the summary's
 
     if clear {
+      if args.count > 1 { throw CLIError("--clear takes no time: djq post-at <video> --clear") }
       let r = try bulk.clearExact([v.id], dryRun: dry)
       wrote = !dry && !r.changed.isEmpty
       let why = r.skipped[v.id]
@@ -70,13 +64,14 @@ enum PostAtCommand {
       print("\(v.tag): not set. \(why)")
       return 2
     }
-    print("\(dry ? "[dry run] " : "")\(v.tag): \(plan.unchanged ? "already set for \(fmt(plan.at, settings))" : plan.summary)")
+    print("\(dry ? "[dry run] " : "")\(v.tag): \(plan.unchanged ? "already set for \(when(plan.at))" : plan.summary)")
     for l in plan.platforms {
-      print("  \(pad(l.platform.displayName, 14)) \(fmt(l.at, settings))\(l.moved ? "  (moved: YouTube's quiet window, 07:30 UTC)" : "")")
+      print("  \(pad(l.platform.displayName, 14)) \(when(l.at))\(l.retry ? "  (its retry)" : "")\(l.moved ? "  (moved: YouTube's quiet window, 07:30 UTC)" : "")")
     }
     for s in plan.skipped { print("  \(pad(s.platform.displayName, 14)) no post: \(s.why)") }
+    for n in plan.notes where !n.hasPrefix("YouTube moves") { print("  note: \(n)") }
     for s in plan.replaces {
-      print("  replaces \(s.exactAt.map { "the set time \(fmt($0, settings))" } ?? "its day \(fmt(DayMath(settings: settings).date(s.date), settings, "EEE d MMM"))")")
+      print("  replaces \(s.exactAt.map { "the set time \(when($0))" } ?? "its day \(fmt(DayMath(settings: settings).date(s.date), settings, "EEE d MMM"))")")
     }
     if let b = out.batchId { print("  undo: djq bulk undo \(short(b))") }
     return 0

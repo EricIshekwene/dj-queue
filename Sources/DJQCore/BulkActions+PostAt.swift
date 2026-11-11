@@ -10,13 +10,17 @@ extension BulkActions {
   public static let clearExactAction = "post-at-clear"
 
   /// Sets `at` as the time each item posts on every platform (`Planner.postAt`). One batch, one undo. `moves[id].note`
-  /// is the toast: "Set for Sat 14 Nov 3:15 PM". A time that has passed or is inside `Planner.exactLead` throws; an
-  /// item that can't take it is in `skipped` with the reason.
+  /// is the toast: "Set for Sat 14 Nov 3:15 PM". A time that has passed or is inside `Planner.exactLead` throws (unless
+  /// every item already has it: unchanged); an item that can't take it is in `skipped` with the reason.
   @discardableResult
   public func postAt(_ ids: [String], at raw: Date, dryRun: Bool = false) throws -> BulkResult {
     let planner = Planner(store: store)
     let at = Planner.exactMinute(raw)
-    if let why = planner.exactTimeProblem(at) { throw EngineError(why) }
+    // Every item would be skipped for the same reason, so the batch fails at once. Unless they all have this very time
+    // already: then nothing changes, however close it is.
+    if let why = planner.exactTimeProblem(at), try !ids.allSatisfy({ try planner.exactSlot(videoId: $0)?.exactAt == at }) {
+      throw EngineError(why)
+    }
     let shown = try store.settings()
     var moves: [String: StageMove] = [:]
     var r = try run(Self.postAtAction, ids: ids, params: ["at": Self.localMinute(at, shown)], dryRun: dryRun, plan: true) { _, v, s in

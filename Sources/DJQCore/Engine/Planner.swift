@@ -534,8 +534,10 @@ public final class Planner: @unchecked Sendable {
       if p.state == .due || p.state == .overdue { p.state = p.renderId == nil ? .planned : .rendered }
       try store.save(p, note: "plan pushed → \(day)")
     }
+    // A set-time item's retry sits at the set time and stays there (round 21).
+    let exact = Set(try store.planSlots(where: "exact_at IS NOT NULL").map(\.id))
     let extras = try store.posts(where: "kind<>'regular' AND scheduled_at>=?", [dm.date(date)])
-      .filter { !$0.state.isTerminal && (until == nil || dm.key($0.scheduledAt) < until!) }
+      .filter { !$0.state.isTerminal && (until == nil || dm.key($0.scheduledAt) < until!) && !exact.contains($0.planSlotId ?? "") }
     for var p in extras {
       let day = dm.addDays(dm.key(p.scheduledAt), days)
       p.scheduledAt = try Sched.staggered(store: store, platform: p.platform, day: day, settings: settings, dm: dm, excluding: [p.id])

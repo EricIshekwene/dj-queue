@@ -229,7 +229,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -246,7 +246,6 @@ func run() throws -> Int32 {
     print(cmd == "postiz" ? PostizCommand.usage : usage); return 0
   }
   if cmd == "postiz" && args.isEmpty { print(PostizCommand.usage); return 0 }
-  if cmd == "post-at" { return try PostAtCommand.run(paths) }
   guard knownCommands.contains(cmd) else { throw CLIError("unknown command \(cmd)\n\n\(usage)") }
   let store = try Store(paths: paths)
   let settings = try store.settings()
@@ -958,6 +957,9 @@ func run() throws -> Int32 {
 
   case "postiz":
     return try PostizCommand.run(store, &wrote)
+
+  case "post-at":
+    return try PostAtCommand.run(store, settings, &wrote)
 
   case "agent":
     switch try arg(0, "install|uninstall|status") {

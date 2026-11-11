@@ -221,7 +221,8 @@ extension Planner {
   }
 
   /// What a relay may take off: unpinned slots from today on with nothing posted, each live post at least `relayLead`
-  /// away and untouched. A set-time slot is always pinned, and left out by name as well. Postiz keeps its guards: a slot with a live job moves (the publish step cancels the job, and the
+  /// away and untouched. A set-time slot is always pinned, and left out by name as well.
+  /// Postiz keeps its guards: a slot with a live job moves (the publish step cancels the job, and the
   /// lineage blocks a new create until that's confirmed); one whose job isn't settled or ended Postiz delivery for good,
   /// or that went to Eric by hand, stays.
   private func movableSlots(_ c: Pass) throws -> [PlanSlot] {
