@@ -120,6 +120,11 @@ Postiz" test is the settings alone, so it needs no Keychain read. `djq post-now`
 
 ## Checks
 
-- `swift build`: 0 warnings. `swift test`: all green (1068 tests).
-- `djq posts --problems`, `djq status`, `djq doctor --json` on a scratch copy of the newest backup (no schema change).
-- `scripts/live-checks.sh … screens`: the r9 and r22 shots (retrying chip, inspector Details, sign-in card) in light and dark.
+- `swift build`: 0 warnings. `swift test`: 1071 tests green (icon-tooltip lint included).
+- `djq posts --problems`, `djq status`, `djq doctor --json` on a scratch copy of the newest backup (no schema change;
+  counts identical). Doctor's only error there is `postiz.stuck`, from the copy's jobs never syncing (unchanged check).
+- `scripts/live-checks.sh … screens`: the r9 and r22 shots (retrying chip, inspector Details, sign-in card, menu bar) in
+  light and dark, `screen-guard: clean`. One earlier run logged screen-guard breaks on two shots this round doesn't touch
+  (`54-calendar-card-menu`, `r4-previews-grid`): every window of the app moving and shrinking over 0.3 s, the system's
+  window-zoom animation (Mission Control-like) rather than a window the app showed; the run before and the rerun after,
+  on the same code, were clean.
