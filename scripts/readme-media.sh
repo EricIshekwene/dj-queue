@@ -129,3 +129,9 @@ gif post-at          $A/post-at-01-edit-photo-ready-light $A/post-at-02-dialog-o
 still post-at-dialog     $A/post-at-05-two-days-out-light
 still post-at-youtube    $A/post-at-22-youtube-quiet-hours-light
 still calendar-set-time  $A/post-at-07-calendar-week-light
+
+H=screens
+# Round 22: failed posts heal themselves. A calm Retrying chip, the inspector's "nothing to do", one sign-in card.
+gif self-healing        $H/r9-posts-scheduled-light $H/r22-inspector-retrying-light $H/r22-posts-signin-light
+still self-healing-retrying $H/r22-inspector-retrying-light
+still self-healing-signin   $H/r22-posts-signin-light

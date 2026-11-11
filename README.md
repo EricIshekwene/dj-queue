@@ -44,6 +44,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | **Photos in Edit** — a Photo or Carousel mark where clips show their kind, and no score | **Preview equals export** — the editor canvas (left) beside the posted JPEG (right) |
 | ![Photo posts in the Edit list](docs/media/photos-in-edit.jpg) | ![Editor canvas beside the exported JPEG](docs/media/photo-preview-export.jpg) |
 
+**Failed posts heal themselves (v0.16.0).** A post that fails goes back through the queue by itself until it's out: an hour later, six hours later, then the platform's next open slot each day, with freshly uploaded media and no limit on tries. YouTube's upload quota resets at midnight Pacific, so its retries go to the next YouTube slot after that. While it waits you see one calm *Retrying Thu 8:00 am* chip and nothing to do. Only what the app can't fix asks for you: a copyright or policy block, a file a platform won't take, or a channel whose Postiz sign-in broke, which is one *Reconnect* item per channel while its posts wait and then go out on their own. *Post now* on a Postiz platform now sends it through Postiz.
+
+| Retrying is a quiet chip, never a red error | One item per channel that needs signing in again |
+|---|---|
+| ![Posts list and inspector with a retrying post](docs/media/self-healing.gif) | ![Reconnect Threads in Postiz, posts wait](docs/media/self-healing-signin.jpg) |
+
 ## What it does
 
 The app follows a clip's life — **Score → Edit → Queue → Calendar** — with one job and one primary action per screen, on a calm, rounded design system modelled on ChatGPT's look and shadcn/ui component anatomy.
