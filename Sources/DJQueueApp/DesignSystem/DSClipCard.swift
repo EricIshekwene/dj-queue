@@ -336,7 +336,8 @@ struct DSClipCard<Actions: View>: View {
       HStack(spacing: DS.space.md) {
         platformsRow
         dateChip
-        scoreText.frame(minWidth: 34, alignment: .trailing)
+        // Its own width: a row squeezed by platforms and a date must not push "No score" over the date chip.
+        scoreText.frame(minWidth: 34, alignment: .trailing).fixedSize()
         HStack(spacing: 2) { actions }
       }
     }

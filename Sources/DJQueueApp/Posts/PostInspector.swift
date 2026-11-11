@@ -24,7 +24,8 @@ struct PostInspector: View {
           }
           if post.state == .posted { section("Metrics") { metrics } }
           section("Attempts") { attempts }
-          section("Repost") { repost }
+          // Round 21 (D16): a photo post has one version this round, so there is nothing to repost.
+          if v?.isPhoto != true { section("Repost") { repost } }
           section("Actions", last: true) { actions(fixes) }
         }
       }

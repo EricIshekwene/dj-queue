@@ -90,6 +90,6 @@ extension SnapshotShots {
         SampleData.unmarkSampleLongform(m)
         ui.longformTargets = m.libraryAll.filter { $0.type == .long }
       },
-    ]
+    ] + photos(c)  // round 21: photo posts (Shots+Photos.swift)
   }
 }

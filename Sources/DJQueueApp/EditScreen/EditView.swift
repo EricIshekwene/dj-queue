@@ -113,11 +113,18 @@ struct EditView: View {
   }
 
   private func makeReady(_ ids: [String]) {
-    model.pipelineBulk("Send \(AppModel.pipelineClips(ids.count)) to the Queue?", verb: "Send to Queue", ids: ids,
-                       changes: [.init(field: "Held clips", value: "Released: clips you sent back go to the Queue too"),
-                                 .init(field: "Crop", value: "Default anchor, confirmed where missing"),
-                                 .init(field: "Text, caption, cover", value: "Keep following New clip defaults"),
-                                 .init(field: "Title", value: "Not set by this — clips without one still need text")]) { b, dry in
+    // Round 21: photo posts go the same way, with no score. A selection of only photos says what happens to a photo.
+    let photosOnly = !ids.contains { model.video($0)?.isPhoto != true }
+    let what = photosOnly ? (ids.count == 1 ? "1 photo post" : "\(ids.count) photo posts") : AppModel.pipelineClips(ids.count)
+    let changes: [DSChangeList.Change] = photosOnly
+      ? [.init(field: "Held posts", value: "Released: posts you sent back go to the Queue too"),
+         .init(field: "Crop", value: "Centred, confirmed where a photo has none"),
+         .init(field: "Score", value: "Not needed: they take the next open days")]
+      : [.init(field: "Held clips", value: "Released: clips you sent back go to the Queue too"),
+         .init(field: "Crop", value: "Default anchor, confirmed where missing"),
+         .init(field: "Text, caption, cover", value: "Keep following New clip defaults"),
+         .init(field: "Title", value: "Not set by this — clips without one still need text")]
+    model.pipelineBulk("Send \(what) to the Queue?", verb: "Send to Queue", ids: ids, changes: changes) { b, dry in
       try b.makeReadyWithDefaults(ids, dryRun: dry)
     }
   }

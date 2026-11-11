@@ -51,19 +51,23 @@ struct PhotoImportSheet: View {
 
   // MARK: Pieces
 
-  /// The picked photos in posting order, ending in an "add" tile.
-  private var strip: some View {
-    ScrollView(.horizontal, showsIndicators: false) {
-      HStack(spacing: DS.space.xs) {
-        ForEach(Array(request.files.enumerated()), id: \.element) { i, url in thumb(i, url) }
-        DSIconButton("plus", tooltip: "Pick more photos", variant: .outline, size: .lg) { model.askAddPhotos() }
-          .frame(width: Self.tile, height: Self.tile)
-      }
-      .padding(.vertical, 1)
+  /// The picked photos in posting order, six to a row, ending in an "add" tile. A long set scrolls inside three rows.
+  @ViewBuilder private var strip: some View {
+    let tiles = DSFlowLayout(spacing: DS.space.xs, lineSpacing: DS.space.xs) {
+      ForEach(Array(request.files.enumerated()), id: \.element) { i, url in thumb(i, url) }
+      DSIconButton("plus", tooltip: "Pick more photos", variant: .outline, size: .lg) { model.askAddPhotos() }
+        .frame(width: Self.tile, height: Self.tile)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    if request.files.count + 1 > 18 {
+      ScrollView { tiles }.frame(height: Self.tile * 3 + DS.space.xs * 2)
+    } else {
+      tiles
     }
   }
 
-  private static let tile: CGFloat = 76
+  /// Six tiles and their gaps fill the dialog's 472 pt column exactly.
+  private static let tile: CGFloat = 72
 
   private func thumb(_ i: Int, _ url: URL) -> some View {
     ZStack {
