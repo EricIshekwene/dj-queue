@@ -115,13 +115,11 @@ du -sh "$OUT"
 P=photo-import
 gif photo-import     $P/photo-01-edit-before-light $P/photo-03-import-sheet-light $P/photo-04-import-sheet-post-per-photo-light \
                  $P/photo-06-edit-cards-added-light $P/photo-11-quicklook-photo-1-light $P/photo-12-quicklook-photo-2-light
-still photo-import-sheet $P/photo-03-import-sheet-light
 still photos-in-edit     $P/photo-06-edit-cards-added-light
 E=photo-editor
 gif photo-editor     $E/photo-01-open-carousel-light $E/photo-04-frame-crop-zoom-light $E/photo-05-text-on-photo-3-light \
                  $E/photo-06-shows-on-2-3-light $E/photo-08-style-and-colour-light $E/photo-09-reordered-new-cover-light \
                  $E/photo-13-platform-note-first-4-of-6-light
-still photo-editor       $E/photo-08-style-and-colour-light
 still photo-editor-crop  $E/photo-04-frame-crop-zoom-light
 still photo-editor-shape $E/photo-16-instagram-9x16-issue-light
 still photo-preview-export $E/compare-canvas-export-light

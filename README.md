@@ -8,7 +8,7 @@ Built for my own use as DJ Lovd (TikTok, Instagram, Facebook, YouTube Shorts, Th
 
 ## See it move
 
-Recorded off screen from the app's own click-through checks (v0.12.1): each frame is a real step the check clicks, types or scrubs through.
+Recorded off screen from the app's own click-through checks: each frame is a real step the check clicks, types or scrubs through.
 
 | Timed texts — add a second and third text, each with its own time and look | Playback — each text shows only in its own window |
 |---|---|
@@ -41,6 +41,8 @@ Recorded off screen from the app's own click-through checks (v0.12.1): each fram
 | ![Cropping one photo of a carousel](docs/media/photo-editor-crop.jpg) | ![The 9:16 note for Instagram with its one-click fixes](docs/media/photo-editor-shape.jpg) |
 | **Calendar** — set-time items show their own time with a clock mark beside the regular plan | **A clip at a set time** — YouTube stays out of its quiet hours, and the dialog says where it moves |
 | ![Calendar week with photo posts at set times](docs/media/calendar-set-time.jpg) | ![YouTube moved out of the quiet window](docs/media/post-at-youtube.jpg) |
+| **Photos in Edit** — a Photo or Carousel mark where clips show their kind, and no score | **Preview equals export** — the editor canvas (left) beside the posted JPEG (right) |
+| ![Photo posts in the Edit list](docs/media/photos-in-edit.jpg) | ![Editor canvas beside the exported JPEG](docs/media/photo-preview-export.jpg) |
 
 ## What it does
 
