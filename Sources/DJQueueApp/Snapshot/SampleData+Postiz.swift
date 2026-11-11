@@ -154,6 +154,9 @@ extension SampleData {
     r.lastPostId = attempt.id
     r.failedAt = failed.scheduledAt
     r.nextRetryAt = at
+    // Round 22: the same error for over a week, so Problems shows its one calm "Keeps failing on TikTok" card.
+    r.failingWith = msg
+    r.failingSince = now.addingTimeInterval(-8 * 86400)
     try store.setKV("postiz.autoRetry.\(failed.videoId)#tiktok#v\(failed.versionNo)", r)
   }
 }
