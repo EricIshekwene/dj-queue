@@ -257,7 +257,8 @@ private struct PhotoTile: View {
           }
           .dsTooltip(model.missingPhotos.contains(photo.id) ? "This photo's file is missing. Put it back, or remove the photo."
                      : count > 1 ? "Photo \(index + 1): click to show it, drag to reorder" : "The photo of this post")
-          .probeFrame("photo-tile-\(index + 1)")
+          // An anchor, not a probe frame: a check finds it when it asks, however the strip was rebuilt in between.
+          .background(ScriptAnchor("Photo tile \(index + 1)").id(index))
         if let notice {
           Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 7.5, weight: .semibold)).foregroundStyle(DS.color.warning)
             .frame(width: 14, height: 14).background(DS.color.surfaceRaised, in: Circle())
@@ -318,11 +319,11 @@ private struct PhotoTextBar: View {
         .frame(width: max(14, b - a), height: h)
         .overlay { moveSurface }
         .dsTooltip(bar.draggable ? "Click to edit this text, drag to move it to other photos" : "Edit the text on the photo")
-        .probeFrame("text-bar-\(bar.number)")
+        .background(ScriptAnchor("Text bar \(bar.number)").id(bar.number))
         .offset(x: a)
       if bar.draggable {
-        grip(selected: selected, leading: true).probeFrame("text-start-\(bar.number)").offset(x: a)
-        grip(selected: selected, leading: false).probeFrame("text-end-\(bar.number)").offset(x: b - 6)
+        grip(selected: selected, leading: true).background(ScriptAnchor("Text bar \(bar.number) start").id(bar.number)).offset(x: a)
+        grip(selected: selected, leading: false).background(ScriptAnchor("Text bar \(bar.number) end").id(bar.number)).offset(x: b - 6)
       }
     }
     .frame(width: metrics.contentWidth, height: h, alignment: .leading)

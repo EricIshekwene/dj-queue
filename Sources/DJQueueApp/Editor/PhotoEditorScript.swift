@@ -392,14 +392,14 @@ enum PhotoEditorScript {
       }
       await shot("photo-4-no-text")
       // The bar: its end grip from photo 3 back to photo 2, then ⌘Z.
-      if let f = probe("text-end-1"), let t2 = probe("photo-tile-2") {
+      if let f = await control("Text bar 1 end"), let t2 = await control("Photo tile 2") {
         await drag(from: NSPoint(x: f.midX, y: f.midY), to: NSPoint(x: t2.maxX - 3, y: f.midY))
       }
       check("dragging the bar's end grip left makes it Photo 2 (\(e.textRangeLabel(TextLayer.firstId)))", e.textRange(TextLayer.firstId) == 2...2 && raw()?.textEnd == 2)
       await commandZ()
       check("⌘Z puts Photos 2–3 back", e.textRange(TextLayer.firstId) == 2...3 && raw()?.textEnd == 3)
       // The whole bar one photo right, and back with the button.
-      if let f = probe("text-bar-1"), let t3 = probe("photo-tile-3"), let t2 = probe("photo-tile-2") {
+      if let f = await control("Text bar 1"), let t3 = await control("Photo tile 3"), let t2 = await control("Photo tile 2") {
         await drag(from: NSPoint(x: f.midX, y: f.midY), to: NSPoint(x: f.midX + (t3.minX - t2.minX), y: f.midY))
       }
       check("dragging the bar moves it to Photos 3–4", e.textRange(TextLayer.firstId) == 3...4)
@@ -431,7 +431,7 @@ enum PhotoEditorScript {
       let third = original[2]
       let crop = savedEdit().photoCrops[third.id]
       check("photo 3 has the crop from before", crop != nil)
-      if let from = probe("photo-tile-3"), let to = probe("photo-tile-1") {
+      if let from = await control("Photo tile 3"), let to = await control("Photo tile 1") {
         await drag(from: NSPoint(x: from.midX, y: from.midY), to: NSPoint(x: to.midX - 4, y: from.midY))
       }
       var now = photos()
