@@ -20,6 +20,11 @@ enum PhotoEditorScript {
   /// The same, inside the text's box, for the canvas against the posted JPEG only: JPEG's chroma subsampling rings
   /// around coloured, outlined letters (measured 3.7; the photo without the text there measures above 40).
   private static let sameTextInJPEG = 6.0
+  /// The same, inside the text's box, for the canvas as the window server draws it against the composition with the
+  /// text: the letters' edges are resampled twice (the canvas on screen, then the comparison size). Measured 5.0 to 6.7
+  /// on an unlocked Mac (a locked one captures the view tree, which measures about 1); the photo without the text there
+  /// measures 47 and up, and a text at 45 % about half of that.
+  private static let sameTextOnCanvas = 9.0
 
   static func run(store: Store, dir: String, appearance: String) async -> Int32 {
     let out = URL(fileURLWithPath: dir)
@@ -255,7 +260,7 @@ enum PhotoEditorScript {
                         what, index + 1, want ? "with the text" : "with no text at all", d.withText, d.noText, d.middle)
       // With the text: equal to the composition with text and far from the one without. Hidden: equal to the one without,
       // which a text drawn at any opacity is not.
-      check(line, want ? d.withText < PhotoEditorScript.same && d.noText > PhotoEditorScript.same * 3 && d.middle < PhotoEditorScript.same
+      check(line, want ? d.withText < PhotoEditorScript.sameTextOnCanvas && d.noText > PhotoEditorScript.sameTextOnCanvas * 3 && d.middle < PhotoEditorScript.same
                        : d.noText < PhotoEditorScript.same && d.middle < PhotoEditorScript.same)
     }
 

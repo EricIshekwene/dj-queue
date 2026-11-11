@@ -385,9 +385,10 @@ enum PostAtScript {
       check("two Queue items for a selection", false)
     }
 
-    // 10. A regular clip at 9:30 PM New York: inside YouTube's quiet hours (02:00–07:00 UTC), so YouTube moves to 07:30 UTC.
+    // 10. A regular clip at 10:30 PM New York, which is 7:30 PM Pacific: inside YouTube's quiet window (7 PM to midnight
+    // Pacific since round 22), so YouTube moves to 00:30 Pacific, 3:30 AM New York the next day.
     let far = dm.addDays(today, 35)
-    let late = dm.at(far, minutes: 21 * 60 + 30)
+    let late = dm.at(far, minutes: 22 * 60 + 30)
     func takesYouTube(_ v: Video) -> Bool {
       guard !v.isPhoto, exact(v.id) == nil, model.postAtBlocker(v) == nil, let p = try? model.bulk.postAtPreview(v.id, at: late) else { return false }
       return p.blocker == nil && p.platforms.contains { $0.platform == .youtube && $0.moved }
@@ -424,20 +425,19 @@ enum PostAtScript {
     await wait(500)
     for _ in 0..<3 where dialog.map({ !far.hasPrefix(String(($0.month.isEmpty ? today : $0.month).prefix(7))) }) == true { _ = await click("Post at month next") }
     check("stepped to its month and clicked \(far)", await click("Post at day \(far)") && dialog?.day == far)
-    check("typed 9:30 pm", await type("9:30 pm"))
+    check("typed 10:30 pm", await type("10:30 pm"))
     let p10 = await preview()
     let yt = p10?.platforms.first { $0.platform == .youtube }
-    func utcSecond(_ d: Date) -> Int { Int(d.timeIntervalSince1970) % 86400 }
-    check("the YouTube row is moved to 07:30 UTC", yt?.moved == true && yt.map { utcSecond($0.at) } == 7 * 3600 + 1800 && yt.map { $0.at > late } == true)
-    check("the dialog says so before anything is set", p10?.notes.contains { $0.hasPrefix("YouTube moves to ") && $0.hasSuffix("(07:30 UTC)") } == true)
-    check("every other platform is at 9:30 PM", p10?.platforms.filter { $0.platform != .youtube }.allSatisfy { $0.at == late && !$0.moved } == true
+    check("the YouTube row is moved to 00:30 Pacific", yt?.moved == true && yt.map { YouTubeWindow.isMoved($0.at) && $0.at > late && $0.at < late.addingTimeInterval(6 * 3600) } == true)
+    check("the dialog says so before anything is set", p10?.notes.contains { $0.hasPrefix("YouTube moves to ") && $0.hasSuffix("(00:30 Pacific)") } == true)
+    check("every other platform is at 10:30 PM", p10?.platforms.filter { $0.platform != .youtube }.allSatisfy { $0.at == late && !$0.moved } == true
           && (p10?.platforms.count ?? 0) >= 2)
     await shot("youtube-quiet-hours")
     check("clicked Set time", await finish("Post at confirm"))
     model.refreshNow()
     let ytPost = livePosts(clip.id).first { $0.platform == .youtube }
-    check("the stored YouTube post is outside 02:00–07:00 UTC, at 07:30", ytPost.map { !(2 * 3600..<7 * 3600).contains(utcSecond($0.scheduledAt)) && utcSecond($0.scheduledAt) == 27000 } == true)
-    check("the others are stored at 9:30 PM", livePosts(clip.id).filter { $0.platform != .youtube }.allSatisfy { $0.scheduledAt == late } && exact(clip.id)?.exactAt == late)
+    check("the stored YouTube post is at 00:30 Pacific, after the quiet window", ytPost.map { YouTubeWindow.isMoved($0.scheduledAt) && $0.scheduledAt > late } == true)
+    check("the others are stored at 10:30 PM", livePosts(clip.id).filter { $0.platform != .youtube }.allSatisfy { $0.scheduledAt == late } && exact(clip.id)?.exactAt == late)
     check("“\(through)” didn't change: a set time is outside the cadence", model.scheduledText == through)
     ListPrefs.shared.setSearch(.queue, "")
     await calendar(.week, far)

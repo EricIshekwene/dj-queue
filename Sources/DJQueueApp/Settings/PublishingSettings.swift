@@ -219,8 +219,9 @@ struct PublishingPlatformRow: View {
 
   @ViewBuilder private func stateBadge(_ kind: PublisherKind) -> some View {
     let ch = model.postiz.channel(model.settings.publishing.channels[platform])
-    if ch?.disabled == true {
-      DSBadge("Channel disabled", style: .soft(.danger), icon: "exclamationmark",
+    // Round 22 made an expired sign-in the same wait as a disabled channel (`needsSignIn`); the row says so for both.
+    if ch?.needsSignIn == true {
+      DSBadge(ch?.disabled == true ? "Channel disabled" : "Reconnect", style: .soft(.danger), icon: "exclamationmark",
               help: "\(ch?.name ?? "This channel") is disabled or needs reconnecting in Postiz")
     } else if kind == .postiz, let r = model.postizRoute(platform).fallbackReason {
       DSBadge("Post by hand", style: .soft(.warning), help: r.message)
