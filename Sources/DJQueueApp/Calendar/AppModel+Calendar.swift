@@ -193,8 +193,9 @@ extension AppModel {
     return !calendarDays.contains { !calendarClips($0).isEmpty || !calendarExtras($0).isEmpty }
   }
 
-  /// A clip holds this day, whatever the filter shows.
-  func calendarDayIsTaken(_ day: String) -> Bool { !(calendarData.slots[day] ?? []).isEmpty }
+  /// A clip holds one of this day's regular places, whatever the filter shows. A set-time item doesn't: a day that
+  /// only has one is still open for the next clip in the Queue.
+  func calendarDayIsTaken(_ day: String) -> Bool { !calendarRegularSlots(day).isEmpty }
 
   /// The day's regular slots. A set-time item is outside the cadence: it takes none of the day's places (D12).
   func calendarRegularSlots(_ day: String) -> [PlanSlot] { (calendarData.slots[day] ?? []).filter { !$0.isExact } }

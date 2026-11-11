@@ -11,7 +11,8 @@ import SwiftUI
 /// and say so in the log: a drag between days (the drop's own function, `CalendarDrop.accept`) and the card's ⋯ menu
 /// (the function its item calls, `askPostAt`). A Queue card shows its buttons while the pointer rests on it; nothing moves
 /// Eric's pointer, so `SnapshotHover` stands in for that and the click on the clock is still a real one. `DJQ_POST_AT_SABOTAGE=1` types a time that is fine where the script
-/// expects a refusal, to prove the run can fail. Exits 1 on a failed check and saves a capture of each step.
+/// expects a refusal, to prove the run can fail. To act while the dialog's rows are still loading, the script lengthens
+/// the dialog's own pause before it asks Core (`PostAtDialogModel.debounce`): a slow preview, also labelled. Exits 1 on a failed check and saves a capture of each step.
 @MainActor
 enum PostAtScript {
   static func run(model: AppModel, store: Store, clock: FixedClock, out: URL) async -> Int32 {
@@ -119,6 +120,11 @@ enum PostAtScript {
       for _ in 0..<60 where dialog?.landed == nil && dialog?.picked.at != nil { await wait(100) }
       return dialog?.landed?.first?.preview
     }
+    /// The same wait, for a selection: every item's row.
+    func previews() async -> [PostAtCheck] {
+      for _ in 0..<60 where dialog?.landed == nil && dialog?.picked.at != nil { await wait(100) }
+      return dialog?.landed ?? []
+    }
     func closed() async -> Bool {
       for _ in 0..<80 where model.postAtRequest != nil { await wait(100) }
       await wait(400)
@@ -184,6 +190,27 @@ enum PostAtScript {
     // 3. Two days out at 3:15 PM: five platform rows, none for YouTube.
     let day2 = dm.addDays(today, 2)
     check("clicked \(day2) in the month", await click("Post at day \(day2)") && dialog?.day == day2)
+    check("typed 6pm", await type("6pm"))
+    _ = await preview()
+
+    // Review M1: the button stays off until the rows for THIS day and time are on screen. Return right after typing
+    // writes nothing, and the rows of the time before never stand in for the new one.
+    note("stand-in: a slow preview (the dialog waits 3 s before it asks Core) so the script can act while the rows load")
+    PostAtDialogModel.debounce = .seconds(3)
+    check("the rows for 6:00 PM on that day are up and the button is on", dialog?.landed != nil && dialog?.offReason == nil)
+    check("typed a valid time, 3:20pm", await type("3:20pm"))
+    await key("\r", code: 36)
+    check("↩ at once: the rows are still loading, so the button is off (“\(PostAtDialogModel.checking)”)",
+          dialog?.picked.problem == nil && dialog?.landed == nil && dialog?.isChecking == true && dialog?.offReason == PostAtDialogModel.checking)
+    check("the 6:00 PM rows don't stand in for 3:20 PM", dialog?.landed == nil && !has("Post at row facebook"))
+    check("↩ wrote nothing", model.postAtRequest != nil && exact(photo.id) == nil && stage(photo.id) == .edit && livePosts(photo.id).isEmpty)
+    _ = await click("Post at confirm")
+    check("a click on the button wrote nothing either", model.postAtRequest != nil && exact(photo.id) == nil && stage(photo.id) == .edit)
+    await shot("checking-button-off")
+    let slow = await preview()
+    check("once the 3:20 PM rows land the button is on", slow?.platforms.allSatisfy { minutes($0.at) == 15 * 60 + 20 } == true && dialog?.offReason == nil)
+    PostAtDialogModel.debounce = .milliseconds(180)
+
     check("typed 3:15pm", await type("3:15pm"))
     let at2 = dm.at(day2, minutes: 15 * 60 + 15)
     let p2 = await preview()
@@ -192,6 +219,8 @@ enum PostAtScript {
     check("no YouTube row: a photo post never goes there", p2?.platforms.contains { $0.platform == .youtube } == false
           && p2?.skipped.contains { $0.platform == .youtube && $0.reason == .off } == true)
     check("the button is on", dialog?.offReason == nil && p2?.blocker == nil)
+    check("the dialog draws those five rows, and YouTube as left out",
+          (p2?.platforms ?? []).allSatisfy { has("Post at row \($0.platform.rawValue)") } && !has("Post at row youtube") && has("Post at skipped youtube"))
     await shot("two-days-out")
 
     // 4. Confirm: Scheduled, five posts at that minute, nothing else moved.
@@ -297,6 +326,7 @@ enum PostAtScript {
       check("a clip with something to fix: its clock opens the dialog", await click("Post at \(stuck.id)") && model.postAtRequest?.videoIds == [stuck.id])
       let p9 = await preview()
       check("it says what is missing, in Send to Queue's words", p9?.blocker?.hasPrefix("Still in Edit: ") == true && dialog?.offReason == p9?.blocker)
+      check("the reason is drawn in place of the rows", has("Post at blocker") && !has("Post at row facebook"))
       await shot("fix-first")
       _ = await click("Post at confirm")
       await wait(500)
@@ -306,6 +336,53 @@ enum PostAtScript {
       ListPrefs.shared.setSearch(.edit, "")
     } else {
       check("a clip in Edit with something to fix", false)
+    }
+
+    // 9b. A selection: one row per item, the one that can't take a time stays with its whole reason, Esc, one batch, one Undo.
+    let planMany = plan()
+    let waiting = model.queueClips.first { ClipStage.of($0) == .queue && !$0.isPhoto && model.postAtBlocker($0) == nil }?.id
+    let finished = model.queueClips.first { model.postAtBlocker($0) != nil }?.id
+    let many = [photo.id] + [waiting, finished].compactMap { $0 }
+    if many.count >= 2 {
+      model.toast = nil
+      model.setViewMode(.wide, for: .queue)
+      model.screen = .queue
+      model.setSelection(many, screen: .queue)
+      note("stand-in: the selection's right-click menu is a system menu, so the function its “Post at a set time…” item calls runs (askPostAt)")
+      model.askPostAt(many)
+      await wait(900)
+      check("the dialog opens for \(many.count) items", model.postAtRequest?.videoIds == many && dialog?.primaryTitle == "Set time")
+      check("clicked the Tomorrow 12:00 PM chip", await click("Post at chip tomorrow"))
+      let rows = await previews()
+      check("one row per item is drawn", rows.count == many.count && many.allSatisfy { has("Post at item \($0)") })
+      if let finished {
+        check("the one that already posted stays, and the rest can still be set", rows.first { $0.videoId == finished }?.blocker != nil && dialog?.offReason == nil)
+      }
+      await shot("several-items")
+      await key("\u{1b}", code: 53)
+      check("Esc closes the dialog and sets nothing", (await closed()) && plan() == planMany)
+      check("Esc left the selection as it was", model.selected(.queue) == Set(many))
+      model.setSelection(many, screen: .queue)
+      model.askPostAt(many)
+      await wait(900)
+      _ = await click("Post at chip tomorrow")
+      _ = await previews()
+      check("clicked Set time", await finish("Post at confirm"))
+      model.refreshNow()
+      let set = [photo.id] + [waiting].compactMap { $0 }
+      check("every item that could take it has tomorrow 12:00 PM", set.allSatisfy { exact($0)?.exactAt == noon })
+      if let finished { check("the one that already posted was left alone", exact(finished) == nil) }
+      check("one toast for the batch, with Undo", model.toast?.message.hasPrefix("\(set.count) items set for ") == true && model.toast?.actionTitle == "Undo")
+      await shot("several-set")
+      model.undoLast()
+      for _ in 0..<60 where plan() != planMany { await wait(100) }
+      await wait(500)
+      model.refreshNow()
+      check("one Undo puts all of them back", plan() == planMany && set.allSatisfy { exact($0) == nil })
+      model.clearSelection(.queue)
+      model.toast = nil
+    } else {
+      check("two Queue items for a selection", false)
     }
 
     // 10. A regular clip at 9:30 PM New York: inside YouTube's quiet hours (02:00–07:00 UTC), so YouTube moves to 07:30 UTC.

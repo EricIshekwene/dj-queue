@@ -116,7 +116,7 @@ struct CalendarDayColumn: View {
       if clips.isEmpty {
         CalendarOpenDay(model: model, day: day, targeted: targeted, height: style == .week ? width * 16 / 9 : CalendarCover.smallHeight + 2 * DS.space.xs)
           .opacity(isPast ? 0.5 : 1)
-      } else if !isPast, model.calendarFilter == nil, clips.allSatisfy({ $0.slot.isExact }), model.calendarDayCanFill(day) {
+      } else if !isPast, clips.allSatisfy({ $0.slot.isExact }), model.calendarDayCanFill(day) {
         // Only set-time items here: they take none of the day's regular places, so the day is still open (D12).
         CalendarOpenDay(model: model, day: day, targeted: targeted, height: 72)
       }
@@ -260,7 +260,7 @@ struct CalendarPhotoMark: View {
   var body: some View {
     if let label = video.photoLabel {
       HStack(spacing: 3) {
-        Image(systemName: video.isCarousel ? "square.on.square" : "photo").font(.system(size: 8.5, weight: .semibold))
+        Image(systemName: video.isCarousel ? "square.on.square" : "photo").font(DS.type.microCompact)
         Text(label).font(DS.type.microCompact).lineLimit(1)
       }
       .foregroundStyle(.white)
@@ -285,7 +285,7 @@ struct CalendarSetTimeMark: View {
     if let exact = slot.exactAt {
       let other = day.map { $0 != slot.date } ?? false
       HStack(spacing: 3) {
-        Image(systemName: "clock").font(.system(size: 9.5, weight: .semibold))
+        Image(systemName: "clock").font(DS.type.microCompact)
         Text((other ? Fmt.day(exact, tz: model.tz, style: "EEE") + " " : "") + AppModel.clockText(exact, tz: model.tz))
           .font(DS.type.captionMedium.monospacedDigit()).lineLimit(1)
       }

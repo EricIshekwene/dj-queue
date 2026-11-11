@@ -151,6 +151,12 @@ fails at publish time, on a day Eric isn't looking, with the other four platform
 - **A photo post's Calendar cover is drawn at the post's own shape (4:5 by default), never stretched or cropped to 9:16**, with "Photo" or "Carousel · N" on it. Month chips and Day headers keep the small 9:16 thumb. Nothing about a photo card plays or asks for a proxy.
 - **A missed set-time post's row offers "Change set time…" where a regular post offers Shift.** *Why:* Core refuses the shift ("post it now or pick a new time"), so the row offers the two things that work.
 - **Month chips lead with the set time ("3:15p") before the title.** *Why:* the platform row has no room for it at 7 columns, and the time is the point of the chip.
+- **The primary button stays off ("Checking this time…") until Core's dry run for the picked day and time is on screen (review M1).** Rows asked for another time, or before the item changed, never count. *Why:* type-then-Return would set a time whose rows, YouTube note or blocker Eric hadn't seen. Given up: Return can't be typed ahead of the rows.
+- **An item "has a set time" only while that slot still has a post to come (review m1).** One whose posts all went out is history: the clock goes back to "Post at a set time", and "Use the regular schedule" is offered only where Core can do it (nothing posted yet).
+- **A refusal that arrives after the dialog was closed shows as a toast (review m3);** one that arrives while it is open stays in the dialog and the rows are asked for again.
+- **The dialog closes by itself when every item it was opened for is gone,** and re-asks Core when an item's stage, day or posts change underneath it (review m4).
+- **Several items: the whole reason sits under the item that stays, notes carry the item's name, and one line says that through Postiz they go out a minute apart (review m5).**
+- **The day grid takes the arrow keys once it has the keyboard** (← → a day, ↑ ↓ a week), with the focus ring on the picked day (review m10). On-media marks keep white on a dark capsule like the pin: there is no on-media token.
 - **In the live check a drag between days and the card's ⋯ menu are stand-ins** (the drop's own function and the menu item's function), and a Queue card's hover is `SnapshotHover`. macOS pulls a drag session and a menu onto a display.
 
 ## Decisions made while building (core photos)

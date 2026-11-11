@@ -137,8 +137,8 @@ struct CalendarMonthChip: View {
             // Round 21 (Buffer's month chips lead with the time): a clock mark and the minute, "3:15p". A set time is
             // always pinned, so it takes the pin's place.
             HStack(spacing: 2) {
-              Image(systemName: "clock").font(.system(size: 8, weight: .semibold))
-              Text(Fmt.compactTime(exact, tz: model.tz)).font(.system(size: 10.5, weight: .medium).monospacedDigit())
+              Image(systemName: "clock").font(DS.type.microCompact)
+              Text(Fmt.compactTime(exact, tz: model.tz)).font(DS.type.microCompact)
             }
             .foregroundStyle(DS.color.text)
             .fixedSize()

@@ -95,7 +95,7 @@ struct CalendarDayClip: View {
       DSXThumb(model: model, video: group.video, width: 36, post: group.posts.first)
       VStack(alignment: .leading, spacing: 2) {
         Text(group.video.map(model.displayName) ?? "Missing clip").font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(2)
-        HStack(spacing: 6) {
+        HStack(spacing: group.slot?.isExact == true ? 6 : 4) {  // regular clips keep their 4 pt
           if let slot = group.slot, slot.isExact {
             // Round 21: the set time, in place of the pin (a set time is always pinned).
             CalendarSetTimeMark(model: model, slot: slot, day: day)
@@ -107,6 +107,7 @@ struct CalendarDayClip: View {
           if let v = group.video, let label = v.photoLabel {
             DSBadge(label, style: .outline, icon: v.isCarousel ? "square.on.square" : "photo", size: .sm,
                     help: v.isCarousel ? "A carousel of \(v.photoCount) photos — the first is the cover" : "A photo post")
+              .padding(.leading, group.slot?.isExact == true ? 0 : 2)
               .background(ScriptAnchor("Photo mark \(v.id)"))
           }
         }

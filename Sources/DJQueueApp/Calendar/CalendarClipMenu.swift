@@ -21,7 +21,8 @@ struct CalendarClipMenu: View {
   var body: some View {
     let moveWhy = model.calendarMoveBlocker(slot, posts: posts)
     // Round 21: a set-time item keeps its minute. Post today would drop it, so it says why not (Core's words).
-    let timed = slot?.isExact == true || model.setTime(video.id) != nil
+    // Only a set time that is still to come counts: one that already went out leaves nothing to keep or take off.
+    let timed = model.setTime(video.id) != nil
     Button("Move to…" + AppModel.menuReason(moveWhy), systemImage: "calendar") { model.calendarPinTarget = [video.id] }
       .disabled(moveWhy != nil)
     if let slot, !timed, slot.date == day ?? slot.date {
@@ -38,7 +39,7 @@ struct CalendarClipMenu: View {
     let timeWhy = model.postAtBlocker(video)
     Button((timed ? "Change set time…" : "Post at a set time…") + AppModel.menuReason(timeWhy), systemImage: "clock") { model.askPostAt([video.id]) }
       .disabled(timeWhy != nil)
-    if timed {
+    if model.canClearSetTime(video.id) {
       Button(StageWording.useRegularSchedule, systemImage: "arrow.uturn.backward") { model.clearSetTimeAsking([video.id]) }
     }
     Divider()

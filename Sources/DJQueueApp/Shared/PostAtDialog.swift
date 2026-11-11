@@ -27,8 +27,8 @@ struct PostAtDialog: View {
   var body: some View {
     let s = state
     let p = s.picked
-    let timed = s.timedIds
-    DSDialog(AppModel.postAtTitle, description: "Every platform goes out at this minute. The regular schedule doesn't move.",
+    let timed = s.clearableIds
+    DSDialog(AppModel.postAtTitle, description: "Pick the exact day and minute. The regular schedule doesn't move.",
              icon: "clock", width: 640, onClose: s.close) {
       VStack(alignment: .leading, spacing: DS.space.md) {
         PostAtItems(model: model, videos: s.videos)
@@ -62,8 +62,9 @@ struct PostAtDialog: View {
         Spacer(minLength: DS.space.md)
         DSButton("Cancel", variant: .ghost, shortcut: "esc", action: s.close).keyboardShortcut(.cancelAction)
           .background(ScriptAnchor("Post at cancel"))
-        DSButton(s.primaryTitle, icon: "clock", variant: .primary, isLoading: s.busy, disabledReason: s.offReason,
-                 tooltip: p.at.map { "Every platform goes out \(model.setTimeText($0))" }, shortcut: "↩", action: s.confirm)
+        // Off until Core's dry run for this very day and time has landed: Eric never confirms rows he hasn't seen.
+        DSButton(s.primaryTitle, icon: "clock", variant: .primary, isLoading: s.busy || s.isChecking, disabledReason: s.offReason,
+                 tooltip: s.primaryHelp, shortcut: "↩", action: s.confirm)
           .keyboardShortcut(.defaultAction)
           .background(ScriptAnchor("Post at confirm"))
       }
@@ -71,8 +72,12 @@ struct PostAtDialog: View {
       .layoutPriority(1)
     }
     .dsFloatingSurface(radius: DS.radius.lg, elevation: DS.elevation.e3)
-    .onAppear { s.start(model: model, ids: request.videoIds) }
-    .task(id: p.at) { await s.check(p.at) }
+    .onAppear { s.start(model: model, request: request) }
+    // Asked again when the time changes, when the item changes underneath (a day from the engine, a post going out),
+    // and after a refused write.
+    .task(id: s.checkKey) { await s.check() }
+    // Every item is gone (excluded or removed elsewhere): there is nothing left to give a time.
+    .onChange(of: s.videos.isEmpty) { _, gone in if gone { s.close() } }
   }
 
   static let timePlaceholder = "e.g. 7:30 PM"
@@ -99,22 +104,35 @@ final class PostAtDialogModel {
   /// The dialog on screen, for `PostAtScript`.
   static weak var live: PostAtDialogModel?
 
+  /// How long typing rests before Core is asked. The live check lengthens it to act while the rows are still loading.
+  static var debounce: Duration = .milliseconds(180)
+  static let checking = "Checking this time…"
+
   @ObservationIgnored private weak var model: AppModel?
+  /// The request this dialog was opened for: a write that lands after it closed must not touch another dialog.
+  @ObservationIgnored private var requestId: UUID?
   private(set) var ids: [String] = []
   /// The picked day ("2026-11-14") and the time as typed.
   var day = ""
   var timeText = ""
   /// Any day of the month the grid shows.
   var month = ""
-  /// What Core says the picked time would do, per item, and the time it was asked for.
+  /// What Core says the picked time would do, per item, and what it was asked for.
   private(set) var checks: [String: PostAtCheck] = [:]
-  private(set) var checkedAt: Date?
+  private(set) var checkedKey: PostAtCheckKey?
+  /// Bumped after a refused write, so the rows are asked for again.
+  private var retries = 0
+  /// The date a chip or the item's own set time handed over. Kept while the day and time still say it, so the second
+  /// 1:30 AM of the night the clocks go back doesn't reopen as the first.
+  @ObservationIgnored private var handed: Date?
   /// A refusal from the write itself: it stays in the dialog.
   private(set) var error: String?
   private(set) var busy = false
 
   var videos: [Video] { ids.compactMap { model?.video($0) } }
   var timedIds: [String] { ids.filter { model?.setTime($0) != nil } }
+  /// The ones "Use the regular schedule" can act on.
+  var clearableIds: [String] { ids.filter { model?.canClearSetTime($0) == true } }
   /// "Change time" once every item has one.
   var primaryTitle: String { !ids.isEmpty && timedIds.count == ids.count ? "Change time" : "Set time" }
 
@@ -124,7 +142,9 @@ final class PostAtDialogModel {
     guard let model, !text.isEmpty, !day.isEmpty else { return (nil, nil) }
     guard let m = PostAtClock.minutes(text) else { return (nil, "That isn't a time — try 7pm or 19:30") }
     do {
-      let at = try Planner.exactDate(day: day, minutes: m, settings: model.settings)
+      let dm = model.dm
+      let kept = handed.flatMap { dm.key($0) == day && Fmt.minutesOfDay($0, calendar: dm.calendar) == m ? $0 : nil }
+      let at = try kept ?? Planner.exactDate(day: day, minutes: m, settings: model.settings)
       // The time it already has is never a problem, however close: nothing would change.
       if ids.allSatisfy({ model.setTime($0) == at }) { return (at, nil) }
       return (at, model.planner.exactTimeProblem(at))
@@ -133,19 +153,47 @@ final class PostAtDialogModel {
     }
   }
 
-  /// The checks for the picked time, once they have landed.
+  /// What the rows depend on: the picked time, and where each item stands (stage, day, posts).
+  var checkKey: PostAtCheckKey? {
+    guard let model, let at = picked.at else { return nil }
+    let stamp = ids.map { id -> String in
+      guard let v = model.video(id) else { return "\(id)|gone" }
+      let slot = model.nextSlotByVideo[id]
+      let posts = (model.postsByVideo[id] ?? []).map { "\($0.platform.rawValue):\($0.state.rawValue):\(Int($0.scheduledAt.timeIntervalSince1970))" }.sorted()
+      return "\(id)|\(v.state)|\(v.sentToQueue)|\(v.excluded)|\(v.missing)|\(slot?.date ?? "-")|\(slot?.exactAt?.timeIntervalSince1970 ?? 0)|"
+        + "\((model.issuesByVideo[id] ?? []).count)|\(posts.joined(separator: ","))"
+    }
+    return PostAtCheckKey(at: at, stamp: stamp.joined(separator: ";"), retry: retries)
+  }
+
+  /// The checks for the picked time and the items as they stand now, once they have landed. Rows asked for another
+  /// time, or before an item changed, never count.
   var landed: [PostAtCheck]? {
-    guard let at = picked.at, checkedAt == at else { return nil }
+    guard let key = checkKey, checkedKey == key else { return nil }
     let list = ids.compactMap { checks[$0] }
     return list.count == ids.count ? list : nil
   }
 
-  /// Why the primary button is off (nil = it's on).
+  /// The time works and Core is still being asked what it does.
+  var isChecking: Bool { let p = picked; return p.at != nil && p.problem == nil && landed == nil }
+
+  /// The primary button's tooltip: when it goes out, and YouTube's own time when its quiet hours move it.
+  var primaryHelp: String? {
+    guard let model, let at = picked.at else { return nil }
+    let base = "Goes out \(model.setTimeText(at))"
+    let lines = (landed ?? []).flatMap { $0.blocker == nil ? ($0.preview?.platforms ?? []) : [] }
+    guard let m = lines.first(where: \.moved) else { return base }
+    let clock = AppModel.clockText(m.at, tz: model.tz)
+    let day = model.dm.key(m.at) == model.dm.key(at) ? "" : Fmt.day(m.at, tz: model.tz, style: "EEE") + " "
+    return "\(base) · \(m.platform.dsxCompactName) \(day)\(clock)"
+  }
+
+  /// Why the primary button is off (nil = it's on). It stays off until the rows for this day and time are on screen.
   var offReason: String? {
     let p = picked
     if let why = p.problem { return why }
     guard p.at != nil else { return "Pick a day and type a time" }
-    guard let list = landed else { return nil }
+    guard let list = landed else { return Self.checking }
     let open = list.filter { $0.blocker == nil }
     if open.isEmpty { return list.count == 1 ? list[0].blocker : "None of them can take this time" }
     if open.allSatisfy(\.unchanged) { return list.count == 1 ? "It already has this time" : "They already have this time" }
@@ -153,18 +201,21 @@ final class PostAtDialogModel {
   }
 
   /// The time it has, else the next round hour at least an hour away.
-  func start(model: AppModel, ids: [String]) {
+  func start(model: AppModel, request: PostAtRequest) {
     Self.live = self
     guard self.model == nil else { return }
     self.model = model
+    requestId = request.id
+    let ids = request.videoIds
     self.ids = ids
     let shared = ids.compactMap { model.setTime($0) }
     let has = shared.count == ids.count && Set(shared).count == 1 ? shared[0] : nil
-    if let has, model.planner.exactTimeProblem(has) == nil { pick(has) } else { pick(PostAtQuick.nextRoundHour(model.now)) }
+    if let has, model.planner.exactTimeProblem(has) == nil { pick(has) } else { pick(PostAtQuick.nextRoundHour(model.now, tz: model.tz)) }
   }
 
   func pick(_ at: Date) {
     guard let dm = model?.dm else { return }
+    handed = at
     day = dm.key(at)
     month = day
     timeText = PostAtClock.text(Fmt.minutesOfDay(at, calendar: dm.calendar))
@@ -177,15 +228,15 @@ final class PostAtDialogModel {
   }
 
   /// Debounced, off the main thread: typing "7:30 pm" asks Core once.
-  func check(_ at: Date?) async {
-    guard let at, let model else { return }
-    try? await Task.sleep(for: .milliseconds(180))
+  func check() async {
+    guard let key = checkKey, let model else { return }
+    try? await Task.sleep(for: Self.debounce)
     guard !Task.isCancelled else { return }
     let (b, ids) = (model.bulk, ids)
-    let out = await Task.detached(priority: .userInitiated) { PostAtCheck.run(b, ids: ids, at: at) }.value
+    let out = await Task.detached(priority: .userInitiated) { PostAtCheck.run(b, ids: ids, at: key.at) }.value
     guard !Task.isCancelled else { return }
     checks = out
-    checkedAt = at
+    checkedKey = key
   }
 
   func confirm() {
@@ -193,10 +244,11 @@ final class PostAtDialogModel {
     guard let model, let at = picked.at, offReason == nil, !busy else { return }
     busy = true
     error = nil
+    let ids = ids
     Task {
       let why = await model.postAt(ids: ids, at: at)
       busy = false
-      if let why { error = why } else { close() }
+      done(why)
     }
   }
 
@@ -204,14 +256,38 @@ final class PostAtDialogModel {
     guard let model, !busy else { return }
     busy = true
     error = nil
+    let ids = clearableIds
     Task {
-      let why = await model.clearSetTime(ids: timedIds)
+      let why = await model.clearSetTime(ids: ids)
       busy = false
-      if let why { error = why } else { close() }
+      done(why)
     }
   }
 
-  func close() { model?.postAtRequest = nil }
+  /// A write came back. A refusal stays in the dialog and the rows are asked for again; when the dialog was closed
+  /// meanwhile it shows as a toast, so it is never lost.
+  private func done(_ why: String?) {
+    guard let model else { return }
+    let open = model.postAtRequest?.id == requestId
+    if let why {
+      if open { error = why; retries += 1 } else { model.show(why, error: true) }
+    } else if open {
+      close()
+    }
+  }
+
+  /// Closes this dialog, and only this one.
+  func close() {
+    guard let model, model.postAtRequest?.id == requestId else { return }
+    model.postAtRequest = nil
+  }
+}
+
+/// What a set of rows was asked for.
+struct PostAtCheckKey: Hashable, Sendable {
+  var at: Date
+  var stamp: String
+  var retry: Int
 }
 
 /// What Core says a time would do for one item: its preview, or why the preview couldn't run.
@@ -246,7 +322,7 @@ struct PostAtQuick: Identifiable {
     let dm = DayMath(settings: settings)
     let today = dm.key(now)
     let soon = now.addingTimeInterval(Planner.exactLead)
-    var out = [PostAtQuick(id: "hour", title: "In 1 hour", at: inAnHour(now))]
+    var out = [PostAtQuick(id: "hour", title: "In 1 hour", at: inAnHour(now, tz: settings.tz))]
     let tonight = dm.at(today, minutes: 19 * 60)
     if tonight >= soon { out.append(PostAtQuick(id: "tonight", title: "Tonight 7:00 PM", at: tonight)) }
     out.append(PostAtQuick(id: "tomorrow", title: "Tomorrow 12:00 PM", at: dm.at(dm.addDays(today, 1), minutes: 12 * 60)))
@@ -262,14 +338,17 @@ struct PostAtQuick: Identifiable {
     return out
   }
 
-  /// An hour from now, on the next five minutes.
-  static func inAnHour(_ now: Date) -> Date {
-    Date(timeIntervalSince1970: ((now.timeIntervalSince1970 + 3600) / 300).rounded(.up) * 300)
-  }
+  /// An hour from now, on the next five minutes of the Settings clock.
+  static func inAnHour(_ now: Date, tz: TimeZone) -> Date { roundedUp(now.addingTimeInterval(3600), to: 300, tz: tz) }
 
   /// The next round hour at least an hour away (the dialog's first suggestion).
-  static func nextRoundHour(_ now: Date) -> Date {
-    Date(timeIntervalSince1970: ((now.timeIntervalSince1970 + 3600) / 3600).rounded(.up) * 3600)
+  static func nextRoundHour(_ now: Date, tz: TimeZone) -> Date { roundedUp(now.addingTimeInterval(3600), to: 3600, tz: tz) }
+
+  /// `d` up to the next multiple of `step` seconds on the wall clock of `tz`: a zone with a :30 or :45 offset still
+  /// lands on its own round hour.
+  private static func roundedUp(_ d: Date, to step: Double, tz: TimeZone) -> Date {
+    let offset = Double(tz.secondsFromGMT(for: d))
+    return Date(timeIntervalSince1970: ((d.timeIntervalSince1970 + offset) / step).rounded(.up) * step - offset)
   }
 }
 
@@ -327,6 +406,8 @@ struct PostAtDayGrid: View {
 
   static let cell: CGFloat = 32
   static let width: CGFloat = cell * 7
+  /// The grid has the keyboard: ← → move a day, ↑ ↓ a week, and the picked day shows the focus ring.
+  @FocusState private var focused: Bool
 
   var body: some View {
     let dm = model.dm
@@ -357,17 +438,38 @@ struct PostAtDayGrid: View {
         }
       }
     }
+    .focusable()
+    .focused($focused)
+    .focusEffectDisabled()
+    .onMoveCommand(perform: move)
     .accessibilityElement(children: .contain)
     .accessibilityLabel("Day")
+  }
+
+  /// Arrow keys while the grid has the keyboard. Past days can't be reached.
+  private func move(_ direction: MoveCommandDirection) {
+    let by: Int
+    switch direction {
+    case .left: by = -1
+    case .right: by = 1
+    case .up: by = -7
+    case .down: by = 7
+    @unknown default: return
+    }
+    let to = model.dm.addDays(day.isEmpty ? model.todayKey : day, by)
+    guard to >= model.todayKey else { return }
+    day = to
+    month = to
   }
 
   private func cell(_ d: String, inMonth: Bool) -> some View {
     let past = d < model.todayKey
     let label = Fmt.day(model.dm.date(d), tz: model.tz, style: "EEE d MMM")
     return PostAtDayCell(number: Fmt.day(model.dm.date(d), tz: model.tz, style: "d"), isSelected: d == day, isToday: d == model.todayKey,
-                         isDim: past || !inMonth, isOff: past) {
+                         isDim: past || !inMonth, isOff: past, isFocused: focused && d == day) {
       day = d
       if !inMonth { month = d }
+      focused = true
     }
     .dsTooltip(past ? "Past days can't take a post" : nil)
     .accessibilityLabel(d == model.todayKey ? "Today, \(label)" : label)
@@ -386,6 +488,7 @@ private struct PostAtDayCell: View {
   let isToday: Bool
   let isDim: Bool
   let isOff: Bool
+  var isFocused = false
   let action: () -> Void
   @State private var hovering = false
 
@@ -397,6 +500,7 @@ private struct PostAtDayCell: View {
         .frame(width: PostAtDayGrid.cell - 4, height: PostAtDayGrid.cell - 4)
         .background(isSelected ? DS.color.primary : hovering && !isOff ? DS.color.hover : .clear, in: Circle())
         .overlay { if isToday && !isSelected { Circle().strokeBorder(DS.color.borderStrong) } }
+        .overlay { if isFocused { Circle().strokeBorder(DS.color.focusRing, lineWidth: 3).padding(-3) } }
         .frame(width: PostAtDayGrid.cell, height: PostAtDayGrid.cell)
         .contentShape(Rectangle())
     }
@@ -485,24 +589,47 @@ private struct PostAtOutcome: View {
 
   // MARK: Several items
 
+  /// One block per item: its name and what it gets, and under it the whole reason when it stays as it is.
   @ViewBuilder private func many(_ checks: [PostAtCheck]) -> some View {
     ForEach(checks, id: \.videoId) { c in
       let name = model.video(c.videoId).map(model.displayName) ?? "Missing item"
-      HStack(spacing: DS.space.xs) {
-        Image(systemName: c.blocker == nil ? "clock" : "minus.circle").font(.system(size: 11, weight: .medium))
-          .foregroundStyle(c.blocker == nil ? DS.color.textSecondary : DS.color.warning).frame(width: 16)
-        Text(name).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(1)
-        Spacer(minLength: DS.space.xs)
-        Text(summary(c)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+      VStack(alignment: .leading, spacing: 0) {
+        HStack(spacing: DS.space.xs) {
+          Image(systemName: c.blocker == nil ? "clock" : "minus.circle").font(DS.type.micro)
+            .foregroundStyle(c.blocker == nil ? DS.color.textSecondary : DS.color.warning).frame(width: 16)
+          Text(name).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(1)
+          Spacer(minLength: DS.space.xs)
+          Text(summary(c)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+        }
+        .frame(height: Self.row)
+        if let why = c.blocker {
+          Text(why).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 16 + DS.space.xs)
+            .padding(.bottom, DS.space.xxs)
+        }
       }
-      .frame(height: Self.row)
-      .dsTooltip(c.blocker)
+      .accessibilityElement(children: .combine)
+      .background(ScriptAnchor("Post at item \(c.videoId)"))
     }
-    ForEach(Array(Set(checks.flatMap { $0.preview?.blocker == nil ? ($0.preview?.notes ?? []) : [] })).sorted(), id: \.self) { n in note(n) }
+    ForEach(manyNotes(checks), id: \.self) { n in note(n) }
+  }
+
+  /// Each note under the name of its item, then what a selection set for one minute does through Postiz.
+  private func manyNotes(_ checks: [PostAtCheck]) -> [String] {
+    let taking = checks.filter { $0.blocker == nil && !$0.unchanged }
+    var out = taking.flatMap { c -> [String] in
+      let name = model.video(c.videoId).map(model.displayName) ?? "One item"
+      return (c.preview?.notes ?? []).map { "\(name): \($0)" }
+    }
+    let platforms = Set(taking.flatMap { $0.preview?.platforms.map(\.platform) ?? [] })
+    if taking.count > 1, platforms.contains(where: { model.settings.publishing.publisher(for: $0) == .postiz }) {
+      out.append("Through Postiz they go out a minute apart on each channel")
+    }
+    return out
   }
 
   private func summary(_ c: PostAtCheck) -> String {
-    if let why = c.blocker { return "stays — " + (why.count > 44 ? String(why.prefix(42)) + "…" : why) }
+    if c.blocker != nil { return "stays as it is" }
     guard let p = c.preview else { return "" }
     if p.unchanged { return "already has this time" }
     return "\(p.platforms.count) platform\(p.platforms.count == 1 ? "" : "s")"
@@ -512,7 +639,7 @@ private struct PostAtOutcome: View {
 
   private func line(_ p: Platform, text: String, dim: Bool, help: String?) -> some View {
     HStack(spacing: DS.space.xs) {
-      Image(systemName: p.dsSymbol).font(.system(size: 11, weight: .medium)).foregroundStyle(dim ? DS.color.textTertiary : DS.color.textSecondary)
+      Image(systemName: p.dsSymbol).font(DS.type.micro).foregroundStyle(dim ? DS.color.textTertiary : DS.color.textSecondary)
         .frame(width: 16)
       Text(p.dsxCompactName).font(DS.type.callout).foregroundStyle(dim ? DS.color.textTertiary : DS.color.text)
       Spacer(minLength: DS.space.xs)
@@ -523,11 +650,12 @@ private struct PostAtOutcome: View {
     .dsTooltip(help)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("\(p.displayName): \(text)")
+    .background(ScriptAnchor("Post at \(dim ? "skipped" : "row") \(p.rawValue)"))
   }
 
   private func note(_ text: String) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: DS.space.xs) {
-      Image(systemName: "info.circle").font(.system(size: 11, weight: .medium)).foregroundStyle(DS.color.textTertiary).frame(width: 16)
+      Image(systemName: "info.circle").font(DS.type.micro).foregroundStyle(DS.color.textTertiary).frame(width: 16)
       Text(text).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
     }
     .padding(.top, 2)
@@ -536,7 +664,7 @@ private struct PostAtOutcome: View {
   /// The reason in place of the rows.
   private func blocked(_ why: String) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: DS.space.xs) {
-      Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 11, weight: .medium)).foregroundStyle(DS.color.warning).frame(width: 16)
+      Image(systemName: "exclamationmark.triangle.fill").font(DS.type.micro).foregroundStyle(DS.color.warning).frame(width: 16)
       Text(why).font(DS.type.callout).foregroundStyle(DS.color.text).fixedSize(horizontal: false, vertical: true)
     }
     .padding(DS.space.xs)
@@ -544,5 +672,6 @@ private struct PostAtOutcome: View {
     .background(DS.color.tint(.warning), in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
     .accessibilityElement(children: .combine)
     .accessibilityLabel("Can't set this time: \(why)")
+    .background(ScriptAnchor("Post at blocker"))
   }
 }

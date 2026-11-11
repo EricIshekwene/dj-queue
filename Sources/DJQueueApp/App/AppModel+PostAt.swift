@@ -19,14 +19,14 @@ extension AppModel {
     let ids = ids.filter { video($0) != nil }
     guard !ids.isEmpty else { return }
     if let why = postAtBlocker(ids) { show(why, error: true); return }
+    // From the editor: what was just changed there is saved first, so the dialog's rows read it.
+    if editor != nil { EditorModel.flushLiveAndWait() }
     postAtRequest = PostAtRequest(videoIds: ids)
   }
 
-  /// The item's set-time slot (nil = it follows the regular schedule), from the loaded plan.
-  func setTimeSlot(_ videoId: String) -> PlanSlot? {
-    if let s = nextSlotByVideo[videoId], s.isExact { return s }
-    return calendarData.setTimes[videoId]
-  }
+  /// The item's set-time slot (nil = it follows the regular schedule), from the loaded plan. Only a set time that is
+  /// still to come or still waiting counts (`CalendarData.setTimes`): one whose posts all went out is history.
+  func setTimeSlot(_ videoId: String) -> PlanSlot? { calendarData.setTimes[videoId] }
 
   /// The item's set time, nil on the regular schedule.
   func setTime(_ videoId: String) -> Date? { setTimeSlot(videoId)?.exactAt }
@@ -68,9 +68,15 @@ extension AppModel {
     return targets.count == 1 ? reasons[0] : "None of the selected items can take a set time"
   }
 
-  /// Why "Use the regular schedule" isn't offered for `targets` (nil = it is): none of them has a set time.
+  /// "Use the regular schedule" can act on this item: it has a set time and nothing of it has posted (Core refuses a
+  /// clear once something posted, so it isn't offered where it can only fail).
+  func canClearSetTime(_ videoId: String) -> Bool {
+    setTime(videoId) != nil && video(videoId).map { postAtBlocker($0) == nil } == true
+  }
+
+  /// Why "Use the regular schedule" isn't offered for `targets` (nil = it is): none of them has a set time to take off.
   func clearSetTimeBlocker(_ targets: [String]) -> String? {
-    targets.contains { setTime($0) != nil } ? nil : StageWording.noSetTime
+    targets.contains(where: canClearSetTime) ? nil : StageWording.noSetTime
   }
 
   /// "New York time": the Settings time zone in words.
@@ -134,7 +140,7 @@ extension AppModel {
 
   /// "Use the regular schedule" from a menu: there is no dialog to hold a refusal, so it shows as a toast.
   func clearSetTimeAsking(_ ids: [String]) {
-    let timed = ids.filter { setTime($0) != nil }
+    let timed = ids.filter(canClearSetTime)
     guard !timed.isEmpty else { show(StageWording.noSetTime, error: true); return }
     Task { if let why = await clearSetTime(ids: timed) { show(why, error: true) } }
   }
