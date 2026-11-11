@@ -76,7 +76,11 @@ struct EditorView: View {
     .background(DS.color.background)
     .overlay(alignment: .bottom) {
       if let t = model.toast {
-        DSToast(toast: DSToastModel(message: t)).padding(.bottom, 180).transition(.dsPop)
+        // A photo post's timeline card is taller than a clip's and grows with its text lanes, and the bar above it
+        // holds the zoom and Reset crop: the toast floats over the bottom of the picture, clear of both.
+        DSToast(toast: DSToastModel(message: t))
+          .padding(.bottom, model.isPhoto ? EditorPhotoTimeline.cardHeight(lanes: model.photoTextBars.laneCount) + DS.space.sm + 34 + DS.space.xs + DS.space.sm + 6 : 180)
+          .transition(.dsPop)
       }
     }
     .dsAnimation(DS.motion.popover, value: model.toast)
@@ -218,11 +222,12 @@ struct EditorHeader: View {
       .buttonStyle(EditorPressStyle())
       .dsTooltip("Jump to the Title field to rename", side: .bottom)
       HStack(spacing: 2) {
-        DSIconButton("chevron.left", tooltip: "Save and open the previous clip", size: .sm, shortcut: "↑ or ⌘[",
-                     disabledReason: (index ?? 0) <= 0 ? "This is the first clip in the list" : nil) { go(-1) }
+        // Round 21: from a photo post the neighbour may be a clip or a photo post, so it isn't named.
+        DSIconButton("chevron.left", tooltip: model.isPhoto ? "Save and open the one before" : "Save and open the previous clip", size: .sm, shortcut: "↑ or ⌘[",
+                     disabledReason: (index ?? 0) <= 0 ? (model.isPhoto ? "This is the first in the list" : "This is the first clip in the list") : nil) { go(-1) }
           .keyboardShortcut("[", modifiers: .command)
-        DSIconButton("chevron.right", tooltip: "Save and open the next clip", size: .sm, shortcut: "↓ or ⌘]",
-                     disabledReason: (index ?? videoIds.count) >= videoIds.count - 1 ? "This is the last clip in the list" : nil) { go(1) }
+        DSIconButton("chevron.right", tooltip: model.isPhoto ? "Save and open the next one" : "Save and open the next clip", size: .sm, shortcut: "↓ or ⌘]",
+                     disabledReason: (index ?? videoIds.count) >= videoIds.count - 1 ? (model.isPhoto ? "This is the last in the list" : "This is the last clip in the list") : nil) { go(1) }
           .keyboardShortcut("]", modifiers: .command)
           .background(ScriptAnchor("Next clip"))
         if let i = index, videoIds.count > 1 {
@@ -256,7 +261,7 @@ struct EditorHeader: View {
 
   /// The editor's own change history (EditorModel.undo/redo, also ⌘Z / ⇧⌘Z).
   private var undoButtons: some View {
-    let off = model.readOnly ? "Editing is off for this clip" : nil
+    let off = model.readOnly ? "Editing is off for this \(model.noun)" : nil
     return HStack(spacing: 0) {
       DSIconButton("arrow.uturn.backward", tooltip: "Undo the last change", size: .sm, shortcut: "⌘Z",
                    disabledReason: off ?? (model.canUndo ? nil : "Nothing to undo yet")) { model.undo() }

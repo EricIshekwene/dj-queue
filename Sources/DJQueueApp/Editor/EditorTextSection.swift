@@ -82,7 +82,8 @@ struct EditorTextSection: View {
       DSFlowLayout(spacing: 4) {
         ForEach(Array(model.texts.enumerated()), id: \.element.id) { i, t in
           DSChip("\(i + 1)", isSelected: t.id == model.selectedText, showsCheck: false, size: .sm, tooltip: Self.textTip(t, number: i + 1)) {
-            model.selectText(t.id)
+            // On a photo post the canvas goes to a photo the text is on (it draws only what posts).
+            if model.isPhoto { model.focusText(t.id) } else { model.selectText(t.id) }
           }
           .background(ScriptAnchor("Text \(i + 1)"))
         }

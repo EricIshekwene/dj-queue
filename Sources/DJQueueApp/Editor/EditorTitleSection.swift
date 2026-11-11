@@ -163,10 +163,12 @@ struct EditorTitleSection: View {
         // Round 21 (D18): a photo post says "Photo" or "Carousel · 4" where a clip picks DJ vid or Talking.
         DSBadge(label, style: .soft(.neutral), icon: model.isCarousel ? "square.stack" : "photo", size: .sm,
                 help: model.isCarousel ? "A carousel: its photos post together, in the strip's order" : "A photo post: one photo")
+          .background(ScriptAnchor("Kind \(label)"))
       } else {
         DSSegmented(selection: Binding(get: { model.video?.kind ?? .djVid }, set: { model.setKind($0) }),
                     segments: Kind.allCases.map { DSSegment(value: $0, title: $0.displayName) }, size: .sm)
           .dsTooltip("Set the kind; Talking clips start with no text")
+          .background(ScriptAnchor("Kind switch"))
       }
     }
     .padding(.top, DS.space.xxs)

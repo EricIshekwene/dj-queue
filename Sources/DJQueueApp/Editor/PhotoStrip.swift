@@ -16,12 +16,18 @@ struct EditorPhotoTimeline: View {
   @State private var flashing = false
 
   static let tileH: CGFloat = 72, labelH: CGFloat = 16, tileGap: CGFloat = 6
+  /// Room above the tiles for the remove button, which sits on a tile's corner.
+  static let topRoom: CGFloat = 8
+
+  /// The tracks under the header: tiles, their labels and the text lanes.
+  static func tracksHeight(lanes: Int) -> CGFloat { topRoom + tileH + labelH + EditorTimeline.gap + EditorTextTrack.height(lanes: lanes) + 4 }
+  /// The whole timeline card for a post with `lanes` text lanes (the toast floats above it).
+  static func cardHeight(lanes: Int) -> CGFloat { DS.space.xs + 34 + DS.space.xs + tracksHeight(lanes: lanes) + DS.space.sm }
 
   var body: some View {
     let bars = model.photoTextBars
     let m = PhotoStripMetrics(aspect: model.aspect, count: model.photoCount)
     let textBlock = EditorTextTrack.height(lanes: bars.laneCount)
-    let height = Self.tileH + Self.labelH + EditorTimeline.gap + textBlock
     VStack(spacing: DS.space.xs) {
       header
       HStack(alignment: .top, spacing: 0) {
@@ -33,7 +39,7 @@ struct EditorPhotoTimeline: View {
               if model.photoCount > 0 { textTrack(bars, m) }
             }
             .frame(width: m.contentWidth, alignment: .leading)
-            .padding(.trailing, DS.space.sm)
+            .padding(.top, Self.topRoom).padding(.trailing, DS.space.sm)
           }
           .scrollIndicators(.automatic)
           .onChange(of: model.photoIndex) { _, _ in
@@ -41,7 +47,7 @@ struct EditorPhotoTimeline: View {
           }
         }
       }
-      .frame(height: height + 4, alignment: .top)
+      .frame(height: Self.tracksHeight(lanes: bars.laneCount), alignment: .top)
       .overlay {
         if flashing || dropTargeted {
           RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous)
@@ -84,6 +90,7 @@ struct EditorPhotoTimeline: View {
     VStack(alignment: .leading, spacing: 0) {
       Image(systemName: "photo.on.rectangle").frame(height: Self.tileH).contentShape(Rectangle())
         .dsTooltip("The photos, in the order they post", side: .leading)
+        .padding(.top, Self.topRoom)
       Spacer().frame(height: Self.labelH + EditorTimeline.gap)
       Image(systemName: "textformat").frame(height: EditorTimeline.textH).contentShape(Rectangle())
         .dsTooltip("Text lane: the photos each text shows on", side: .leading)
@@ -102,7 +109,7 @@ struct EditorPhotoTimeline: View {
       ForEach(Array(list.enumerated()), id: \.element.id) { i, p in
         let moving = drag?.id == p.id
         PhotoTile(model: model, photo: p, index: i, count: list.count, selected: i == model.photoIndex, thumb: images.thumbs[p.id]?.image,
-                  metrics: m, moving: moving,
+                  unreadable: images.unreadable.contains(p.id) || model.unreadablePhotos.contains(p.id), metrics: m, moving: moving,
                   onPress: { model.selectPhoto(i) },
                   onDrag: { dx in drag = (p.id, dx, m.place(from: i, dx: dx)) },
                   onRelease: { moved in
@@ -231,6 +238,8 @@ private struct PhotoTile: View {
   var count: Int
   var selected: Bool
   var thumb: CGImage?
+  /// Its file is there but can't be read as a picture.
+  var unreadable = false
   var metrics: PhotoStripMetrics
   var moving: Bool
   var onPress: () -> Void
@@ -239,9 +248,11 @@ private struct PhotoTile: View {
   @State private var hovering = false
 
   private var h: CGFloat { EditorPhotoTimeline.tileH }
+  private static let cornerLift = EditorPhotoTimeline.topRoom
 
   var body: some View {
-    let notice = model.missingPhotos.contains(photo.id) ? nil : model.photoNotice(photo)
+    let missing = model.missingPhotos.contains(photo.id)
+    let notice = missing || unreadable ? nil : model.photoNotice(photo)
     VStack(spacing: 2) {
       ZStack(alignment: .topTrailing) {
         picture
@@ -255,7 +266,8 @@ private struct PhotoTile: View {
             EditorDragSurface(cursor: count > 1 ? .openHand : .arrow, slop: 4, onPress: onPress,
                               onDrag: { d in if count > 1 { onDrag(d.width) } }, onRelease: { moved in onRelease(moved && count > 1) })
           }
-          .dsTooltip(model.missingPhotos.contains(photo.id) ? "This photo's file is missing. Put it back, or remove the photo."
+          .dsTooltip(missing ? "This photo's file is missing. Put it back, or remove the photo."
+                     : unreadable ? "This photo's file can't be read. Remove it and add the photo again."
                      : count > 1 ? "Photo \(index + 1): click to show it, drag to reorder" : "The photo of this post")
           // An anchor, not a probe frame: a check finds it when it asks, however the strip was rebuilt in between.
           .background(ScriptAnchor("Photo tile \(index + 1)").id(index))
@@ -268,12 +280,12 @@ private struct PhotoTile: View {
             .padding(3)
         }
         if selected || hovering {
+          // The design system's own small icon button, at its own size, on the tile's corner.
           DSIconButton("xmark", tooltip: "Remove this photo from the post", variant: .secondary, size: .sm,
                        disabledReason: model.removePhotoOffReason) { model.removePhoto(photo.id) }
-            .scaleEffect(0.72)
             .background(DS.color.surfaceRaised, in: Circle())
             .background(ScriptAnchor("Remove photo \(index + 1)").id(index))  // an anchor keeps its first name: a moved tile gets a new one
-            .offset(x: 3, y: -3)
+            .offset(x: 8, y: -Self.cornerLift)
         }
       }
       .frame(width: metrics.tileW, height: h)
@@ -285,8 +297,8 @@ private struct PhotoTile: View {
   }
 
   @ViewBuilder private var picture: some View {
-    if model.missingPhotos.contains(photo.id) {
-      // Its file is gone (a picture read earlier may still be in memory; it isn't what would post).
+    if model.missingPhotos.contains(photo.id) || unreadable {
+      // Its file is gone or isn't a picture (one read earlier may still be in memory; it isn't what would post).
       Image(systemName: "questionmark").font(.system(size: 14, weight: .semibold)).foregroundStyle(DS.color.danger)
     } else if let thumb {
       Image(decorative: thumb, scale: 1).resizable().aspectRatio(contentMode: .fit)
@@ -333,7 +345,7 @@ private struct PhotoTextBar: View {
 
   private var moveSurface: some View {
     EditorDragSurface(cursor: bar.draggable ? .openHand : .arrow, slop: 3, onPress: {
-      model.selectText(bar.id)
+      model.focusText(bar.id)  // the canvas shows a photo this text is on: it is never drawn on one it isn't on
       if bar.draggable { origin = (first, last, false) }
     }, onDrag: { d in
       guard let o = origin else { return }
@@ -349,7 +361,7 @@ private struct PhotoTextBar: View {
   private func gripSurface(leading: Bool) -> some View {
     EditorDragSurface(cursor: .resizeLeftRight, onPress: {
       origin = (first, last, false)
-      model.selectText(bar.id)
+      model.focusText(bar.id)
     }, onDrag: { d in
       guard let o = origin else { return }
       if leading { write(min(max(1, o.first + steps(d)), o.last), o.last) } else { write(o.first, min(max(o.first, o.last + steps(d)), count)) }

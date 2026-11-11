@@ -9,14 +9,17 @@ import SwiftUI
 ///
 /// The window is off every display (`Backstage`). What events can't reach is a stand-in and says so in the log: a
 /// native menu (the caption template), the file picker and a drop (`addPhotos`, the call both end in). Exits 1 on a FAIL.
-/// `DJQ_PHOTO_EDITOR_SABOTAGE=1` breaks one step on purpose (the shape click is skipped), to prove a FAIL is seen.
+/// `DJQ_PHOTO_EDITOR_SABOTAGE=1` breaks one step on purpose (the shape click is skipped), to prove a FAIL is seen;
+/// `DJQ_PHOTO_EDITOR_SABOTAGE=ghost` draws a text faded on photos it isn't on, to prove the picture comparison sees it.
 @MainActor
 enum PhotoEditorScript {
-  /// Mean difference (0…255) under a text's solid pixels below which that text counts as showing.
-  private static let shownBelow = 30.0
-  /// Mean difference (0…255) over the middle of the frame below which the canvas and the posted JPEG are the same
-  /// picture: the capture goes through the display's colour profile and the JPEG through its compression.
-  private static let samePictureBelow = 9.0
+  /// Mean difference (0…255) below which two pictures of one photo are the same picture: the canvas against what
+  /// `PhotoRenderer` composes, or against the posted JPEG. Measured about 1 (scaling and JPEG compression); a crop a
+  /// few percent off, a missing text or a text at 45 % all land well above 3.
+  private static let same = 3.0
+  /// The same, inside the text's box, for the canvas against the posted JPEG only: JPEG's chroma subsampling rings
+  /// around coloured, outlined letters (measured 3.7; the photo without the text there measures above 40).
+  private static let sameTextInJPEG = 6.0
 
   static func run(store: Store, dir: String, appearance: String) async -> Int32 {
     let out = URL(fileURLWithPath: dir)
@@ -37,7 +40,9 @@ enum PhotoEditorScript {
     var window: NSWindow!
     var post = ""
     var lockedNoted = false
-    let sabotage = ProcessInfo.processInfo.environment["DJQ_PHOTO_EDITOR_SABOTAGE"] != nil
+    /// "ghost" draws the faded text again (the stepping checks on photos 1 and 4 must fail); anything else skips the 1:1 click.
+    let sabotageMode = ProcessInfo.processInfo.environment["DJQ_PHOTO_EDITOR_SABOTAGE"]
+    var sabotage: Bool { sabotageMode != nil && sabotageMode != "ghost" }
 
     init(store: Store, out: URL, appearance: String) { self.store = store; self.out = out; self.appearance = appearance }
 
@@ -212,12 +217,51 @@ enum PhotoEditorScript {
       return (try? Validation.issues(video: v, store: store)) ?? []
     }
 
-    /// The first text's mean difference from its own drawing, on the canvas as captured. Small = it's there.
-    func textScore(_ e: EditorModel) async -> Double {
-      guard let layer = saved()?.layers.first, let canvas = await captured("canvas-output") else { return 255 }
+    /// Photo `index` of the saved post as `PhotoRenderer` composes it (the function the JPEGs come from), with its texts
+    /// or with none, at the comparison size.
+    func composed(_ index: Int, withText: Bool, _ w: Int, _ h: Int) -> [UInt8]? {
+      EditorModel.flushLiveAndWait()
+      guard let v = video() else { return nil }
+      return Self.pixels(PhotoRenderer.preview(store: store, video: v, index: index, withText: withText), w, h)
+    }
+
+    /// The box (in comparison pixels) the saved post's texts cover, a little larger than the letters.
+    func textBox(_ aspect: Aspect, _ w: Int, _ h: Int) -> CGRect? {
+      guard let layers = saved()?.allLayers.filter({ !$0.isBlank }), !layers.isEmpty else { return nil }
+      let boxes = layers.compactMap { TextOverlay.textBounds(for: $0, aspect: aspect) }
+      guard let first = boxes.first else { return nil }
+      let all = boxes.dropFirst().reduce(first) { $0.union($1) }
+      let o = aspect.outputSize, k = CGFloat(w) / CGFloat(o.w)
+      return CGRect(x: all.minX * k, y: all.minY * k, width: all.width * k, height: all.height * k).insetBy(dx: -4, dy: -4)
+        .intersection(CGRect(x: 0, y: 0, width: w, height: h))
+    }
+
+    /// The canvas as captured, against photo `index` composed with and without its texts: the mean difference inside
+    /// the texts' box for each, and over the middle of the frame for the with-text one. This is what "the text shows"
+    /// and "the text is hidden" mean here: the canvas IS the photo as it posts, or the photo with no text.
+    func canvasAgainst(_ e: EditorModel, photo index: Int) async -> (withText: Double, noText: Double, middle: Double)? {
       let w = 432, h = Int((Double(w) / e.aspect.ratio).rounded())
-      guard let mask = TextOverlay.image(for: layer, aspect: e.aspect).flatMap({ Self.pixels($0, w, h) }), let shown = Self.pixels(canvas, w, h) else { return 255 }
-      return Self.scoreUnder(mask, shown)
+      guard let canvas = await captured("canvas-output"), let shown = Self.pixels(canvas, w, h),
+            let with = composed(index, withText: true, w, h), let without = composed(index, withText: false, w, h),
+            let box = textBox(e.aspect, w, h) else { return nil }
+      return (Self.meanDifference(shown, with, w: w, in: box), Self.meanDifference(shown, without, w: w, in: box),
+              Self.meanDifference(shown, with, w: w, h: h, inset: 0.2))
+    }
+
+    /// Asserts what the canvas shows on photo `index`: the photo as it posts, with the text (`want`) or without.
+    func checkCanvas(_ e: EditorModel, photo index: Int, text want: Bool, _ what: String) async {
+      guard let d = await canvasAgainst(e, photo: index) else { check("\(what): canvas compared", false); return }
+      let line = String(format: "%@: the canvas is photo %d %@ (text box: %.1f against it with text, %.1f against it without; middle %.1f)",
+                        what, index + 1, want ? "with the text" : "with no text at all", d.withText, d.noText, d.middle)
+      // With the text: equal to the composition with text and far from the one without. Hidden: equal to the one without,
+      // which a text drawn at any opacity is not.
+      check(line, want ? d.withText < PhotoEditorScript.same && d.noText > PhotoEditorScript.same * 3 && d.middle < PhotoEditorScript.same
+                       : d.noText < PhotoEditorScript.same && d.middle < PhotoEditorScript.same)
+    }
+
+    /// The files in DJQ's own Originals folder for the post: a count that must not grow when undo brings a photo back.
+    func originalsCount() -> Int {
+      ((try? FileManager.default.contentsOfDirectory(atPath: store.paths.photos.appendingPathComponent("Originals/\(post)").path)) ?? []).count
     }
 
     // MARK: The run
@@ -270,10 +314,12 @@ enum PhotoEditorScript {
       await captionAndPlatforms(e)
       await instagramShape(e)
       await export(e)
+      await rangesAfterRemoval(e)
       let now = video()
       check("nothing was sent to the Queue: the post is still in Edit, not sent", now?.sentToQueue == false && now.map { ClipStage.of($0) } == .edit)
       await missingFile(e)
       await singlePhoto(e, single)
+      await unreadableFile(e, single)
       await brokenPost(e, single)
     }
 
@@ -286,7 +332,9 @@ enum PhotoEditorScript {
       check("the canvas picture is the composed one (PhotoRenderer.compose)", e.photoImages.composed?.key == e.photoCanvasKey)
       if let c = await captured("canvas-output") { check("the canvas is not blank", !Self.isBlank(c)) } else { check("canvas captured", false) }
       check("a new photo post has no text", e.photoHasNoTextYet && e.textImages.isEmpty && saved()?.noText == true)
-      check("the header says what it is, with no version picker and no kind switch", v.photoLabel == "Carousel · 4" && !has("Versions"))
+      check("the Title section says Carousel · 4 where a clip has the kind switch, and there is no version picker",
+            has("Kind Carousel · 4") && !has("Kind switch") && !has("Versions"))
+      check("no tile is marked: nothing here is soft or missing", photos().allSatisfy { e.photoNotice($0) == nil })
       check("YouTube is off for it", !e.posting(.youtube))
       check("nothing to fix yet", e.liveIssues.isEmpty)
       await shot("open-carousel")
@@ -320,8 +368,7 @@ enum PhotoEditorScript {
 
     func frameAndCrop(_ e: EditorModel, _ original: [PhotoItem]) async {
       guard let photo = e.currentPhoto else { return }
-      await clickSegment("Canvas mode", 0, of: 3)
-      if e.canvasMode != .frame { note("stand-in: the Frame segment (its width isn't a third)"); e.canvasMode = .frame }
+      await canvasMode(e, .frame)
       await wait(600)
       check("Frame view shows the whole photo", e.canvasMode == .frame && probe("frame-source") != nil)
       check("no photo has its own crop yet", savedEdit().photoCrops.isEmpty && !e.cropIsSet)
@@ -338,6 +385,8 @@ enum PhotoEditorScript {
       await click("Zoom in")
       crops = savedEdit().photoCrops
       check("zooming in made its crop smaller (\(Int(before?.w ?? 0)) → \(Int(crops[photo.id]?.w ?? 0)))", (crops[photo.id]?.w ?? 9999) < (before?.w ?? 0) - 50)
+      check("zoomed past 1.5× the tile is marked, and says what to do (“\(e.photoNotice(photo) ?? "")”)",
+            e.photoNotice(photo)?.contains("soft") == true && original.filter { $0.id != photo.id }.allSatisfy { e.photoNotice($0) == nil })
       check("still that photo only, and it fits the shape",
             Set(crops.keys) == [photo.id] && crops[photo.id].map { Media.cropProblem($0, aspect: .r4x5, sourceWidth: photo.width, sourceHeight: photo.height) == nil } == true)
       check("the other photos keep the centred crop", original.filter { $0.id != photo.id }.allSatisfy { PhotoRules.crop(for: $0, edit: savedEdit(), aspect: .r4x5) == PhotoRules.centredCrop($0, aspect: .r4x5) })
@@ -354,8 +403,17 @@ enum PhotoEditorScript {
       check("Reset crop goes back to the centred crop", savedEdit().photoCrops.isEmpty)
       await commandZ()
       check("⌘Z brings the crop back", savedEdit().photoCrops[photo.id] == kept)
-      await clickSegment("Canvas mode", 1, of: 3)
-      if e.canvasMode != .zones { e.canvasMode = .zones }
+      await canvasMode(e, .zones)
+    }
+
+    /// The Frame · Zones · Preview switch by a real click on its segment.
+    func canvasMode(_ e: EditorModel, _ mode: EditorCanvasMode) async {
+      let i = EditorCanvasMode.allCases.firstIndex(of: mode) ?? 0
+      await clickSegment("Canvas mode", i, of: 3)
+      if e.canvasMode != mode {
+        note("stand-in: EditorModel.canvasMode (the click missed the \(mode.rawValue) segment, which isn't a third of the control)")
+        e.canvasMode = mode
+      }
       await wait(600)
     }
 
@@ -371,26 +429,36 @@ enum PhotoEditorScript {
       window.makeFirstResponder(nil)
       await wait(700)
       check("it draws on the canvas", e.textImages.count == 1 && e.textImages[0].shows(at: e.playback.time))
-      var score = await textScore(e)
-      check(String(format: "the canvas has the text's pixels (%.0f)", score), score < PhotoEditorScript.shownBelow)
+      await checkCanvas(e, photo: 2, text: true, "after typing")
       await shot("text-on-photo-3")
 
       check("the range has a control", await click("Shows first earlier"))
       check("it reads Photos 2–3", e.textRangeLabel(TextLayer.firstId) == "Photos 2–3" && raw()?.textStart == 1 && raw()?.textEnd == 3)
       await shot("shows-on-2-3")
-      // Photo by photo: it shows on 2 and 3, by the model, on the canvas and by the renderer's own rule.
+      if sabotageMode == "ghost" { note("SABOTAGE: the faded text is back on photos it isn't on"); e.ghostTextForScript = true }
+      defer { e.ghostTextForScript = false }
+      // Photo by photo, in the default Zones view with the text selected: on 2 and 3 the canvas is the photo as it posts,
+      // on 1 and 4 it is the photo with no text at all (a faded copy of the text would not pass).
       await left(); await left()
       for i in 0..<4 {
         if i > 0 { await right() }
         await wait(500)
         let want = (1...2).contains(i)
-        score = await textScore(e)
-        let drawn = PhotoRules.layers(saved(), onPhoto: i, of: 4).count == 1
-        check(String(format: "photo %d: the text %@ (canvas %.0f)", i + 1, want ? "shows" : "is hidden", score),
-              e.photoIndex == i && (score < PhotoEditorScript.shownBelow) == want && drawn == want
+        check("photo \(i + 1): the model and the renderer's rule agree the text \(want ? "shows" : "is hidden")",
+              e.photoIndex == i && e.selectedText == TextLayer.firstId && (PhotoRules.layers(saved(), onPhoto: i, of: 4).count == 1) == want
                 && (e.textImages.first?.shows(at: e.playback.time) ?? false) == want)
+        await checkCanvas(e, photo: i, text: want, "stepping")
       }
       await shot("photo-4-no-text")
+      // On a photo the text isn't on, the Text section says so and takes Eric to it; so does its bar.
+      check("on photo 4 the Text section says the text isn't here and offers the way", has("Go to text photo"))
+      await click("Go to text photo")
+      check("Go to photo 2 shows photo 2, where the text is", e.photoIndex == 1 && !has("Go to text photo"))
+      await left()
+      if let f = await control("Text bar 1") { await clickAt(NSPoint(x: f.midX, y: f.midY)) }
+      check("a click on the text's bar from photo 1 shows photo 2 too", e.photoIndex == 1 && e.selectedText == TextLayer.firstId)
+      await right(); await right()
+      check("on photo 4 again", e.photoIndex == 3)
       // The bar: its end grip from photo 3 back to photo 2, then ⌘Z.
       if let f = await control("Text bar 1 end"), let t2 = await control("Photo tile 2") {
         await drag(from: NSPoint(x: f.midX, y: f.midY), to: NSPoint(x: t2.maxX - 3, y: f.midY))
@@ -408,8 +476,7 @@ enum PhotoEditorScript {
       await commandZ()
       await commandZ()
       check("⌘Z twice is back at Photos 2–3", e.textRange(TextLayer.firstId) == 2...3)
-      await left(); await left()
-      check("back on photo 2", e.photoIndex == 1)
+      check("the grip took the canvas to photo 2, the first one the text is on", e.photoIndex == 1)
     }
 
     func styleAndColour(_ e: EditorModel) async {
@@ -421,8 +488,7 @@ enum PhotoEditorScript {
       check("the colour saved", saved()?.textLook?.color == "#FF3B30")
       window.makeFirstResponder(nil)
       await wait(700)
-      let score = await textScore(e)
-      check(String(format: "the canvas draws the new look (%.0f)", score), score < PhotoEditorScript.shownBelow)
+      await checkCanvas(e, photo: e.photoIndex, text: true, "the new look")
       await shot("style-and-colour")
       await click("Advanced")
     }
@@ -442,6 +508,7 @@ enum PhotoEditorScript {
       await wait(500)
       await shot("reordered-new-cover")
 
+      let copies = originalsCount()
       check("the selected tile has a remove button", await click("Remove photo 1"))
       now = photos()
       check("the photo is out of the post", now.map(\.id) == [original[0].id, original[1].id, original[3].id])
@@ -452,16 +519,16 @@ enum PhotoEditorScript {
 
       await commandZ()
       now = photos()
-      check("⌘Z brings the photo back in its place (the same picture)", now.count == 4 && now.first?.fingerprint == third.fingerprint
-            && Array(now.dropFirst().map(\.id)) == [original[0].id, original[1].id, original[3].id])
-      check("with its crop", now.first.map { savedEdit().photoCrops[$0.id] == crop } == true)
+      check("⌘Z brings the same photo back in its place: its id and its file, no new copy (\(originalsCount()) files)",
+            now.map(\.id) == [third.id, original[0].id, original[1].id, original[3].id] && now.first == third && originalsCount() == copies)
+      check("with its own crop", savedEdit().photoCrops[third.id] == crop && crop != nil)
       await commandZ()
       now = photos()
       check("⌘Z again undoes the reorder: the first cover is back", now.map(\.fingerprint) == original.map(\.fingerprint) && video()?.file == now.first?.file)
       check("photo 3 still has its crop", savedEdit().photoCrops[now[2].id] == crop && e.photos.map(\.id) == now.map(\.id))
-      e.redo()
+      await click("Redo")
       await wait(600)
-      check("Redo reorders again", photos().first?.fingerprint == third.fingerprint)
+      check("the Redo button reorders again", photos().first?.fingerprint == third.fingerprint)
       await commandZ()
       check("and ⌘Z takes it back", photos().map(\.fingerprint) == original.map(\.fingerprint))
       await shot("undone")
@@ -488,9 +555,10 @@ enum PhotoEditorScript {
       await wait(500)
       await shot("photos-added")
       // D9: six photos are more than X sends; its row says so, and it isn't an issue.
-      check("X's row says it gets the first 4 of 6", PhotoRules.platformNote(count: e.photoCount, aspect: e.aspect, platform: .x) == "X gets the first 4 of 6 photos"
-            && e.posting(.x) && e.liveIssues.isEmpty)
       await click("Index Platforms")
+      check("X's row carries its note (“\(PhotoRules.platformNote(count: e.photoCount, aspect: e.aspect, platform: .x) ?? "")”), and it isn't an issue",
+            has("Platform note X") && PhotoRules.platformNote(count: e.photoCount, aspect: e.aspect, platform: .x) == "X gets the first 4 of 6 photos"
+              && !has("Platform note Instagram") && e.posting(.x) && e.liveIssues.isEmpty)
       await shot("platform-note-first-4-of-6")
       await click("Index Text")
       await commandZ()
@@ -529,8 +597,8 @@ enum PhotoEditorScript {
       await click("Index Platforms")
       check("the YouTube row is there", await click("Post to YouTube Shorts"))
       check("and stays off: a click changes nothing", !e.posting(.youtube) && savedEdit().skippedPlatforms.contains(.youtube))
-      check("with the reason", PhotoRules.platformNote(count: e.photoCount, aspect: e.aspect, platform: .youtube) == PhotoRules.youtubeReason)
-      check("the other rows have nothing to say about 4 photos in 4:5", e.postingPlatforms.allSatisfy { PhotoRules.platformNote(count: e.photoCount, aspect: e.aspect, platform: $0) == nil })
+      check("with the reason on screen", has("Platform note YouTube Shorts") && PhotoRules.platformNote(count: e.photoCount, aspect: e.aspect, platform: .youtube) == PhotoRules.youtubeReason)
+      check("the other rows have no note for 4 photos in 4:5", e.postingPlatforms.allSatisfy { !has("Platform note \($0.displayName)") })
       await shot("platforms-youtube-off")
     }
 
@@ -587,21 +655,123 @@ enum PhotoEditorScript {
       guard files.count > 2, let jpeg = NSImage(contentsOfFile: files[2])?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { check("the third JPEG opens", false); return }
       check("it is 1080 × 1350 (4:5)", jpeg.width == 1080 && jpeg.height == 1350)
       let w = 432, h = 540
-      guard let exported = Self.pixels(jpeg, w, h), let shown = Self.pixels(canvas, w, h) else { check("pixels read", false); return }
-      let diff = Self.meanDifference(shown, exported, w: w, h: h, inset: 0.2)
-      check(String(format: "the canvas and the posted JPEG are the same picture in the middle 60%% (mean difference %.1f of 255, tolerance %.0f)", diff, PhotoEditorScript.samePictureBelow),
-            diff < PhotoEditorScript.samePictureBelow)
-      if let layer = saved()?.layers.first, let mask = TextOverlay.image(for: layer, aspect: e.aspect).flatMap({ Self.pixels($0, w, h) }) {
-        let inCanvas = Self.scoreUnder(mask, shown), inExport = Self.scoreUnder(mask, exported)
-        check(String(format: "the text is in both (canvas %.0f, export %.0f)", inCanvas, inExport), inCanvas < PhotoEditorScript.shownBelow && inExport < PhotoEditorScript.shownBelow)
+      guard let exported = Self.pixels(jpeg, w, h), let shown = Self.pixels(canvas, w, h), let box = textBox(e.aspect, w, h) else { check("pixels read", false); return }
+      let middle = Self.meanDifference(shown, exported, w: w, h: h, inset: 0.2), inBox = Self.meanDifference(shown, exported, w: w, in: box)
+      check(String(format: "the canvas and the posted JPEG are the same picture: middle 60%% %.1f (tolerance %.0f of 255), the text's box %.1f (tolerance %.0f)",
+                   middle, PhotoEditorScript.same, inBox, PhotoEditorScript.sameTextInJPEG),
+            middle < PhotoEditorScript.same && inBox < PhotoEditorScript.sameTextInJPEG)
+      // Controls: what must NOT pass as the same picture. A wrong crop (photo 3 with the centred crop instead of its own),
+      // a missing text (photo 3 composed without it), and another photo.
+      if let v = video(), let photo = v.photos?[2], let settings = try? store.settings(),
+         let full = PhotoRenderer.load(store.paths.photos.appendingPathComponent(photo.file)) {
+        var centred = savedEdit()
+        centred.photoCrops = [:]
+        if let wrong = Self.pixels(PhotoRenderer.image(full, photo: photo, index: 2, count: 4, edit: centred, version: saved(), defaults: settings.defaults), w, h) {
+          let d = Self.meanDifference(shown, wrong, w: w, h: h, inset: 0.2)
+          check(String(format: "photo 3 with the centred crop is not the same picture (%.1f)", d), d > PhotoEditorScript.same * 2)
+        } else { check("the wrong-crop control composed", false) }
       }
-      // The check can tell two pictures apart: another photo of the post is not "the same picture".
+      if let bare = composed(2, withText: false, w, h) {
+        let d = Self.meanDifference(shown, bare, w: w, in: box)
+        check(String(format: "photo 3 without its text is not the same picture in the text's box (%.1f)", d), d > PhotoEditorScript.same * 3)
+      }
       if let other = NSImage(contentsOfFile: files[0])?.cgImage(forProposedRect: nil, context: nil, hints: nil).flatMap({ Self.pixels($0, w, h) }) {
         let apart = Self.meanDifference(shown, other, w: w, h: h, inset: 0.2)
-        check(String(format: "and photo 1's JPEG is not (%.1f)", apart), apart > PhotoEditorScript.samePictureBelow * 1.5)
+        check(String(format: "and photo 1's JPEG is not (%.1f)", apart), apart > PhotoEditorScript.same * 2)
       }
+      // Every posted file: it is the photo as composed, with the text on photos 2 and 3 only.
+      await checkFiles(files, textOn: 2...3, e.aspect, "the export")
       Self.sideBySide(canvas: canvas, export: exported, w: w, h: h, to: out.appendingPathComponent("compare-canvas-export-\(appearance).png"))
       note("compare-canvas-export-\(appearance).png: canvas left, posted JPEG right")
+    }
+
+    /// The posted JPEGs against `PhotoRenderer`'s compositions: each is its photo, and inside the texts' box it equals
+    /// the photo WITHOUT text exactly where no text shows (`textOn`: 1-based photos).
+    func checkFiles(_ files: [String], textOn: ClosedRange<Int>?, _ aspect: Aspect, _ what: String) async {
+      let w = 432, h = Int((Double(w) / aspect.ratio).rounded())
+      guard let box = textBox(aspect, w, h) else { check("\(what): a text to look for", false); return }
+      for (i, file) in files.enumerated() {
+        guard let jpeg = NSImage(contentsOfFile: file)?.cgImage(forProposedRect: nil, context: nil, hints: nil).flatMap({ Self.pixels($0, w, h) }),
+              let without = composed(i, withText: false, w, h) else { check("\(what): JPEG \(i + 1) read", false); continue }
+        let want = textOn?.contains(i + 1) ?? false
+        let d = Self.meanDifference(jpeg, without, w: w, in: box)
+        check(String(format: "%@: JPEG %d %@ (%.1f from the photo with no text, in the text's box)", what, i + 1, want ? "carries the text" : "has no text", d),
+              want ? d > PhotoEditorScript.same * 3 : d < PhotoEditorScript.same)
+      }
+    }
+
+    func render(_ name: String) async -> [String]? {
+      EditorModel.flushLiveAndWait()
+      let root = out.appendingPathComponent("\(name)-\(appearance)")
+      try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      let storeRef = store, id = post
+      return await Task.detached(priority: .userInitiated) {
+        do { return try Renderer(store: storeRef, outputRoot: root).ensureRender(videoId: id, versionNo: 1, platform: nil).allPaths } catch {
+          print("photo-editor-script: render failed: \(error)")
+          return nil
+        }
+      }.value
+    }
+
+    /// The rule a removal follows (`PhotoTextRanges`, pure), then the screen: two texts on photo 4, a photo removed, both
+    /// move to the new last photo and say so; the bars, "Shows on", the canvas and the posted files all agree; ⌘Z puts
+    /// the photo and the ranges back.
+    func rangesAfterRemoval(_ e: EditorModel) async {
+      func same(_ a: (start: Double?, end: Double?)?, _ s: Double?, _ en: Double?) -> Bool { a != nil && a?.start == s && a?.end == en }
+      check("the rule: photos 3–4 of 4, one removed, is photo 3", same(PhotoTextRanges.clamped(start: 2, end: 4, count: 3), 2, 3))
+      check("the rule: only on the removed last photo moves to the new last photo", same(PhotoTextRanges.clamped(start: 3, end: 4, count: 3), 2, 3)
+            && same(PhotoTextRanges.clamped(start: 3, end: nil, count: 3), 2, nil))
+      check("the rule: a range that still fits, no range, and the inverted whole-post window are left alone",
+            PhotoTextRanges.clamped(start: 1, end: 3, count: 3) == nil && PhotoTextRanges.clamped(start: nil, end: nil, count: 3) == nil
+              && PhotoTextRanges.clamped(start: 3, end: 1, count: 2) == nil)
+      var v = Version(number: 1)
+      v.text = "A"; v.textStart = 3; v.textEnd = 4
+      v.moreText = [TextLayers.new(text: "B", like: e.resolved.firstLayer, start: 1, end: 4), TextLayers.new(text: "C", like: e.resolved.firstLayer, start: 0, end: 2)]
+      let r = PhotoTextRanges.clamped(v, count: 3)
+      check("the rule over a version: the first text and the second move, the third stays",
+            r.version.textStart == 2 && r.version.textEnd == 3 && r.version.moreText?[0].end == 3 && r.version.moreText?[1].end == 2
+              && r.moved.map(\.number) == [1, 2] && r.moved.map(\.range) == [3...3, 2...3])
+      check("and what the toast says", PhotoTextRanges.notice([r.moved[0]], count: 3) == "“A” now shows on photo 3" && PhotoTextRanges.notice(r.moved, count: 3) == "2 texts moved onto the photos that are left")
+
+      // On screen. The first text onto photo 4 only, and a second text added there.
+      await click("Index Text")
+      await right(); await right(); await right()
+      check("on photo 4", e.photoIndex == 3)
+      await click("This photo")
+      check("This photo puts the first text on photo 4 only", e.textRange(TextLayer.firstId) == 4...4)
+      if !EditorDisclosures.shared.isOpen(.advanced) { await click("Advanced") }
+      await click("Add text")
+      await type("Second")
+      window.makeFirstResponder(nil)
+      await wait(500)
+      guard let second = saved()?.moreText.first else { check("a second text", false); return }
+      check("a second text was added on photo 4", second.text == "Second" && e.textRange(second.id) == 4...4)
+      await click("Advanced")
+      if let t = await control("Photo tile 1") { await clickAt(NSPoint(x: t.midX, y: t.midY + 12)) }
+      check("photo 1 is on the canvas", e.photoIndex == 0)
+      await checkCanvas(e, photo: 0, text: false, "two texts, both on photo 4")
+      let before = photos(), copies = originalsCount()
+      check("photo 1 can be removed", await click("Remove photo 1"))
+      await wait(600)
+      check("three photos are left", photos().map(\.id) == Array(before.dropFirst().map(\.id)))
+      check("both texts moved onto photo 3, the new last photo (stored \(raw()?.textStart ?? -1)–\(raw()?.textEnd ?? -1))",
+            raw()?.textStart == 2 && raw()?.textEnd == 3 && raw()?.moreText?.first?.start == 2 && raw()?.moreText?.first?.end == 3
+              && e.textRange(TextLayer.firstId) == 3...3 && e.textRange(second.id) == 3...3)
+      check("the toast says so (“\(e.toast ?? "")”)", e.toast?.contains("2 texts moved") == true)
+      let bars = e.photoTextBars.bars
+      check("the bars sit under photo 3 and are on, as Shows on reads", bars.count == 2 && bars.allSatisfy { $0.on && $0.span.start == 2 && $0.span.end == 3 }
+            && e.textRangeLabel(second.id) == "Photo 3")
+      check("the renderer's rule draws both on photo 3 only", (0..<3).map { PhotoRules.layers(saved(), onPhoto: $0, of: 3).count } == [0, 0, 2])
+      await shot("removed-texts-moved-to-photo-3")
+      if let files = await render("render-after-removal") {
+        check("three JPEGs after the removal", files.count == 3)
+        await checkFiles(files, textOn: 3...3, e.aspect, "after the removal")
+      } else { check("rendered after the removal", false) }
+      await commandZ()
+      await wait(400)
+      check("⌘Z brings the photo back as it was and puts both texts back on photo 4, with no new copy",
+            photos() == before && originalsCount() == copies && e.textRange(TextLayer.firstId) == 4...4 && e.textRange(second.id) == 4...4
+              && raw()?.textStart == 3 && raw()?.textEnd == 4)
     }
 
     /// A photo file that's gone: the post is missing (as a clip would be), the strip still works, and taking that photo
@@ -613,7 +783,7 @@ enum PhotoEditorScript {
       let gone = list[3]
       let file = store.paths.photos.appendingPathComponent(gone.file)
       let parked = file.deletingLastPathComponent().appendingPathComponent("parked.jpg")
-      note("stand-in: a photo file moved away in the scratch Photos folder, then Core's own file check")
+      note("stand-in: a photo file moved away in the scratch Photos folder, Core's own file check, and the post reloaded (EditorModel.load)")
       try? FileManager.default.moveItem(at: file, to: parked)
       _ = try? PhotoImport(store: store).checkFiles()
       e.load(post)
@@ -646,22 +816,35 @@ enum PhotoEditorScript {
       await wait(700)
       check("a single photo's text has no window", raw()?.text == "Doors 9" && raw()?.textStart == nil && raw()?.textEnd == nil)
       check("and no Shows on row", !has("Every photo"))
-      let score = await textScore(e)
-      check(String(format: "it draws on the canvas (%.0f)", score), score < PhotoEditorScript.shownBelow)
+      await checkCanvas(e, photo: 0, text: true, "single photo")
       await shot("single-photo")
-      e.canvasMode = .preview
-      await wait(900)
+      await canvasMode(e, .preview)
+      await wait(400)
       check("the phone preview leaves YouTube out", !e.previewOrder.contains(.youtube) && e.previewPlatform != .youtube)
       await shot("single-photo-preview")
-      e.canvasMode = .zones
-      await wait(400)
+      await canvasMode(e, .zones)
+    }
+
+    /// A file that is there but isn't a picture any more: the canvas and the tile say so; nothing spins for good.
+    func unreadableFile(_ e: EditorModel, _ single: Video) async {
+      e.flushAndWait()
+      guard let photo = photos(single.id).first else { check("the single photo's photo", false); return }
+      note("stand-in: the single photo's file overwritten with text in the scratch Photos folder, the picture caches emptied, and the post reloaded (EditorModel.load)")
+      try? Data("not a picture".utf8).write(to: store.paths.photos.appendingPathComponent(photo.file))
+      EditorPhotoImages.canvas.remove { _ in true }
+      EditorPhotoImages.small.remove { _ in true }
+      e.load(single.id)
+      await wait(2500)
+      check("a photo that can't be read says so on the canvas and its tile, and isn't called missing",
+            e.unreadablePhotos == [photo.id] && e.photoImages.unreadable == [photo.id] && has("Photo unreadable") && !e.fileMissing)
+      await shot("photo-unreadable")
     }
 
     /// A post row with an empty photo list can't be made through the app; a broken one is made here to see that the
     /// editor opens it, says "Add a photo", and that the to-fix chip points at the strip.
     func brokenPost(_ e: EditorModel, _ single: Video) async {
       e.flushAndWait()
-      note("stand-in: a photo post with no photos, written straight into the scratch database")
+      note("stand-in: a photo post with no photos, written straight into the scratch database, and the post reloaded (EditorModel.load)")
       _ = try? store.db.run("UPDATE videos SET photos='[]' WHERE id=?", [single.id])
       e.load(single.id)
       await wait(2000)
@@ -701,25 +884,25 @@ enum PhotoEditorScript {
       return ok ? data : nil
     }
 
-    /// Mean difference between `frame` and a text's own image, under the text's solid pixels. Small = the text is there.
-    static func scoreUnder(_ mask: [UInt8], _ frame: [UInt8]) -> Double {
-      var sum = 0.0, n = 0.0
-      var i = 0
-      while i + 3 < mask.count {
-        if mask[i + 3] > 245 {
-          for c in 0..<3 { sum += abs(Double(mask[i + c]) - Double(frame[i + c])) }
-          n += 3
-        }
-        i += 4
-      }
-      return n > 0 ? sum / n : 255
-    }
-
     /// Mean difference of two pictures over their middle (`inset` of each side left out: rounded corners and edges).
     static func meanDifference(_ a: [UInt8], _ b: [UInt8], w: Int, h: Int, inset: Double) -> Double {
       var sum = 0.0, n = 0.0
       for y in Int(Double(h) * inset)..<Int(Double(h) * (1 - inset)) {
         for x in Int(Double(w) * inset)..<Int(Double(w) * (1 - inset)) {
+          let i = (y * w + x) * 4
+          for c in 0..<3 { sum += abs(Double(a[i + c]) - Double(b[i + c])) }
+          n += 3
+        }
+      }
+      return n > 0 ? sum / n : 255
+    }
+
+    /// Mean difference of two pictures inside `box` (pixels, top-left origin).
+    static func meanDifference(_ a: [UInt8], _ b: [UInt8], w: Int, in box: CGRect) -> Double {
+      var sum = 0.0, n = 0.0
+      let h = a.count / 4 / max(1, w)
+      for y in max(0, Int(box.minY))..<min(h, Int(box.maxY.rounded(.up))) {
+        for x in max(0, Int(box.minX))..<min(w, Int(box.maxX.rounded(.up))) {
           let i = (y * w + x) * 4
           for c in 0..<3 { sum += abs(Double(a[i + c]) - Double(b[i + c])) }
           n += 3

@@ -13,6 +13,8 @@ extension EditorModel {
   // MARK: Which photo
 
   var isPhoto: Bool { video?.isPhoto == true }
+  /// What the editor calls the thing it has open, in sentences shared by both: "clip" or "post".
+  var noun: String { isPhoto ? "post" : "clip" }
   var photos: [PhotoItem] { video?.photos ?? [] }
   var photoCount: Int { photos.count }
   var isCarousel: Bool { photoCount > 1 }
@@ -33,7 +35,9 @@ extension EditorModel {
     if let img = EditorPhotoImages.canvas.value(key) {
       playback.showPhoto(img, index: index)
     } else if snapshotMode {
-      playback.showPhoto(EditorPhotoImages.decode(url, key: key, maxPixel: EditorPhotoImages.canvasPixels, into: EditorPhotoImages.canvas), index: index)
+      let img = EditorPhotoImages.decode(url, key: key, maxPixel: EditorPhotoImages.canvasPixels, into: EditorPhotoImages.canvas)
+      if img == nil, !missingPhotos.contains(photo.id) { unreadablePhotos.insert(photo.id) }
+      playback.showPhoto(img, index: index)
     } else {
       playback.showPhoto(nil, index: index)
       let id = videoId
@@ -47,7 +51,10 @@ extension EditorModel {
   }
 
   private func photoDecoded(_ image: CGImage?, photoId: String, videoId id: String) {
-    guard videoId == id, let p = currentPhoto, p.id == photoId else { return }
+    guard videoId == id else { return }
+    // A file that is there but isn't a picture any more: say so, or the canvas would wait for it for good.
+    if image == nil, !missingPhotos.contains(photoId) { unreadablePhotos.insert(photoId) }
+    guard let p = currentPhoto, p.id == photoId else { return }
     playback.showPhoto(image, index: photoIndex)
     refreshPhotoImages()
   }
@@ -69,6 +76,8 @@ extension EditorModel {
 
   /// The photo on the canvas is one whose file is gone.
   var currentPhotoMissing: Bool { currentPhoto.map { missingPhotos.contains($0.id) } ?? false }
+  /// The photo on the canvas has a file that can't be read as a picture.
+  var currentPhotoUnreadable: Bool { currentPhoto.map { unreadablePhotos.contains($0.id) } ?? false }
 
   /// Where the current photo's file should be (the missing state names it).
   var currentPhotoURL: URL? {
@@ -143,19 +152,17 @@ extension EditorModel {
     show("Every photo has this framing · ⌘Z takes it back")
   }
 
-  /// What a tile's mark says about a photo's shape (nil = nothing to say): much of it is cut off by a crop Eric hasn't
-  /// set himself, or the crop has fewer pixels than the 1080-wide output.
+  /// Past this the crop has so few pixels for the 1080-wide output that it shows: the tile is marked.
+  static let softAbove = 1.5
+
+  /// What a tile's mark says (nil = no mark): the photo will post soft, and what to do about it. Only that: a mark on
+  /// a photo that merely loses its sides to the shape would be on every landscape photo and say nothing.
   func photoNotice(_ p: PhotoItem) -> String? {
     let a = aspect
     let c = PhotoRules.crop(for: p, edit: edit, aspect: a)
-    if EditorGeometry.upscale(c, aspect: a) > 1.01 {
-      return "This photo is \(Int(c.w)) px wide in the frame, under the 1080 it posts at, so it may look soft"
-    }
-    guard !PhotoRules.hasOwnCrop(p, edit: edit, aspect: a) else { return nil }
-    let kept = (c.w * c.h) / Double(max(1, p.width * p.height))
-    guard kept < 0.7 else { return nil }
-    let wide = Double(p.width) / Double(max(1, p.height)) > a.ratio
-    return "\(a.rawValue) cuts off the \(wide ? "sides" : "top and bottom") of this photo. Check its crop in the Frame view."
+    guard EditorGeometry.upscale(c, aspect: a) > Self.softAbove else { return nil }
+    return "Photo \((photos.firstIndex { $0.id == p.id } ?? 0) + 1) is \(Int(c.w)) px wide in its crop and posts at 1080, so it will look soft. "
+      + (PhotoRules.hasOwnCrop(p, edit: edit, aspect: a) ? "Zoom out in the Frame view, or use a larger photo." : "Use a larger photo, or another shape.")
   }
 
   // MARK: Adding, removing and reordering (D15)
@@ -235,7 +242,9 @@ extension EditorModel {
     let was = photoIndex
     guard let fresh = photoChange({ try $0.remove(photoId: photoId, from: $1, journal: false) }) else { return }
     photosChanged(fresh, select: at < was ? was - 1 : was)
-    show("Photo removed · ⌘Z brings it back")
+    // A text on a photo that's gone moves onto the photos that are left, in this same undo step, and says so.
+    let moved = clampTextRanges()
+    show(PhotoTextRanges.notice(moved, count: photoCount).map { "Photo removed · \($0) · ⌘Z takes both back" } ?? "Photo removed · ⌘Z brings it back")
   }
 
   /// Puts photo `photoId` at place `index` (0-based). The first photo is the cover.
@@ -276,32 +285,28 @@ extension EditorModel {
     if !snapshotMode { ChangeSignal.post() }
   }
 
-  /// Undo and redo: makes the stored photo list `target` again. A photo that comes back is added from DJ Queue's own
-  /// copy (a removed photo's file stays in Originals), which gives it a new id; the pairs returned are those renames,
-  /// already applied to the editor's history.
-  func restorePhotos(_ target: [PhotoItem]) -> [(old: PhotoItem, new: PhotoItem)] {
-    guard let v = video, v.isPhoto, !target.isEmpty else { return [] }
+  /// Every text's range inside the photos the post has now (`PhotoTextRanges`), written into the undo step that is
+  /// already open. Returns the texts that moved.
+  @discardableResult
+  func clampTextRanges() -> [PhotoTextRanges.Moved] {
+    let n = photoCount, current = versionNo
+    guard isPhoto, n > 0 else { return [] }
+    var moved: [PhotoTextRanges.Moved] = []
+    amendVersions { v in
+      let r = PhotoTextRanges.clamped(v, count: n)
+      if v.number == current { moved = r.moved }
+      return r.version
+    }
+    return moved
+  }
+
+  /// Undo and redo: makes the stored photo list `target` again, the same photos with the same ids and files (a removed
+  /// photo's copy stays in Originals), so nothing is copied and each crop still belongs to its photo.
+  func restorePhotos(_ target: [PhotoItem]) {
+    guard let v = video, v.isPhoto, !target.isEmpty else { return }
     let store = store, id = videoId
-    var renamed: [(old: PhotoItem, new: PhotoItem)] = []
     do {
-      let (fresh, pairs) = try Self.saveQueue.sync { () throws -> (Video, [(PhotoItem, PhotoItem)]) in
-        let importer = PhotoImport(store: store)
-        guard var now = try store.video(id: id) else { throw EngineError("No post \(id)") }
-        var pairs: [(PhotoItem, PhotoItem)] = []
-        for p in target where !(now.photos ?? []).contains(where: { $0.id == p.id }) {
-          let before = Set((now.photos ?? []).map(\.id))
-          now = try importer.append(files: [try store.photoURL(p, of: now)], to: id, journal: false).video
-          if let new = (now.photos ?? []).first(where: { !before.contains($0.id) }) { pairs.append((p, new)) }
-        }
-        let ids = target.compactMap { p in pairs.first { $0.0.id == p.id }?.1.id ?? ((now.photos ?? []).contains { $0.id == p.id } ? p.id : nil) }
-        for p in now.photos ?? [] where !ids.contains(p.id) { now = try importer.remove(photoId: p.id, from: id, journal: false).video }
-        if Set(ids) == Set((now.photos ?? []).map(\.id)) { now = try importer.reorder(videoId: id, ids: ids, journal: false).video }
-        return (now, pairs)
-      }
-      for (old, new) in pairs {
-        renameInHistory(old, to: new)
-        renamed.append((old, new))
-      }
+      let fresh = try Self.saveQueue.sync { try PhotoListRestore.set(target, videoId: id, store: store) }
       let was = currentPhoto?.id
       adoptPhotos(from: fresh)
       selectPhoto(photos.firstIndex { $0.id == was } ?? photoIndex)
@@ -310,7 +315,6 @@ extension EditorModel {
     } catch {
       show("Couldn't put the photos back: \(error.localizedDescription)")
     }
-    return renamed
   }
 
   // MARK: Text on a range of photos (D7)
@@ -336,6 +340,19 @@ extension EditorModel {
     let s = max(0, l.start ?? 0), e = min(d + 1, l.end ?? (d + 1))
     if l.id == TextLayer.firstId { return e <= s || s >= d ? 0...(d + 1) : s...e }
     return s >= d || e <= s ? nil : s...e
+  }
+
+  /// Selects text `id` from its bar or the Text section and shows a photo it is on: the canvas draws only what posts,
+  /// so a text is never on screen on a photo it isn't on.
+  func focusText(_ id: String) {
+    selectText(id)
+    showSelectedTextPhoto()
+  }
+
+  /// Steps the canvas to the first photo the selected text shows on, when the current one isn't one of them.
+  func showSelectedTextPhoto() {
+    guard isPhoto, let r = textRange(selectedText), !r.contains(photoIndex + 1) else { return }
+    selectPhoto(r.lowerBound - 1)
   }
 
   /// "Every photo" · "Photo 2" · "Photos 2–4".
@@ -398,8 +415,9 @@ extension EditorModel {
                                   on: r.hasText && !r.noText, draggable: shows && n > 1, span: shows ? span(TextLayer.firstId) : (0, d), lane: 0)
     guard !r.noText else { return ([first], 1) }
     var bars = [first] + r.moreText.enumerated().map { i, l in
-      EditorTimelineBar(id: l.id, number: i + 2, label: l.isBlank ? "Empty text" : Captions.oneLine(l.text), on: !l.isBlank, draggable: n > 1,
-                        span: span(l.id), lane: 0)
+      // A text on no photo (a range past the end, which only an outside change can leave) isn't drawn: its bar is off.
+      EditorTimelineBar(id: l.id, number: i + 2, label: l.isBlank ? "Empty text" : Captions.oneLine(l.text),
+                        on: !l.isBlank && textRange(l.id) != nil, draggable: n > 1, span: span(l.id), lane: 0)
     }
     let lanes = TextTimeline.lanes(bars.map(\.span))
     for i in bars.indices { bars[i].lane = lanes[i] }

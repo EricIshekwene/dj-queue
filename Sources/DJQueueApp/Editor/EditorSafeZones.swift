@@ -7,6 +7,8 @@ import SwiftUI
 struct EditorSafeZones: View {
   var platforms: Set<Platform>
   var aspect: Aspect
+  /// Round 21: the notes say "photo" where they'd say "video" or "clips".
+  var photo = false
 
   private var ordered: [Platform] { EditorPlatforms.order.filter { platforms.contains($0) } }
 
@@ -73,8 +75,8 @@ struct EditorSafeZones: View {
       } else {
         let text: String
         switch p {
-        case .x: text = xCrop == nil ? "X shows the whole video" : "X crops tall clips to 4:5"
-        case .threads: text = "Threads shows the whole video"
+        case .x: text = xCrop == nil ? "X shows the whole \(photo ? "photo" : "video")" : "X crops tall \(photo ? "photos" : "clips") to 4:5"
+        case .threads: text = "Threads shows the whole \(photo ? "photo" : "video")"
         default: text = aspect == .r16x9 ? "\(p.editorShortName): 16:9 isn't a feed format" : "\(p.editorShortName): nothing over the picture"
         }
         let y = p == .x && xCrop != nil ? (xCrop!.minY * H + 6) : topY

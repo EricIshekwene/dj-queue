@@ -26,6 +26,8 @@ final class EditorPhotoImages: ObservableObject {
   @Published private(set) var thumbs: [String: Thumb] = [:]
   /// The current photo as the export draws it under the texts.
   @Published private(set) var composed: (key: String, image: CGImage)?
+  /// Photos whose file couldn't be read for a tile (by id): the tile says so instead of spinning.
+  @Published private(set) var unreadable: Set<String> = []
 
   private var wantedComposite: String?
   private var composeTask: Task<Void, Never>?
@@ -85,6 +87,7 @@ final class EditorPhotoImages: ObservableObject {
     wantedComposite = nil
     composed = nil
     thumbs = [:]
+    unreadable = []
   }
 
   // MARK: The canvas picture
@@ -126,14 +129,16 @@ final class EditorPhotoImages: ObservableObject {
   func refreshThumbs(_ jobs: [Job], sync: Bool) {
     let ids = Set(jobs.map(\.photo.id))
     if thumbs.keys.contains(where: { !ids.contains($0) }) { thumbs = thumbs.filter { ids.contains($0.key) } }
-    let stale = jobs.filter { thumbs[$0.photo.id]?.key != $0.key }
+    if !unreadable.isSubset(of: ids) { unreadable.formIntersection(ids) }
+    // A photo that couldn't be read isn't tried again on every refresh; a reopened post starts over (`reset`).
+    let stale = jobs.filter { thumbs[$0.photo.id]?.key != $0.key && !unreadable.contains($0.photo.id) }
     guard Set(stale.map(\.key)) != Set(thumbPending) else { return }
     thumbTask?.cancel()
     thumbRun &+= 1
     thumbPending = sync ? [] : stale.map(\.key)
     guard !stale.isEmpty else { return }
     if sync {
-      for j in stale { if let img = Self.thumb(j) { thumbs[j.photo.id] = Thumb(key: j.key, image: img) } }
+      for j in stale { if let img = Self.thumb(j) { thumbs[j.photo.id] = Thumb(key: j.key, image: img) } else { unreadable.insert(j.photo.id) } }
       return
     }
     let run = thumbRun
@@ -148,7 +153,7 @@ final class EditorPhotoImages: ObservableObject {
   private func thumbLanded(_ job: Job, _ img: Unchecked<CGImage>?, run: Int) {
     guard run == thumbRun else { return }
     thumbPending.removeAll { $0 == job.key }
-    if let img { thumbs[job.photo.id] = Thumb(key: job.key, image: img.value) }
+    if let img { thumbs[job.photo.id] = Thumb(key: job.key, image: img.value) } else { unreadable.insert(job.photo.id) }
   }
 
   private nonisolated static func thumb(_ job: Job) -> CGImage? {

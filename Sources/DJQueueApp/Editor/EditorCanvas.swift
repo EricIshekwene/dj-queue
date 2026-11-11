@@ -120,6 +120,8 @@ struct EditorCanvas: View {
       Group {
         if model.loading {
           DSSpinner(size: 18)
+        } else if model.isPhoto && model.currentPhotoUnreadable {
+          unreadableState
         } else if model.video == nil || (model.isPhoto ? model.currentPhotoMissing : model.fileMissing) {
           // A photo post says which photo is gone, and still shows the ones that are there.
           missingState
@@ -141,7 +143,8 @@ struct EditorCanvas: View {
   }
 
   @ViewBuilder private var bottomBar: some View {
-    if model.loading || model.video == nil || (model.isPhoto ? model.currentPhotoMissing || model.photos.isEmpty : model.fileMissing) {
+    if model.loading || model.video == nil
+        || (model.isPhoto ? model.currentPhotoMissing || model.currentPhotoUnreadable || model.photos.isEmpty : model.fileMissing) {
       Color.clear
     } else {
       switch model.canvasMode {
@@ -177,6 +180,19 @@ struct EditorCanvas: View {
       Text("No photos in this post").font(DS.type.headline).foregroundStyle(DS.color.text)
       Text("Add one with the Add tile below.").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
     }
+  }
+
+  /// A photo whose file is there but isn't a picture any more: nothing to wait for, so it says what to do.
+  private var unreadableState: some View {
+    VStack(spacing: DS.space.sm) {
+      Image(systemName: "exclamationmark.triangle").font(.system(size: 20, weight: .medium)).foregroundStyle(DS.color.danger)
+        .frame(width: 40, height: 40).background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm))
+      Text("Photo \(model.photoIndex + 1) can't be read").font(DS.type.headline).foregroundStyle(DS.color.text)
+      Text(model.isCarousel ? "Remove it from the strip below and add the photo again."
+                            : "Add the photo again with the Add tile below, then remove this one.")
+        .font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+    }
+    .background(ScriptAnchor("Photo unreadable"))
   }
 
   private var missingState: some View {
@@ -361,13 +377,15 @@ struct EditorZonesCanvas: View {
       let out = editorFit(CGSize(width: model.aspect.ratio, height: 1), in: area)
       ZStack(alignment: .topLeading) {
         Color.clear
-        EditorOutputMedia(model: model, playback: playback, dimHiddenText: !model.plainCanvasForScript, dragging: drag?.id, textOffset: textDrag)
+        // Round 21: a photo has no playhead to move, so what's on the canvas is what posts. A text that isn't on this
+        // photo is not drawn, faded or otherwise, and has no handle here; its bar and the Text section reach it.
+        EditorOutputMedia(model: model, playback: playback, dimHiddenText: !model.plainCanvasForScript && (!model.isPhoto || model.ghostTextForScript), dragging: drag?.id, textOffset: textDrag)
           .frame(width: out.width, height: out.height)
           .clipShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
           .dsElevation(DS.elevation.e1)
           .probeFrame("canvas-output")
           .offset(x: out.minX, y: out.minY)
-        EditorSafeZones(platforms: model.zonePlatforms, aspect: model.aspect)
+        EditorSafeZones(platforms: model.zonePlatforms, aspect: model.aspect, photo: model.isPhoto)
           .frame(width: out.width, height: out.height)
           .clipShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
           .offset(x: out.minX, y: out.minY)
@@ -376,7 +394,7 @@ struct EditorZonesCanvas: View {
         // what's on screen, topmost first.
         if !model.readOnly && !model.plainCanvasForScript {
           let on = model.textImages.filter { $0.shows(at: playback.time) }
-          let dimmed = model.textImages.filter { !$0.shows(at: playback.time) && ($0.id == model.selectedText || $0.id == drag?.id) }
+          let dimmed = model.isPhoto ? [] : model.textImages.filter { !$0.shows(at: playback.time) && ($0.id == model.selectedText || $0.id == drag?.id) }
           ForEach(dimmed + on) { t in textHandle(t, in: out) }
         }
         if snapX || snapY { guides(in: out) }

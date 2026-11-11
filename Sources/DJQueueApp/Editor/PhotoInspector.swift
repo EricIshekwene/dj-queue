@@ -137,9 +137,11 @@ struct EditorPhotoPlatformNotes: View {
         if let note = PhotoRules.platformNote(count: n, aspect: a, platform: p) {
           let refused = PhotoRules.shapeProblem(a, platform: p) != nil
           EditorHint(note, icon: refused ? "exclamationmark.triangle.fill" : "info.circle", tone: refused ? .warning : nil)
+            .background(ScriptAnchor("Platform note \(p.displayName)"))
         }
       }
       EditorHint(PhotoRules.youtubeReason + ".", icon: "info.circle")
+        .background(ScriptAnchor("Platform note YouTube Shorts"))
     }
   }
 }
@@ -174,6 +176,18 @@ struct EditorPhotoShowsOn: View {
     let off: String? = model.resolved.noText ? "No text is on; turn it off to change where this shows" : nil
     EditorField(label: "Shows on", help: "The photos this text is drawn on", value: model.textRangeLabel(id)) {
       VStack(alignment: .leading, spacing: 6) {
+        // The canvas draws only what posts, so on a photo outside the range the text isn't there: say so, with the way to it.
+        if let range, !range.contains(here) {
+          HStack(spacing: 6) {
+            EditorHint("Not on this photo", icon: "eye.slash")
+            Spacer(minLength: 0)
+            DSButton("Go to photo \(range.lowerBound)", variant: .ghost, size: .sm,
+                     tooltip: "Show photo \(range.lowerBound), the first one this text is on") { model.selectPhoto(range.lowerBound - 1) }
+              .background(ScriptAnchor("Go to text photo"))
+          }
+        } else if range == nil {
+          EditorHint("On no photo: its range is past the last photo. Pick where it shows.", icon: "eye.slash", tone: .warning)
+        }
         HStack(spacing: 6) {
           DSButton("Every photo", variant: .outline, size: .sm, disabledReason: off ?? (every ? "It already shows on every photo" : nil),
                    tooltip: "Show this text on every photo, also ones added later") { model.setTextRange(id, nil, step: true) }

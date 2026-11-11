@@ -162,6 +162,8 @@ final class EditorModel: ObservableObject {
   let photoImages = EditorPhotoImages()
   /// True while added photos are being copied in.
   @Published var photoBusy = false
+  /// Photos whose file is there but can't be read as a picture (by id): the canvas says so instead of waiting.
+  @Published var unreadablePhotos: Set<String> = []
   /// The photos of a photo post whose file isn't on disk (by id). The post is missing while there is one.
   @Published private(set) var missingPhotos: Set<String> = []
   /// Platform whose own caption field should open (Write an X caption).
@@ -183,6 +185,9 @@ final class EditorModel: ObservableObject {
   @Published var toast: String?
   /// Evidence runs: the Zones canvas shows just the output (no dimmed text, no handles), to set beside an exported frame.
   @Published var plainCanvasForScript = false
+  /// Evidence runs only: brings back the faded copy of a text on a photo it isn't on, so the photo check can show that
+  /// it fails on one (`DJQ_PHOTO_EDITOR_SABOTAGE=ghost`). Never set in the app.
+  @Published var ghostTextForScript = false
   /// Bumped when Title should take keyboard focus (header title click).
   @Published var focusTitle = 0
   /// True while a clip's data is being read (the canvas shows a spinner, not "not found").
@@ -273,7 +278,7 @@ final class EditorModel: ObservableObject {
       l.posts = try store.posts(where: "video_id=?", [id])
       l.issues = try Validation.issues(video: v, store: store)
     } catch {
-      l.error = l.readOnly ? "This clip's saved edit can't be read, so editing is off to protect it. Run Doctor."
+      l.error = l.readOnly ? "This \(l.video?.isPhoto == true ? "post" : "clip")'s saved edit can't be read, so editing is off to protect it. Run Doctor."
         : "Couldn't load: \(error)"
     }
     return l
@@ -310,6 +315,7 @@ final class EditorModel: ObservableObject {
     photoImages.reset()
     photoBusy = false
     missingPhotos = []
+    unreadablePhotos = []
     let store = store
     if snapshotMode {
       apply(Self.saveQueue.sync { Self.read(store, id) }, token: token)
@@ -609,8 +615,8 @@ final class EditorModel: ObservableObject {
     let sound = tracks.isEmpty ? "Original audio"
       : tracks.map { t in t.artist.map { "\(t.title) · \($0)" } ?? t.title }.joined(separator: " x ")
     return PhoneMockContent(platform: p, caption: caption(for: p), youtubeTitle: youtubeTitle, handle: PlatformUI.handle(p),
-                            displayName: "DJ Lovd", soundLine: sound, durationText: isPhoto ? "" : EditorGeometry.time(trim.duration),
-                            aspect: aspect)
+                            displayName: "DJ Lovd", soundLine: isPhoto ? "" : sound, durationText: isPhoto ? "" : EditorGeometry.time(trim.duration),
+                            aspect: aspect, isPhoto: isPhoto)
   }
 
   /// The platforms the phone preview and the safe-zone chips offer: every one for a clip, those that take photos for a
@@ -927,7 +933,7 @@ final class EditorModel: ObservableObject {
     guard writeGroup({ try HashtagGroups.create(group, store: $0, bulk: $1) }) != nil else { return false }
     groupForm = nil
     setGroup(group.id, on: true)
-    show("“\(group.name)” saved and on for this clip")
+    show("“\(group.name)” saved and on for this \(noun)")
     return true
   }
 
@@ -949,7 +955,7 @@ final class EditorModel: ObservableObject {
     }
     let after = hashtags
     let swap = !change.kept.contains(videoId) && !written.isEmpty && !written.contains("{hashtags}") && before != after
-    let message = change.kept.contains(videoId) ? "“\(group.name)” saved. This clip keeps its tags: it has scheduled or posted posts"
+    let message = change.kept.contains(videoId) ? "“\(group.name)” saved. This \(noun) keeps its tags: it has scheduled or posted posts"
       : swap ? "“\(group.name)” saved. ⌘Z restores only this caption" : "“\(group.name)” saved"
     // Before this clip's own change below: the session moves past the group batch, then owns that change.
     if let journal = appHooks.afterGroupEdit { journal(change.result, message) } else { show(message) }
@@ -1071,10 +1077,10 @@ final class EditorModel: ObservableObject {
       guard writeGroup(failure: failure, { try CaptionTemplates.create(t, store: $0, bulk: $1) }) != nil else { return false }
       templateForm = nil
       if clipHasPosts {
-        show("“\(t.name)” saved. This clip keeps its caption: it has scheduled or posted posts")
+        show("“\(t.name)” saved. This \(noun) keeps its caption: it has scheduled or posted posts")
       } else {
         setCaptionTemplate(t.id)
-        show("“\(t.name)” saved and on for this clip")
+        show("“\(t.name)” saved and on for this \(noun)")
       }
       return true
     }
@@ -1089,7 +1095,7 @@ final class EditorModel: ObservableObject {
     guard let change = writeGroup(failure: failure, { try CaptionTemplates.update(saved, store: $0, bulk: $1) }) else { return false }
     templateForm = nil
     let kept = change.kept.contains(videoId)
-    let message = kept ? "“\(t.name)” saved. This clip keeps its caption: it has scheduled or posted posts" : "“\(t.name)” saved"
+    let message = kept ? "“\(t.name)” saved. This \(noun) keeps its caption: it has scheduled or posted posts" : "“\(t.name)” saved"
     if let journal = appHooks.afterGroupEdit { journal(change.result, message) } else { show(message) }
     if kept { replaceVersions((try? store.versions(videoId: videoId)) ?? versions) } else { fieldRevision &+= 1 }
     return true
@@ -1513,7 +1519,7 @@ final class EditorModel: ObservableObject {
   func undo() {
     commitCaptionDraft()
     guard !photoBusy else { show("Photos are being added. Undo works again in a moment."); return }
-    guard !readOnly, let s = undoStack.popLast() else { show("Nothing to undo in this clip"); return }
+    guard !readOnly, let s = undoStack.popLast() else { show("Nothing to undo in this \(noun)"); return }
     dropTimeDraft()
     redoStack.append(undoState)
     restoreUndo(s)
@@ -1530,8 +1536,7 @@ final class EditorModel: ObservableObject {
     show("Redone")
   }
 
-  private func restoreUndo(_ state: UndoState) {
-    var s = state
+  private func restoreUndo(_ s: UndoState) {
     restoringUndo = true
     defer {
       restoringUndo = false
@@ -1544,10 +1549,10 @@ final class EditorModel: ObservableObject {
     func unready(_ vs: [Version]) -> [Version] {
       (vs.contains { $0.number == 1 } ? vs : [Version(number: 1)] + vs).map { var v = $0; v.repostReady = nil; return v }
     }
-    // Round 21: the photos first. A photo that comes back is a new copy with a new id, so the state takes that id.
-    if let target = s.photos, target != video?.photos {
-      for (old, new) in restorePhotos(target) { Self.rename(old, to: new, in: &s) }
-    }
+    // Round 21: the photos first, as they were: same ids and files, so each photo's own crop in `s.edit` is still its.
+    // Then, whatever the state says, no text is left on a photo that isn't there (`PhotoTextRanges`).
+    if let target = s.photos, target != video?.photos { restorePhotos(target) }
+    defer { if isPhoto { clampTextRanges() } }
     if s.edit == edit, unready(s.versions) == unready(versions), s.title == video?.title, s.titleTracks == video?.titleTracks,
        s.kind == nil || s.kind == video?.kind {
       // Both sides' numbers: a v1 that only existed for its mark is in `versions` but not in the earlier state.
@@ -1582,15 +1587,24 @@ final class EditorModel: ObservableObject {
     refreshOverlay()
   }
 
-  /// A photo that undo brought back has a new id: every remembered state follows it, so its crop and place still apply.
-  func renameInHistory(_ old: PhotoItem, to new: PhotoItem) {
-    for i in undoStack.indices { Self.rename(old, to: new, in: &undoStack[i]) }
-    for i in redoStack.indices { Self.rename(old, to: new, in: &redoStack[i]) }
-  }
-
-  private static func rename(_ old: PhotoItem, to new: PhotoItem, in s: inout UndoState) {
-    if let i = s.photos?.firstIndex(where: { $0.id == old.id }) { s.photos?[i] = new }
-    if let c = s.edit.photoCrops.removeValue(forKey: old.id) { s.edit.photoCrops[new.id] = c }
+  /// Changes the versions as part of the undo step that is already marked (a photo removal that moves a text's range
+  /// with it): no step of its own. True when anything changed.
+  @discardableResult
+  func amendVersions(_ change: (Version) -> Version) -> Bool {
+    var changed = false
+    for i in versions.indices {
+      let v = change(versions[i])
+      guard v != versions[i] else { continue }
+      versions[i] = v
+      pendingVersions.insert(v.number)
+      changed = true
+    }
+    if changed {
+      fieldRevision &+= 1
+      scheduleSave()
+      refreshOverlay()
+    }
+    return changed
   }
 
   // MARK: Photos (round 21): the few writes `EditorModel+Photos.swift` needs here
@@ -1611,6 +1625,7 @@ final class EditorModel: ObservableObject {
     // The store dropped the crops of photos that left; the editor's copy follows without a save of its own.
     let keep = Set((v.photos ?? []).map(\.id))
     for k in edit.photoCrops.keys where !keep.contains(k) { edit.photoCrops.removeValue(forKey: k) }
+    unreadablePhotos.formIntersection(keep)
   }
 
   /// Which photo files are on disk. A post is missing while one is gone; once none is (that photo was removed here,
@@ -1873,6 +1888,7 @@ final class EditorModel: ObservableObject {
     let like = selectedLayer
     // A text on every photo has no window to move: its copy shows on every photo too, just below it.
     if isPhoto, like.start == nil, like.end == nil { add(TextLayers.new(text: like.text, like: like), overlapping: true); return }
+    defer { if isPhoto { showSelectedTextPhoto() } }  // the copy may sit on the next photo: the canvas goes there
     let (w, overlaps) = TextTimeline.duplicateWindow(TextTimeline.span(like, trimDuration: trim.duration), trimDuration: trim.duration)
     add(TextLayers.new(text: like.text, like: like, start: w.start, end: w.end), overlapping: overlaps)
   }

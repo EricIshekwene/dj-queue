@@ -18,6 +18,8 @@ struct PhoneMockContent: Equatable {
   var durationText: String = ""
   /// The clip's output aspect (the `media` view is drawn at exactly this aspect).
   var aspect: Aspect = .r9x16
+  /// Round 21 (D10): a photo post goes out with no music, so the feeds draw no sound line and no spinning disc.
+  var isPhoto = false
 }
 
 /// Generic phone mock of a platform's feed (TikTok, Instagram Reels, Facebook Reels, YouTube Shorts) or post card
@@ -91,7 +93,7 @@ struct EditorPhoneMock<Media: View>: View {
       feedTopBar(g, spec)
       feedRail(g, spec)
       feedHandleRow(g, spec)
-      feedSoundLine(g, spec)
+      if !content.isPhoto { feedSoundLine(g, spec) }
       feedCaption(g, spec)
     }
     .frame(width: g.w, height: g.h)
@@ -146,7 +148,7 @@ struct EditorPhoneMock<Media: View>: View {
   @ViewBuilder private func feedRail(_ g: MockGeo, _ spec: PlatformUISpec) -> some View {
     let rail = MockRail.for(content.platform)
     let cx = g.rect(spec.el(.rightRail)).midX
-    ForEach(Array(rail.items.enumerated()), id: \.offset) { _, it in
+    ForEach(Array(rail.items.enumerated()).filter { !content.isPhoto || !$0.element.isDisc }, id: \.offset) { _, it in
       MockRailGlyph(glyph: it.glyph, size: g.pt(rail.icon), initials: initials, g: g)
         .position(x: cx, y: g.y(it.y))
       if let label = it.label {
@@ -534,6 +536,7 @@ private struct MockRail {
     var y: CGFloat
     var label: String? = nil
     var labelY: CGFloat = 0
+    var isDisc: Bool { if case .disc = glyph { return true } else { return false } }
   }
 
   var items: [Item]

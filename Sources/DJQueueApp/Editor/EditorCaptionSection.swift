@@ -235,7 +235,8 @@ struct EditorCaptionSection: View {
 
   private func hashtags(_ r: ResolvedVersion) -> some View {
     VStack(alignment: .leading, spacing: DS.space.md) {
-      EditorField(label: "Hashtag groups", help: "Your own groups, shared by every clip. Right-click one to edit or delete it",
+      EditorField(label: "Hashtag groups", help: model.isPhoto ? "Your own groups, shared by every clip and photo post. Right-click one to edit or delete it"
+                                                        : "Your own groups, shared by every clip. Right-click one to edit or delete it",
                   isCustom: !r.isDefault("hashtagSetIds"), inheritedFrom: model.source(of: "hashtagSetIds"),
                   resetHelp: "Back to the default groups (New clip defaults)",
                   onReset: model.ownsField(["hashtagSetIds"]) ? { model.setHashtagSets(model.fallback(\.hashtagSetIds, \.hashtagSetIds)) } : nil) {
@@ -276,7 +277,7 @@ struct EditorCaptionSection: View {
   private var groupActions: some View {
     HStack(spacing: DS.space.xxs) {
       DSButton("New group", icon: "plus", variant: .ghost, size: .sm, disabledReason: model.groupsOffReason,
-               tooltip: "Make a group and turn it on for this clip") {
+               tooltip: "Make a group and turn it on for this \(model.noun)") {
         focusMemo.remember()
         dsWithAnimation { model.openGroupForm() }
       }
@@ -480,7 +481,7 @@ struct EditorGroupFormView: View {
                   hint: parsed.isEmpty ? "Spaces between them; the # is optional" : "Saves as \(parsed.joined(separator: " "))",
                   size: .sm, focusToken: focusTags, onSubmit: save)
       if isNew {
-        EditorHint("Saved for every clip, and on for this one.")
+        EditorHint(model.isPhoto ? "Saved for every clip and photo post, and on for this one." : "Saved for every clip, and on for this one.")
       } else if let reach = form.impact {
         EditorHint(reach.editSummary, icon: "info.circle")
       }
@@ -610,7 +611,7 @@ struct EditorTemplateFormView: View {
       if let reach = form.impact {
         EditorHint(reach.templateEditSummary, icon: "info.circle")
       } else if isNew, model.clipHasPosts {
-        EditorHint("This clip keeps its caption: it has scheduled or posted posts", icon: "info.circle")
+        EditorHint("This \(model.noun) keeps its caption: it has scheduled or posted posts", icon: "info.circle")
       }
       HStack(spacing: DS.space.xxs) {
         DSXMenuButton(icon: "curlybraces", tooltip: "Add a token to the template", size: .sm) {
@@ -624,7 +625,8 @@ struct EditorTemplateFormView: View {
         }
         .keyboardShortcut(.cancelAction)
         DSButton(isNew ? "Save template" : "Save changes", variant: .outline, size: .sm, disabledReason: problem?.message,
-                 tooltip: !isNew ? nil : model.clipHasPosts ? "Saved for every clip" : "Saved for every clip, and on for this one", action: save)
+                 tooltip: !isNew ? nil : model.clipHasPosts ? "Saved for every \(model.isPhoto ? "clip and photo post" : "clip")"
+                   : "Saved for every \(model.isPhoto ? "clip and photo post" : "clip"), and on for this one", action: save)
       }
     }
     .padding(DS.space.sm)

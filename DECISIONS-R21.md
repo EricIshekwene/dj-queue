@@ -196,10 +196,21 @@ fails at publish time, on a day Eric isn't looking, with the other four platform
 
 ## Decisions made while building (B2, the photo editor)
 
-- **The editor's ⌘Z brings a removed photo back as a new copy of DJ Queue's own file,** so it has a new id; its crop and its
-  place follow it through the editor's history. *Why:* Core's public calls add, remove and reorder, and a removed photo's
-  copy stays in Originals for exactly this. The app's ⌘Z after the editor closes still restores the old list as it was
-  (`ClipSnap.photos`). A public "set this photo list" in Core would make the copy unnecessary (follow-up).
+- **The editor's ⌘Z brings a removed photo back as the same photo:** its id, DJ Queue's own copy of its file (which a
+  removal leaves in Originals) and its own crop. Nothing is copied again. *Why:* a new copy per undo left orphan files and
+  a new id. Core's public calls add, remove and reorder, so the one write that sets a list the post had before is
+  `PhotoListRestore` in the editor (the same statement as Core's internal `Store.writePhotos`); it should become a public
+  Core call (follow-up, reported to the session parent).
+- **A text's range is clamped when photos are removed (after the review, M2).** A range names positions. When the post
+  gets shorter, each text's range is cut to the photos that remain: photos 3–4 of 4 with one removed is photo 3, and a
+  text only on the removed last photo moves to the new last photo. It happens in the same undo step as the removal and
+  the toast says it ("Photo removed · “Loft nights” now shows on photo 3"). *Why:* a range left wholly past the end made
+  Core draw the first text on every photo and a second text on none, with nothing on screen saying so. The rule is one
+  pure function, `PhotoTextRanges.clamped`; `djq`'s removal should call the same rule in Core (reported to the parent).
+- **The canvas of a photo post never draws a text on a photo it isn't on (after the review, M1).** The clip editor keeps
+  the selected text faded outside its time so it can be placed; a photo has no playhead, so that copy would stay for
+  good and the canvas would not be what posts. A text is reached from its bar or the Text section, which show a photo it
+  is on, and on any other photo "Shows on" says "Not on this photo" with "Go to photo 2".
 - **A text whose range covers the whole post is stored with no window ("Every photo"),** whether Eric pressed Every photo
   or dragged its bar over all of them. *Why:* what reads "Every photo" should also be on a photo added later.
 - **A photo post with no text shows one line and "Add text" in the Text section,** not the empty field with "No text" on.
@@ -207,9 +218,10 @@ fails at publish time, on a day Eric isn't looking, with the other four platform
 - **"Shows on" sits in the Text section itself for a carousel,** above Style, with Every photo, This photo and a first
   and last photo to step. The seconds fields under Advanced are gone for photos. *Why:* which photos a text is on is the
   first thing to decide about it; for a clip the timing is a refinement.
-- **A tile gets a mark when the post's shape cuts more than 30 % off a photo Eric hasn't cropped himself, or its crop is
-  under 1080 px wide.** The first goes away once he sets that photo's crop. *Why:* those are the two cases where the
-  centred crop can post something he didn't expect; a mark on every photo would say nothing.
+- **A tile gets a mark only for something Eric can act on:** its crop has so few pixels that it posts soft (more than
+  1.5× upscaled; the tooltip says how wide it is and what to do), or its file is missing or can't be read (a red "?").
+  *Why:* the first rule also marked every photo the shape crops, which is every landscape photo in 4:5, so the mark
+  said nothing (review, minor 5).
 - **Zoom out, a slider, zoom in and Reset crop sit under the Frame canvas for a photo** (the Meetup pattern), and the
   crop is dragged on the canvas. Left, Centre and Right are not offered. *Why:* photos come in every shape, so a third
   of the width is often no move at all.
