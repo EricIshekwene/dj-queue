@@ -113,6 +113,12 @@ import UniformTypeIdentifiers
     let first = try #require(PhotoImages.bitmap(URL(fileURLWithPath: r.allPaths[0])))
     #expect(first[200, 700].near(.red) && first[880, 700].near(.blue))
     #expect(PhotoRules.extensions.isSuperset(of: ["jpg", "jpeg", "png", "heic", "heif", "webp", "tif", "tiff"]))
+    // WebP: this Mac can read it but not write it, so the picture is a one-pixel file spelled out here.
+    let webp = f.inbox.appendingPathComponent("tiny.webp")
+    try #require(Data(base64Encoded: "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")).write(to: webp)
+    let w = try #require(try PhotoImport(store: f.store).add(files: [webp]).posts.first)
+    #expect(w.photos?.first?.file.hasSuffix(".webp") == true && w.photos?.first?.width == 1 && w.photos?.first?.height == 1)
+    #expect(PhotoRenderer.load(try f.store.photoURLs(w)[0]) != nil)
   }
 
   @Test func aPostHoldsAtMostThePhotosTheLargestPlatformTakes() throws {

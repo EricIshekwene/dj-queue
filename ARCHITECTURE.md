@@ -288,7 +288,7 @@ the budget check, and put the first photo on the job. A video's payload and cont
 `AgentAPI.VideoSummary` gains `media` ("photo" | "video") and `photos[{id, file, width, height}]`.
 
 **What the UI calls** (all in DJQCore):
-- `PhotoImport(store:).add(files:mode:title:titleSource:) -> Result{posts, skipped[{file, reason}]}`: import (`.carousel` | `.separate`). Post `ChangeSignal` yourself.
+- `PhotoImport(store:).add(files:mode:title:titleSource:) -> Result{posts, skipped[{file, reason}]}`: import (`.carousel` | `.separate`). It copies and hashes files, so call it off the main thread, and post `ChangeSignal` yourself.
 - `PhotoImport.refusal(_ url:) -> String?`: why a dropped file can't be a photo, before importing. `PhotoRules.extensions`: for the file picker.
 - `PhotoImport.append(files:to:journal:)`, `remove(photoId:from:journal:)`, `reorder(videoId:ids:journal:) -> Change{video, skipped, batchId}`: one journal entry each (`photo-add`, `photo-remove`, `photo-reorder`) for ⌘Z; pass `journal: false` inside an open editor entry (`BulkActions.begin`), whose `commit` records photo changes with the rest (`ClipSnap.photos`). Removing the last photo throws.
 - `Store.photoURL(_:of:)`, `photoURLs(_:)`: where a photo's file is.
@@ -299,6 +299,7 @@ the budget check, and put the first photo on the job. A video's payload and cont
 - `PhotoRules.aspect(_:defaults:)`, `aspects`, `crop(for:edit:aspect:)`, `centredCrop(_:aspect:)`, `hasOwnCrop(_:edit:aspect:)`: frame and crop per photo; write a crop to `Edit.photoCrops[photo.id]` (upright source pixels) and save the edit as for a clip.
 - `PhotoRules.layers(_:onPhoto:of:)`, `photoRange(of:in:count:)`, `rangeLabel(_:count:)`, `window(fromPhoto:toPhoto:)`: which photos a text shows on, and the stored window for a range.
 - `PhotoRules.sent(count:platform:) -> (sent, dropped)`, `notice(count:platform:)` ("X gets the first 4 of 7 photos"), `platformNote(count:platform:)` (that, or `youtubeReason` for YouTube), `maxPerPost` (35).
+- The YouTube row of a photo post: show it off and disabled with `PhotoRules.youtubeReason`. An edit held in memory can still be changed, but every save and every read puts the skip back.
 - `Video.isPhoto`, `photoCount`, `isCarousel`, `photoLabel`, `kindLabel`; `Settings.defaults.photoAspect`; `StageWording.backTitle/backHelp/blocker` already say "Photos have no Score stage".
 - `Render.allPaths`, `PreparedPost.allFileURLs`: every file of a photo post, for Reveal, drag-out and the Calendar's post sheet.
 - `ValidationIssue.Kind.noPhotos` → `IssueSection.photos`. `EditorModel.section(for:)` maps `.photos` to Frame for now: point it at the photos strip when that exists.
