@@ -84,8 +84,8 @@ import Testing
     (.x, "File exceeded the limit"), (.x, "Video exceeded the allowed limit"), (.tiktok, "file-too-large"),
     (.x, "Tweet needs to be a bit shorter."), (.facebook, "Content not eligible"), (.x, "Insufficient credits"),
     (.threads, "Verify your account"), (.instagram, "Not available in your country"),
-    // a 403 alone isn't a sign-in (round 22 waits on the rest of the old sign-in list)
-    (.x, "Request failed with status code 403"),
+    // a 403 alone, a bare permission or refresh isn't a sign-in (round 22 waits on the rest of the old sign-in list)
+    (.x, "Request failed with status code 403"), (.x, "You don't have permission to do this"), (.instagram, "Refresh your connection"),
     // size
     (.facebook, "Video exceeds the maximum allowed"), (.x, "Video exceeds 5 minutes"), (.x, "Your video is over the limit of 512MB"),
     (.threads, "The video is 200 seconds; maximum is 180"), (.facebook, "HTTP 413"), (.tiktok, "FileSizeExceeded"), (.tiktok, "UnsupportedMedia"),

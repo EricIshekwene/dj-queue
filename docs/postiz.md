@@ -217,12 +217,14 @@ a rate or a quota.
 
 Round 22 reads two kinds before the veto (`PostizService.classify`), unless a policy word is there too:
 
-- **media** (a media word: media, file, url, upload, download, fetch; and a "gone" word: expired, not found, 404,
-  invalid, unavailable, couldn't be retrieved/fetched): Postiz couldn't get the file. It retries on every platform,
-  YouTube too (no video was made), on the usual backoff, and the retry uploads the media again;
-- **sign-in** (auth, token, session, log in, sign in, reconnect, refresh, permission, scope, 401, unauthorized,
-  disabled): the channel's login, never a media problem even when it says "expired". Its posts wait for the channel
-  (below, **Sign-in**).
+- first, a size, length, type or format word (too large, exceeds, duration, format, codec, file type, …) always stays;
+- **media** (a media word: media, file, url, upload, download, fetch; and a "gone" word: expired, not found, 404, an
+  invalid url or link, couldn't be retrieved/fetched): Postiz couldn't get the file. It retries on every platform on the
+  usual backoff, and the retry uploads the media again. On YouTube only wording about fetching the source media counts,
+  never a status, processing, response or after-upload step;
+- **sign-in**, read narrowly (tokens, OAuth, invalid_grant, re-authorize, reconnect, an expired login or session, 401,
+  unauthorized, refreshNeeded, a disabled channel; never a bare permission, refresh or "disabled"): the channel's login.
+  Its posts wait for the channel (below, **Sign-in**).
 
 YouTube keeps its guard: otherwise only the upload quota retries ("daily upload quota" / `defaultVideoInsertPerDayPerProject`,
 and not with a thumbnail or an uploaded video in the message), because any other YouTube error may come after the video
@@ -267,8 +269,12 @@ the attention card, the menu bar, `djq posts --problems`, `djq status`, Doctor `
 platform per outage (`postiz.signIn:<platform>:<since>`, whose action opens Postiz). Its posts don't fall back to Manual
 and don't each show a failure: nothing goes to Postiz on that channel, a post past its time is never missed, and a
 failure's retry waits ("Waits for sign-in"). It ends when the channel list (read every 30 minutes during an outage) shows
-the channel healthy after showing it flagged, or when a post goes out on it; with no word from the list, one post is
-tried every 6 hours. It is never dropped by itself.
+the channel healthy, or when a post goes out on it; with no word from the list, one post is tried every 6 hours. A create
+refused with sign-in wording is a wait only when the list, read again then, flags the channel. For a day after a wait
+ends, posts whose time passed meanwhile go to Postiz the stagger gap apart.
+
+**Keeps failing.** A retry failing with the same error (not YouTube's quota) for 7 days keeps retrying and shows one calm
+item, "Keeps failing on TikTok: <reason>" (Posts → Problems, one notification, Doctor `postiz.auto_retry` as a warning).
 
 **Waiting.** Paused (all or the platform), the platform off Postiz (Manual, off, no usable channel or key), the clip sent
 back to Edit, the channel's sign-in, or another job of the clip + platform open: no retry. It reads "Retry waits" with the reason,

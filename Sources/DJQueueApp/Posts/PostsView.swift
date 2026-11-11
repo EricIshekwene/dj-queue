@@ -94,6 +94,19 @@ struct PostsView: View {
     }
   }
 
+  /// Round 22: the sign-in and keeps-failing items that fit the search and the Platform filter (the rest of the filters
+  /// are about clips, and these are about a channel or a lineage).
+  private var scopedItems: (signIn: [PostizSignInProblem], stubborn: [PostizKeepsFailing], any: Bool) {
+    let s = prefs[.posts]
+    let q = s.search.trimmingCharacters(in: .whitespaces)
+    let platform = s.filters[ListFilterKey.platform]
+    func fits(_ p: Platform) -> Bool {
+      (platform == nil || p.rawValue == platform) && (q.isEmpty || p.displayName.localizedCaseInsensitiveContains(q))
+    }
+    let a = model.signInProblems.filter { fits($0.platform) }, b = model.keepsFailing.filter { fits($0.platform) }
+    return (a, b, !a.isEmpty || !b.isEmpty)
+  }
+
   /// Filters popover: Platform first (counted in posts), then the clip sections (counted in clips with posts).
   private var filterSections: [DSFilterSection] {
     let byPlatform = Dictionary(grouping: scoped(model.posts, except: ListFilterKey.platform), by: \.platform).mapValues(\.count)
@@ -129,7 +142,8 @@ struct PostsView: View {
   }
 
   private func statusChips(_ scope: [PlatformPost]) -> some View {
-    let problems = scoped(model.problems).count + model.signInProblems.count  // round 22: one per channel to reconnect
+    // Round 22: one per channel to reconnect and one per retry that keeps failing, in the same scope as the posts.
+    let problems = scoped(model.problems).count + scopedItems.signIn.count + scopedItems.stubborn.count
     let opts = [PostsTab.problems, .scheduled, .posted].map { t in
       DSStatusChipOption(id: t.rawValue, title: t.title, count: t == .problems ? problems : scope.filter { inTab($0, t) }.count,
                          tone: t == .problems && problems > 0 ? .danger : nil, tooltip: t.blurb)
@@ -147,7 +161,7 @@ struct PostsView: View {
       } else if model.posts.isEmpty {
         DSEmptyState(icon: "paperplane", title: "No posts yet", message: "Posts appear once clips have a day on the Calendar.",
                      actionTitle: "Open Calendar") { model.screen = .calendar }
-      } else if list.isEmpty && !(tab == .problems && !model.signInProblems.isEmpty) {
+      } else if list.isEmpty && !(tab == .problems && scopedItems.any) {
         if tab == .problems && !prefs[.posts].isNarrowed(ignoringStatus: true) {
           DSEmptyState(icon: "checkmark.circle", title: "No problems", message: "Every post went out or is on schedule.",
                        actionTitle: "Show all posts") { prefs.setStatus(.posts, nil) }
@@ -165,7 +179,8 @@ struct PostsView: View {
             LazyVStack(spacing: DS.space.xs) {
               // Round 22: a channel to reconnect is one card, above the posts, however many posts wait for it.
               if tab == .problems {
-                ForEach(model.signInProblems) { item in PostizSignInCard(model: model, item: item) }
+                ForEach(scopedItems.signIn) { item in PostizSignInCard(model: model, item: item) }
+                ForEach(scopedItems.stubborn) { item in PostizKeepsFailingCard(model: model, item: item) }
               }
               ForEach(groups) { g in
                 PostGroupCard(model: model, group: g, ordered: ordered, compact: compact, problems: tab == .problems,

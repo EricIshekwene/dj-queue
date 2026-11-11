@@ -127,6 +127,7 @@ struct MenuBarState {
   var problems: [PlatformPost]
   /// Round 22: channels to reconnect in Postiz (one each), counted with the problems.
   var signIn: [PostizSignInProblem] = []
+  var stubborn: [PostizKeepsFailing] = []
   /// Today's posts Postiz handles (≤ 4 shown).
   var postiz: [PlatformPost] = []
   var engineRunning: Bool
@@ -147,6 +148,7 @@ struct MenuBarState {
     due = Array(dueNow.dropFirst())
     problems = m.problems
     signIn = m.signInProblems
+    stubborn = m.keepsFailing
     postiz = m.postizToday
     engineRunning = m.engineRunning
     paused = m.settings.paused
@@ -197,9 +199,9 @@ struct MenuBarContent: View {
         if !state.postiz.isEmpty { postizList }
       }
       .padding(DS.space.md)
-      if !state.problems.isEmpty || !state.signIn.isEmpty || !state.engineRunning || state.update != nil {
+      if !state.problems.isEmpty || !state.signIn.isEmpty || !state.stubborn.isEmpty || !state.engineRunning || state.update != nil {
         VStack(spacing: DS.space.xs) {
-          if !state.problems.isEmpty || !state.signIn.isEmpty { problemsRow }
+          if !state.problems.isEmpty || !state.signIn.isEmpty || !state.stubborn.isEmpty { problemsRow }
           if !state.engineRunning { engineRow }
           if let u = state.update { updateRow(u) }
         }
@@ -392,7 +394,7 @@ struct MenuBarContent: View {
   // MARK: Attention rows
 
   private var problemsRow: some View {
-    let n = state.problems.count + state.signIn.count
+    let n = state.problems.count + state.signIn.count + state.stubborn.count
     return Button {
       WindowManager.shared.showMain(screen: .posts)
       model.reviewProblems()

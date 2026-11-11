@@ -40,7 +40,7 @@ import Testing
 
   static let mediaMessages = ["Media upload expired", "The media file could not be retrieved", "Failed to fetch media from URL: 404",
                               "Upload URL is invalid or expired", "File not found", "Could not download the file from the provided URL",
-                              "media not found", "The uploaded file has expired, upload it again"]
+                              "media not found", "Media URL expired", "Invalid media URL"]
 
   @Test(arguments: mediaMessages)
   func aMediaProblemRetriesOnEveryPlatform(_ m: String) {
@@ -51,10 +51,46 @@ import Testing
     }
   }
 
+  /// Review F1: a size, length, type or format problem is never "media", whatever else it says: it stays with Eric.
+  static let sizeOrFormatMessages = ["Invalid file format", "Invalid file type", "Invalid media type", "Video file is invalid",
+                                     "File too large or invalid", "Media file is invalid: aspect ratio not supported",
+                                     "Invalid video duration in uploaded file", "Invalid upload: file exceeds 4GB",
+                                     "The media file is unavailable: unsupported codec", "Upload failed: video longer than 60 seconds"]
+
+  @Test(arguments: sizeOrFormatMessages)
+  func aSizeOrFormatProblemNeverReadsAsMedia(_ m: String) {
+    #expect(!PostizService.isMediaProblem(m))
+    for p in Platform.allCases {
+      #expect(PostizService.classify(m, on: p) == .stays, "\(p.rawValue): \(m)")
+      #expect(!PostizService.retriesByItself(m, on: p))
+    }
+  }
+
+  /// Review F2: on YouTube a media or sign-in reading needs wording from before the upload; anything about its status,
+  /// processing, a response or the upload having happened may mean the video exists, so it stays with Eric.
+  @Test(arguments: ["Could not get upload status", "Failed to download response", "The caller does not have permission",
+                    "Something went wrong, refresh and try again", "The uploaded file has expired, upload it again",
+                    "Media URL expired after upload", "Processing failed: file not found"])
+  func onYouTubeAnythingAfterTheUploadStays(_ m: String) {
+    #expect(PostizService.classify(m, on: .youtube) == .stays, "\(m)")
+  }
+
+  @Test func elsewhereAnExpiredUploadIsMedia() {
+    #expect(PostizService.classify("The uploaded file has expired, upload it again", on: .tiktok) == .media)
+  }
+
+  /// Review F4: a feature that's off for the post or the account is the post's problem, never the channel's sign-in.
+  @Test(arguments: ["Comments are disabled for this account", "Duet disabled", "Stitch is disabled for this video",
+                    "Something went wrong, refresh and try again", "Session timed out, try again"])
+  func aDisabledFeatureIsNoSignIn(_ m: String) {
+    for p in Platform.allCases { #expect(PostizService.classify(m, on: p) != .signIn, "\(p.rawValue): \(m)") }
+  }
+
   static let signInMessages = [signIn, "access_token_invalid", "scope_not_authorized", "Please re-authenticate your account",
                                "Refresh token expired, reconnect the channel", "You need to log in", "Please reauthorize the app",
                                "Unauthenticated", "Request failed with status code 401", "Token expired",
-                               "Your login expired, sign in again", "Media upload failed: access token expired"]
+                               "Your login expired, sign in again", "Media upload failed: access token expired", "invalid_grant",
+                               "The channel was disabled in Postiz, reconnect it"]
 
   /// A sign-in or token "expired" is never a media problem: it's the channel's login.
   @Test(arguments: signInMessages)
@@ -262,8 +298,13 @@ import Testing
     #expect(doctor.findings.first { $0.id == "postiz.sign_in" }?.where_ == ["tiktok"])
   }
 
-  /// Three TikTok posts fail on the channel's sign-in: one item, one notification, no red failures, no attempts while
-  /// it's out, never handed to the Calendar or dropped; reconnected (the list says so), all three go out by themselves.
+  func flagTikTok(_ rig: Rig, _ on: Bool?) {
+    rig.fake.integrations = rig.fake.integrations.map { var c = $0; if c.platform == .tiktok { c.refreshNeeded = on }; return c }
+  }
+
+  /// Three TikTok posts fail on the channel's sign-in and Postiz flags the channel: one item, one notification, no red
+  /// failures, no attempts while it's out, never handed to the Calendar or dropped; reconnected (the list says so), all
+  /// three go out by themselves, the stagger gap apart.
   @Test func aSignInOutageIsOneItemThenEveryPostResumes() throws {
     let rig = try settled(3, [.tiktok, .x])
     let tts = try rig.f.posts(.tiktok).sorted { $0.scheduledAt < $1.scheduledAt }
@@ -272,6 +313,7 @@ import Testing
       let j = try #require(try rig.job(p))
       rig.fake.fail(j.postizId!, error: Self.signIn)
     }
+    flagTikTok(rig, true)
     rig.f.clock.set(tts[0].scheduledAt.addingTimeInterval(60))
     rig.tick(3)
     let creates = rig.fake.calls("POST posts").count
@@ -285,44 +327,48 @@ import Testing
       #expect(try rig.service.displayState(for: rig.store.post(id: p.id)!)
               == .retrying(PostizService.signInBadge, line: "Retrying once TikTok is reconnected in Postiz"))
     }
-    // Hours out: still waiting, nothing made, nothing sent.
+    // A day and more out, the list still flagging it: nothing made or sent, no per-post alert, nothing handed over or
+    // dropped, still the one item.
     rig.f.clock.advance(5 * 3600)
     rig.tick(2)
-    #expect(try rig.store.posts(where: "platform='tiktok'").count == 3 && rig.fake.calls("POST posts").count == creates)
-    // A day and more out (one timed try went to Postiz meanwhile): no per-post alert, nothing handed over or dropped,
-    // still the one item.
     rig.f.clock.advance(26 * 3600)
     rig.tick(2)
-    #expect(rig.fake.calls("POST posts").count == creates + 1)
+    #expect(try rig.store.posts(where: "platform='tiktok'").count == 3 && rig.fake.calls("POST posts").count == creates)
     #expect(notes(rig, "postiz.retryWaits").isEmpty && notes(rig, "postiz.signIn:tiktok:").count == 1)
     #expect(try rig.service.signInProblems().count == 1 && r8.problems(rig).isEmpty)
-    let waiting = try rig.store.posts(where: "platform='tiktok' AND kind='retry'").filter { try rig.job($0) == nil }
-    #expect(waiting.count == 2)
-    for a in waiting {
-      #expect(try rig.service.displayState(for: a) == .retrying(PostizService.signInBadge, line: "Retrying once TikTok is reconnected in Postiz"))
-      #expect(a.state != .overdue && a.errorMessage == nil)
-    }
-    // The list says it needs a refresh, then that it's fine again: reconnected. Everything goes out by itself.
-    func flag(_ on: Bool) throws {
-      rig.fake.integrations = rig.fake.integrations.map { var c = $0; if c.platform == .tiktok { c.refreshNeeded = on }; return c }
-      _ = try rig.service.channels()
-      rig.tick()
-    }
-    try flag(true)
     #expect(try rig.service.signInWait(.tiktok)?.flagged == true)
-    #expect(rig.fake.calls("POST posts").count == creates + 1)
-    try flag(false)
-    rig.tick(2)
+    // Reconnected: the list says it's fine. Everything goes out by itself, the stagger gap apart.
+    flagTikTok(rig, false)
+    _ = try rig.service.channels()
+    rig.tick(3)
     #expect(try rig.service.signInWait(.tiktok) == nil && rig.service.signInProblems().isEmpty)
-    let attempts = try rig.store.posts(where: "platform='tiktok' AND kind='retry'")
+    let attempts = try rig.store.posts(where: "platform='tiktok' AND kind='retry'").sorted { $0.scheduledAt < $1.scheduledAt }
     #expect(attempts.count == 3)
     #expect(try attempts.allSatisfy { try rig.job($0)?.phase == .live })
     #expect(rig.fake.calls("POST posts").count == creates + 3)
+    let gap = Double(try rig.store.settings().retryStaggerHours) * 3600
+    #expect(zip(attempts, attempts.dropFirst()).allSatisfy { $1.scheduledAt.timeIntervalSince($0.scheduledAt) >= gap - 1 })
     #expect(notes(rig, "postiz.signIn:tiktok:").count == 1)
     #expect(try rig.invariants().isEmpty)
   }
 
-  /// No word from the channel list: one post tries again every six hours; once one goes out, the rest follow.
+  /// Review F4: a sign-in error while the channel list says the channel is fine waits only until the list is read
+  /// again; then the failure goes back to its usual retry.
+  @Test func aSignInWaitEndsWhenTheListShowsTheChannelHealthy() throws {
+    let rig = try settled(1, [.tiktok])
+    let tt = try post(rig, .tiktok)
+    try fail(rig, tt, Self.signIn)
+    #expect(try rig.service.signInWait(.tiktok) != nil && r8.attempts(rig, tt).count == 1)
+    rig.f.clock.advance(40 * 60)  // the list is read every 30 minutes during a wait
+    rig.tick(2)
+    #expect(try rig.service.signInWait(.tiktok) == nil && rig.service.signInProblems().isEmpty)
+    rig.tick(2)
+    let a = try #require(try r8.attempts(rig, tt).last)
+    #expect(try a.kind == .retry && rig.job(a)?.phase == .live)
+  }
+
+  /// No word from the channel list (it can't be read): one post tries again every six hours; once one goes out, the rest
+  /// follow.
   @Test func withNoWordFromTheListOnePostTriesEverySixHours() throws {
     let rig = try settled(2, [.tiktok])
     let tts = try rig.f.posts(.tiktok).sorted { $0.scheduledAt < $1.scheduledAt }
@@ -330,6 +376,7 @@ import Testing
       let j = try #require(try rig.job(p))
       rig.fake.fail(j.postizId!, error: Self.signIn)
     }
+    rig.fake.failNext["GET integrations"] = Array(repeating: 500, count: 200)
     rig.f.clock.set(tts[0].scheduledAt.addingTimeInterval(60))
     rig.tick(3)
     let creates = rig.fake.createCount
@@ -346,6 +393,35 @@ import Testing
     rig.tick(2)
     #expect(rig.fake.createCount == creates + 2)
     #expect(try rig.service.signInProblems().isEmpty)
+  }
+
+  /// Review F4: a refusal at create that reads as sign-in is the channel's only when the list (read again then) flags
+  /// the channel; otherwise it's the post's own refusal, and the platform's other posts aren't held.
+  @Test func aCreateRefusalIsASignInWaitOnlyWhenTheListAgrees() throws {
+    let rig = try settled(1, [.x, .tiktok, .instagram, .threads]) { s in
+      for p in [Platform.tiktok, .instagram, .threads] { s.publishing.publishers[p] = .manual }
+    }
+    let tt = try post(rig, .tiktok), ig = try post(rig, .instagram), th = try post(rig, .threads)
+    let expired = "Your access token expired, reconnect the account"
+    // The list says TikTok is fine: the post's own refusal, to the Calendar as before; nothing else on TikTok waits.
+    rig.fake.createRefusals = [expired]
+    try rig.f.updateSettings { $0.publishing.publishers[.tiktok] = .postiz }
+    rig.tick()
+    #expect(try rig.store.finalPostizJob(postId: tt.id)?.closeReason == .rejected)
+    #expect(try rig.service.signInWait(.tiktok) == nil && rig.service.signInProblems().isEmpty)
+    // Postiz flags Instagram: the post waits for it, and the platform shows one sign-in item.
+    rig.fake.integrations = rig.fake.integrations.map { var c = $0; if c.platform == .instagram { c.refreshNeeded = true }; return c }
+    rig.fake.createRefusals = [expired]
+    try rig.f.updateSettings { $0.publishing.publishers[.instagram] = .postiz }
+    rig.tick()
+    #expect(try rig.store.finalPostizJob(postId: ig.id) == nil && rig.job(ig) == nil)
+    #expect(try rig.service.signInProblems().map(\.platform) == [.instagram])
+    // "Comments are disabled" is the post's problem, never the channel's sign-in.
+    rig.fake.createRefusals = ["Comments are disabled for this account"]
+    try rig.f.updateSettings { $0.publishing.publishers[.threads] = .postiz }
+    rig.tick()
+    #expect(try rig.store.finalPostizJob(postId: th.id)?.closeReason == .rejected)
+    #expect(try rig.service.signInWait(.threads) == nil)
   }
 
   /// The channel list shows the channel disabled or needing a refresh before anything failed: its posts aren't sent and
@@ -384,6 +460,90 @@ import Testing
     let decoded = try JSONDecoder().decode(PostizIntegration.self, from: Data(old.utf8))
     #expect(decoded.refreshNeeded == nil && !decoded.needsSignIn)
   }
+  // MARK: Review fixes
+
+  /// Review F3: a failure an older build left (no retry promised) whose time passed long ago re-queues only if the
+  /// corrected reading says it retries, and then on the platform's next slot, not within minutes.
+  @Test func anOldFailureRequeuesOnTheNextSlotAndAVetoedOneStays() throws {
+    let rig = try settled(1, [.x, .instagram])
+    let x = try post(rig, .x), ig = try post(rig, .instagram)
+    for (p, m) in [(x, "Something went wrong"), (ig, "Invalid file format")] {
+      let j = try #require(try rig.job(p))
+      rig.fake.fail(j.postizId!, error: m)
+    }
+    rig.f.clock.set(rig.f.at(Self.monday, "23:30"))
+    try rig.f.updateSettings { $0.paused = true }
+    rig.tick(2)
+    var r = try rig.service.autoRetries(x)  // as an older build left it: no promise
+    r.failedPostId = nil
+    r.nextRetryAt = nil
+    try rig.store.setKV(PostizService.autoRetryKey(x), r)
+    rig.f.clock.advance(3 * 86400)
+    try rig.f.updateSettings { $0.paused = false }
+    let now = rig.f.clock.now
+    rig.tick(2)
+    let a = try #require(try r8.attempts(rig, x).last)
+    #expect(a.kind == .retry && a.scheduledAt >= now.addingTimeInterval(3600))
+    #expect(Sched.clock(a.scheduledAt, try rig.store.settings()) == "17:00")  // X's slot
+    #expect(try r8.attempts(rig, ig).count == 1 && r8.problems(rig) == [ig.id])
+  }
+
+  /// Review F5: the same error for a week keeps retrying but shows one calm item; a new error starts the week again.
+  @Test func aRetryFailingAWeekWithTheSameErrorShowsOneCalmItem() throws {
+    let rig = try settled(1, [.x])
+    let x = try post(rig, .x)
+    try fail(rig, x, "Something went wrong at the platform")
+    #expect(try rig.service.keepsFailing().isEmpty)
+    var r = try rig.service.autoRetries(x)
+    r.failingSince = rig.f.clock.now.addingTimeInterval(-8 * 86400)
+    try rig.store.setKV(PostizService.autoRetryKey(x), r)
+    rig.tick(2)
+    rig.tick(2)
+    let items = try rig.service.keepsFailing()
+    #expect(items.map(\.summary) == ["Keeps failing on X: Something went wrong at the platform"])
+    #expect(notes(rig, "postiz.keepsFailing:").count == 1)
+    #expect(try r8.problems(rig).isEmpty && rig.service.pendingAutoRetries().count == 1)  // it keeps retrying
+    let doctor = DoctorPostizTests.postiz(DoctorPostizTests.doctor(rig.store, keys: rig.keys).run())
+    #expect(doctor["postiz.auto_retry"]?.severity == .warning && doctor["postiz.auto_retry"]?.detail.contains("Keeps failing on X") == true)
+    let a = try #require(try r8.attempts(rig, x).last)
+    try fail(rig, a, "A different error")
+    #expect(try rig.service.keepsFailing().isEmpty)
+  }
+
+  /// Review F6: posts whose time passed while the channel waited go out the stagger gap apart, not within minutes.
+  @Test func afterAnOutageThePostsThatWaitedKeepTheStaggerGap() throws {
+    let rig = try Rig(3, platforms: [.tiktok])
+    flagTikTok(rig, true)
+    _ = try rig.service.channels()
+    rig.settle()
+    let tts = try rig.f.posts(.tiktok)
+    #expect(try tts.count == 3 && tts.allSatisfy { try rig.job($0) == nil })
+    rig.f.clock.set(rig.f.at("2026-11-05", "12:00"))
+    rig.tick()
+    #expect(try rig.store.posts(where: "platform='tiktok' AND state='overdue'").isEmpty)
+    flagTikTok(rig, false)
+    _ = try rig.service.channels()
+    rig.tick(2)
+    let dates = try tts.map { try #require(try rig.job($0)).remoteDate }.sorted()
+    let gap = Double(try rig.store.settings().retryStaggerHours) * 3600
+    #expect(dates.count == 3 && zip(dates, dates.dropFirst()).allSatisfy { $1.timeIntervalSince($0) >= gap - 1 })
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  /// Review F7: a post Postiz already refused stays manual, and Post now says so.
+  @Test func postNowOnAPostPostizRefusedStaysByHand() throws {
+    let rig = try settled(1, [.x, .tiktok]) { $0.publishing.publishers[.tiktok] = .manual }
+    let tt = try post(rig, .tiktok)
+    rig.fake.createRefusals = ["Caption has too many hashtags"]
+    try rig.f.updateSettings { $0.publishing.publishers[.tiktok] = .postiz }
+    rig.tick()
+    #expect(try rig.store.finalPostizJob(postId: tt.id)?.closeReason == .rejected)
+    let actions = PostActions(store: rig.store)
+    #expect(try !actions.postNowGoesThroughPostiz(rig.store.post(id: tt.id)!))
+    try actions.postNow(postId: tt.id)
+    #expect(try rig.store.history(postId: tt.id).last?.note == "post now")
+  }
+
   // MARK: R7
 
   /// Post now on a platform set to Postiz sends it through Postiz at the soonest time, never to the Calendar by hand: the

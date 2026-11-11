@@ -283,13 +283,15 @@ func run() throws -> Int32 {
     let today = try actions.dueToday(now: now)
     let problems = try actions.problems()
     let signIn = try PostizService(store: store).signInProblems()
+    let stubborn = try PostizService(store: store).keepsFailing()
     print("DJ Queue · \(fmt(now, settings, "EEE d MMM yyyy HH:mm")) (\(settings.timeZone))")
     let waiting = try planner.schedulable(settings).count
     print("Calendar   \(StageWording.scheduledThrough(rw.scheduledThrough, settings: settings))\(PostAtCommand.statusNote(store)) · Queue \(waiting) waiting")
     print("Stages     Score \(try queue.toScore().count) · Edit \(try queue.needsEdit().count) · Queue \(waiting) · about \(rw.totalDays) d of clips left")
     let byState = Dictionary(grouping: today, by: \.state).map { "\($0.value.count) \($0.key.displayName.lowercased())" }.sorted()
     print("Today      \(today.count) post\(today.count == 1 ? "" : "s")\(byState.isEmpty ? "" : " (" + byState.joined(separator: ", ") + ")")")
-    print("Problems   \(problems.count + signIn.count)\(signIn.isEmpty ? "" : " (" + signIn.map(\.summary).joined(separator: "; ") + ")")")
+    let items = signIn.map(\.summary) + stubborn.map(\.summary)
+    print("Problems   \(problems.count + items.count)\(items.isEmpty ? "" : " (" + items.joined(separator: "; ") + ")")")
     let hb = try store.lastHeartbeat()
     let paused = settings.paused ? "ALL" : (settings.pausedPlatforms.isEmpty ? "no" : settings.pausedPlatforms.map(\.displayName).sorted().joined(separator: ", "))
     print("Engine     \(hb.map { "last heartbeat \(Int(now.timeIntervalSince($0.at) / 60)) min ago" } ?? "never ran") · paused: \(paused)")
@@ -322,7 +324,10 @@ func run() throws -> Int32 {
       print("Problems")
       // Round 22: a channel whose sign-in broke is one line, however many posts wait for it.
       for item in try PostizService(store: store).signInProblems() {
-        print("  \(item.summary) — \(PostizSignInProblem.howItWorks.replacingOccurrences(of: " Nothing to do here.", with: ""))")
+        print("  \(item.summary) — \(PostizSignInProblem.howItWorks)")
+      }
+      for item in try PostizService(store: store).keepsFailing() {
+        print("  \(item.summary) — it keeps retrying by itself (post \(short(item.postId)))")
       }
       printPosts(store, try actions.problems(), settings)
     } else {

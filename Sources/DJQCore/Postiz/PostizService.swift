@@ -511,7 +511,16 @@ public final class PostizService: @unchecked Sendable {
     let earliest = now.addingTimeInterval(Self.leadTime)
     var d = scheduledAt >= earliest ? scheduledAt : Date(timeIntervalSince1970: (earliest.timeIntervalSince1970 / 60).rounded(.up) * 60)
     d = YouTubeWindow.clear(d, platform)
-    let taken = Set(try store.openPostizJobs().filter { $0.integrationId == integrationId }.map { Int($0.remoteDate.timeIntervalSince1970 / 60) })
+    let jobs = try store.openPostizJobs().filter { $0.integrationId == integrationId }
+    // Round 22: just after a sign-in wait, posts whose time passed meanwhile keep the stagger gap from the channel's
+    // other posts in Postiz (the burst after an outage), instead of all going out within minutes.
+    if scheduledAt < earliest, try signInClearedRecently(platform) {
+      let gap = max(1, try store.settings().retryStaggerHours) * 3600
+      while let c = jobs.first(where: { abs($0.remoteDate.timeIntervalSince(d)) < gap - 1 }) {
+        d = YouTubeWindow.clear(c.remoteDate.addingTimeInterval(gap), platform)
+      }
+    }
+    let taken = Set(jobs.map { Int($0.remoteDate.timeIntervalSince1970 / 60) })
     while taken.contains(Int(d.timeIntervalSince1970 / 60)) { d = YouTubeWindow.clear(d.addingTimeInterval(60), platform) }
     return d
   }
@@ -633,8 +642,11 @@ public final class PostizService: @unchecked Sendable {
         try store.logEvent("postiz", "\(p.platform.displayName): Postiz couldn't use the media uploaded earlier (\(m)) — uploading it again on the next pass",
                            videoId: p.videoId, postId: p.id)
         return .waiting
-      case .validation(let m) where Self.classify(m, on: p.platform) == .signIn:
-        // Round 22 (R5): the channel's sign-in. The post waits for the channel; it never falls back to Manual.
+      case .validation(let m) where Self.classify(m, on: p.platform) == .signIn
+                                    && (try? channels(refresh: true, settings: settings))?.first(where: { $0.id == integrationId })?.needsSignIn == true:
+        // Round 22 (R5): a refusal that reads as sign-in, and the channel list (read again now) agrees. The post waits for
+        // the channel; it never falls back to Manual. When the list says the channel is fine, it's the post's own
+        // problem: refused as usual (below), so one misread post never holds a whole platform.
         try store.closePostizJob(id: job.id, reason: .interrupted, note: "the channel needs signing in: \(m)")
         try noteSignInFailure(p.platform, message: m)
         try store.logEvent("postiz", "\(p.platform.displayName): Postiz says the channel needs signing in again (\(m)) — its posts wait for it",

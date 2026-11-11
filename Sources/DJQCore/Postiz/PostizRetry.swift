@@ -22,7 +22,25 @@ public struct PostizAutoRetries: Codable, Sendable, Hashable {
   public var tryUnused: Bool?
   /// Ticks the attempt has spent a day late with nothing stopping it, and still unsent (`maxUnsentTicks`).
   public var unsentTicks: Int?
+  /// Round 22: the error the retries keep failing with, and since when it has been that same error (`keepsFailing`).
+  public var failingWith: String?
+  public var failingSince: Date?
   public init() {}
+}
+
+/// Round 22: a retry that has failed with the same error for a week. It keeps retrying; Eric sees one calm item.
+public struct PostizKeepsFailing: Sendable, Hashable, Identifiable {
+  public var platform: Platform
+  /// The attempt or failure that carries the retry now.
+  public var postId: String
+  public var videoId: String
+  public var since: Date
+  public var reason: String
+  public var id: String { "\(videoId)#\(platform.rawValue)" }
+  /// "Keeps failing on TikTok".
+  public var title: String { "Keeps failing on \(platform.displayName)" }
+  /// "Keeps failing on TikTok: <reason>".
+  public var summary: String { "\(title): \(reason)" }
 }
 
 /// An automatic retry still to come, for every screen, Doctor and `djq postiz status`.
@@ -216,14 +234,28 @@ extension PostizService {
     + #"guidelines?|community|terms|spam\w*|flagged|bans?|banned|suspen\w*|restrict\w*|locked|deactivat\w*|terminated|"#
     + #"insufficient|credits?|upgrade\w*|subscri\w*|in your (country|region))\b"#
   /// Round 22: Postiz couldn't get the media (its link expired, the file is gone). Both a media word and a "gone" word.
+  /// "Invalid" or "unavailable" alone is no "gone" word (an invalid file is a format problem): only an invalid url or link.
   static let mediaWords = #"\b(media|file|files|url|urls|uploads?|uploaded|uploading|downloads?|downloaded|downloading|fetch\w*|attachments?)\b"#
-  static let mediaGone = #"\b(expired|not found|404|invalid|unavailable|no longer (exists|available)|"#
+  static let mediaGone = #"\b(expired|not found|404|no longer (exists|available)|invalid (media |file |upload )?(url|link)|(url|link) (is )?invalid|"#
     + #"could ?n[o']?t be (retrieved|fetched|found|downloaded|accessed)|"#
     + #"(could ?n[o']?t|can ?n[o']?t|unable to|failed to) (retrieve|fetch|download|access|pull|get))\b"#
-  /// Round 22: the channel's sign-in. A token or session that expired is this, never a media problem.
-  static let signInWords = #"\b((re|un)?-?auth(enticat|oriz|oris)\w*|oauth\w*|access ?tokens?|refresh ?tokens?|tokens?|credentials?|"#
-    + #"permissions?|scopes?|log[- ]?in|logged out|sign[- ]?in|signed out|refresh\w*|re ?connect\w*|re ?link\w*|"#
-    + #"disconnected|not connected|sessions?|401|unauthori[sz]ed|disabled)\b"#
+  /// On YouTube only Postiz failing to fetch the source media counts, never a step that may come after the upload.
+  static let youTubeMediaWords = #"\b(media|file|files|url|urls)\b"#
+  static let youTubeAfterUpload = #"\b((upload|processing|video|its) status|status of the (video|upload)|(get|check|poll\w*|read) (the )?status|"#
+    + #"processing|response|video ?id|after (the )?upload|uploaded|insert\w*|publish\w*|thumbnails?|playlist\w*)\b"#
+  /// Round 22: what the same post would hit again whatever its media: size, length, format, type. Read before the media
+  /// and sign-in readings, so "invalid file format" or "file exceeds 4GB" never retries.
+  static let sizeOrFormat = #"\b(too (long|short|large|big|small)|longer|shorter|larger|bigger|smaller|sizes?|duration|length|"#
+    + #"maximum|minimum|max|over the limit|\d+ ?(kb|mb|gb|tb)|413|415|422|format\w*|codecs?|aspect ratio|resolution|"#
+    + #"frame rate|bitrate|unsupported|not supported|hashtags?|mismatch|(file|media|mime|content|video|image) ?types?)\b|"#
+    + #"\bexceeds\b(?!\s+(the |your )?(rate|quota|daily|request|api))|\b(file|video|media|image|post|caption|text|title|upload)s? exceeded\b"#
+  /// Round 22: the channel's sign-in, read narrowly: a token, OAuth, re-authorizing, reconnecting, an expired login, a
+  /// channel Postiz disabled. Never a bare "permission", "refresh", "session" or "disabled" ("comments are disabled").
+  static let signInWords = #"\b((access|refresh|auth|bearer|oauth) ?tokens?|tokens? (has |is |was )?(expired|invalid|revoked|missing)|"#
+    + #"invalid (grant|token)|oauth\w*|re ?auth(enticat|oriz|oris)\w*|unauthenticated|not authenticated|unauthori[sz]ed|401|"#
+    + #"re ?connect\w*|re ?link\w*|disconnected|not connected|logged out|signed out|"#
+    + #"(log ?in|sign ?in|session|credentials?) (has |is )?(expired|required|invalid|revoked)|(log|sign) ?in again|"#
+    + #"(need|needs|have|has) to (log|sign) ?in|scopes? not authori[sz]ed|refresh ?needed|channel (is |was )?disabled)\b"#
   /// On YouTube these may come after the video exists (the thumbnail step, "we uploaded your video but …").
   static let youTubeMayExist = #"\b(thumbnails?|uploaded (your |the )?video|video (was |has been )?uploaded)\b"#
 
@@ -241,11 +273,20 @@ extension PostizService {
     }
   }
 
-  /// Postiz couldn't fetch the post's media: expired, not found, a 404. A sign-in word ("token expired") rules it out.
+  /// Postiz couldn't fetch the post's media: expired, not found, a 404. A sign-in word ("token expired") or a size or
+  /// format word rules it out.
   public static func isMediaProblem(_ message: String) -> Bool {
     let m = normalized(message)
     func has(_ re: String) -> Bool { m.range(of: re, options: .regularExpression) != nil }
-    return has(mediaWords) && has(mediaGone) && !has(signInWords)
+    return has(mediaWords) && has(mediaGone) && !has(signInWords) && !has(sizeOrFormat)
+  }
+
+  /// On YouTube: only Postiz failing to fetch the source media (no video was made), never a status, processing or
+  /// response step that may come after the upload.
+  static func isYouTubeSourceMediaProblem(_ message: String) -> Bool {
+    let m = normalized(message)
+    func has(_ re: String) -> Bool { m.range(of: re, options: .regularExpression) != nil }
+    return isMediaProblem(message) && has(youTubeMediaWords) && !has(youTubeAfterUpload) && !has(youTubeMayExist)
   }
 
   /// The channel's sign-in broke: auth, a token, a session, reconnect, an expired login.
@@ -267,10 +308,10 @@ extension PostizService {
     if isCopyright(message) { return .copyright }
     let m = normalized(message)
     func has(_ re: String) -> Bool { m.range(of: re, options: .regularExpression) != nil }
-    if has(alreadyThere) { return .stays }
+    if has(alreadyThere) || has(sizeOrFormat) { return .stays }
     let policy = has(policyWords)
-    let mayExist = platform == .youtube && has(youTubeMayExist)
-    if !policy, !mayExist, isMediaProblem(message) { return .media }
+    let mayExist = platform == .youtube && (has(youTubeMayExist) || has(youTubeAfterUpload))
+    if !policy, platform == .youtube ? isYouTubeSourceMediaProblem(message) : isMediaProblem(message) { return .media }
     if !policy, !mayExist, isSignInProblem(message) { return .signIn }
     if isVetoed(message) { return .stays }
     guard platform == .youtube else { return .retries }
@@ -319,6 +360,10 @@ extension PostizService {
     r.unsentTicks = nil
     r.nextRetryAt = PostizRetrySchedule.next(after: failedAt, retry: r.count + 1, platform: p.platform, settings: try store.settings(),
                                              quota: Self.isYouTubeQuota(message))
+    if r.failingWith.map(Self.normalized) != Self.normalized(message) || r.failingSince == nil {
+      r.failingWith = message
+      r.failingSince = failedAt
+    }
     try store.setKV(Self.autoRetryKey(p), r)
   }
 
@@ -451,6 +496,15 @@ extension PostizService {
     let message = job.lastError ?? ""
     if try autoRetries(p).failedPostId != p.id {  // failed before this build, under an older one, or one that gave up at five
       try recordFailure(p, at: min(job.remoteDate, job.closedAt ?? now), message: message)
+      // Its time passed long ago: the platform's next slot (YouTube's after the next reset for the quota), staggered
+      // below like any retry, so failures an older build left don't all go out at once.
+      var r = try autoRetries(p)
+      if let due = r.nextRetryAt, due < now {
+        r.nextRetryAt = p.platform == .youtube && Self.isYouTubeQuota(message)
+          ? PostizRetrySchedule.youTubeQuota(after: now, settings: settings).retry
+          : PostizRetrySchedule.slot(p.platform, notBefore: now.addingTimeInterval(PostizRetrySchedule.slotGap), settings: settings)
+        try store.setKV(Self.autoRetryKey(p), r)
+      }
     }
     guard decision == .go else { return false }
     if Self.endsInLegacyCapNote(p.errorMessage), let m = p.errorMessage {
@@ -474,6 +528,30 @@ extension PostizService {
 
   /// A day past its time, a retry stops being quiet.
   public static let stuckAfter: TimeInterval = 86400
+  /// Round 22: failing with the same error this long, a retry keeps going but shows one calm item.
+  public static let keepsFailingAfter: TimeInterval = 7 * 86400
+
+  /// Retries that have failed with the same error (not YouTube's quota) for `keepsFailingAfter`: one item each for Eric,
+  /// "Keeps failing on TikTok: <reason>". They keep retrying.
+  public func keepsFailing() throws -> [PostizKeepsFailing] {
+    guard try !openRetryRecords().isEmpty else { return [] }
+    let settings = try store.settings()
+    return try keepsFailing(settings: settings, router: router(settings))
+  }
+
+  func keepsFailing(settings: Settings, router: PostizRouter) throws -> [PostizKeepsFailing] {
+    var seen = Set<String>(), out: [PostizKeepsFailing] = []
+    for retry in try pendingAutoRetries(settings: settings, router: router) {
+      let p = retry.post
+      guard seen.insert(Self.autoRetryKey(p)).inserted else { continue }
+      let r = try autoRetries(p)
+      guard let why = r.failingWith, let since = r.failingSince, !Self.isYouTubeQuota(why),
+            now.timeIntervalSince(since) >= Self.keepsFailingAfter else { continue }
+      out.append(PostizKeepsFailing(platform: p.platform, postId: p.id, videoId: p.videoId, since: since,
+                                    reason: why.components(separatedBy: " — ").first ?? why))
+    }
+    return out
+  }
   /// A day late with nothing stopping it, an attempt gets this many more ticks (about an hour awake) before it's handed
   /// to Eric. Wall time alone can't tell: a Mac that slept three days wakes with every attempt "a day late".
   public static let maxUnsentTicks = 60
@@ -494,6 +572,12 @@ extension PostizService {
   /// does). An attempt nothing stops that still can't reach Postiz after a day (the clip went invalid, Postiz won't take
   /// it) goes to the Calendar as a normal post: it stops being a retry, so it can go overdue.
   func watchStuckRetries(settings: Settings, router: PostizRouter) throws {
+    for item in try keepsFailing(settings: settings, router: router) {
+      let tag = try store.video(id: item.videoId)?.tag ?? item.videoId
+      _ = notify(AppNotification(key: "postiz.keepsFailing:\(item.videoId)#\(item.platform.rawValue):\(Int(item.since.timeIntervalSince1970))",
+                                 title: item.title, body: "\(tag): \(item.reason). It keeps retrying by itself.", critical: false,
+                                 actions: [.open], postId: item.postId, videoId: item.videoId))
+    }
     for retry in try pendingAutoRetries(settings: settings, router: router) {
       let p = retry.post
       let due = try autoRetries(p).nextRetryAt ?? p.scheduledAt

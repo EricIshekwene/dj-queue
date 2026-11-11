@@ -41,7 +41,7 @@ public struct PostizSignInProblem: Sendable, Hashable, Identifiable {
   /// "Reconnect TikTok in Postiz · 3 posts wait".
   public var summary: String { "\(title) · \(waitingText)" }
   /// The "how it works" line under it.
-  public static let howItWorks = "They go out by themselves once the channel works again. Nothing to do here."
+  public static let howItWorks = "They go out by themselves once you reconnect it."
 }
 
 extension PostizService {
@@ -53,6 +53,14 @@ extension PostizService {
   public static let signInChannelCheck: TimeInterval = 30 * 60
 
   static func signInKey(_ p: Platform) -> String { signInPrefix + p.rawValue }
+  /// When the platform's last sign-in wait ended: for a day after, posts whose time passed while it waited go out the
+  /// stagger gap apart (`remoteDate`), not all within minutes.
+  static func signInClearedKey(_ p: Platform) -> String { "postiz.signInCleared." + p.rawValue }
+
+  func signInClearedRecently(_ p: Platform) throws -> Bool {
+    guard let at: Date = try store.kv(Self.signInClearedKey(p)) else { return false }
+    return now.timeIntervalSince(at) < 86400
+  }
 
   public func signInWait(_ p: Platform) throws -> PostizSignInWait? { try store.kv(Self.signInKey(p)) }
 
@@ -97,6 +105,7 @@ extension PostizService {
   func clearSignIn(_ p: Platform, why: String) throws {
     guard try signInWait(p) != nil else { return }
     try store.db.run("DELETE FROM kv WHERE key=?", [Self.signInKey(p)])
+    try store.setKV(Self.signInClearedKey(p), now)
     try store.logEvent("postiz", "\(p.displayName) works again in Postiz (\(why)): its waiting posts go out by themselves")
   }
 
@@ -118,7 +127,9 @@ extension PostizService {
           w!.flagged = true
           try store.setKV(Self.signInKey(p), w!)
         }
-      } else if w?.flagged == true {
+      } else if let ww = w, ww.flagged || listFetched(after: ww.lastTry) {
+        // The list shows the channel healthy: after showing it flagged, or read after the last sign-in error. Its posts
+        // go back to the usual retries (whose backoff paces them), so a wait never outlives a healthy channel.
         try clearSignIn(p, why: "the channel list shows it connected")
         w = nil
       }
@@ -127,6 +138,12 @@ extension PostizService {
                                  body: "\(item.waiting > 0 ? item.waitingText : "Its posts wait"). They go out by themselves once the channel works again.",
                                  critical: false, actions: [.open]))
     }
+  }
+
+  /// The cached channel list was read after `date`.
+  func listFetched(after date: Date) -> Bool {
+    guard let c: PostizChannelCache = try? store.kv(PostizChannelCache.kvKey) else { return false }
+    return c.fetchedAt > date
   }
 
   func signInProblem(_ p: Platform, _ w: PostizSignInWait, router: PostizRouter) throws -> PostizSignInProblem? {

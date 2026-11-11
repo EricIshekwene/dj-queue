@@ -72,3 +72,31 @@ struct PostizSignInCard: View {
     .accessibilityLabel(item.summary)
   }
 }
+
+/// Round 22: a retry that has failed with the same error for a week. It keeps retrying by itself (no cap); this calm
+/// card says so once, with the reason, and opens the post. No red: nothing is lost.
+struct PostizKeepsFailingCard: View {
+  let model: AppModel
+  let item: PostizKeepsFailing
+
+  var body: some View {
+    DSCard(variant: .outline, padding: DS.space.sm) {
+      HStack(alignment: .center, spacing: DS.space.sm) {
+        DSPlatformIcon(platform: item.platform, size: 32)
+        VStack(alignment: .leading, spacing: 4) {
+          Text("\(item.title) · \(model.video(item.videoId).map(model.displayName) ?? item.videoId)")
+            .font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).lineLimit(1)
+          Text("\(item.reason). Since \(Fmt.day(item.since, tz: model.tz, style: "EEE d MMM")), and it keeps retrying by itself.")
+            .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        DSButton("Show post", variant: .outline, size: .sm, tooltip: "Open its details and attempt history") {
+          dsWithAnimation { model.postsSelection = item.postId }
+        }
+      }
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(item.summary)
+  }
+}

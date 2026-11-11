@@ -73,6 +73,8 @@ final class AppModel {
   var problems: [PlatformPost] = []
   /// Round 22: one item per platform whose Postiz channel needs signing in again (its posts wait, they aren't problems).
   var signInProblems: [PostizSignInProblem] = []
+  /// Round 22: retries failing with the same error for a week (they keep retrying; one calm item each).
+  var keepsFailing: [PostizKeepsFailing] = []
   var dueToday: [PlatformPost] = []
   var runway = Runway(approvedDays: 0, readyDays: 0, totalDays: 0)
   var lastHeartbeat: Heartbeat?
@@ -342,6 +344,7 @@ final class AppModel {
     var posts: [PlatformPost] = []
     var problems: [PlatformPost] = []
     var signInProblems: [PostizSignInProblem] = []
+    var keepsFailing: [PostizKeepsFailing] = []
     var dueToday: [PlatformPost] = []
     var runway = Runway(approvedDays: 0, readyDays: 0, totalDays: 0)
     var lastHeartbeat: Heartbeat?
@@ -428,6 +431,7 @@ final class AppModel {
       l.schedulable = try Planner(store: store).schedulable(l.settings)
       l.postiz = try PostizLoaded.load(store: store, now: now, service: postiz, hasKey: hasKey, posts: l.posts)
       l.signInProblems = try postiz.signInProblems()
+      l.keepsFailing = try postiz.keepsFailing()
     } catch {
       l.error = "\(error)"
     }
@@ -476,6 +480,7 @@ final class AppModel {
     postsBySlot = Dictionary(grouping: posts.filter { $0.planSlotId != nil }, by: { $0.planSlotId! })
     problems = l.problems
     if signInProblems != l.signInProblems { signInProblems = l.signInProblems }
+    if keepsFailing != l.keepsFailing { keepsFailing = l.keepsFailing }
     dueToday = l.dueToday
     runway = l.runway
     lastHeartbeat = l.lastHeartbeat
@@ -633,14 +638,14 @@ final class AppModel {
 
   var problemSummary: (title: String, detail: String) {
     let n = attentionCount
-    let parts = signInProblems.map(\.title) + problems.map { p in
+    let parts = signInProblems.map(\.title) + keepsFailing.map(\.title) + problems.map { p in
       postizState(p) == .unconfirmed ? "\(p.platform.displayName) unconfirmed in Postiz" : "\(p.platform.displayName) \(p.state == .copyrightBlocked || p.state == .copyrightMuted ? "© \(p.state == .copyrightMuted ? "muted" : "blocked")" : p.state.displayName.lowercased())"
     }
     return ("\(n) need\(n == 1 ? "s" : "") attention", parts.prefix(3).joined(separator: " · ") + (n > 3 ? " · …" : ""))
   }
 
   /// Everything that needs Eric: problem posts, plus one item per channel to reconnect (round 22).
-  var attentionCount: Int { problems.count + signInProblems.count }
+  var attentionCount: Int { problems.count + signInProblems.count + keepsFailing.count }
 
   /// Opens Postiz in the browser, where a channel is reconnected (the one action of a sign-in item).
   func openPostiz() {

@@ -30,7 +30,7 @@ extension AppModel {
     // Round 22: one calm card per channel to reconnect; its posts wait (they're not problems) and go out by themselves.
     for item in signInProblems {
       out.append(.init(id: "signin-\(item.platform.rawValue)", tone: .warning, title: item.title,
-                       message: "\(item.waitingText) · they go out by themselves once it works again", actionTitle: "Open Postiz",
+                       message: "\(item.waitingText) · they go out by themselves once you reconnect it", actionTitle: "Open Postiz",
                        action: { [weak self] in self?.openPostiz() }))
     }
     if settings.paused {

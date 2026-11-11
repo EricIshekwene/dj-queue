@@ -110,6 +110,49 @@ a reset, starts `handedToToday` over. *Why:* the publish step then sends it at n
 by the usual move rule); an earlier hand-over (a missed slot) no longer pins it to the Calendar; the "is it routed to
 Postiz" test is the settings alone, so it needs no Keychain read. `djq post-now` and the app's toast say where it goes.
 
+## Review fixes (independent review NEEDS_FIX, session-parent decisions)
+
+**D27 (F1). Size, length, type and format veto before the media reading** (`sizeOrFormat`), and "invalid" or
+"unavailable" alone is no longer a "gone" word (only an invalid url or link). *Why:* "Invalid file format" or "file
+exceeds 4GB" would otherwise retry and re-upload forever behind a calm chip; they are Eric's.
+
+**D28 (F2). On YouTube only the upload quota and Postiz failing to fetch the source media retry.** A media reading needs
+media, file or url wording and nothing about status, processing, a response, the upload having happened, insert or
+publish; sign-in needs the narrow wording (D30). *Why:* any later step may mean the video exists, and a retry would
+double-post.
+
+**D29 (F3). Failures an older build left re-queue only if the corrected reading retries, and on the platform's next
+slot.** A failure with no promise whose time passed long ago is re-timed to the next Settings slot at least an hour away
+(YouTube's quota: its slot after the next reset), then staggered by `retrySlot`. *Why:* Eric wants them posted any day or
+time, but never in a burst; on the newest backup there are no unresolved failed posts, so nothing revives there today.
+
+**D30 (F4). Sign-in is read narrowly**: tokens, OAuth, invalid_grant, re-authorize, reconnect, an expired login or
+session, 401/unauthorized, refreshNeeded, a channel disabled. Never a bare permission, refresh, session or "disabled"
+("comments are disabled"). *Why:* one misread post must never hold a whole platform.
+
+**D31 (F4). A create refused with sign-in wording is a sign-in wait only if the channel list, read again right then,
+flags the channel**; otherwise it is the post's own refusal (to the Calendar as before). **A wait clears when a list read
+after its last sign-in error shows the channel healthy.** *Why:* the list is the authority on the channel; an error alone
+can't hold the platform past the next read (30 minutes), and the failures go back to their paced retries.
+
+**D32 (F5). Seven days failing with the same error (not YouTube's quota) shows one calm item** ("Keeps failing on TikTok:
+<reason>"): a card in Posts → Problems with "Show post", counted with what needs Eric, one notification per run of the
+same error, Doctor's `postiz.auto_retry` raised to a warning, and lines in `djq posts --problems` and `djq status`. It
+keeps retrying. A different error starts the week again. *Why:* no cap (D9), but nothing permanent stays invisible.
+
+**D33 (F6). For a day after a sign-in wait ends, posts whose time passed meanwhile go to Postiz the stagger gap apart**
+(`remoteDate` spaces them from the channel's other jobs; their plan times stay). *Why:* no burst after an outage, without
+moving regular posts off their plan days.
+
+**D34 (F7). Post now says "goes to Postiz" only when Postiz will send it**: the platform is set to Postiz and the post has
+no final job and no published lineage. Otherwise it is "post now", by hand. *Why:* the publish step skips a refused or
+deleted post, so promising Postiz was wrong.
+
+**D35 (F8). Copy and scope.** The sign-in line reads "They go out by themselves once you reconnect it." The Problems chip
+counts sign-in and keeps-failing items only when they fit the search and the Platform filter. Retries stored by v0.15 at
+07:30 UTC move to 00:30 Pacific (after the reset) rather than to the Settings slot: they're already after the reset, so
+it's left as is.
+
 ## Mobbin references and what they shaped
 
 - Buffer, failed queue (red bar + "Retry now" on every card): the anti-pattern. No per-post retry button or red bar.
@@ -120,7 +163,7 @@ Postiz" test is the settings alone, so it needs no Keychain read. `djq post-now`
 
 ## Checks
 
-- `swift build`: 0 warnings. `swift test`: 1071 tests green (icon-tooltip lint included).
+- `swift build`: 0 warnings. `swift test`: 1081 tests green (icon-tooltip lint included).
 - `djq posts --problems`, `djq status`, `djq doctor --json` on a scratch copy of the newest backup (no schema change;
   counts identical). Doctor's only error there is `postiz.stuck`, from the copy's jobs never syncing (unchanged check).
 - `scripts/live-checks.sh … screens`: the r9 and r22 shots (retrying chip, inspector Details, sign-in card, menu bar) in
