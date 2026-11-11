@@ -105,7 +105,8 @@ struct CalendarDayClip: View {
           }
           Text(Fmt.day(model.dm.date(day), tz: model.tz, style: "EEE d MMM")).font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
           if let v = group.video, let label = v.photoLabel {
-            DSBadge(label, style: .outline, icon: v.isCarousel ? "square.on.square" : "photo", size: .sm)
+            DSBadge(label, style: .outline, icon: v.isCarousel ? "square.on.square" : "photo", size: .sm,
+                    help: v.isCarousel ? "A carousel of \(v.photoCount) photos — the first is the cover" : "A photo post")
               .background(ScriptAnchor("Photo mark \(v.id)"))
           }
         }

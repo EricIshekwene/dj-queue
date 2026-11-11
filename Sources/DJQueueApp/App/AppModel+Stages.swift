@@ -239,17 +239,35 @@ struct StageControl: View {
                      disabledReason: fwd) { model.stageForward([video.id]) }
       }
       if hasSetTime { clock(.sm) }
-    } else {
+    } else if size == .sm {
       HStack(spacing: 4) {
-        DSButton(model.stageBackTitle(video), icon: "chevron.left", variant: .ghost, size: size, disabledReason: back,
-                 tooltip: model.stageBackHelp(video)) { model.stageBack([video.id]) }
-        if hasForward {
-          DSButton(model.stageForwardTitle(video), trailingIcon: "chevron.right", variant: .outline, size: size, disabledReason: fwd,
-                   tooltip: model.stageForwardHelp(video)) { model.stageForward([video.id]) }
-        }
+        moves(back, fwd)
         if hasSetTime { clock(size) }
       }
       .fixedSize()
+    } else {
+      // The Single view's side panel is a stack of labelled buttons, 280 pt wide: the set time gets its own line.
+      VStack(alignment: .leading, spacing: DS.space.sm) {
+        HStack(spacing: 4) { moves(back, fwd) }.fixedSize()
+        if hasSetTime {
+          let at = model.setTime(video.id)
+          DSButton(at.map { StageWording.setFor($0, settings: model.settings) } ?? AppModel.postAtTitle, icon: at == nil ? "clock" : "clock.fill",
+                   variant: .ghost, size: size, disabledReason: model.postAtBlocker(video),
+                   tooltip: at == nil ? "Pick the exact day and minute it posts" : "Change the set time, or go back to the regular schedule") {
+            model.askPostAt([video.id])
+          }
+          .background(ScriptAnchor("Post at \(video.id)"))
+        }
+      }
+    }
+  }
+
+  @ViewBuilder private func moves(_ back: String?, _ fwd: String?) -> some View {
+    DSButton(model.stageBackTitle(video), icon: "chevron.left", variant: .ghost, size: size, disabledReason: back,
+             tooltip: model.stageBackHelp(video)) { model.stageBack([video.id]) }
+    if hasForward {
+      DSButton(model.stageForwardTitle(video), trailingIcon: "chevron.right", variant: .outline, size: size, disabledReason: fwd,
+               tooltip: model.stageForwardHelp(video)) { model.stageForward([video.id]) }
     }
   }
 

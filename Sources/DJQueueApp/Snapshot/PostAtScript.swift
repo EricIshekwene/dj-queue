@@ -207,6 +207,7 @@ enum PostAtScript {
     check("the toast says “\(StageWording.setFor(at2, settings: model.settings))” with Undo",
           model.toast?.message == StageWording.setFor(at2, settings: model.settings) && model.toast?.actionTitle == "Undo")
     check("it left Edit", !model.editList.contains { $0.id == photo.id })
+    ListPrefs.shared.setSearch(.edit, "")
     await shot("set-toast")
 
     // 5. The Calendar on that day, in every view.
@@ -319,6 +320,18 @@ enum PostAtScript {
       return 1
     }
     note("clip “\(model.displayName(clip))”, \(ClipStage.of(clip)?.displayName ?? "?")")
+
+    // The editor's header has the same clock (`EditorStageControl`), and the dialog opens over the editor.
+    model.openEditor(clip.id, in: [clip.id])
+    await wait(2500)
+    check("the editor's header has the clock, and a real click opens the dialog over the editor",
+          await click("Post at \(clip.id)") && model.postAtRequest?.videoIds == [clip.id] && model.editor?.videoId == clip.id)
+    _ = await preview()
+    await shot("editor-dialog")
+    check("a click on Cancel closes it, the editor stays and nothing is set", await finish("Post at cancel") && exact(clip.id) == nil && model.editor != nil)
+    model.closeEditor()
+    await wait(1200)
+    model.refreshNow()
     let planBefore = plan()
     let through = model.scheduledText
     model.setViewMode(.wide, for: .queue)

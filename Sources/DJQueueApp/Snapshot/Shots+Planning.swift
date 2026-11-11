@@ -101,6 +101,12 @@ extension SnapshotShots {
         m.setSelection(ids, screen: .queue)
         m.askPostAt(ids)
       },
+      c.main("post-at-dialog-editor") { m in  // from the editor's header, over the editor
+        if let v = m.queueClips.first(where: { !$0.isPhoto && ClipStage.of($0) == .queue && m.postAtBlocker($0) == nil }) {
+          m.openEditor(v.id)
+          m.askPostAt([v.id])
+        }
+      },
       c.main("calendar-day-set-time") { m in
         calendar(m, .day, anchor: m.calendarData.setTimes.values.compactMap(\.exactAt).min().map { m.dm.key($0) } ?? m.dm.addDays(m.todayKey, 1))
       },

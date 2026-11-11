@@ -61,6 +61,7 @@ struct PostAtDialog: View {
         }
         Spacer(minLength: DS.space.md)
         DSButton("Cancel", variant: .ghost, shortcut: "esc", action: s.close).keyboardShortcut(.cancelAction)
+          .background(ScriptAnchor("Post at cancel"))
         DSButton(s.primaryTitle, icon: "clock", variant: .primary, isLoading: s.busy, disabledReason: s.offReason,
                  tooltip: p.at.map { "Every platform goes out \(model.setTimeText($0))" }, shortcut: "↩", action: s.confirm)
           .keyboardShortcut(.defaultAction)
