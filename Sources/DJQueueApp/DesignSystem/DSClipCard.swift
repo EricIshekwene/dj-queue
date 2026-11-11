@@ -223,7 +223,7 @@ struct DSClipCard<Actions: View>: View {
         Text("\(s)").font(DS.type.score).foregroundStyle(DS.color.text).dsTooltip("Score \(s) — it sets the posting order")
       } else if clip.photos != nil {
         // A photo needs no score: say so quietly instead of a dash that reads as something missing.
-        Text("No score").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+        Text("No score").font(DS.type.caption).foregroundStyle(DS.color.textTertiary).lineLimit(1).fixedSize()
           .dsTooltip("Photos need no score. Without one it takes the next open day")
       } else {
         Text("—").font(DS.type.score).foregroundStyle(DS.color.textTertiary).dsTooltip("Not scored yet — score it in Score")

@@ -303,5 +303,9 @@ struct ScriptAnchor: NSViewRepresentable {
     return v
   }
 
-  func updateNSView(_ v: Mark, context: Context) {}
+  /// A name can carry state ("Photo 2 of 3"), so it follows the view.
+  func updateNSView(_ v: Mark, context: Context) {
+    let id = NSUserInterfaceItemIdentifier(Self.prefix + name)
+    if v.identifier != id { v.identifier = id }
+  }
 }

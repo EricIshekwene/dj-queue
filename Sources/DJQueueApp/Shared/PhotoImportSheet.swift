@@ -25,8 +25,17 @@ struct PhotoImportSheet: View {
                       : "Names the post in every list. You can change it in the editor.",
                     onSubmit: add)
           .background(ScriptAnchor("Import title"))
-        DSToggle("A post per photo", description: "Off: all \(n) go out together as one carousel.", isOn: $separate)
-          .background(ScriptAnchor("A post per photo"))
+        // The whole row is one button (label, description and switch), like a settings row.
+        Button { dsWithAnimation { separate.toggle() } } label: {
+          DSToggle("A post per photo", description: separate ? "On: \(n) posts, each with one photo." : "Off: all \(n) go out together as one carousel.",
+                   isOn: .constant(separate))
+            .allowsHitTesting(false)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("A post per photo")
+        .accessibilityValue(separate ? "On" : "Off")
+        .background(ScriptAnchor("A post per photo"))
         plan(n)
       }
     } footer: {

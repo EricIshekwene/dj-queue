@@ -210,6 +210,7 @@ private struct EditBulkBar: View {
     } primary: {
       DSButton("Send to Queue", variant: .primary, size: .sm,
                tooltip: "Send \(n) selected to the Queue", action: makeReady)
+        .background(ScriptAnchor("Send selected to Queue"))
     }
   }
 }
