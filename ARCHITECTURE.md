@@ -289,7 +289,7 @@ in a post; a removed photo's copy stays so undo can bring it back). Renders go t
 `Posted/Shortform/`. The file Eric picked is only read, and a symlink is imported as a copy of the file it points at. Every photo path is
 resolved from `Paths.photos` (`Store.photoURL`, `fileURL(for:)`, the render folder), never from the session row's folder, and intake puts
 that row's folder back to `Paths.photos` when it differs. Intake's manifest pass never sees the Photos session or its posts;
-`PhotoImport.checkFiles` (end of `Intake.run`) marks a post `missing` while one of its photo files is gone. Doctor: `photos.missing`.
+`PhotoImport.checkFiles` (end of `Intake.run`) marks a post `missing` while one of its photo files is gone or can't be read as a picture. Doctor: `photos.missing`. A scripted run keeps the Photos folder in its own scratch (`Paths.photosOverride`, `DJQ_PHOTOS`; `Paths.owns` counts it).
 
 **Stages (D4).** `ClipStage.of`: an unscored photo post is in Edit, never Score. `Queue.toScore` leaves photos out; `needsEdit`, `candidates`,
 `ordered` and `Store.wasInQueue` take them unscored. Queue order: unscored photos first, oldest `createdAt` first, then the existing rules
@@ -363,4 +363,15 @@ render that was replaced while its photos went up. The pure `PostizPayload.spec(
 - The YouTube row of a photo post: show it off and disabled with `PhotoRules.youtubeReason`. An edit held in memory can still be changed, but every save and every read puts the skip back.
 - `Video.isPhoto`, `photoCount`, `isCarousel`, `photoLabel`, `kindLabel`; `Settings.defaults.photoAspect`; `StageWording.backTitle/backHelp/blocker` already say "Photos have no Score stage".
 - `Render.allPaths`, `PreparedPost.allFileURLs`: every file of a photo post, for Reveal, drag-out and the Calendar's post sheet.
-- `ValidationIssue.Kind.noPhotos` → `IssueSection.photos`. `EditorModel.section(for:)` maps `.photos` to Frame for now: point it at the photos strip when that exists.
+- `ValidationIssue.Kind.noPhotos` → `IssueSection.photos` → `EditorSection.photos`: the editor scrolls to the photos strip and flashes it.
+- `PhotoTextRanges` (pure): what happens to each text's range when a photo is removed. A range after the removed photo moves down one place, a range that held it gets one shorter, a text whose only photo went moves to the nearest one left (`moved`, for the toast). `PhotoImport.remove` applies it to the stored versions when it journals (`djq`, lists); an open editor passes `journal: false` and applies the same rule to the versions it holds.
+- `PhotoImport.setPhotos(_:videoId:)`: makes a list the post had before the list again (same ids and files), for the editor's undo and redo of a list change. Refuses an empty list and a file that isn't on disk.
+
+## Round 21 additions: the screens
+
+- **Import** (`App/AppModel+Photos.swift`, `Shared/PhotoImportSheet.swift`): Add photos on Edit, ⌘K, and a drop on the Edit page all end in `AppModel.importPhotos`, which runs `PhotoImport.add` off the main thread. Several files open the in-window sheet (`model.photoImportRequest`). Nothing is sent to the Queue.
+- **Lists and previews**: a photo post draws through `DSPhotoPreview` (first photo as it posts, "Photo" / "Carousel · N", ‹ › in large previews) and never gets a player, a proxy or hover playback (`AppModel+Previews`, `requestProxies`).
+- **Photo editor** (`Editor/EditorModel+Photos.swift` and the `isPhoto` branches of the editor): the canvas is `PhotoRenderer`'s own picture of the unsaved edit, the timeline is the photos strip with text bars in photo units, each photo has its own crop, and ←/→ step photos. The clip editor's code paths are unchanged.
+- **Post at a set time** (`App/AppModel+PostAt.swift`, `Shared/PostAtDialog.swift`): `askPostAt` from the stage control's clock, the ⋯ menus, the bulk bars, ⌘K and the Calendar. The dialog previews through `BulkActions.postAtPreview` and keeps its button off until the preview for the current day and time has landed.
+- **Calendar**: set-time slots show their own time with a clock mark, sort by time, never count as one of the day's regular places, and keep their clock time when dragged to another day.
+- **Live checks**: `photo-import`, `photo-editor`, `post-at` (each with `-dark`), on sample photo posts cut from the dev clips (`SampleData.addPhotoPosts`).

@@ -307,3 +307,25 @@ fails at publish time, on a day Eric isn't looking, with the other four platform
   file is always made from the full photo. Zoomed in further on a very large photo, the canvas is softer than the file.
 - **An empty photo list (a broken row) opens in the editor** with "No photos in this post", and the to-fix chip flashes
   the strip, where the Add tile is.
+
+## Decisions made at integration (session parent)
+
+- **When a photo is removed, each text stays with its photos** (replaces "clamped only" above). A range after the
+  removed photo moves down one place, a range that held it gets one shorter, and only a text whose one photo went moves
+  to the nearest photo left, with the toast saying so. A reorder still keeps positions, as D7 says. *Why:* the second
+  editor review showed that removing photo 1 silently put "Loft nights" onto two other pictures. The rule is
+  `PhotoTextRanges` in Core, shared by the editor and a journaled `PhotoImport.remove` (`djq`, lists).
+- **A range Eric set stays a range.** Photos 1–3 of 4 with photo 4 removed still reads "Photos 1–3", so a photo added
+  later doesn't get the text. Only a bar dragged over every photo, or Every photo, is stored as "every photo".
+  *Why:* the two read the same until a photo is added, and then the explicit one should not grow by itself.
+- **A photo file that is there but can't be read counts as missing.** The post waits in Edit with "File missing" and
+  can't be sent. *Why:* otherwise it could be queued and fail at render time, at its slot.
+- **A scheduled item on a day shared through a per-platform order can't take a set time** (see the set-time section).
+  Two patches on that case failed review, so it is refused with the way out named. Eric's settings have no
+  per-platform order, so this can't come up today.
+- **A scripted run keeps its photo posts in its own throwaway folder** (`Paths.photosOverride`, `DJQ_PHOTOS`), never in
+  the shared dev footage folder. The real app always uses `<DJ Video>/Photos`.
+- **Sample photo posts are frames cut from Eric's own dev clips** (`SampleData.addPhotoPosts`), in Edit, the Queue and at
+  a set time, so every page's capture shows photos. No third-party picture is in the repo or the README.
+- **Not done, on purpose:** reposts and versions of photo posts (D16), a real file picker or system menu inside a check
+  (stand-ins, listed for Eric to try by hand), and any real post or Postiz call.
