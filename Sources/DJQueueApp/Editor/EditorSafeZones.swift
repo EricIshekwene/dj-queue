@@ -104,10 +104,10 @@ struct EditorZoneChips: View {
   var body: some View {
     HStack(spacing: 6) {
       Text("Safe zones").font(DS.type.captionMedium).foregroundStyle(DS.color.textSecondary)
-        .dsTooltip("Where each app's buttons cover the video (per \(model.aspect.rawValue))")
+        .dsTooltip("Where each app's buttons cover the \(model.isPhoto ? "photo" : "video") (per \(model.aspect.rawValue))")
       chip(title: "None", tint: nil, selected: model.zonePlatforms.isEmpty) { model.zonePlatforms = [] }
         .dsTooltip(model.zonePlatforms.isEmpty ? nil : "Hide all safe-zone overlays")
-      ForEach(EditorPlatforms.order) { p in
+      ForEach(model.previewOrder) { p in
         chip(title: p.editorShortName, tint: p.editorZoneTint, selected: model.zonePlatforms.contains(p)) {
           var s = model.zonePlatforms
           if s.contains(p) { s.remove(p) } else { s.insert(p) }

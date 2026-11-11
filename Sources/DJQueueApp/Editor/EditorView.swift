@@ -86,7 +86,7 @@ struct EditorView: View {
     // Don't start with the cursor in the Title field (Space should play, not type).
     .onAppear {
       DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
-      if let p = trimPlatform, model.posting(p), model.edit.platformTrims[p] == nil, !model.readOnly {
+      if let p = trimPlatform, !model.isPhoto, model.posting(p), model.edit.platformTrims[p] == nil, !model.readOnly {
         model.addPlatformTrim(p)
         model.scrollTarget = .platforms
       }
@@ -121,6 +121,18 @@ struct EditorView: View {
       covered: model.isCovered?() == true, hasClip: !model.fileMissing && model.video != nil)
     else { return false }
     let pb = model.playback
+    if model.isPhoto {
+      // Round 21: ← / → step photos, ↑ / ↓ still change posts, and there is nothing to play or trim.
+      switch action {
+      case .seek(let d, _): model.stepPhoto(d)
+      case .clip(let d): Self.open(d, model: model, in: videoIds)
+      case .leaveTextField:
+        if e.window?.performKeyEquivalent(with: e) == true { return true }
+        EditorFocus.leaveText(in: e.window)
+      case .togglePlay, .trimIn, .trimOut: break
+      }
+      return true
+    }
     switch action {
     case .togglePlay: pb.toggle()
     case .seek(let d, let fine): pb.jump(d, step: model.arrowStep, fine: fine, fps: model.fps, duration: model.duration)
@@ -190,10 +202,15 @@ struct EditorHeader: View {
             Text(model.video?.displayName ?? "Clip").font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(1)
               .frame(maxWidth: 320, alignment: .leading).fixedSize(horizontal: true, vertical: false)
             if model.title == nil && model.video != nil {
-              DSBadge("Raw tag", style: .outline, size: .sm, help: "No Title yet; screens show the marker tag")
+              if model.isPhoto {
+                DSBadge("No title", style: .outline, size: .sm, help: "No Title yet; screens show the photo's file name")
+              } else {
+                DSBadge("Raw tag", style: .outline, size: .sm, help: "No Title yet; screens show the marker tag")
+              }
             }
           }
-          Text(Captions.setName(model.sessionName)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+          // Round 21 (D18): a photo post says what it is where a clip names its set.
+          Text(model.video?.photoLabel ?? Captions.setName(model.sessionName)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
         }
         .contentShape(Rectangle())
       }
@@ -217,7 +234,7 @@ struct EditorHeader: View {
       Spacer()
       saveIndicator
       undoButtons
-      versionPicker
+      if !model.isPhoto { versionPicker }  // round 21 (D16): one version per photo post
       DSButton("Done", variant: .primary, size: .md, tooltip: "Save and close", shortcut: "⌘↩") { done() }
         .keyboardShortcut(.return, modifiers: .command)
     }

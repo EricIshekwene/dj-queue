@@ -8,21 +8,27 @@ struct EditorFrameSection: View {
 
   var body: some View {
     EditorCollapsibleSection(.frame, disclosure: .frame, summary: summary, model: model) {
-      VStack(alignment: .leading, spacing: DS.space.md) {
-        EditorField(label: "Aspect", help: "Output shape of the video", isCustom: !model.isDefault(.aspect),
-                    resetHelp: "Back to the default aspect (\(model.defaults.aspect.rawValue))",
-                    onReset: { model.setAspect(model.defaults.aspect) }) {
-          DSSegmented(selection: Binding(get: { model.aspect }, set: { model.setAspect($0) }),
-                      segments: Aspect.allCases.map { DSSegment(value: $0, title: $0.rawValue) }, size: .sm, fullWidth: true)
+      if model.isPhoto {
+        // Round 21: one shape for the post and a crop per photo; nothing to trim.
+        EditorPhotoFrameFields(model: model)
+      } else {
+        VStack(alignment: .leading, spacing: DS.space.md) {
+          EditorField(label: "Aspect", help: "Output shape of the video", isCustom: !model.isDefault(.aspect),
+                      resetHelp: "Back to the default aspect (\(model.defaults.aspect.rawValue))",
+                      onReset: { model.setAspect(model.defaults.aspect) }) {
+            DSSegmented(selection: Binding(get: { model.aspect }, set: { model.setAspect($0) }),
+                        segments: Aspect.allCases.map { DSSegment(value: $0, title: $0.rawValue) }, size: .sm, fullWidth: true)
+          }
+          crop
+          trim
         }
-        crop
-        trim
       }
     }
   }
 
   private var summary: String {
-    model.aspect.rawValue + (model.cropIsSet ? " · Crop confirmed" : " · Default crop")
+    if model.isPhoto { return model.aspect.rawValue + (model.cropIsSet ? " · Your crop" : " · Centred crop") }
+    return model.aspect.rawValue + (model.cropIsSet ? " · Crop confirmed" : " · Default crop")
   }
 
   private var crop: some View {
@@ -222,22 +228,26 @@ struct EditorPlatformsSection: View {
   var body: some View {
     EditorSectionView(.platforms) {
       VStack(alignment: .leading, spacing: DS.space.md) {
-        EditorField(label: "Post to", help: "Platforms this clip is posted on", isCustom: !model.isDefault(.platforms),
+        EditorField(label: "Post to", help: "Platforms this \(model.isPhoto ? "post goes out" : "clip is posted") on", isCustom: !model.isDefault(.platforms),
                     resetHelp: "Back to the default platforms", onReset: { model.resetEdit(.platforms) }) {
           DSFlowLayout(spacing: 6) {
             ForEach(EditorPlatforms.order) { p in
               let enabled = model.settings.enabledPlatforms.contains(p)
               let ownTrim = model.posting(p) && model.edit.platformTrims[p] != nil
+              // Round 21 (D8): a platform that takes no photos is off for a photo post and says why.
+              let never = model.isPhoto && !p.supportsPhotos
+              let what = model.isPhoto ? "post" : "clip"
               DSChip(p.displayName, icon: ownTrim ? "scissors" : nil, isSelected: model.posting(p),
-                     disabledReason: enabled ? nil : "\(p.displayName) is turned off in Settings → Platforms", size: .sm,
-                     tooltip: enabled ? (model.posting(p) ? "Skip \(p.displayName) for this clip\(ownTrim ? " (it has its own trim)" : "")"
-                                                          : "Post this clip on \(p.displayName) too") : nil) {
+                     disabledReason: never ? PhotoRules.youtubeReason : enabled ? nil : "\(p.displayName) is turned off in Settings → Platforms", size: .sm,
+                     tooltip: enabled ? (model.posting(p) ? "Skip \(p.displayName) for this \(what)\(ownTrim ? " (it has its own trim)" : "")"
+                                                          : "Post this \(what) on \(p.displayName) too") : nil) {
                 model.setPosting(p, !model.posting(p))
               }
+              .background(ScriptAnchor("Post to \(p.displayName)"))
             }
           }
         }
-        lengths
+        if model.isPhoto { EditorPhotoPlatformNotes(model: model) } else { lengths }
         EditorHint("Safe zones are a view setting: pick platforms under the preview in the Zones view.", icon: "rectangle.dashed")
       }
     }

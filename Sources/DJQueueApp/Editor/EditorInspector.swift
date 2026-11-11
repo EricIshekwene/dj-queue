@@ -10,7 +10,7 @@ struct EditorInspector: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      EditorMiniIndex(current: current, flagged: flagged) { s in
+      EditorMiniIndex(sections: EditorSection.inspector(photo: model.isPhoto), current: current, flagged: flagged) { s in
         current = s
         model.scrollTarget = s
       }
@@ -21,7 +21,7 @@ struct EditorInspector: View {
           // Full-width hairlines between sections (the Framer / Webflow / Figma inspector pattern) so each section
           // reads as its own block.
           VStack(alignment: .leading, spacing: 0) {
-            if model.versionNumbers.count > 1 || model.isRepostReady(model.versionNo) {
+            if !model.isPhoto, model.versionNumbers.count > 1 || model.isRepostReady(model.versionNo) {
               EditorRepostReadyRow(model: model)
               DSSeparator()
             }
@@ -34,8 +34,11 @@ struct EditorInspector: View {
             DSSeparator()
             EditorCaptionSection(model: model).disabled(model.fieldsOff)
             DSSeparator()
-            EditorCoverSection(model: model)
-            DSSeparator()
+            // Round 21 (D15): a photo post has no Cover section; the strip marks its first photo as the cover.
+            if !model.isPhoto {
+              EditorCoverSection(model: model)
+              DSSeparator()
+            }
             EditorPlatformsSection(model: model).disabled(model.fieldsOff)
           }
           .padding(.bottom, DS.space.xxl)
@@ -59,6 +62,8 @@ struct EditorInspector: View {
   }
 
   private func jump(_ proxy: ScrollViewProxy, _ s: EditorSection, animated: Bool) {
+    // The photos strip isn't in this column: it flashes by itself (`EditorModel.flashPhotos`).
+    guard s != .photos else { DispatchQueue.main.async { model.scrollTarget = nil }; return }
     current = s
     if animated && !dsAnimationsOff { dsWithAnimation { proxy.scrollTo(s, anchor: .top) } } else { proxy.scrollTo(s, anchor: .top) }
     DispatchQueue.main.async { model.scrollTarget = nil }
@@ -71,6 +76,7 @@ struct EditorInspector: View {
 /// Compact text index (caption size, so all six fit in 340 pt). Selected = soft grey capsule; a warning dot marks
 /// sections that need attention.
 struct EditorMiniIndex: View {
+  var sections: [EditorSection] = EditorSection.inspector(photo: false)
   var current: EditorSection
   var flagged: Set<EditorSection>
   var go: (EditorSection) -> Void
@@ -78,7 +84,7 @@ struct EditorMiniIndex: View {
 
   var body: some View {
     HStack(spacing: 0) {
-      ForEach(EditorSection.allCases) { s in
+      ForEach(sections) { s in
         Button { go(s) } label: {
           HStack(spacing: 3) {
             Text(s.rawValue).fixedSize()
@@ -96,7 +102,7 @@ struct EditorMiniIndex: View {
         .onHover { hovering = $0 ? s : (hovering == s ? nil : hovering) }
         .dsTooltip(flagged.contains(s) ? "Jump to \(s.rawValue) (needs attention)" : "Jump to \(s.rawValue)", side: .bottom)
         .background(ScriptAnchor("Index \(s.rawValue)"))
-        if s != EditorSection.allCases.last { Spacer(minLength: 0) }
+        if s != sections.last { Spacer(minLength: 0) }
       }
     }
   }

@@ -26,7 +26,7 @@ struct EditorCaptionSection: View {
           parts
         }
         hashtags(r)
-        youtube(r)
+        if !model.isPhoto { youtube(r) }  // round 21 (D8): a photo post never goes to YouTube
         ownCaptions(r)
       }
     }
@@ -289,6 +289,7 @@ struct EditorCaptionSection: View {
   private func groupChip(_ s: HashtagSet, _ r: ResolvedVersion) -> some View {
     let on = r.hashtagSetIds.contains(s.id)
     return DSChip(HashtagGroups.label(s), isSelected: on, size: .sm) { model.setGroup(s.id, on: !on) }
+      .background(ScriptAnchor("Group \(s.id)"))
       .dsTooltip(s.tags.isEmpty ? "This group has no hashtags yet — right-click it to add some"
                  : on ? "Take \(s.tags.joined(separator: " ")) out of the caption"
                  : "Add \(s.tags.joined(separator: " ")) to the caption")
@@ -350,6 +351,7 @@ struct EditorCaptionSection: View {
         DSSelect(selection: Binding(get: { typed.isEmpty ? (r.youtubeTitleTemplateId ?? "") : Self.customValue },
                                     set: { id in if id != Self.customValue { model.setYouTubeTitleTemplate(id) } }),
                  options: options, size: .sm)
+          .background(ScriptAnchor("YouTube title template"))
         EditorYouTubeTitleField(model: model,
                                 error: typed.count > lim && model.posting(.youtube)
                                   ? "\(typed.count - lim) over YouTube's \(lim) — shorten it; the clip stays in Edit until it fits" : nil)

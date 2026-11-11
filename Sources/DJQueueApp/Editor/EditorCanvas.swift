@@ -79,7 +79,9 @@ struct EditorOutputMedia: View {
     let c = model.crop
     let visible = CGRect(x: c.x, y: c.y, width: c.w, height: c.h)
     ZStack {
-      if let p = playback.player, !model.snapshotMode {
+      if model.isPhoto {
+        EditorPhotoSurface(model: model, playback: playback, images: model.photoImages)
+      } else if let p = playback.player, !model.snapshotMode {
         EditorPlayerSurface(player: p, source: model.sourceSize, visible: visible)
       } else {
         EditorStillSurface(image: playback.still, source: model.sourceSize, visible: visible)
@@ -107,17 +109,21 @@ struct EditorCanvas: View {
   var body: some View {
     VStack(spacing: DS.space.sm) {
       DSSegmented(selection: $model.canvasMode, segments: [
-        DSSegment(value: EditorCanvasMode.frame, title: "Frame", icon: "crop", tooltip: "Crop the 9:16 frame on the 4K source"),
+        DSSegment(value: EditorCanvasMode.frame, title: "Frame", icon: "crop",
+                  tooltip: model.isPhoto ? "Crop this photo to the post's shape" : "Crop the 9:16 frame on the 4K source"),
         DSSegment(value: .zones, title: "Zones", icon: "rectangle.dashed", tooltip: "Check text against each platform's UI zones"),
         DSSegment(value: .preview, title: "Preview", icon: "iphone", tooltip: "See it in a phone mock with the real caption"),
       ], size: .sm)
       .padding(.top, DS.space.sm)
+      .background(ScriptAnchor("Canvas mode"))
 
       Group {
         if model.loading {
           DSSpinner(size: 18)
         } else if model.fileMissing || model.video == nil {
           missingState
+        } else if model.isPhoto && model.photos.isEmpty {
+          noPhotosState
         } else {
           switch model.canvasMode {
           case .frame: EditorFrameCanvas(model: model, playback: playback)
@@ -134,11 +140,11 @@ struct EditorCanvas: View {
   }
 
   @ViewBuilder private var bottomBar: some View {
-    if model.loading || model.fileMissing || model.video == nil {
+    if model.loading || model.fileMissing || model.video == nil || (model.isPhoto && model.photos.isEmpty) {
       Color.clear
     } else {
       switch model.canvasMode {
-      case .frame: frameBar
+      case .frame: if model.isPhoto { EditorPhotoFrameBar(model: model) } else { frameBar }
       case .zones: EditorZoneChips(model: model)
       case .preview: EditorPreviewBar(model: model)
       }
@@ -162,11 +168,21 @@ struct EditorCanvas: View {
     }
   }
 
+  /// A photo post whose photo list is empty (a broken row; the app can't make one): the strip's Add tile fixes it.
+  private var noPhotosState: some View {
+    VStack(spacing: DS.space.sm) {
+      Image(systemName: "photo.badge.plus").font(.system(size: 20, weight: .medium)).foregroundStyle(DS.color.textSecondary)
+        .frame(width: 40, height: 40).background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm))
+      Text("No photos in this post").font(DS.type.headline).foregroundStyle(DS.color.text)
+      Text("Add one with the Add tile below.").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+    }
+  }
+
   private var missingState: some View {
     VStack(spacing: DS.space.sm) {
       Image(systemName: "exclamationmark.triangle").font(.system(size: 20, weight: .medium)).foregroundStyle(DS.color.danger)
         .frame(width: 40, height: 40).background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm))
-      Text(model.video == nil ? "Clip not found" : "File missing").font(DS.type.headline).foregroundStyle(DS.color.text)
+      Text(model.video == nil ? "Clip not found" : model.isPhoto ? "Photo file missing" : "File missing").font(DS.type.headline).foregroundStyle(DS.color.text)
       if let u = model.fileURL {
         Text(u.path).font(DS.type.mono).foregroundStyle(DS.color.textSecondary)
           .lineLimit(2).multilineTextAlignment(.center).frame(maxWidth: 420)
@@ -221,6 +237,14 @@ struct EditorFrameCanvas: View {
       }
       .contentShape(Rectangle())
       .background(EditorScrollCatcher { dy in model.setZoom(model.zoom * (1 + dy * 0.01)) })
+      // A photo's crop surface is an AppKit view, which takes the drag; the pinch is recognised here around it. A clip
+      // keeps its own pinch on its surface (`including: .subviews` leaves this one out).
+      .simultaneousGesture(MagnifyGesture()
+        .onChanged { v in
+          if pinchStart == nil { pinchStart = model.zoom }
+          model.setZoom((pinchStart ?? 1) * v.magnification)
+        }
+        .onEnded { _ in pinchStart = nil }, including: model.isPhoto ? .all : .subviews)
     }
   }
 
@@ -248,6 +272,31 @@ struct EditorFrameCanvas: View {
         .offset(x: window.minX, y: window.minY)
         .allowsHitTesting(false)
       cornerHandles(window).allowsHitTesting(false)
+      if model.isPhoto {
+        // Round 21: the same drag through AppKit, so a check can send it to the window (a SwiftUI gesture never sees
+        // those events). Pinch is on the whole canvas, below.
+        photoCropSurface(scale: full.width / max(model.sourceSize.width, 1))
+          .frame(width: full.width, height: full.height)
+          .probeFrame("frame-source")
+          .dsTooltip("Drag to move the crop; scroll or pinch to zoom")
+          .offset(x: full.minX, y: full.minY)
+      } else {
+        videoCropSurface(full: full)
+      }
+    }
+  }
+
+  private func photoCropSurface(scale: CGFloat) -> some View {
+    EditorDragSurface(cursor: .openHand, onPress: { cropDragStart = model.crop }, onDrag: { d in
+      guard var c = cropDragStart else { return }
+      c.x += d.width / scale
+      c.y += d.height / scale
+      model.setCrop(c)
+    }, onRelease: { _ in cropDragStart = nil })
+  }
+
+  private func videoCropSurface(full: CGRect) -> some View {
+    Group {
       Color.white.opacity(0.001)
         .frame(width: full.width, height: full.height)
         .offset(x: full.minX, y: full.minY)
@@ -388,7 +437,7 @@ struct EditorPreviewCanvas: View {
 
   private var platforms: [Platform] {
     guard model.compare else { return [model.previewPlatform] }
-    let list = EditorPlatforms.order
+    let list = model.previewOrder
     let i = list.firstIndex(of: model.previewPlatform) ?? 0
     return (0..<3).map { list[(i + $0) % list.count] }
   }
@@ -428,7 +477,7 @@ struct EditorPreviewBar: View {
   var body: some View {
     HStack(spacing: DS.space.xs) {
       DSIconButton("chevron.left", tooltip: "Previous platform", variant: .ghost, size: .sm) { model.stepPreview(-1) }
-      ForEach(EditorPlatforms.order) { p in
+      ForEach(model.previewOrder) { p in
         DSChip(p.editorShortName, icon: p == .x ? nil : p.dsSymbol, isSelected: model.previewPlatform == p, showsCheck: false, size: .sm) {
           model.previewPlatform = p
         }

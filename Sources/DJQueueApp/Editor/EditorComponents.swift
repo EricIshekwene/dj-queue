@@ -44,6 +44,8 @@ struct EditorField<Content: View>: View {
   var isCustom = false
   var inheritedFrom: Int? = nil
   var resetHelp = "Reset to the default"
+  /// What the "Custom" badge means when the field has no New clip default (a photo's own crop).
+  var customHelp = "Changed from your New clip defaults"
   var onReset: (() -> Void)? = nil
   @ViewBuilder var content: Content
 
@@ -57,7 +59,7 @@ struct EditorField<Content: View>: View {
         if let value {
           Text(value).font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
         }
-        EditorCustomTag(isCustom: isCustom, inheritedFrom: inheritedFrom, resetHelp: resetHelp, onReset: onReset)
+        EditorCustomTag(isCustom: isCustom, inheritedFrom: inheritedFrom, resetHelp: resetHelp, customHelp: customHelp, onReset: onReset)
       }
       content
     }

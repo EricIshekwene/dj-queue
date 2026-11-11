@@ -13,13 +13,19 @@ struct EditorTextSection: View {
     let r = model.resolved
     let l = model.selectedLayer
     let first = model.selectedIsFirst
+    let photo = model.isPhoto
+    let what = photo ? (model.isCarousel ? "the photos" : "the photo") : "the video"
     EditorSectionView(.text) {
       VStack(alignment: .leading, spacing: DS.space.md) {
+        // Round 21 (D7): a photo post starts with no text, and says so with the one thing to do about it.
+        if model.photoHasNoTextYet {
+          EditorPhotoNoText(model: model).disabled(model.fieldsOff)
+        } else {
         if model.texts.count > 1 { switcher.disabled(model.fieldsOff) }
-        EditorField(label: "Text on the video", isCustom: first && !r.isDefault("text"), inheritedFrom: first ? model.source(of: "text") : nil,
+        EditorField(label: "Text on \(what)", isCustom: first && !r.isDefault("text"), inheritedFrom: first ? model.source(of: "text") : nil,
                     resetHelp: textResetHelp, onReset: resetter(["text"])) {
           VStack(alignment: .leading, spacing: DS.space.xs) {
-            DSTextArea(placeholder: r.noText ? "No text on this clip" : first ? "Text on the video" : "Type the new text",
+            DSTextArea(placeholder: r.noText ? "No text on this \(photo ? "post" : "clip")" : first ? "Text on \(what)" : "Type the new text",
                        text: Binding(get: { r.noText ? "" : l.text }, set: { t in model.setSelectedWords(t) }),
                        minHeight: Self.textAreaHeight(r.noText ? "" : l.text), maxHeight: 120, focusToken: model.focusTextField)
               .disabled(r.noText)
@@ -29,19 +35,21 @@ struct EditorTextSection: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
               EditorHint(first ? textHint(r) : windowHint(l))
               Spacer(minLength: 0)
-              if first && !r.isDefault("text") && model.ownsField(["text"]) && model.defaults.textSource == .title && !r.noText {
+              if !photo && first && !r.isDefault("text") && model.ownsField(["text"]) && model.defaults.textSource == .title && !r.noText {
                 DSButton("Follow the Title", variant: .ghost, size: .sm,
                          tooltip: "Drop the typed text and use the Title again") { model.resetVersion(["text"]) }
               }
             }
             DSToggle("No text", description: nil, isOn: Binding(get: { r.noText }, set: { v in model.setNoText(v) }),
                      size: .sm)
-              .dsTooltip(model.texts.count > 1 ? "Post this clip without any of its texts; they stay saved"
-                                               : "Post this clip without any text on the video")
+              .dsTooltip(model.texts.count > 1 ? "Post this \(photo ? "post" : "clip") without any of its texts; they stay saved"
+                                               : "Post this \(photo ? "post" : "clip") without any text on \(what)")
               .background(ScriptAnchor("No text"))
           }
         }
         .disabled(model.fieldsOff)
+        // Which photos the selected text shows on. A single photo has nothing to choose.
+        if photo && model.isCarousel { EditorPhotoShowsOn(model: model).disabled(model.fieldsOff) }
         EditorField(label: "Style", isCustom: first && !r.isDefault("style"), inheritedFrom: first ? model.source(of: "style") : nil,
                     resetHelp: "Back to the default style (\(model.defaults.textStyle.displayName))",
                     onReset: resetter(["style"])) {
@@ -60,6 +68,7 @@ struct EditorTextSection: View {
           DSDisclosure("Advanced", summary: advancedSummary(r), isOpen: open.binding(.advanced)) {
             EditorTextAdvanced(model: model).disabled(model.fieldsOff)
           }
+        }
         }
       }
     }
@@ -96,6 +105,7 @@ struct EditorTextSection: View {
   }
 
   private func windowHint(_ l: TextLayer) -> String {
+    if model.isPhoto { return "Text \(model.selectedNumber) · \(model.textRangeLabel(l.id).lowercased())" }
     let s = TextTimeline.span(l, trimDuration: model.trim.duration)
     return "Text \(model.selectedNumber) · shows \(EditorGeometry.time(s.start, tenths: true)) – \(EditorGeometry.time(s.end, tenths: true))"
   }
@@ -142,14 +152,15 @@ struct EditorTextSection: View {
   /// Agent suggestions for the text on the video (`text_suggestions`): a tap puts one on the selected text.
   @ViewBuilder private var textSuggestions: some View {
     if model.textSuggestions.isEmpty {
-      HStack(spacing: 6) {
+      // Round 21: the agent prompt asks for song names, which a photo doesn't have.
+      if !model.isPhoto { HStack(spacing: 6) {
         EditorHint("No text suggestions yet", icon: "text.badge.plus")
         Spacer(minLength: 0)
         DSButton("Ask an agent", icon: "doc.on.clipboard", variant: .ghost, size: .sm,
                  tooltip: "Copy a prompt for your agent: song names, the title and the text on the video") {
           model.copyAgentPrompt()
         }
-      }
+      } }
     } else {
       VStack(alignment: .leading, spacing: 6) {
         Text("Text suggestions").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
@@ -184,14 +195,16 @@ struct EditorTextSection: View {
   }
 
   private var textResetHelp: String {
+    if model.isPhoto { return "Take this text off (back to no text)" }
     switch model.defaults.textSource {
-    case .title: "Back to the Title"
-    case .rawTag: "Back to the raw tag"
-    case .empty: "Back to no text"
+    case .title: return "Back to the Title"
+    case .rawTag: return "Back to the raw tag"
+    case .empty: return "Back to no text"
     }
   }
 
   private func textHint(_ r: ResolvedVersion) -> String {
+    if model.isPhoto { return r.noText ? "No text on this post." : model.isCarousel ? "Shows on \(model.textRangeLabel(TextLayer.firstId).lowercased())." : "Typed for this post." }
     if !r.isDefault("text") { return r.noText ? "No text on this clip." : "Typed for this clip." }
     if r.noText { return "Talking clips have no text by default." }
     switch model.defaults.textSource {
@@ -272,7 +285,8 @@ private struct EditorTextAdvanced: View {
     let off: String? = r.noText ? "No text is on; turn off No text to style it" : nil
     VStack(alignment: .leading, spacing: DS.space.md) {
       actions
-      timing(r, l)
+      // Round 21: a photo post has no seconds. Which photos a text shows on is the "Shows on" row above.
+      if !model.isPhoto { timing(r, l) }
       EditorField(label: "Font", isCustom: look.font != nil, resetHelp: "Back to the default font",
                   onReset: look.font == nil ? nil : { model.setLook { $0.font = nil } }) {
         DSSelect(selection: Binding(get: { look.font ?? .standard }, set: { f in model.setLook { $0.font = f } }),
@@ -320,10 +334,11 @@ private struct EditorTextAdvanced: View {
   private var actions: some View {
     HStack(spacing: 6) {
       DSButton("Add text", icon: "plus", variant: .outline, size: .sm, disabledReason: model.addTextOffReason,
-               tooltip: "Add a text at the playhead, looking like this one") { model.addText() }
+               tooltip: !model.isPhoto ? "Add a text at the playhead, looking like this one"
+                 : model.isCarousel ? "Add a text on photo \(model.photoIndex + 1), looking like this one" : "Add another text, looking like this one") { model.addText() }
         .background(ScriptAnchor("Add text"))
       DSButton("Duplicate", variant: .ghost, size: .sm, disabledReason: model.addTextOffReason,
-               tooltip: "Copy this text, right after it on the timeline") { model.duplicateText() }
+               tooltip: model.isPhoto ? "Copy this text" : "Copy this text, right after it on the timeline") { model.duplicateText() }
         .background(ScriptAnchor("Duplicate"))
       DSButton("Delete", variant: .ghost, size: .sm, disabledReason: model.deleteTextOffReason,
                tooltip: model.selectedIsFirst ? "Delete this text; the next one takes its place" : "Delete this text") { model.deleteText() }
