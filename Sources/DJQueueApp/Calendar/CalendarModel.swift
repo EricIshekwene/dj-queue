@@ -112,12 +112,20 @@ struct CalendarData {
   var awake: [DateInterval] = []
   /// The day `awake` starts from; nil = not loaded (Month has no strip).
   var awakeFrom: String?
+  /// Round 21: every item with a set time, by video id, on any day (the stage control and the menus ask "does it have
+  /// one?" from every screen, also for a set time the Mac slept through).
+  var setTimes: [String: PlanSlot] = [:]
 
   static func load(store: Store, posts: [PlatformPost], range: CalendarRange, awakeFrom: String?, dm: DayMath) throws -> CalendarData {
     var d = CalendarData(range: range, awakeFrom: awakeFrom)
     let slots = try store.planSlots(where: "date>=? AND date<=?", [range.first, range.last])
     d.slots = Dictionary(grouping: slots, by: \.date).mapValues { $0.sorted { $0.position < $1.position } }
     d.slotById = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, $0) })
+    for s in try store.planSlots(where: "exact_at IS NOT NULL") {
+      if let had = d.setTimes[s.videoId], (had.exactAt ?? .distantPast) >= (s.exactAt ?? .distantPast) { continue }
+      d.setTimes[s.videoId] = s
+      d.slotById[s.id] = s  // a missed set-time post from a day outside the range still finds its slot
+    }
     let shown = posts.compactMap { p -> (String, PlatformPost)? in
       let key = dm.key(p.scheduledAt)
       return range.contains(key) ? (key, p) : nil

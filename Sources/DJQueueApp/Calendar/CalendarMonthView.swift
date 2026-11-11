@@ -119,7 +119,8 @@ struct CalendarMonthCell: View {
   }
 }
 
-/// 16 × 28 thumb · title · one dot per platform (a glyph once the cell is ≥ 150 pt wide).
+/// 16 × 28 thumb · title · one dot per platform (a glyph once the cell is ≥ 150 pt wide). A set-time chip adds a clock
+/// mark (and its minute where there's room); a photo post shows its first photo and a photo mark.
 struct CalendarMonthChip: View {
   @Bindable var model: AppModel
   let clip: CalendarClip
@@ -131,12 +132,35 @@ struct CalendarMonthChip: View {
     HStack(spacing: DS.space.xxs + 1) {
       DSXThumb(model: model, video: clip.video, width: 16, post: clip.posts.values.min { $0.platform.rawValue < $1.platform.rawValue })
       VStack(alignment: .leading, spacing: 1) {
-        Text(model.displayName(clip.video)).font(.system(size: 11, weight: .medium)).foregroundStyle(DS.color.text).lineLimit(1)
+        HStack(spacing: 3) {
+          if let exact = clip.slot.exactAt {
+            // Round 21 (Buffer's month chips lead with the time): a clock mark and the minute, "3:15p". A set time is
+            // always pinned, so it takes the pin's place.
+            HStack(spacing: 2) {
+              Image(systemName: "clock").font(.system(size: 8, weight: .semibold))
+              Text(Fmt.compactTime(exact, tz: model.tz)).font(.system(size: 10.5, weight: .medium).monospacedDigit())
+            }
+            .foregroundStyle(DS.color.text)
+            .fixedSize()
+            .contentShape(Rectangle())
+            .dsTooltip(model.setTimeHelp(clip.slot))
+            .background(ScriptAnchor("Set time mark \(clip.slot.id)"))
+          }
+          Text(model.displayName(clip.video)).font(.system(size: 11, weight: .medium)).foregroundStyle(DS.color.text).lineLimit(1)
+        }
         HStack(spacing: glyphs ? 3 : 2) {
           ForEach(clip.platforms, id: \.self) { p in mark(p) }
-          if clip.slot.pinned {
+          if !clip.slot.isExact, clip.slot.pinned {
             Image(systemName: "pin.fill").font(.system(size: 7, weight: .semibold)).foregroundStyle(DS.color.textTertiary)
               .dsTooltip(CalendarWords.pinned)
+          }
+          if let label = clip.video.photoLabel {
+            Image(systemName: clip.video.isCarousel ? "square.on.square" : "photo").font(.system(size: 7.5, weight: .semibold))
+              .foregroundStyle(DS.color.textTertiary)
+              .contentShape(Rectangle())
+              .dsTooltip(label)
+              .accessibilityLabel(label)
+              .background(ScriptAnchor("Photo mark \(clip.video.id)"))
           }
         }
       }
@@ -152,7 +176,7 @@ struct CalendarMonthChip: View {
     .contextMenu { CalendarClipMenu(model: model, video: clip.video, slot: clip.slot, posts: clip.posts) }
     .dsTooltip(blocker)
     .accessibilityElement(children: .contain)
-    .accessibilityLabel("\(model.displayName(clip.video)), \(model.calendarTimeRange(clip))")
+    .accessibilityLabel("\(model.displayName(clip.video)), \(clip.slot.isExact ? "set time " : "")\(model.calendarTimeRange(clip))")
   }
 
   @ViewBuilder private func mark(_ p: Platform) -> some View {

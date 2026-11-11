@@ -95,12 +95,19 @@ struct CalendarDayClip: View {
       DSXThumb(model: model, video: group.video, width: 36, post: group.posts.first)
       VStack(alignment: .leading, spacing: 2) {
         Text(group.video.map(model.displayName) ?? "Missing clip").font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(2)
-        HStack(spacing: 4) {
-          if group.slot?.pinned == true {
+        HStack(spacing: 6) {
+          if let slot = group.slot, slot.isExact {
+            // Round 21: the set time, in place of the pin (a set time is always pinned).
+            CalendarSetTimeMark(model: model, slot: slot, day: day)
+          } else if group.slot?.pinned == true {
             Image(systemName: "pin.fill").font(.system(size: 9, weight: .semibold)).foregroundStyle(DS.color.textTertiary)
               .dsTooltip(CalendarWords.pinned)
           }
           Text(Fmt.day(model.dm.date(day), tz: model.tz, style: "EEE d MMM")).font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+          if let v = group.video, let label = v.photoLabel {
+            DSBadge(label, style: .outline, icon: v.isCarousel ? "square.on.square" : "photo", size: .sm)
+              .background(ScriptAnchor("Photo mark \(v.id)"))
+          }
         }
       }
       Spacer(minLength: DS.space.xs)
@@ -122,8 +129,9 @@ struct CalendarDayClip: View {
     Dictionary(posts.map { ($0.platform, $0) }, uniquingKeysWith: { a, b in a.attemptNo > b.attemptNo ? a : b })
   }
 
+  /// A set-time slot's time is its own minute, never position × offset.
   private func planText(_ p: Platform) -> String {
-    let at = model.settings.slotTime(p, date: day, position: group.slot?.position ?? 0, model.dm)
+    let at = group.slot.map { model.slotTime($0, p) } ?? model.settings.slotTime(p, date: day, position: 0, model.dm)
     return AppModel.clockText(at, tz: model.tz)
   }
 }
@@ -178,7 +186,7 @@ struct NextUpCard: View {
     default: when = post.scheduledAt > model.now ? "in \(AppModel.countdown(to: post.scheduledAt, now: model.now))" : "due now"
     }
     let day = model.dm.key(post.scheduledAt) == model.todayKey ? "" : "\(Fmt.day(post.scheduledAt, tz: model.tz, style: "EEE")) "
-    return "Next: \(post.platform.displayName) · \(day)\(time) · \(when)"
+    return "Next: \(post.platform.displayName) · \(day)\(time) · \(when)" + (model.hasSetTime(post) ? " · set time" : "")
   }
 }
 
@@ -248,7 +256,7 @@ struct TodayRow: View {
     case .rendering: "The engine is preparing the file"
     case .ready: "Rendered — it's due at \(AppModel.clockText(post.scheduledAt, tz: model.tz))"
     case .dueNow: "Post it now, then mark it posted"
-    case .late: "Past its time — post it now or shift the plan"
+    case .late: model.hasSetTime(post) ? "Past its set time — post it now or pick a new time" : "Past its time — post it now or shift the plan"
     case .copyright: post.errorMessage ?? "Copyright problem"
     case .failed: post.errorMessage ?? "Upload failed"
     default: s.text
@@ -289,8 +297,10 @@ struct TodayRow: View {
         if post.platform == .youtube {
           DSIconButton("textformat", tooltip: "Copy the YouTube title", size: .sm) { model.copyTitleNamed(post) }
         }
-        DSIconButton("doc.on.doc", tooltip: "Copy the video file to paste in upload", size: .sm) { model.copyFile(post) }
-        DSIconButton("folder", tooltip: "Show the video file in Finder", size: .sm) { model.revealFile(post) }
+        // A photo post has pictures, not a video file.
+        let file = video?.isPhoto == true ? "photo" : "video file"
+        DSIconButton("doc.on.doc", tooltip: "Copy the \(file) to paste in upload", size: .sm) { model.copyFile(post) }
+        DSIconButton("folder", tooltip: "Show the \(file) in Finder", size: .sm) { model.revealFile(post) }
         DSIconButton("checkmark.circle", tooltip: "Paste the post URL to mark it posted", size: .sm) { model.markPostedTarget = post }
         more
       }
@@ -321,9 +331,15 @@ struct TodayRow: View {
         let held = model.heldReason(post.videoId) != nil
         Button(held ? "Post now — sent back to Edit" : "Post now (make it due today)", systemImage: "bolt") { model.postNow(post) }
           .disabled(held)
-        Button(held ? "Shift to next free slot — sent back to Edit" : "Shift to next free \(post.platform.dsxCompactName) slot",
-               systemImage: "calendar.badge.clock") { model.shiftPlan(post) }
-          .disabled(held)
+        if model.hasSetTime(post) {
+          // A set time has no slot to shift into (`StageWording.setTimeNoShift`): post it now, skip it, or pick a new time.
+          Button(held ? "Change set time… — sent back to Edit" : "Change set time…", systemImage: "clock") { model.askPostAt([post.videoId]) }
+            .disabled(held)
+        } else {
+          Button(held ? "Shift to next free slot — sent back to Edit" : "Shift to next free \(post.platform.dsxCompactName) slot",
+                 systemImage: "calendar.badge.clock") { model.shiftPlan(post) }
+            .disabled(held)
+        }
       }
       if model.canReset(post) || model.canSkip(post) { Divider() }
       if model.canReset(post) { Button("Reset to Planned", systemImage: "arrow.counterclockwise") { model.reset(post) } }

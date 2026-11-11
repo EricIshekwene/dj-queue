@@ -85,7 +85,7 @@ extension AppModel {
   var noOverlayOpen: Bool {
     editor == nil && !showSettings && !showPalette && !showShortcuts && pendingBulk == nil && pendingConfirm == nil
       && previewVideo == nil && markPostedTarget == nil && reportTarget == nil && longformTarget == nil && scorePrompt == nil
-      && pinPrompt == nil && captionDialogIds == nil && cropDialogIds == nil && !ListPrefs.shared.screenDialogOpen && BrowseUI.shared.quickLook == nil
+      && pinPrompt == nil && postAtRequest == nil && photoImportRequest == nil && captionDialogIds == nil && cropDialogIds == nil && !ListPrefs.shared.screenDialogOpen && BrowseUI.shared.quickLook == nil
       && BrowseUI.shared.longformTargets.isEmpty && BrowseUI.shared.scoreTargets.isEmpty && BrowseUI.shared.pendingPostBulk == nil
   }
 
@@ -117,26 +117,37 @@ extension AppModel {
     Dictionary((postsBySlot[slotId] ?? []).map { ($0.platform, $0) }, uniquingKeysWith: { a, b in a.attemptNo > b.attemptNo ? a : b })
   }
 
-  /// The clips going out on `day`, in slot order, narrowed by the platform filter. Built from the posts that really go
-  /// out that day: a post shifted off this day shows on its own day (`calendarExtras`), not on this card.
+  /// The clips going out on `day`, in the order they go out, narrowed by the platform filter. Built from the posts that
+  /// really go out that day: a post shifted off this day shows on its own day (`calendarExtras`), not on this card.
+  /// Regular clips are in slot order, which is time order; a set-time item (round 21) sits among them by its own time,
+  /// never by its position, which is only a number above the day's regular places.
   func calendarClips(_ day: String) -> [CalendarClip] {
     let filter = calendarFilter
     let todays = calendarData.posts[day] ?? []
-    return (calendarData.slots[day] ?? []).compactMap { s -> CalendarClip? in
+    let clips = (calendarData.slots[day] ?? []).compactMap { s -> CalendarClip? in
       guard let v = video(s.videoId) else { return nil }
       let posts = slotPosts(s.id)
       let onDay = Dictionary(todays.filter { $0.planSlotId == s.id }.map { ($0.platform, $0) },
                              uniquingKeysWith: { a, b in a.attemptNo > b.attemptNo ? a : b })
       if !posts.isEmpty && onDay.isEmpty { return nil }
-      let platforms = shownPlatforms(onDay, filter: filter)
+      let platforms = shownPlatforms(onDay, filter: filter, video: v)
       return platforms.isEmpty ? nil : CalendarClip(slot: s, video: v, posts: posts, dayPosts: onDay, platforms: platforms)
+    }
+    guard clips.contains(where: { $0.slot.isExact }) else { return clips }
+    let first = Dictionary(uniqueKeysWithValues: clips.map { c in (c.id, c.platforms.map { calendarTime(c, $0) }.min() ?? .distantFuture) })
+    return clips.sorted { a, b in
+      let (ta, tb) = (first[a.id] ?? .distantFuture, first[b.id] ?? .distantFuture)
+      return ta != tb ? ta < tb : a.slot.position < b.slot.position
     }
   }
 
-  private func shownPlatforms(_ posts: [Platform: PlatformPost], filter: Platform?) -> [Platform] {
+  /// The platforms a card shows: the ones with a post that day, else the ones it will post to. A photo post never
+  /// goes to a platform that takes no photos (YouTube), so a card with no posts yet doesn't promise it.
+  private func shownPlatforms(_ posts: [Platform: PlatformPost], filter: Platform?, video: Video) -> [Platform] {
     let withPosts = Set(posts.keys)
     let active = settings.activePlatforms
-    let all = withPosts.isEmpty ? active : active.filter(withPosts.contains) + withPosts.subtracting(active).sorted()
+    let all = withPosts.isEmpty ? active.filter { !video.isPhoto || $0.supportsPhotos }
+      : active.filter(withPosts.contains) + withPosts.subtracting(active).sorted()
     return filter.map { f in all.filter { $0 == f } } ?? all
   }
 
@@ -185,10 +196,14 @@ extension AppModel {
   /// A clip holds this day, whatever the filter shows.
   func calendarDayIsTaken(_ day: String) -> Bool { !(calendarData.slots[day] ?? []).isEmpty }
 
-  /// The engine can still fill this day: same rule as `Planner.isOpen`, a free position with time left before it.
+  /// The day's regular slots. A set-time item is outside the cadence: it takes none of the day's places (D12).
+  func calendarRegularSlots(_ day: String) -> [PlanSlot] { (calendarData.slots[day] ?? []).filter { !$0.isExact } }
+
+  /// The engine can still fill this day: same rule as `Planner.isOpen`, a free regular position with time left before
+  /// it. Set-time items don't count: a day that only has one is still open for the next clip in the Queue.
   func calendarDayCanFill(_ day: String) -> Bool {
     guard day >= todayKey else { return false }
-    let used = Set((calendarData.slots[day] ?? []).map(\.position))
+    let used = Set(calendarRegularSlots(day).map(\.position))
     let limit = now.addingTimeInterval(Planner.autoScheduleLead)
     let dm = self.dm
     return (0..<max(1, settings.postsPerDay)).contains { pos in
@@ -196,10 +211,30 @@ extension AppModel {
     }
   }
 
-  /// When a clip's post goes out on `p`: the post's time, or the slot's time while it has no post yet.
+  /// When a clip's post goes out on `p`: the post's time, or the slot's time while it has no post yet. A set-time slot's
+  /// time is its own minute (YouTube out of its quiet hours), never position × offset.
   func calendarTime(_ c: CalendarClip, _ p: Platform) -> Date {
-    c.dayPosts[p]?.scheduledAt
-      ?? settings.slotTime(p, date: c.slot.date, position: c.slot.position, dm)
+    c.dayPosts[p]?.scheduledAt ?? slotTime(c.slot, p)
+  }
+
+  /// A slot's time on `p` before it has a post there.
+  func slotTime(_ s: PlanSlot, _ p: Platform) -> Date {
+    if let exact = s.exactAt { return YouTubeWindow.clear(exact, p) }
+    return settings.slotTime(p, date: s.date, position: s.position, dm)
+  }
+
+  /// The post sits on a set-time slot (a missed one from an earlier day included).
+  func hasSetTime(_ p: PlatformPost) -> Bool {
+    p.planSlotId.flatMap { calendarData.slotById[$0] }?.isExact == true
+  }
+
+  /// The set-time mark's tooltip: "Set time — every platform at 3:15 PM", plus YouTube's own time when its quiet hours
+  /// moved it ("YouTube moves to Thu 12 Nov 2:30 AM (07:30 UTC)").
+  func setTimeHelp(_ slot: PlanSlot) -> String? {
+    guard let exact = slot.exactAt else { return nil }
+    let yt = slotPosts(slot.id)[.youtube].flatMap { $0.scheduledAt != exact && !$0.state.isTerminal ? $0.scheduledAt : nil }
+    return "Set time — every platform at \(Self.clockText(exact, tz: tz))"
+      + (yt.map { " · \(StageWording.youtubeMoves(to: $0, setFor: exact, settings: settings))" } ?? "")
   }
 
   /// "12:30 PM – 7 PM" across the platforms shown (one time when they're all the same).
@@ -265,7 +300,8 @@ extension AppModel {
   /// Clips beyond the schedule: the days are full out to the horizon and these are still waiting. Zero while paused or
   /// between ticks, when open days are about to take them.
   var calendarWaitingBeyondHorizon: Int {
-    guard !settings.paused, let last = upcomingSlots.map(\.date).max(),
+    // Set times are one-offs outside the cadence: one on the 20th doesn't mean the days are full to the 20th.
+    guard !settings.paused, let last = upcomingSlots.filter({ !$0.isExact }).map(\.date).max(),
           last >= dm.addDays(todayKey, Planner.autoScheduleHorizonDays) else { return 0 }
     return schedulable.count
   }
@@ -283,6 +319,10 @@ extension AppModel {
   /// Slot → day, pinned so nothing re-lays it. A full day swaps (Planner.moveSlot) and the toast names the other clip.
   /// Past days and posted slots refuse here, in words, before anything is written. A landing on today inside the lead
   /// asks first; a swap that would put the other clip there is refused by the planner (`StageWording.todayTooSoon`).
+  ///
+  /// Round 21: a set-time item keeps its clock time on the new day and never swaps or displaces ("Moved to Sun 15 Nov,
+  /// still 3:15 PM"); when that time has passed there, Core's reason shows. And a set-time item on the target day takes
+  /// none of its regular places, so a regular clip dropped there lands beside it.
   @discardableResult
   func calendarMove(slotId: String, to day: String, done: String = "Moved") -> Bool {
     guard day >= todayKey else { show("Past days can't be changed", error: true); return false }
@@ -293,7 +333,13 @@ extension AppModel {
       show("Posted on \(p.platform.displayName), so it stays on its day", error: true)
       return false
     }
-    let here = upcomingSlots.filter { $0.date == day && $0.id != s.id }
+    if let exact = s.exactAt {
+      let (slot, videoId) = (s.id, s.videoId)
+      return undoable("\(done) to \(label), still \(Self.clockText(exact, tz: tz))", "move", ids: [videoId], plan: true) {
+        try planner.move(slotId: slot, to: day)
+      }
+    }
+    let here = upcomingSlots.filter { $0.date == day && $0.id != s.id && !$0.isExact }
     let perDay = max(1, settings.postsPerDay)
     var other: PlanSlot?
     if here.count >= perDay { other = here.first { $0.position == s.position } ?? here.first }
@@ -342,7 +388,7 @@ extension AppModel {
       undoable("\(done) to \(label)", "pin", ids: [videoId], plan: true) { try planner.pin(videoId: videoId, date: day) }
       return
     }
-    let here = upcomingSlots.filter { $0.date == day }
+    let here = upcomingSlots.filter { $0.date == day && !$0.isExact }
     let replaced = here.count >= max(1, settings.postsPerDay) ? here.first { !$0.pinned }.flatMap { video($0.videoId) } : nil
     let row = replaced.map { DSChangeList.Change(field: "Replaces", value: "“\(displayName($0))”, which goes back to waiting") }
     askPostToday(videoId, platforms: soon, extra: row, done: "\(done) to \(label)") { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
@@ -362,7 +408,7 @@ extension AppModel {
   /// Platforms that would go out inside the lead if this clip landed on `day`: only ever today. Its own platforms when
   /// it has posts (minus the finished ones, which get no new post), else every active one.
   func platformsTooSoon(_ videoId: String, day: String, position: Int? = nil) -> [Platform] {
-    guard day == todayKey else { return [] }
+    guard day == todayKey, nextSlotByVideo[videoId]?.isExact != true else { return [] }  // a set time keeps its own minute
     let posts = nextSlotByVideo[videoId].map { slotPosts($0.id) } ?? [:]
     let live = posts.filter { !$0.value.state.isTerminal }
     let limit = now.addingTimeInterval(Planner.autoScheduleLead)
@@ -373,9 +419,10 @@ extension AppModel {
     }
   }
 
-  /// The position a clip lands on: the first free one, else the first clip that isn't pinned.
+  /// The position a clip lands on: the first free one, else the first clip that isn't pinned. Set-time items hold no
+  /// regular position.
   private func openPosition(on day: String, for videoId: String) -> Int {
-    let here = upcomingSlots.filter { $0.date == day && $0.videoId != videoId }
+    let here = upcomingSlots.filter { $0.date == day && $0.videoId != videoId && !$0.isExact }
     return (0..<max(1, settings.postsPerDay)).first { p in !here.contains { $0.position == p } } ?? here.first { !$0.pinned }?.position ?? 0
   }
 
@@ -393,9 +440,11 @@ extension AppModel {
                             doneMessage: done, alwaysConfirm: true) { dry in try body(b, dry) })
   }
 
-  /// False for a post just past midnight: its time runs over from the slot's own day, and nothing moved it.
+  /// False for a post just past midnight: its time runs over from the slot's own day, and nothing moved it. A set-time
+  /// post has no position to run over from: it is on another day only when YouTube's quiet hours put it there.
   func calendarWasMoved(_ p: PlatformPost) -> Bool {
     guard let s = p.planSlotId.flatMap({ calendarData.slotById[$0] }) else { return true }
+    if s.isExact { return dm.key(p.scheduledAt) != s.date }
     return dm.planDay(p.scheduledAt, position: s.position, slotDate: s.date, platform: p.platform,
                       offsetMinutes: settings.secondPostOffsetMinutes) != s.date
   }
