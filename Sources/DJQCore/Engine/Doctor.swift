@@ -34,6 +34,7 @@ public final class Doctor: @unchecked Sendable {
     }
     check("manifest", manifests)
     check("files.missing", missingFiles)
+    check("photos.missing", missingPhotos)
     check("files.relinked", relinked)
     check("files.duration", durations)
     check("plan.notReady", notReadyButPlanned)
@@ -135,8 +136,20 @@ public final class Doctor: @unchecked Sendable {
     return out
   }
 
+  /// Round 21: a photo post with a photo file gone from DJ Queue's Photos folder (it can't render or post).
+  func missingPhotos() throws -> [DoctorFinding] {
+    let importer = PhotoImport(store: store)
+    var w: [String] = []
+    for v in try store.videos(where: "photos IS NOT NULL") {
+      for f in try importer.missingFiles(v) { w.append("\(v.id) · \(v.displayName) · \(store.paths.photos.appendingPathComponent(f).path)") }
+    }
+    guard !w.isEmpty else { return [] }
+    return [.init(id: "photos.missing", severity: .error, title: "\(w.count) photo file(s) missing", detail: "A photo post can't render or post while one of its photos is gone. Records are kept.",
+                  where_: w, fix: "Put the file back at that path and run `djq intake` (the post comes back by itself). If the photo is gone for good, Eric removes it from the post in the editor, or excludes the post (`djq exclude <id>`). Never edit files under Photos/Originals by hand otherwise.")]
+  }
+
   func missingFiles() throws -> [DoctorFinding] {
-    let vids = try store.videos(where: "missing=1")
+    let vids = try store.videos(where: "missing=1 AND photos IS NULL")
     guard !vids.isEmpty else { return [] }
     let w = try vids.map { "\($0.id) · \($0.name) · \(try store.fileURL(for: $0)?.path ?? $0.file)\($0.inManifest ? "" : " (removed from videos.json)")" }
     return [.init(id: "files.missing", severity: .error, title: "\(vids.count) video file(s) missing", detail: "Missing videos can't render or post. Records are kept.",
@@ -159,7 +172,8 @@ public final class Doctor: @unchecked Sendable {
       .filter { !$0.state.isTerminal }.map(\.videoId))).sorted().prefix(12)
     var bad: [String] = []
     for id in ids {
-      guard let v = try store.video(id: id), !v.missing, let url = try store.fileURL(for: v) else { continue }
+      // A photo post has no duration to compare (round 21): ffprobe never sees it.
+      guard let v = try store.video(id: id), !v.missing, !v.isPhoto, let url = try store.fileURL(for: v) else { continue }
       let r = LaunchAgent.run(ffprobe, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", url.path])
       guard let d = Double(r.output.trimmingCharacters(in: .whitespacesAndNewlines)) else {
         bad.append("\(v.id) · \(v.name): ffprobe can't read the file")
@@ -237,7 +251,7 @@ public final class Doctor: @unchecked Sendable {
     var w: [String] = []
     for p in try store.posts(where: "scheduled_at<=? AND state IN ('planned','rendering','rendered','due','overdue')", [now.addingTimeInterval(48 * 3600)]) {
       let r = try p.renderId.flatMap { try store.render(id: $0) }
-      if let path = r?.outputPath, r?.deletedAt == nil, FileManager.default.fileExists(atPath: path) { continue }
+      if let r, r.outputPath != nil, r.deletedAt == nil, r.allPaths.allSatisfy({ FileManager.default.fileExists(atPath: $0) }) { continue }
       w.append("post \(p.id) · \(p.platform.rawValue) · \(p.videoId) v\(p.versionNo) · \(r == nil ? "no render" : "render file missing")")
     }
     guard !w.isEmpty else { return [] }

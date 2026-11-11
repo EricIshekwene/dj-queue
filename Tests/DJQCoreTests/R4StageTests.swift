@@ -310,7 +310,7 @@ import Testing
     let counts = ValidationIssue.bucketCounts(["a": [tooX, tooIG], "b": [crop, tooX], "c": []])
     #expect(counts.map(\.kind) == [.noCrop, .tooLong] && counts.map(\.count) == [1, 2])
     #expect(StageWording.reasonsText([tooX, crop]) == "No crop · Too long for X")
-    #expect(ValidationIssue.Kind.inChipOrder.count == 11)
+    #expect(ValidationIssue.Kind.inChipOrder.count == 12)  // round 21 added "No photos"
     for k in ValidationIssue.Kind.inChipOrder { #expect(!k.chipLabel.isEmpty && !k.chipHelp.isEmpty) }
   }
 

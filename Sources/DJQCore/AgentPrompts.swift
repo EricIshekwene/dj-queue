@@ -8,7 +8,7 @@ public enum AgentPrompts {
 
   /// True when a clip has no title AND (no suggestions OR the best suggestion is below `confidentEnough`).
   public static func needsTitleHelp(_ video: Video, suggestions: [TitleSuggestion]) -> Bool {
-    guard video.type == .short, video.titleText == nil else { return false }
+    guard video.type == .short, !video.isPhoto, video.titleText == nil else { return false }  // a photo has no song to look up
     let best = suggestions.compactMap(\.confidence).max()
     return suggestions.isEmpty || (best ?? 0) < confidentEnough
   }

@@ -533,6 +533,7 @@ final class EditorModel: ObservableObject {
     case .caption: .caption
     case .cover: .cover
     case .platforms: .platforms
+    case .photos: .frame  // round 21: the photos strip isn't built yet; Frame is where a photo post's pictures are
     case nil: nil
     }
   }

@@ -26,7 +26,8 @@ public final class PostizPublisher: Publisher, @unchecked Sendable {
     if case .string(let t) = spec.settings["title"] { title = t }
     return PreparedPost(postId: p.id, platform: p.platform, fileURL: URL(fileURLWithPath: spec.renderPath),
                         coverURL: spec.coverPath.map { URL(fileURLWithPath: $0) }, caption: spec.content, title: title,
-                        uploadURL: URL(string: settings.publishing.apiBase) ?? p.platform.uploadURL)
+                        uploadURL: URL(string: settings.publishing.apiBase) ?? p.platform.uploadURL,
+                        moreFileURLs: spec.photoPaths.dropFirst().map { URL(fileURLWithPath: $0) })
   }
 
   /// Submits this one post now (no-op when it already has a job). A refusal falls back to Manual.

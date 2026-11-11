@@ -71,14 +71,18 @@ public enum StageWording {
   public static let queueSchedulesItself = "Clips in the Queue schedule themselves"
 
   /// Back label for `v`: "Back to Score" / "Back to Edit"; "Back" when it has no back move.
-  public static func backTitle(_ v: Video) -> String { ClipStage.of(v)?.backTitle ?? "Back" }
+  public static func backTitle(_ v: Video) -> String {
+    if v.isPhoto, ClipStage.of(v) == .edit { return "Back" }  // a photo post has no Score stage to go back to
+    return ClipStage.of(v)?.backTitle ?? "Back"
+  }
 
   /// Forward label for `v`: "Score it" / "Send to Queue" / "Mark posted…"; "Forward" otherwise.
   public static func forwardTitle(_ v: Video) -> String { ClipStage.of(v)?.forwardTitle ?? "Forward" }
 
   /// Back tooltip for `v` (falls back to the blocker, then "Back a stage").
   public static func backHelp(_ v: Video) -> String {
-    ClipStage.of(v)?.backHelp(score: v.score) ?? blocker(v, .back) ?? "Back a stage"
+    if v.isPhoto, ClipStage.of(v) == .edit { return PhotoRules.noScoreStage }
+    return ClipStage.of(v)?.backHelp(score: v.score) ?? blocker(v, .back) ?? "Back a stage"
   }
 
   /// Forward tooltip for `v` (falls back to the blocker, then "Forward a stage").
@@ -93,6 +97,7 @@ public enum StageWording {
     guard let st = ClipStage.of(v) else { return noStageReason(v) }
     if v.missing, st == .edit { return fileMissing }
     switch (st, direction) {
+    case (.edit, .back) where v.isPhoto: return PhotoRules.noScoreStage
     case (.score, .back): return "Score is the first stage"
     case (.queue, .forward): return queueSchedulesItself
     case (.posted, .back): return "Posted — use Repost (next version) or Reset a wrongly marked post in Posts"
@@ -175,6 +180,7 @@ extension ValidationIssue.Kind {
     case .corrupt: "Edit unreadable"
     case .missingFile: "File missing"
     case .heldInEdit: "Sent back from Queue"
+    case .noPhotos: "No photos"
     }
   }
 
@@ -193,6 +199,7 @@ extension ValidationIssue.Kind {
     case .corrupt: "The saved edit can't be read — see Doctor"
     case .missingFile: "The clip file is gone — relink it in Health"
     case .heldInEdit: "You sent it back from the Queue — send it to the Queue again when it's done"
+    case .noPhotos: "Still needed before it can go to the Queue: add a photo in the editor"
     }
   }
 
@@ -200,7 +207,7 @@ extension ValidationIssue.Kind {
   public var isBlock: Bool {
     switch self {
     case .tooLong, .tooLarge, .captionTooLong, .titleTooLong, .corrupt, .missingFile: true
-    case .noCrop, .noText, .noCaption, .noTitle, .heldInEdit: false
+    case .noCrop, .noText, .noCaption, .noTitle, .heldInEdit, .noPhotos: false
     }
   }
 
@@ -208,6 +215,7 @@ extension ValidationIssue.Kind {
   public var chipOrder: Int {
     switch self {
     case .heldInEdit: -1
+    case .noPhotos: 0
     case .noCrop: 0
     case .noText: 1
     case .noCaption: 2
@@ -223,7 +231,7 @@ extension ValidationIssue.Kind {
 
   /// Every kind in chip order.
   public static var inChipOrder: [ValidationIssue.Kind] {
-    [.heldInEdit, .noCrop, .noText, .noCaption, .noTitle, .tooLong, .captionTooLong, .tooLarge, .titleTooLong, .corrupt,
+    [.heldInEdit, .noPhotos, .noCrop, .noText, .noCaption, .noTitle, .tooLong, .captionTooLong, .tooLarge, .titleTooLong, .corrupt,
      .missingFile]
   }
 }

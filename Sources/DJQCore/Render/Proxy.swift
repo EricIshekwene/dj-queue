@@ -16,7 +16,9 @@ extension Media {
   public static let proxyWidth = 540
 
   /// The source picture size (cached on the video row after the first probe).
+  /// A photo post answers with its first photo's size and is never probed (round 21).
   public static func sourceSize(store: Store, video: Video) -> CGSize? {
+    if let photos = video.photos { return photos.first.map { CGSize(width: $0.width, height: $0.height) } }
     if let w = video.sourceWidth, let h = video.sourceHeight, w > 0, h > 0 { return CGSize(width: w, height: h) }
     guard let url = try? store.fileURL(for: video), FileManager.default.fileExists(atPath: url.path),
           let info = try? probe(url), info.width > 0, info.height > 0 else { return nil }
@@ -36,10 +38,13 @@ extension Media {
 
   /// The cached proxy if it exists (never generates).
   public static func cachedProxy(store: Store, video: Video, range: ProxyRange = .trim) -> URL? {
-    guard let u = try? proxyURL(store: store, video: video, range: range), FileManager.default.fileExists(atPath: u.path)
+    guard !video.isPhoto, let u = try? proxyURL(store: store, video: video, range: range), FileManager.default.fileExists(atPath: u.path)
     else { return nil }
     return u
   }
+
+  /// A photo post has nothing to play: lists and the editor show `PhotoRenderer.preview` / `Media.thumbnail` instead.
+  static let noProxyForPhotos = "Photo posts have no preview video"
 
   /// Longest one ffmpeg proxy encode may run (per attempt) before it is stopped.
   public static let proxyTimeout: TimeInterval = 120
@@ -55,6 +60,7 @@ extension Media {
   public static func ensureProxy(store: Store, video: Video, range: ProxyRange = .trim,
                                  timeout: TimeInterval = proxyTimeout) throws -> URL {
     let fm = FileManager.default
+    guard !video.isPhoto else { throw MediaError(noProxyForPhotos) }
     let url = try proxyURL(store: store, video: video, range: range)
     if fm.fileExists(atPath: url.path) { return url }
     try fm.createDirectory(at: store.paths.proxies, withIntermediateDirectories: true)
@@ -226,7 +232,9 @@ public final class ProxyService: @unchecked Sendable {
       let result: Result<URL, Error>
       do {
         guard let v = try store.video(id: job.videoId) else { throw MediaError("No video \(job.videoId)") }
-        if let u = Media.cachedProxy(store: store, video: v, range: job.range) {
+        if v.isPhoto {
+          result = .failure(MediaError(Media.noProxyForPhotos))  // no encode, and no failure recorded against the post
+        } else if let u = Media.cachedProxy(store: store, video: v, range: job.range) {
           result = .success(u)
         } else if job.priority == .background, let name = try? Media.proxyURL(store: store, video: v, range: job.range).lastPathComponent,
                   let last: String = try store.kv(Self.failKey(v.id)), last == name {

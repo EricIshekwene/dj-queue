@@ -12,6 +12,9 @@ public struct RenderError: Error, LocalizedError, CustomStringConvertible {
 /// Final-file renderer (spec §7): trim → crop (source px) → scale (lanczos) → one TextOverlay PNG per text
 /// (`enable=between(t,…)`, chained in list order) → two-pass EBU R128 loudnorm → h264_videotoolbox / AAC → +faststart,
 /// validated with ffprobe; plus a cover JPG. One render per (video, version, editHash, scope).
+///
+/// Round 21: a photo post renders through `PhotoRenderer` instead (one JPEG per photo, no ffmpeg, scope always "all");
+/// every `RenderService` call branches on `Video.isPhoto` first, so video plans and hashes are untouched.
 public final class Renderer: RenderService, @unchecked Sendable {
   public let store: Store
   /// Overrides the destination folder (proofs/tests). Default: `<session>/Ready to Post/Shortform/`.
@@ -40,16 +43,25 @@ public final class Renderer: RenderService, @unchecked Sendable {
   // MARK: RenderService
 
   public func scope(videoId: String, platform: Platform?) throws -> String {
+    if try photoPost(videoId) != nil { return "all" }  // one set of files for every platform
     let edit = try store.edit(videoId: videoId)
     if let p = platform, edit.platformTrims[p] != nil { return p.rawValue }
     return "all"
   }
 
+  /// The video row when it is a photo post (round 21), else nil.
+  func photoPost(_ videoId: String) throws -> Video? {
+    guard let v = try store.video(id: videoId), v.isPhoto else { return nil }
+    return v
+  }
+
   public func editHash(videoId: String, versionNo: Int, platform: Platform?) throws -> String {
-    try plan(videoId: videoId, versionNo: versionNo, platform: platform).hash
+    if let v = try photoPost(videoId) { return try photoPlan(v, versionNo: versionNo).hash }
+    return try plan(videoId: videoId, versionNo: versionNo, platform: platform).hash
   }
 
   public func currentRender(videoId: String, versionNo: Int, platform: Platform?) throws -> Render? {
+    if let v = try photoPost(videoId) { return try photoCurrent(try photoPlan(v, versionNo: versionNo)) }
     let p = try plan(videoId: videoId, versionNo: versionNo, platform: platform)
     return try current(p)
   }
@@ -58,6 +70,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
   public func ensureRender(videoId: String, versionNo: Int, platform: Platform?) throws -> Render {
     renderLock.lock()
     defer { renderLock.unlock() }
+    if let v = try photoPost(videoId) { return try ensurePhotoRender(v, versionNo: versionNo) }
     let p = try plan(videoId: videoId, versionNo: versionNo, platform: platform)
     if let r = try current(p) { return r }
     guard p.edit.crop != nil else {
@@ -110,14 +123,18 @@ public final class Renderer: RenderService, @unchecked Sendable {
   /// never re-rendered in place, so a failed re-render can't lose a good file). Concurrent inserts
   /// converge on the oldest row.
   private func candidateRow(_ p: Plan) throws -> Render {
-    if let r = try store.renderRow(videoId: p.video.id, versionNo: p.version.number, hash: p.hash, scope: p.scope) {
+    try candidateRow(videoId: p.video.id, versionNo: p.version.number, hash: p.hash, scope: p.scope)
+  }
+
+  func candidateRow(videoId: String, versionNo: Int, hash: String, scope: String) throws -> Render {
+    if let r = try store.renderRow(videoId: videoId, versionNo: versionNo, hash: hash, scope: scope) {
       return r
     }
-    let mine = Render(id: newId(), videoId: p.video.id, versionNo: p.version.number, editHash: p.hash, scope: p.scope,
+    let mine = Render(id: newId(), videoId: videoId, versionNo: versionNo, editHash: hash, scope: scope,
                       outputPath: nil, coverPath: nil, loudness: nil, duration: nil, size: nil, status: .pending,
                       error: nil, createdAt: store.clock.now, deletedAt: nil)
     try store.save(mine)  // insert
-    let winner = try store.renderRow(videoId: p.video.id, versionNo: p.version.number, hash: p.hash, scope: p.scope) ?? mine
+    let winner = try store.renderRow(videoId: videoId, versionNo: versionNo, hash: hash, scope: scope) ?? mine
     if winner.id != mine.id { try store.markRenderDeleted(id: mine.id) }
     return winner
   }
@@ -158,7 +175,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
   private func lockURL(_ id: String) -> URL { store.paths.work.appendingPathComponent("\(id).lock") }
 
   /// True when this process now holds the render's lock; false when another process holds it.
-  private func acquireLock(_ id: String) throws -> Bool {
+  func acquireLock(_ id: String) throws -> Bool {
     try FileManager.default.createDirectory(at: store.paths.work, withIntermediateDirectories: true)
     let fd = open(lockURL(id).path, O_CREAT | O_RDWR, 0o644)
     guard fd >= 0 else { throw RenderError("Can't open render lock \(id).lock (errno \(errno))") }
@@ -173,7 +190,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
   }
 
   /// Unlocks; the file stays (unlinking a lock file others may have open would split the lock).
-  private func releaseLock(_ id: String) {
+  func releaseLock(_ id: String) {
     guard let fd = lockFDs.removeValue(forKey: id) else { return }
     flock(fd, LOCK_UN)
     close(fd)
@@ -194,10 +211,11 @@ public final class Renderer: RenderService, @unchecked Sendable {
     renderLock.lock()
     defer { renderLock.unlock() }
     let all = try store.renders()
-    let keptPaths = Set(all.filter { keep.contains($0.id) || $0.status == .rendering }
-      .flatMap { [$0.outputPath, $0.coverPath].compactMap { $0 } })
+    // Every file of a render: a photo post's has one per photo (`morePaths`).
+    func files(_ r: Render) -> [String] { r.allPaths + [r.coverPath].compactMap { $0 } }
+    let keptPaths = Set(all.filter { keep.contains($0.id) || $0.status == .rendering }.flatMap(files))
     for r in all where !keep.contains(r.id) && r.status != .rendering {
-      for path in [r.outputPath, r.coverPath].compactMap({ $0 }) where !keptPaths.contains(path) {
+      for path in files(r) where !keptPaths.contains(path) {
         let url = URL(fileURLWithPath: path)
         if isAppOutput(url) { try? FileManager.default.removeItem(at: url) }
       }
@@ -336,9 +354,11 @@ public final class Renderer: RenderService, @unchecked Sendable {
     }
   }
 
-  func destinationDir(_ p: Plan) throws -> URL {
+  func destinationDir(_ p: Plan) throws -> URL { try destinationDir(p.video) }
+
+  func destinationDir(_ video: Video) throws -> URL {
     if let outputRoot { return outputRoot }
-    guard let s = try store.session(id: p.video.sessionId) else { throw RenderError("Session missing for \(p.video.name)") }
+    guard let s = try store.session(id: video.sessionId) else { throw RenderError("Session missing for \(video.name)") }
     return URL(fileURLWithPath: s.folder).appendingPathComponent("Ready to Post/Shortform")
   }
 
@@ -543,7 +563,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
     return Output(file: dest, cover: coverDest, probe: probe, loudness: loudness)
   }
 
-  private func place(_ tmp: URL, at dest: URL) throws {
+  func place(_ tmp: URL, at dest: URL) throws {
     let fm = FileManager.default
     if fm.fileExists(atPath: dest.path) {
       _ = try fm.replaceItemAt(dest, withItemAt: tmp)

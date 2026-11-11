@@ -6,6 +6,8 @@ public struct ValidationIssue: Sendable, Hashable, Identifiable, Codable {
     case noCrop, noText, noCaption, tooLong, tooLarge, missingFile, noTitle, captionTooLong, titleTooLong, corrupt
     /// Sent back to Edit from the Queue (`Video.heldInEdit`, "Back to Edit"); "Send to Queue" clears it.
     case heldInEdit
+    /// Round 21: a photo post with no photos left (its last one can't be removed, so this is a broken row).
+    case noPhotos
   }
   public var kind: Kind
   public var platform: Platform?
@@ -29,6 +31,8 @@ public struct ValidationIssue: Sendable, Hashable, Identifiable, Codable {
 /// The editor inspector section an issue is fixed in (round 7, C1).
 public enum IssueSection: String, Sendable, CaseIterable {
   case title, frame, text, caption, cover, platforms
+  /// Round 21: a photo post's photos strip (it takes the Cover section's place, D15).
+  case photos
 }
 
 extension ValidationIssue.Kind {
@@ -42,6 +46,7 @@ extension ValidationIssue.Kind {
     case .noTitle: .title
     case .tooLong, .tooLarge: .platforms
     case .noCaption, .captionTooLong, .titleTooLong: .caption
+    case .noPhotos: .photos
     case .missingFile, .corrupt, .heldInEdit: nil
     }
   }
@@ -64,6 +69,7 @@ public struct ValidationContext: Sendable {
 public enum Validation {
   /// Readiness rules (round 2): the crop is confirmed, the resolved text is set or "No text" (defaults count),
   /// a caption resolves (written, or an existing template), and every posting platform's limits are met.
+  /// A photo post (round 21) needs its photos, a caption that resolves and fits; no crop, text or length rule.
   /// `context` (optional) saves re-reading settings, templates, hashtag sets and session names per clip.
   public static func issues(video v: Video, store: Store, context: ValidationContext? = nil) throws -> [ValidationIssue] {
     var out: [ValidationIssue] = []
@@ -81,8 +87,14 @@ public enum Validation {
       return out
     }
     let re = EditResolver.resolve(edit, video: v, defaults: settings.defaults)
-    if edit.crop == nil { out.append(.init(kind: .noCrop, platform: nil, message: "Confirm the crop")) }
-    if !r.hasDrawnText && !r.noText {
+    if let photos = v.photos {
+      // Round 21: the centred crop is always valid (Send to Queue confirms it) and a photo with no text is fine, so
+      // neither blocks. YouTube is never a posting platform here (`re` skips it), so its title isn't checked.
+      if photos.isEmpty { out.append(.init(kind: .noPhotos, platform: nil, message: "Add a photo")) }
+    } else {
+      if edit.crop == nil { out.append(.init(kind: .noCrop, platform: nil, message: "Confirm the crop")) }
+    }
+    if !v.isPhoto, !r.hasDrawnText && !r.noText {
       out.append(.init(kind: .noText, platform: nil,
                        message: v.titleText == nil && r.isDefault("text") ? "Add text (no title yet)" : "Add text or choose No text"))
     }
@@ -127,6 +139,7 @@ public enum Validation {
   /// Length checks per posting platform (resolved trim: markers by default; per-platform trims respected).
   public static func platformIssues(video v: Video, resolved re: ResolvedEdit, settings: Settings) -> [ValidationIssue] {
     var out: [ValidationIssue] = []
+    guard !v.isPhoto else { return out }  // a photo post has no length
     for p in settings.activePlatforms where !re.isSkipped(p) {
       guard let lim = settings.limits[p] else { continue }
       let d = re.trim(platform: p).duration

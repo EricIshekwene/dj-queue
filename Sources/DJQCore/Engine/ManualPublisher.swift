@@ -15,6 +15,7 @@ public final class ManualPublisher: Publisher, @unchecked Sendable {
   public func prepare(postId: String) throws -> PreparedPost {
     guard let p = try store.post(id: postId) else { throw EngineError("No post \(postId)") }
     guard let v = try store.video(id: p.videoId) else { throw EngineError("No video \(p.videoId)") }
+    if v.isPhoto, !p.platform.supportsPhotos { throw EngineError(PhotoRules.youtubeReason) }
     let settings = try store.settings()
     var render = try p.renderId.flatMap { try store.render(id: $0) }
     if render?.status != .done || render?.outputPath == nil || render?.deletedAt != nil {
@@ -26,6 +27,12 @@ public final class ManualPublisher: Publisher, @unchecked Sendable {
     }
     let caption = Captions.caption(for: p.platform, version: rv, video: v, sessionName: try store.sessionName(for: v),
                                    sets: try store.hashtagSets(), templates: try store.captionTemplates(), settings: settings)
+    if v.isPhoto {
+      // Every photo this platform takes, in order (D9: the first `maxPhotos`); a photo post has no cover file or title.
+      let files = PhotoRules.files(r, platform: p.platform).map { URL(fileURLWithPath: $0) }
+      return PreparedPost(postId: p.id, platform: p.platform, fileURL: files.first ?? URL(fileURLWithPath: out), coverURL: nil,
+                          caption: caption, title: nil, uploadURL: p.platform.uploadURL, moreFileURLs: Array(files.dropFirst()))
+    }
     let title = p.platform == .youtube ? Captions.youtubeTitle(rv, video: v, settings: settings) : nil
     return PreparedPost(postId: p.id, platform: p.platform, fileURL: URL(fileURLWithPath: out),
                         coverURL: r.coverPath.map { URL(fileURLWithPath: $0) }, caption: caption, title: title,

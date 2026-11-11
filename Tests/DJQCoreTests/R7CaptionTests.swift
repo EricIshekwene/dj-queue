@@ -344,6 +344,7 @@ import Testing
       case .tooLong, .tooLarge: #expect(s == .platforms)
       case .noCaption, .captionTooLong, .titleTooLong: #expect(s == .caption)
       case .missingFile, .corrupt, .heldInEdit: #expect(s == nil)
+      case .noPhotos: #expect(s == .photos)  // round 21: a photo post's photos strip
       }
     }
   }

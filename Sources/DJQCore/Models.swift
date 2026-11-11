@@ -247,9 +247,12 @@ public struct PhotoItem: Codable, Sendable, Hashable, Identifiable {
   /// Upright pixel size (EXIF orientation applied).
   public var width: Int
   public var height: Int
+  /// Size and SHA-256 of the copied file, taken at import (nil on a hand-built value). The render hash reads it, so a
+  /// reorder or a swapped photo re-renders and nothing else does.
+  public var fingerprint: String? = nil
 
-  public init(id: String = PhotoItem.newId(), file: String, width: Int, height: Int) {
-    self.id = id; self.file = file; self.width = width; self.height = height
+  public init(id: String = PhotoItem.newId(), file: String, width: Int, height: Int, fingerprint: String? = nil) {
+    self.id = id; self.file = file; self.width = width; self.height = height; self.fingerprint = fingerprint
   }
 
   public static func newId() -> String { String(UUID().uuidString.prefix(8)).lowercased() }

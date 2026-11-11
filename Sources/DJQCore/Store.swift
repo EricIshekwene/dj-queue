@@ -442,9 +442,10 @@ public final class Store: @unchecked Sendable {
     try db.run("UPDATE videos SET already_posted_on=?, updated_at=? WHERE id=?", [JSONCoding.string(platforms), now, id])
   }
 
-  /// Clearing a score takes the clip back past Edit: it has to be sent again.
+  /// Clearing a score takes the clip back past Edit: it has to be sent again. A photo post needs no score (round 21),
+  /// so clearing its score leaves it where it is.
   public func setScore(_ id: String, _ score: Int?) throws {
-    try db.run("UPDATE videos SET score=?, sent_to_queue=CASE WHEN ? THEN 0 ELSE sent_to_queue END, updated_at=? WHERE id=?",
+    try db.run("UPDATE videos SET score=?, sent_to_queue=CASE WHEN ? AND photos IS NULL THEN 0 ELSE sent_to_queue END, updated_at=? WHERE id=?",
                [score.map { min(100, max(0, $0)) }, score == nil, now, id])
     try logEvent("score", "Score \(score.map(String.init) ?? "cleared")", videoId: id)
   }
@@ -508,9 +509,24 @@ public final class Store: @unchecked Sendable {
 
   /// The video's edit (default `Edit()` when none saved). Keys missing from older JSON keep their defaults;
   /// unreadable JSON throws rather than silently dropping the crop.
+  ///
+  /// Round 21 (D8): a photo post's edit always skips the platforms that take no photos (YouTube Shorts), whatever the
+  /// stored row says, so nothing that reads an edit can plan or post one there.
   public func edit(videoId: String) throws -> Edit {
-    guard let s = try db.one("SELECT json FROM edits WHERE video_id=?", [videoId])?.string("json") else { return Edit() }
-    return try JSONCoding.decodeLenient(Data(s.utf8), defaults: Edit())
+    let row = try db.one("""
+      SELECT (SELECT json FROM edits WHERE video_id=?) AS json, (SELECT photos IS NOT NULL FROM videos WHERE id=?) AS photo
+      """, [videoId, videoId])
+    var e = try row?.string("json").map { try JSONCoding.decodeLenient(Data($0.utf8), defaults: Edit()) } ?? Edit()
+    if row?.bool("photo") == true { Self.keepPhotoPlatforms(&e) }
+    return e
+  }
+
+  /// A photo post never posts where photos can't go: those platforms are skipped and can't be turned on.
+  static func keepPhotoPlatforms(_ e: inout Edit) {
+    for p in Platform.allCases where !p.supportsPhotos {
+      e.skippedPlatforms.insert(p)
+      e.includedPlatforms.remove(p)
+    }
   }
 
   public func hasEdit(videoId: String) throws -> Bool {
@@ -518,8 +534,12 @@ public final class Store: @unchecked Sendable {
   }
 
   /// `remembersCrop`: this crop becomes "last crop" for the `.lastUsed` anchor. A bulk pass isn't one crop Eric chose for the next clip.
+  /// A photo post's edit is stored with its no-photo platforms skipped (round 21, D8), and its crops never become "last crop".
   public func save(_ e: Edit, videoId: String, remembersCrop: Bool = true) throws {
-    if remembersCrop, let c = e.crop, let v = try video(id: videoId), let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0,
+    var e = e
+    let isPhoto = try db.one("SELECT photos IS NOT NULL AS photo FROM videos WHERE id=?", [videoId])?.bool("photo") == true
+    if isPhoto { Self.keepPhotoPlatforms(&e) }
+    if remembersCrop, !isPhoto, let c = e.crop, let v = try video(id: videoId), let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0,
        try edit(videoId: videoId).crop != c {
       struct P: Codable { var x: Double; var y: Double }
       try setKV("defaults.lastCropCentre", P(x: (c.x + c.w / 2) / Double(w), y: (c.y + c.h / 2) / Double(h)))
@@ -795,7 +815,7 @@ public final class Store: @unchecked Sendable {
   /// The stored state says Queue (ready, scored, short, included) — the file flag aside, since intake sets
   /// `missing` before the state catches up.
   static func wasInQueue(_ v: Video) -> Bool {
-    v.state == .ready && v.type == .short && !v.excluded && v.score != nil
+    v.state == .ready && v.type == .short && !v.excluded && (v.score != nil || v.isPhoto)
   }
 
   /// The held flag counts only for a short clip with nothing posted (regular/retry).
@@ -891,7 +911,10 @@ public enum VersionResolver {
     if !decided {
       defaulted.insert("text"); defaulted.insert("noText")
       if let video {
-        if video.kind == .talking && d.noTextForTalking {
+        if video.isPhoto {
+          // Round 21 (D7): a photo post starts with no text. Texts added after the first still draw.
+          noText = !(chain.last { $0.moreText != nil }?.moreText ?? []).contains { !$0.isBlank }
+        } else if video.kind == .talking && d.noTextForTalking {
           noText = true
         } else {
           switch d.textSource {

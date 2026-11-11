@@ -279,7 +279,8 @@ public final class Engine: @unchecked Sendable {
     guard let ps = proxyService else { return "off" }
     guard ctx.rendered == 0, ctx.rendersWaiting == 0, !isRendering else { return "waiting for renders" }
     let rank: [VideoState: Int] = [.needsEdit: 1, .ready: 2, .planned: 2]
-    let vids = try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND state IN ('needs_edit','ready','planned')")
+    // Photo posts have no preview video (round 21).
+    let vids = try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND photos IS NULL AND state IN ('needs_edit','ready','planned')")
       .sorted { a, b in
         let ra = a.score == nil ? 0 : rank[a.state] ?? 3, rb = b.score == nil ? 0 : rank[b.state] ?? 3
         return (ra, a.part ?? 0, a.start ?? 0, a.id) < (rb, b.part ?? 0, b.start ?? 0, b.id)
@@ -479,6 +480,10 @@ public final class Engine: @unchecked Sendable {
       var newCover = r.coverPath
       if let c = r.coverPath, c.contains("/Ready to Post/Shortform/") { newCover = try moveToPosted(c) }
       try store.setRenderOutput(id: r.id, outputPath: newOut, coverPath: newCover)
+      // A photo post's other files move with the first (round 21).
+      if let more = r.morePaths {
+        try store.setRenderMorePaths(id: r.id, try more.map { $0.contains("/Ready to Post/Shortform/") ? try moveToPosted($0) : $0 })
+      }
       try store.logEvent("move", "Moved \(URL(fileURLWithPath: out).lastPathComponent) → Posted/Shortform", videoId: r.videoId)
       moved += 1
     }
@@ -488,7 +493,7 @@ public final class Engine: @unchecked Sendable {
         let users = try store.posts(where: "render_id=?", [r.id])
         guard !users.isEmpty, users.allSatisfy({ $0.state.isTerminal }),
               (users.map { $0.postedAt ?? $0.updatedAt }.max() ?? .distantFuture) < cutoff else { continue }
-        for path in [r.outputPath, r.coverPath].compactMap({ $0 }) where path.contains("/Posted/Shortform/") {
+        for path in r.allPaths + [r.coverPath].compactMap({ $0 }) where path.contains("/Posted/Shortform/") {
           try? fm.removeItem(atPath: path)
         }
         try store.markRenderDeleted(id: r.id)
