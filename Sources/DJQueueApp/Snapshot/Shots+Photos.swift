@@ -108,7 +108,26 @@ extension SnapshotShots {
         d.photoAspect = .r9x16
         SettingsUIState.shared.draft = d
       },
+      // D20: a 9:16 photo post with Instagram on waits in Edit and says how to fix it.
+      c.main("r21-photos-shape-issue") { m in
+        prep(m)
+        m.setViewMode(.wide, for: .edit)
+        m.screen = .edit
+        if let v = post(m, carousel: false, where: { v in m.editList.contains { $0.id == v.id } }), var e = try? m.store.edit(videoId: v.id) {
+          e.aspectOverride = .r9x16
+          try? m.store.save(e, videoId: v.id)
+          m.refreshNow()
+          ListPrefs.shared.setSearch(.edit, m.displayName(v))
+        }
+      },
       c.view("r21-photos-revert", width: 10, height: 10) {
+        for v in c.model.videos where v.isPhoto {
+          if var e = try? c.store.edit(videoId: v.id), e.aspectOverride != nil {
+            e.aspectOverride = nil
+            try? c.store.save(e, videoId: v.id)
+          }
+        }
+        c.model.refreshNow()
         prep(c.model)
         for s in [Screen.edit, .queue, .library] { c.model.viewModes[s] = nil }
         return AnyView(Color.clear)

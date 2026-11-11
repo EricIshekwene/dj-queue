@@ -193,3 +193,34 @@ fails at publish time, on a day Eric isn't looking, with the other four platform
   JSON-escaped and `%20` forms.
 - **Not changed:** photo renders made under the first file naming of this branch (dev and test data only; the day-old sweep removes them),
   and the "budget used up" wording after a 429 (the same sentence clips get; changing it changes clips).
+
+## Decisions made while building (lists and import, B1)
+
+- **A photo card shows the whole first photo at its own shape, fitted into the slot a clip's 9:16 cover has.** In Cards and List it sits
+  centred in the same 63 × 112 (24 × 42) slot; in Grid it sits on a quiet mat in the 9:16 tile. *Why:* "exactly as it will post" means
+  never cut to 9:16, and keeping the slot keeps titles and tiles lined up with the clips around them.
+- **The mark is a small outline badge under the title ("Photo" · "Carousel · 5") and the session and length are left out.** In Grid the
+  same words sit where the length sits. *Why:* D18; and "0:00" and "Photos" say nothing.
+- **A photo with no score reads "No score", small and grey, where a clip shows its number** (a dash in the narrow List column, with the
+  reason on hover). *Why:* a dash reads as something missing, and nothing is.
+- **Only large previews step through a carousel** (Single view, both quick looks): ‹ › on the photo and dots, or "3 of 12" past ten.
+  Small cards never move, on hover or otherwise.
+- **One picked photo is added at once; two or more open the sheet.** The sheet shows six thumbnails to a row, numbered, with an "add"
+  tile that opens the picker again and keeps what was typed. *Why:* D3 puts the one choice (carousel or a post per photo) where there is
+  one to make; a single photo has none.
+- **Files that can't be photos are refused in a toast and the rest go on.** *Why:* one stray PDF in a drag shouldn't cancel six photos.
+- **The import toast offers Open, not Undo.** *Why:* `PhotoImport.add` isn't a journal entry; Exclude takes a post out again.
+- **"A post per photo" is a button row holding the switch** (as "Ready to repost" is). *Why:* the live check clicks it for real, and a
+  bare tap gesture doesn't answer events sent to a hidden window.
+- **Kind gets a "Photo" option on every list that holds a photo post** (Edit, Queue, Library, Posts), not only Library. DJ vid and
+  Talking no longer count photo posts. *Why:* the Queue is where "show me just the photos" is asked most.
+- **Sort menus say "Photos with no score come first, oldest first" only while there is such a photo.** *Why:* "Score, worst first" and
+  "Worst → best" stay true for clips, and the line explains the one thing they don't say.
+- **A photo post hides what can't apply:** Kind, Copy agent prompt, Duplicate version and Repost (D16), and the inspector's Repost
+  section. Bulk Crop with only photos selected is dimmed and says "Photos are cropped in the editor, one by one"; with clips in the
+  selection it opens and shows each photo with Core's reason.
+- **A photo post is never "Not in videos.json".** *Why:* it was never in one; Library used that flag to warn about removed clips.
+- **Reveal in Finder, Copy file and the inspector's render link take every file of a photo post;** the link also drags them all out
+  (an AppKit drag source, since SwiftUI's drag carries one item).
+- **`photoShape` gets two fixes on the card: "Pick another shape" and "Skip Instagram".** *Why:* every block in Edit has an explicit way out.
+- **Settings › New clip defaults › Frame has "Photo shape"; each choice names the platform that refuses it, and 9:16 adds a warning line.**

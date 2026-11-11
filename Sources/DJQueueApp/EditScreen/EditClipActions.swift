@@ -62,6 +62,19 @@ extension AppModel {
                            tooltip: "Open the editor to write a caption just for \(name)", disabledReason: nil) { [self] in
           openEditor(v.id, in: ids)
         })
+      case .photoShape:
+        // Round 21 (D20): Instagram refuses a 9:16 photo. Two ways out, each one a click: another shape, or skip it.
+        out.append(EditFix(id: "shape-\(p.rawValue)", title: "Pick another shape", icon: "aspectratio",
+                           tooltip: "Open the editor to change the photo shape. \(name) takes 4:5 to 16:9", disabledReason: nil) { [self] in
+          openEditor(v.id, in: ids)
+        })
+        let id = v.id
+        out.append(EditFix(id: "skip-shape-\(p.rawValue)", title: "Skip \(name)", icon: "forward",
+                           tooltip: "Don't post this on \(name); the others keep the shape", disabledReason: nil) { [self] in
+          pipelineBulk("Skip \(name) for this post?", verb: "Skip \(name)", ids: [id], done: "\(name) skipped for this post") { b, dry in
+            try b.setPlatform([id], p, skipped: true, dryRun: dry)
+          }
+        })
       case .titleTooLong:
         out.append(EditFix(id: "yt-title", title: "Shorten YouTube title", icon: "textformat",
                            tooltip: "Open the editor to shorten the YouTube title (100 max)", disabledReason: nil) { [self] in

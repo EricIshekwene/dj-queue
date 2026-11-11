@@ -136,7 +136,8 @@ struct LibraryView: View {
       } header: {
         if mode != .single && !longs.isEmpty {
           LongformSection(model: model, videos: longs, mode: mode, showsHeader: true, onOpen: quickLook)
-          LibrarySectionLabel(title: "Short clips", count: shorts.count)
+          // Photo posts are listed with the short clips (round 21); the label says so when there are some.
+          LibrarySectionLabel(title: shorts.contains(where: \.isPhoto) ? "Short clips and photos" : "Short clips", count: shorts.count)
         }
       }
     }
