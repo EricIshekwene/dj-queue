@@ -104,7 +104,7 @@ public final class Planner: @unchecked Sendable {
     var dropped: [PlanSlot] = []
     try store.db.transaction {
       if revalidate { try Revalidation(store: store).run(adjustPlan: false) }
-      var clause = "date>=? AND pinned=0 AND week_start NOT IN (SELECT week_start FROM weeks WHERE state='approved')"
+      var clause = "date>=? AND pinned=0 AND exact_at IS NULL AND week_start NOT IN (SELECT week_start FROM weeks WHERE state='approved')"
       var binds: [SQLBindable?] = [today]
       if let week { clause += " AND week_start=?"; binds.append(week) }
       for s in try store.planSlots(where: clause, binds) {
@@ -134,7 +134,7 @@ public final class Planner: @unchecked Sendable {
     let dm = try store.dayMath()
     let today = store.today(dm)
     try store.db.transaction {
-      for s in try slots(week: week) where s.date >= today && !s.pinned {
+      for s in try slots(week: week) where s.date >= today && !s.pinned && !s.isExact {
         if try store.slotPosts(s.id).contains(where: { $0.state == .posted }) { continue }
         try clearSlot(s)
         try store.deletePlanSlot(s.id)
@@ -169,7 +169,7 @@ public final class Planner: @unchecked Sendable {
       let v = try readyVideo(videoId)
       let week = dm.weekStart(of: dm.date(date))
       if try store.week(week) == nil { try store.save(Week(weekStart: week, state: .draft, approvedAt: nil)) }
-      let here = try store.planSlots(where: "date=?", [date])
+      let here = try store.planSlots(where: "date=?", [date]).filter { !$0.isExact }  // a set-time slot takes no regular position
       let used = Set(here.map(\.position))
       if let pos = (0..<max(1, settings.postsPerDay)).first(where: { !used.contains($0) }) {
         let s = PlanSlot(id: newId(), date: date, position: pos, videoId: v.id, pinned: true, weekStart: week)
@@ -212,8 +212,10 @@ public final class Planner: @unchecked Sendable {
     public var date: String
     /// Platforms whose post is removed that day (empty: a slot that never got posts).
     public var platforms: [Platform]
-    /// The slot that day was pinned (its pin goes too).
+    /// The slot that day was pinned (its pin goes too). A set-time slot always is.
     public var pinned: Bool
+    /// Round 21: the slot that day had a set time (it goes too), so the words can say "set time 3:15 PM", not just "pinned".
+    public var setTime: Date? = nil
   }
 
   /// Read-only preview of `unplan(videoId:)`, in date order.
@@ -230,6 +232,7 @@ public final class Planner: @unchecked Sendable {
     for s in slots {
       var i = byDay[s.date] ?? UnplanItem(videoId: videoId, date: s.date, platforms: [], pinned: false)
       i.pinned = i.pinned || s.pinned
+      i.setTime = i.setTime ?? s.exactAt
       byDay[s.date] = i
     }
     return byDay.values.map { i in
@@ -290,6 +293,8 @@ public final class Planner: @unchecked Sendable {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     guard var sa = try store.planSlot(id: a), var sb = try store.planSlot(id: b) else { throw EngineError("No such plan slot") }
+    // A set time belongs to its clip: swapping would hand it to another one.
+    if sa.isExact || sb.isExact { throw EngineError(StageWording.hasSetTime) }
     try ensureNothingPosted(sa)
     try ensureNothingPosted(sb)
     try ensureNothingFinal(sa)
@@ -305,7 +310,8 @@ public final class Planner: @unchecked Sendable {
     }
   }
 
-  /// Moves a slot to another date (first free position; otherwise swaps places with that date's slot).
+  /// Moves a slot to another date (first free position; otherwise swaps places with that date's slot). A set-time slot
+  /// keeps its clock time on the new day and never swaps (`moveExactSlot`).
   public func move(slotId: String, to date: String) throws {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
@@ -322,6 +328,7 @@ public final class Planner: @unchecked Sendable {
     let perDay = max(1, settings.postsPerDay)
     let existing = try store.planSlots(where: "video_id=? AND date>=?", [videoId, today]).first
     if let e = existing {
+      if e.isExact { throw EngineError(StageWording.hasSetTime) }
       try ensureNothingPosted(e)
       try ensureNothingFinal(e)
     } else {
@@ -364,8 +371,9 @@ public final class Planner: @unchecked Sendable {
       try queue.skipOnce(videoId)
       return
     }
+    if s.isExact { throw EngineError(StageWording.hasSetTime) }
     let later = try store.planSlots(where: "date>=?", [today])
-      .filter { ($0.date, $0.position) > (s.date, s.position) && !$0.pinned }
+      .filter { ($0.date, $0.position) > (s.date, s.position) && !$0.pinned && !$0.isExact }
     for n in later where try !store.slotPosts(n.id).contains(where: { $0.state == .posted }) {
       try swap(s.id, n.id)
       return
@@ -404,8 +412,10 @@ public final class Planner: @unchecked Sendable {
   /// instead of another clip's (`autoSchedule`, DECISIONS-R13.md).
   func createPosts(_ s: PlanSlot, settings: Settings, dm: DayMath, picker: inout PlatformPicker, placer: inout Placer,
                    note: String = "scheduled", notBefore: Date? = nil, pullForHistory: Bool = true) throws {
-    let existing = Set(try store.slotPosts(s.id).filter { $0.kind == .regular }.map(\.platform))
     let now = store.clock.now
+    // A set-time slot's posts go out at its own time, never a slot time, and nothing new is created in the past.
+    if s.isExact { return try createExactPosts(s, settings: settings, notBefore: max(notBefore ?? now, now)) }
+    let existing = Set(try store.slotPosts(s.id).filter { $0.kind == .regular }.map(\.platform))
     var touched: Set<String> = [s.videoId]
     for p in settings.activePlatforms where !existing.contains(p) {
       var videoId: String? = s.videoId
@@ -455,7 +465,8 @@ public final class Planner: @unchecked Sendable {
   }
 
   /// Clears every approved slot first, then recreates their posts in date order (so videos that just traded places
-  /// don't look "already planned", and each platform keeps its shift).
+  /// don't look "already planned", and each platform keeps its shift). A set-time slot's posts come back at its set time
+  /// (`createPosts`).
   func regenerateMany(_ list: [(PlanSlot, Bool)], settings: Settings, dm: DayMath) throws {
     var todo: [PlanSlot] = []
     for (s, was) in list {
@@ -480,7 +491,7 @@ public final class Planner: @unchecked Sendable {
     let dm = DayMath(settings: settings)
     var all = try store.planSlots(where: "date>=?", [date])
     var movable: [PlanSlot] = []
-    for s in all where !s.pinned && (until == nil || s.date < until!) {
+    for s in all where !s.pinned && !s.isExact && (until == nil || s.date < until!) {
       if try !store.slotPosts(s.id).contains(where: { $0.state == .posted }) { movable.append(s) }
     }
     let movingIds = Set(movable.map(\.id))
@@ -523,8 +534,10 @@ public final class Planner: @unchecked Sendable {
       if p.state == .due || p.state == .overdue { p.state = p.renderId == nil ? .planned : .rendered }
       try store.save(p, note: "plan pushed → \(day)")
     }
+    // A set-time item's retry sits at the set time and stays there (round 21).
+    let exact = Set(try store.planSlots(where: "exact_at IS NOT NULL").map(\.id))
     let extras = try store.posts(where: "kind<>'regular' AND scheduled_at>=?", [dm.date(date)])
-      .filter { !$0.state.isTerminal && (until == nil || dm.key($0.scheduledAt) < until!) }
+      .filter { !$0.state.isTerminal && (until == nil || dm.key($0.scheduledAt) < until!) && !exact.contains($0.planSlotId ?? "") }
     for var p in extras {
       let day = dm.addDays(dm.key(p.scheduledAt), days)
       p.scheduledAt = try Sched.staggered(store: store, platform: p.platform, day: day, settings: settings, dm: dm, excluding: [p.id])
@@ -536,8 +549,10 @@ public final class Planner: @unchecked Sendable {
   func moveSlot(_ s: inout PlanSlot, to date: String, settings: Settings, dm: DayMath) throws {
     try ensureNothingPosted(s)
     try ensureNothingFinal(s)
+    if s.isExact { return try moveExactSlot(&s, to: date, settings: settings, dm: dm) }
     let wasApproved = try isApproved(s)
-    let used = try store.planSlots(where: "date=? AND id<>?", [date, s.id])
+    // Set-time slots are outside the cadence: neither a taken position nor a swap partner.
+    let used = try store.planSlots(where: "date=? AND id<>?", [date, s.id]).filter { !$0.isExact }
     if let pos = (0..<max(1, settings.postsPerDay)).first(where: { p in !used.contains { $0.position == p } }) {
       s.date = date
       s.position = pos
@@ -588,14 +603,17 @@ public final class Planner: @unchecked Sendable {
     }
   }
 
-  func readyVideo(_ id: String) throws -> Video {
+  /// `scheduled`: the clip already has a day, so it was sent; only what's left to fix can stop it.
+  func readyVideo(_ id: String, scheduled: Bool = false) throws -> Video {
     guard let v = try store.video(id: id) else { throw EngineError("No video \(id)") }
     guard v.type == .short else { throw EngineError("\(v.tag) is long-form — it's uploaded by hand, not planned") }
     if v.missing { throw EngineError("\(v.tag): file missing") }
     if v.excluded { throw EngineError("\(v.tag) is excluded") }
     let issues = try Validation.issues(video: v, store: store).filter { $0.kind != .tooLong }
-    if let i = issues.first { throw EngineError("\(v.tag) is in Edit, not the Queue (\(i.message))") }
-    if !v.sentToQueue { throw EngineError("\(v.tag) is in Edit, not the Queue (send it to the Queue first)") }
+    if let i = issues.first {
+      throw EngineError(scheduled ? "\(v.tag) has something to fix first (\(i.message))" : "\(v.tag) is in Edit, not the Queue (\(i.message))")
+    }
+    if !scheduled, !v.sentToQueue { throw EngineError("\(v.tag) is in Edit, not the Queue (send it to the Queue first)") }
     return v
   }
 

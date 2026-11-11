@@ -213,6 +213,48 @@ Eric's pipeline is Score → Edit → Queue → Posted. Decisions: `DECISIONS-R1
 - **Stages:** `.scheduled` stays as a case and a status word; back from it is "Back to Edit" (held). The Queue has no forward move.
 - **Runway:** `approvedDays` keeps its name and means days with slots; `scheduledThrough` and `Runway.isLow` feed the words `StageWording.scheduledThrough` and "Queue running low". `djq schedule [--dry-run]` runs the pass once; it is the only safe way to exercise scheduling on a DB copy.
 
+## Round 21 additions: post at a set time
+
+Eric picks an exact day and time for an item; every platform it posts to goes out at that minute. Decisions: `DECISIONS-R21.md` (D12–D14). Core only here; it works for any short-form item (clip or photo post). Code: `Engine/ExactTime.swift`, `BulkActions+PostAt.swift`, `djq/PostAtCommand.swift`; tests `R21ExactTime*Tests.swift`.
+
+**Model.** A set time is a `PlanSlot` with `exactAt` set (`isExact`), no new table:
+
+- `pinned` is always true, `date` is the local day of `exactAt`, `position` is the first free one from `PlanSlot.exactBase` (100) up on that day, so two set-time items can share a day. On the same minute both keep it on Manual; through Postiz one of the two goes a minute later on each channel (`PostizService.remoteDate`: two open jobs on a channel never share a minute) and the preview says so.
+- Its week is marked approved the way `autoSchedule` does it, and it holds one regular `PlatformPost` per usable platform with `scheduledAt = exactAt`. A YouTube time inside the quiet window goes through `YouTubeWindow.clear` (02:00–07:00 UTC → 07:30 UTC) like every other YouTube time.
+- Always the slot's own clip on every platform: no `PlatformPicker`, even with a per-platform sort.
+- A shared day is refused (`refuseSharedCard`, `StageWording.sharedCard`). When a platform has its own order, a scheduled item's card can carry another clip's post and its own post can sit on another clip's card; `postAt` on it throws "TikTok has its own order, so this day is shared with another clip. Send it back to Edit, then set the time." and the preview shows it as the blocker. Nothing is detached, deleted or guessed, and no regular post is ever left without a card. An item in the Queue has no card, and a set-time slot only holds its own clip's posts, so setting from the Queue, changing a set time and clearing one are unaffected.
+- A platform that is off for the item or marked already posted gets no post. One that failed keeps its lineage (`Planner.carryRetries`): a retry on its way moves to the set time as the same post; a failure whose retry is still to come has it made for the set time by the engine; a failure waiting for Eric, or a skipped post, gets nothing and the preview says which.
+- A change is refused while Postiz holds a copy that goes out within `Planner.exactLead` (`refuseTooLate`: "Facebook goes out in 3 minutes — too late to change"), in `postAt`, `clearExact` and a move: Postiz would keep that copy and send it at the old time. The undo of a "post-at" or "post-at-clear" batch is refused by the same test (`Planner.tooLate`, `BulkActions.tooLateToUndo`: "… too late to undo"), force or not.
+- `exactAt` is on the whole minute (`Planner.exactMinute`), at least `Planner.exactLead` (10 min) ahead when it is set, and a clock time that exists that day (`Planner.exactDate` refuses the hour the clocks skip, typed or on a move).
+
+**Invariants** (a test per line in `R21ExactTimePathsTests`):
+
+- It is outside the cadence. `openPositions`, `fill` and `isOpen` see only regular slots: a day keeps all its `0..<postsPerDay` positions beside any number of set times, and regular filling never lands on 100 or up.
+- It takes no `Placer` key and its plan day is its slot's date (`Store.planDay(of:)`); `position × offset` is never used for it.
+- Nothing re-times it: `setSlot` (kept, "it has a set time"), `pushPlan` and Post today (its retry stays at the set time too), the relay (`movableSlots`), `reflow`, `movablePosts` and missed-day shifts all leave it out. A set-time post the Mac slept through goes overdue by the usual rule and stays at its time; Post now and Skip work, Shift plan is refused (`StageWording.setTimeNoShift`) and the missed notice doesn't offer it.
+- `swap`, `skipNext` and `postToday` on a set-time item are refused with `StageWording.hasSetTime`; on other clips they pass over it.
+- `move(slotId:to:)` and `pin(videoId:date:)` (what a Calendar drag calls) keep its clock time on the new day (new `exactAt`, checked against the lead), never swap and never displace. A regular slot moved onto a day ignores the set times there, both for a free position and for a swap partner.
+- Posts regenerated or topped up for it (`createPosts`, `regenerateMany`, `approveWeek`) come back at `exactAt`, never a slot time, and never in the past. `rebuildWeek`, `proposeWeek`, `adoptDraftSlots` and `dropStalePastDraftSlots` leave it as it is.
+- Back to Edit, `unplan` and `remove(slotId:)` take it off like any other day; `UnplanItem.setTime` carries the time for the words.
+- `Queue.runway()` doesn't count it: `approvedDays` and `scheduledThrough` are about the cadence.
+- Undo: `PlanSnap` holds whole `PlanSlot`s, so `exactAt` round-trips; the batches below journal the plan.
+
+**API the UI calls** (all public):
+
+| Call | What it does |
+|---|---|
+| `BulkActions.postAt(_ ids: [String], at: Date, dryRun: Bool = false) -> BulkResult` | Sets the time for each item, one batch, one undo (`action` "post-at"). An Edit item goes through Send to Queue first (D13); one with something to fix stays untouched and `skipped[id]` says what, in Send to Queue's words. `moves[id].note` is the toast, "Set for Sat 14 Nov 3:15 PM". Throws when the time has passed or is under 10 minutes away, unless every item already has it (unchanged). |
+| `BulkActions.clearExact(_ ids: [String], dryRun: Bool = false) -> BulkResult` | "Use the regular schedule": the set time goes, the item is back in the Queue and the next scheduling pass gives it the next open day. One batch, one undo (`action` "post-at-clear"). Refused once something posted. `moves[id].note` is the toast, and names a retry that keeps its own time: "Back on the regular schedule · TikTok's retry still goes out Fri 6 Nov 10:00 AM" (the dry run reads the same). |
+| `BulkActions.postAtPreview(_ id: String, at: Date) -> Planner.ExactPreview` | Read-only, for the confirm sheet, wherever the item is (Edit, Queue, Scheduled): `platforms[{platform, at, moved, retry}]`, `skipped[{platform, reason, why}]` (reason: off, posted, retrying, failed, skipped, history), `replaces` (the day or set time it leaves), `notes` ("YouTube moves to 2:30 AM (07:30 UTC)", "TikTok goes out at 7:01 PM: another post has 7:00 PM"), `unchanged`, `blocker`, `summary`. It runs the real thing and rolls it back, so it can't disagree. |
+| `Planner.exactSlot(videoId:) -> PlanSlot?` | The item's set-time slot, nil on the regular schedule. `PlanSlot.exactAt` / `isExact` mark it in any slot list. |
+| `Planner.exactTimeProblem(_ at: Date) -> String?` | Why a time can't be picked (passed, or inside the lead), for live validation in a picker. |
+| `Planner.exactLead`, `Planner.exactMinute(_:)`, `Planner.parseExact(_:settings:)`, `Planner.exactDate(day:minutes:settings:)` | The 10-minute lead, a date on its whole minute, "YYYY-MM-DD HH:MM" in the Settings time zone, and a day plus minutes after midnight as a date (both throw for a time the clocks skip). |
+| `Planner.postAt(videoId:at:) -> PlanSlot`, `Planner.clearExact(videoId:)`, `Planner.postAtPreview(videoId:at:)` | The engine level under the batches: no journal, and the item must already be in the Queue or scheduled. The app uses the `BulkActions` calls. |
+| `Planner.move(slotId:to:)`, `Planner.pin(videoId:date:)` | Unchanged signatures; on a set-time slot they keep the clock time on the new day. |
+| `StageWording.setFor(_:settings:)`, `dayTime(_:settings:)`, `setTimeMark(_:settings:)`, `useRegularSchedule`, `regularSchedule`, `hasSetTime`, `setTimeNoShift`, `setTimePassed`, `setTimeTooSoon`, `noSetTime`, `tooLateToChange(_:seconds:to:)`, `sharedCard(_:)`, `retryStays(_:at:settings:)`, `noSuchTime(minutes:day:settings:)`, `sameMinute(_:goesAt:taken:settings:)`, `noSetTimePost(_:_:)`, `youtubeMoves(to:setFor:settings:)` | The words, shared by the app and `djq`. |
+
+**CLI.** `djq post-at <video> "<YYYY-MM-DD HH:MM>" [--dry-run] [--json]` and `djq post-at <video> --clear`. `djq week` marks the slot "set time 3:15 PM", `djq today` / `djq posts` mark its posts "[set time]", `djq status` adds "N at a set time"; `djq video --json` carries `plan[].exactAt`. Agents never run it unless Eric says so.
+
 ## Round 10 additions — whole-app search
 - `Sources/DJQCore/Search/`: `AppSearch.swift` (pure engine: `SearchIndex`, `SearchQuery`, tiers, snippets, no SwiftUI, no database), `SearchCorpus.swift` (clips, posts, weeks, sessions, settings and Health as `SearchItem`s; `Store.searchClipText`, one query for the latest version's text) and `SettingsSearchRegistry.swift` (every Settings row and header; `SettingsRegistryTests` scans the Settings views and fails on a missing label).
 - `AppModel.load` builds `searchIndex` off the main actor on every refresh, so a keystroke only scans folded bytes and never touches the database. Nothing is written and there is no schema change.

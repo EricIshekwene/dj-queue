@@ -20,6 +20,8 @@ problems use the `dj-queue-doctor` skill.
 - **Never send a clip to the Queue unless Eric says so in words.** A clip in the Queue is approved and posts by itself:
   `djq stage <video> forward` from Edit, `djq requeue`, `djq bulk requeue` and `djq bulk make-ready` are Eric's Send to Queue.
   Your edits never move a clip to the Queue, however complete they make it (`sent_to_queue` in `--json` says if Eric sent it).
+  `djq post-at` is Eric's Send to Queue as well (it sends the clip and puts it on the calendar at that minute): never run it
+  unless Eric says so, with the day and time in their words. `--dry-run` is always fine.
 - **Postiz: never schedule or publish without Eric's explicit OK.** On your own you may only read
   (`djq postiz status`, `djq postiz channels`) and preview (`--dry-run`, `djq postiz test <video> --dry-run`) or make
   Postiz **drafts** (`djq postiz test <video> --draft`, nothing reaches a platform). Never read, print or ask for the
@@ -193,6 +195,21 @@ history stay; other clips keep their days (nothing is reshuffled, and waiting cl
 (`batchId, changed, skipped, summary…`, see below) plus `unplanned{<video id>: [{videoId, date, platforms[], pinned}]}`; undo it with
 `djq bulk undo <batch>` (flag, slots, weeks and posts come back exactly). Both are also `djq bulk unqueue|requeue`
 (with `--filter`). Only when Eric asks — `--dry-run` first and tell Eric which days would go.
+
+## Post at a set time (round 21)
+
+```sh
+djq post-at <video> "<YYYY-MM-DD HH:MM>" [--dry-run] [--json]   # every platform posts at that minute (Settings time zone); Eric's word only
+djq post-at <video> --clear [--dry-run] [--json]                # back on the regular schedule: it gets the next open day
+```
+
+A set time sits outside posts per day: it takes none of the day's regular places, no other clip moves, and the scheduler
+never shifts it. The time must be 10 minutes ahead or more. YouTube from 02:00 to 07:00 UTC goes at 07:30 UTC, and
+`--dry-run` says so before anything is written (`plan.platforms[{platform, at, moved, retry}]`, `plan.skipped`, `plan.notes`,
+`plan.blocker`). A time is refused when Postiz sends a copy within 10 minutes ("too late to change").
+A clip still in Edit is sent to the Queue by this command; if something is left to fix it stays in Edit and the blocker
+says what. Undo with the `djq bulk undo <batch>` it prints. `djq week` marks the slot "set time 3:15 PM", and `plan[].exactAt`
+in `djq video --json` carries the time (absent on a regular day).
 
 ## Bulk (one transaction, journaled, undoable)
 

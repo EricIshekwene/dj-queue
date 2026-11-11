@@ -63,6 +63,8 @@ usage: djq <command> [args]
   requeue <video…> [--dry-run] [--json]   Send to Queue (only when Eric says so; if something's missing it stays in Edit)
   pin <video> <YYYY-MM-DD> | post-today <video> | skip-next <video> | push <YYYY-MM-DD> <days>
   remove-slot <slot> | swap <slot> <slot> | move <slot> <YYYY-MM-DD>   (a removed Queue clip gets a day again; stage back holds it)
+  post-at <video> "<YYYY-MM-DD HH:MM>" [--dry-run] [--json]   post at a set day and time on every platform, outside posts per day
+                                      (only when Eric says so: it sends the clip to the Queue) | post-at <video> --clear   back on the regular schedule
   posted <post> <url>                 mark posted (URL host must match the platform)
   problem <post> <type> <message>     type: \(ErrorType.allCases.map(\.rawValue).joined(separator: "|"))
   fixed <post> | reset <post> | skip <post> | post-now <post> | shift-plan <post>
@@ -196,6 +198,7 @@ func printPosts(_ store: Store, _ posts: [PlatformPost], _ s: Settings) {
   for p in posts {
     var line = "  \(short(p.id))  \(fmt(p.scheduledAt, s))  \(pad(p.platform.displayName, 14)) \(pad(p.state.displayName, 10)) \(tagOf(store, p.videoId)) v\(p.versionNo)"
     if p.attemptNo > 1 || p.kind != .regular { line += "  [\(p.kind.rawValue) #\(p.attemptNo)]" }
+    line += PostAtCommand.postMark(store, p)
     if let e = p.errorMessage, p.state.isProblem { line += "  — \(e)" }
     if let u = p.url { line += "  \(u)" }
     print(line)
@@ -220,13 +223,13 @@ func printWeek(_ store: Store, _ week: String) throws {
         return "\(p.platform.shortName) \(p.state.rawValue)\(other)"
       }.joined(separator: " · ")
       let score = v?.score.map { String($0) } ?? "–"
-      print("  \(label)  \(short(sl.id))  \(pad((v?.tag ?? sl.videoId) + " (\(score))", 34))\(sl.pinned ? " pinned" : "")\(states.isEmpty ? "" : "  " + states)")
+      print("  \(label)  \(short(sl.id))  \(pad((v?.tag ?? sl.videoId) + " (\(score))", 34))\(PostAtCommand.mark(sl, s))\(states.isEmpty ? "" : "  " + states)")
     }
   }
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -279,7 +282,7 @@ func run() throws -> Int32 {
     let problems = try actions.problems()
     print("DJ Queue · \(fmt(now, settings, "EEE d MMM yyyy HH:mm")) (\(settings.timeZone))")
     let waiting = try planner.schedulable(settings).count
-    print("Calendar   \(StageWording.scheduledThrough(rw.scheduledThrough, settings: settings)) · Queue \(waiting) waiting")
+    print("Calendar   \(StageWording.scheduledThrough(rw.scheduledThrough, settings: settings))\(PostAtCommand.statusNote(store)) · Queue \(waiting) waiting")
     print("Stages     Score \(try queue.toScore().count) · Edit \(try queue.needsEdit().count) · Queue \(waiting) · about \(rw.totalDays) d of clips left")
     let byState = Dictionary(grouping: today, by: \.state).map { "\($0.value.count) \($0.key.displayName.lowercased())" }.sorted()
     print("Today      \(today.count) post\(today.count == 1 ? "" : "s")\(byState.isEmpty ? "" : " (" + byState.joined(separator: ", ") + ")")")
@@ -954,6 +957,9 @@ func run() throws -> Int32 {
 
   case "postiz":
     return try PostizCommand.run(store, &wrote)
+
+  case "post-at":
+    return try PostAtCommand.run(store, settings, &wrote)
 
   case "agent":
     switch try arg(0, "install|uninstall|status") {

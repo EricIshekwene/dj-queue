@@ -130,7 +130,8 @@ extension Planner {
   }
 
   /// Every open (day, position) from today to the horizon, in calendar order. A day never goes past posts/day, even when
-  /// a pinned slot sits above it after posts/day was lowered.
+  /// a pinned slot sits above it after posts/day was lowered. Set-time slots (round 21) don't count: the day keeps all
+  /// its regular positions.
   func openPositions(now: Date, settings: Settings, dm: DayMath) throws -> [(date: String, position: Int)] {
     let today = dm.key(now)
     let last = dm.addDays(today, Self.autoScheduleHorizonDays)
@@ -139,7 +140,8 @@ extension Planner {
     var out: [(date: String, position: Int)] = []
     for offset in 0...Self.autoScheduleHorizonDays {
       let day = dm.addDays(today, offset)
-      let used = Set((byDay[day] ?? []).map(\.position))
+      // Set-time slots are outside the cadence: they take none of the day's room.
+      let used = Set((byDay[day] ?? []).filter { !$0.isExact }.map(\.position))
       let room = perDay - used.count
       guard room > 0 else { continue }
       let free = (0..<perDay).filter { !used.contains($0) }
@@ -163,7 +165,8 @@ extension Planner {
     try dropNotReadyDraftSlots(revalidate: false)
     let slots = try store.planSlots(where: clause, [c.today]).sorted { ($0.date, $0.position) < ($1.date, $1.position) }
     var placer = try Placer(store: store, dm: c.dm)
-    for s in slots {
+    // A set-time slot is real from the moment it's made (`postAt` creates its posts): only its week is marked.
+    for s in slots where !s.isExact {
       let late = !isOpen(day: s.date, position: s.position, today: c.today, now: c.now, settings: c.settings, dm: c.dm)
       let hadPosts = try !store.slotPosts(s.id).isEmpty
       if !late || s.pinned || hadPosts {
@@ -184,7 +187,8 @@ extension Planner {
     c.placer = placer
   }
 
-  private func approve(week: String, at now: Date) throws {
+  /// Marks the week as the internal record wants it for a slot that posts. Shared with `postAt`.
+  func approve(week: String, at now: Date) throws {
     if try store.week(week)?.state != .approved { try store.save(Week(weekStart: week, state: .approved, approvedAt: now)) }
   }
 
@@ -217,7 +221,8 @@ extension Planner {
   }
 
   /// What a relay may take off: unpinned slots from today on with nothing posted, each live post at least `relayLead`
-  /// away and untouched. Postiz keeps its guards: a slot with a live job moves (the publish step cancels the job, and the
+  /// away and untouched. A set-time slot is always pinned, and left out by name as well.
+  /// Postiz keeps its guards: a slot with a live job moves (the publish step cancels the job, and the
   /// lineage blocks a new create until that's confirmed); one whose job isn't settled or ended Postiz delivery for good,
   /// or that went to Eric by hand, stays.
   private func movableSlots(_ c: Pass) throws -> [PlanSlot] {
@@ -232,7 +237,7 @@ extension Planner {
       guard let job = try store.livePostizJob(postId: p.id) else { return true }
       return job.phase == .live && job.remoteDate >= cutoff
     }
-    return try store.planSlots(where: "date>=? AND pinned=0", [c.today]).sorted { ($0.date, $0.position) < ($1.date, $1.position) }
+    return try store.planSlots(where: "date>=? AND pinned=0 AND exact_at IS NULL", [c.today]).sorted { ($0.date, $0.position) < ($1.date, $1.position) }
       .filter { s in
         let posts = try store.slotPosts(s.id)
         return try !posts.contains { $0.state == .posted } && posts.allSatisfy(movable)

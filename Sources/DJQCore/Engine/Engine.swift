@@ -334,7 +334,7 @@ public final class Engine: @unchecked Sendable {
       notify(AppNotification(
         key: "overdue:\(p.id):\(Int(p.scheduledAt.timeIntervalSince1970))", title: "\(p.platform.displayName) · \(tag) · missed",
         body: "Was due \(Sched.shortTime(p.scheduledAt, settings)). \(moved)",
-        critical: false, actions: [.postNow, .shiftPlan, .skip], postId: p.id, videoId: p.videoId))
+        critical: false, actions: try store.hasSetTime(p) ? [.postNow, .skip] : [.postNow, .shiftPlan, .skip], postId: p.id, videoId: p.videoId))
       n += 1
     }
     return n == 0 ? "none" : "overdue \(n)"

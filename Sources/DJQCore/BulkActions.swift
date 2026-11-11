@@ -376,7 +376,7 @@ public final class BulkActions: @unchecked Sendable {
       if try !store.planSlots(where: "video_id=? AND date>=?", [v.id, today]).isEmpty { return .skipped("already planned") }
       let perDay = max(1, s.postsPerDay)
       guard let day = try dm.weekDays(dm.weekStart(of: dm.date(week))).first(where: { d in
-        try d >= today && store.planSlots(where: "date=?", [d]).count < perDay
+        try d >= today && store.planSlots(where: "date=? AND exact_at IS NULL", [d]).count < perDay
       }) else { return .skipped("no free day left in the week of \(week)") }
       try planner.pin(videoId: v.id, date: day)
       return .changed
@@ -764,6 +764,7 @@ public final class BulkActions: @unchecked Sendable {
           if !force, let why = try planConflict(before: bp, after: ap, current: cp) {
             throw EngineError("Can't undo the plan part of \(rec.action): \(why). Use force to overwrite.")
           }
+          if let why = try tooLateToUndo(rec.action, before: bp, current: cp) { throw EngineError(why) }  // round 21: force can't help
           try restorePlan(bp, current: cp, note: "undo \(rec.action) (batch \(id.prefix(8)))")
           touched.formUnion(bp.slots.map(\.videoId) + ap.slots.map(\.videoId) + bp.posts.map(\.videoId) + ap.posts.map(\.videoId))
           touched.formUnion(cp.slots.map(\.videoId) + cp.posts.map(\.videoId))  // clips the scheduler had placed since

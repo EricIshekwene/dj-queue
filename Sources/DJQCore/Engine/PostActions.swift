@@ -220,6 +220,8 @@ public final class PostActions: @unchecked Sendable {
     var p = try post(postId)
     guard !p.state.isTerminal else { throw EngineError("Already \(p.state.displayName)") }
     try ensureNotHeld(p.videoId)
+    // Round 21: a set-time post has no slot to shift into (position 100 and up is no slot time).
+    if try store.hasSetTime(p) { throw EngineError(StageWording.setTimeNoShift) }
     let position = try store.position(of: p)
     var day = store.today(dm)
     try store.db.transaction {

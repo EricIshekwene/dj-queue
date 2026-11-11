@@ -144,6 +144,85 @@ public enum StageWording {
   /// The event of a clip the scheduler gave a day. `day` is already formatted ("Tue 10 Nov").
   public static func scheduledFor(_ day: String) -> String { "Scheduled for \(day)" }
 
+  // MARK: Post at a set time (round 21)
+
+  /// The event, the `StageMove.note` and the toast of a set time. `when` is already formatted ("Sat 14 Nov 3:15 PM").
+  public static func setFor(_ when: String) -> String { "Set for \(when)" }
+  /// "Set for Sat 14 Nov 3:15 PM", in the Settings time zone.
+  public static func setFor(_ at: Date, settings s: Settings) -> String { setFor(Sched.shortTime(at, s)) }
+  /// The mark on a set-time slot in lists and `djq week`: "set time 3:15 PM".
+  public static func setTimeMark(_ at: Date, settings s: Settings) -> String { "set time \(clockTime(at, s))" }
+  /// The action that takes a set time off again.
+  public static let useRegularSchedule = "Use the regular schedule"
+  /// Its event and `StageMove.note`.
+  public static let regularSchedule = "Back on the regular schedule"
+  /// Why a set time is refused: it isn't ahead of now, or it's inside `Planner.exactLead`.
+  public static let setTimePassed = "That time has passed"
+  public static let setTimeTooSoon = "Pick a time at least \(Int(Planner.exactLead / 60)) minutes from now"
+  /// Why a swap, Post today or Skip next leaves a set-time item alone.
+  public static let hasSetTime = "It has a set time — change the time instead"
+  /// Why Shift plan leaves a missed set-time post alone: it has no slot to go to.
+  public static let setTimeNoShift = "It has a set time — post it now or pick a new time"
+  public static let noSetTime = "It has no set time"
+  /// Before Eric confirms a set time inside YouTube's quiet window: "YouTube moves to 2:30 AM (07:30 UTC)", with the day
+  /// when that's another day than the set time's.
+  public static func youtubeMoves(to at: Date, setFor exact: Date, settings s: Settings) -> String {
+    let dm = DayMath(settings: s)
+    let when = dm.key(at) == dm.key(exact) ? clockTime(at, s) : Sched.shortTime(at, s)
+    return "YouTube moves to \(when) (07:30 UTC)"
+  }
+
+  /// Why a time can't be changed or cleared: Postiz holds a copy that is about to go out and keeps it from here on.
+  /// "Facebook goes out in 3 minutes — too late to change".
+  /// `verb`: "change", or "undo" for the undo of a set-time batch.
+  public static func tooLateToChange(_ p: Platform, seconds: TimeInterval, to verb: String = "change") -> String {
+    let m = Int((seconds / 60).rounded(.up))
+    return m <= 0 ? "\(p.displayName) is going out now — too late to \(verb)"
+      : "\(p.displayName) goes out in \(m) minute\(m == 1 ? "" : "s") — too late to \(verb)"
+  }
+  /// Why a scheduled item can't take a set time: a platform with its own order put another clip's post on its day's
+  /// card, or its own post on another clip's card. Back to Edit takes the day off; then the time can be set.
+  public static func sharedCard(_ p: Platform) -> String {
+    "\(p.displayName) has its own order, so this day is shared with another clip. Send it back to Edit, then set the time."
+  }
+  /// After "Use the regular schedule": "TikTok's retry still goes out Fri 6 Nov 10:00 AM".
+  public static func retryStays(_ p: Platform, at: Date, settings s: Settings) -> String {
+    "\(p.displayName)'s retry still goes out \(Sched.shortTime(at, s))"
+  }
+  /// A clock time the day doesn't have: "2:30 AM doesn't exist on Sun 14 Mar: the clocks go forward that night".
+  public static func noSuchTime(minutes: Int, day: String, settings s: Settings) -> String {
+    let h = minutes / 60, clock = "\(h % 12 == 0 ? 12 : h % 12):\(String(format: "%02d", minutes % 60)) \(h < 12 ? "AM" : "PM")"
+    return "\(clock) doesn't exist on \(BulkActions.day(day, DayMath(settings: s), s)): the clocks go forward that night"
+  }
+  /// Through Postiz two posts on one channel never share a minute. `goesAt` set: the other post is already in Postiz,
+  /// so this one goes then ("TikTok goes out at 7:01 PM: another post has 7:00 PM"). nil: neither is there yet.
+  public static func sameMinute(_ p: Platform, goesAt: Date?, taken: Date, settings s: Settings) -> String {
+    if let goesAt { return "\(p.displayName) goes out at \(clockTime(goesAt, s)): another post has \(clockTime(taken, s))" }
+    return "\(p.displayName): another post has \(clockTime(taken, s)), so one of the two goes out a minute later"
+  }
+  /// Why a platform that is on gets no post at the set time (the preview's `skipped[].why`).
+  public static func noSetTimePost(_ r: Planner.ExactPreview.Skipped.Reason, _ p: Platform) -> String {
+    switch r {
+    case .off: "\(p.displayName) is off for it"
+    case .posted: "Already posted on \(p.displayName)"
+    case .retrying: "\(p.displayName) failed and retries by itself, around the set time"
+    case .failed: "\(p.displayName) failed and waits for you in Posts"
+    case .skipped: "\(p.displayName) was skipped for it"
+    case .history: "\(p.displayName) already had its post"
+    }
+  }
+  /// "Sat 14 Nov 3:15 PM" in the Settings time zone: the one way a set time is written.
+  public static func dayTime(_ at: Date, settings s: Settings) -> String { Sched.shortTime(at, s) }
+
+  /// "3:15 PM" in the Settings time zone.
+  static func clockTime(_ d: Date, _ s: Settings) -> String {
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.timeZone = s.tz
+    f.dateFormat = "h:mm a"
+    return f.string(from: d)
+  }
+
   /// Event logged instead of "Moved to Edit" for a clip pinned to a day: it stays on that day and can't post until
   /// fixed. `day` is already formatted ("Tue 10 Nov").
   public static func cantPost(on day: String, _ issues: [ValidationIssue]) -> String {
