@@ -391,3 +391,72 @@ import Testing
     #expect(try R.layout(f) == ["2026-11-02#0 clip-0", "2026-11-02#100 clip-1"])
   }
 }
+
+/// Round 21 through Postiz: a set time reaches Postiz at that minute on every channel, a change replaces its copies, and
+/// "never double-post" holds on Postiz's side throughout.
+@Suite struct R21ExactTimePostizTests {
+  typealias Rig = R6PostizLifecycleTests.Rig
+  typealias R = ExactRig
+
+  /// Channel → when Postiz will publish `video` there (live copies only).
+  func dates(_ rig: Rig, _ video: String) throws -> [String: Date] {
+    var out: [String: Date] = [:]
+    for p in rig.fake.livePosts where try rig.video(of: p) == video {
+      #expect(out[p.integrationId] == nil, "two live copies on \(p.integrationId)")
+      out[p.integrationId] = p.date
+    }
+    return out
+  }
+
+  @Test func aSetTimeGoesToPostizAtThatMinuteAndAChangeReplacesItsCopies() throws {
+    let rig = try Rig(3, approve: false)
+    rig.engine.autoSchedules = true
+    let bulk = BulkActions(store: rig.store)
+    let at = rig.f.at("2026-11-04", "22:00")
+    #expect(try bulk.postAt(["clip-2"], at: at).changed == ["clip-2"])
+    rig.settle()
+    var d = try dates(rig, "clip-2")
+    #expect(d.count == 6 && d["ch-youtube"] == R.utc("2026-11-05", 7, 30))
+    #expect(d.filter { $0.key != "ch-youtube" }.values.allSatisfy { $0 == at })
+    #expect(try rig.invariants().isEmpty)
+    // The regular clips went out on their own days beside it.
+    #expect(try R.layout(rig.f) == ["2026-11-02#0 clip-0", "2026-11-03#0 clip-1", "2026-11-04#100 clip-2"])
+    // A new time: the old copies go, the new ones carry it, one per channel.
+    let to = rig.f.at("2026-11-05", "09:45")
+    #expect(try bulk.postAt(["clip-2"], at: to).changed == ["clip-2"])
+    rig.f.clock.advance(600)
+    rig.settle()
+    d = try dates(rig, "clip-2")
+    #expect(d.count == 6 && d.values.allSatisfy { $0 == to })
+    #expect(try rig.invariants().isEmpty)
+    // Back on the regular schedule: the scheduler gives it a day and Postiz follows.
+    #expect(try bulk.clearExact(["clip-2"]).changed == ["clip-2"])
+    rig.f.clock.advance(600)
+    rig.settle()
+    let day = try #require(try rig.store.planSlots(where: "video_id='clip-2'").first)
+    #expect(!day.isExact && day.position == 0)
+    d = try dates(rig, "clip-2")
+    #expect(d.count == 6 && d["ch-tiktok"] == rig.f.at(day.date, "19:00"))
+    #expect(try rig.invariants().isEmpty)
+  }
+
+  @Test func aPostEricDeletedInPostizIsNeverSentBackBySettingATime() throws {
+    let rig = try Rig(4, approve: false)
+    rig.engine.autoSchedules = true
+    rig.settle()
+    let th = try #require(try rig.f.post(.threads, day: "2026-11-05"))
+    rig.fake.vanish(try #require(try rig.job(th)).postizId!)
+    rig.f.clock.advance(600)
+    rig.tick(3)
+    let name = try #require(try rig.store.video(id: th.videoId)).displayName
+    let refusal = "\(name) has a post you removed from Postiz"
+    let plan = try R.plan(rig.f)
+    let at = rig.f.at("2026-11-14", "15:15")
+    #expect(throws: EngineError(refusal)) { try Planner(store: rig.store).postAt(videoId: th.videoId, at: at) }
+    #expect(try Planner(store: rig.store).postAtPreview(videoId: th.videoId, at: at).blocker == refusal)
+    let r = try BulkActions(store: rig.store).postAt([th.videoId], at: at)
+    #expect(r.changed.isEmpty && r.skipped[th.videoId] == refusal)
+    #expect(try R.plan(rig.f) == plan)
+    #expect(try rig.invariants().isEmpty)
+  }
+}

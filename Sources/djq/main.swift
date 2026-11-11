@@ -63,7 +63,8 @@ usage: djq <command> [args]
   requeue <video…> [--dry-run] [--json]   Send to Queue (only when Eric says so; if something's missing it stays in Edit)
   pin <video> <YYYY-MM-DD> | post-today <video> | skip-next <video> | push <YYYY-MM-DD> <days>
   remove-slot <slot> | swap <slot> <slot> | move <slot> <YYYY-MM-DD>   (a removed Queue clip gets a day again; stage back holds it)
-  post-at <video> "<YYYY-MM-DD HH:MM>" [--dry-run] [--json] | post-at <video> --clear   post at a set day and time on every platform, outside posts per day (Eric's word only: it sends the clip to the Queue); --clear = the regular schedule
+  post-at <video> "<YYYY-MM-DD HH:MM>" [--dry-run] [--json]   post at a set day and time on every platform, outside posts per day
+                                      (only when Eric says so: it sends the clip to the Queue) | post-at <video> --clear   back on the regular schedule
   posted <post> <url>                 mark posted (URL host must match the platform)
   problem <post> <type> <message>     type: \(ErrorType.allCases.map(\.rawValue).joined(separator: "|"))
   fixed <post> | reset <post> | skip <post> | post-now <post> | shift-plan <post>
