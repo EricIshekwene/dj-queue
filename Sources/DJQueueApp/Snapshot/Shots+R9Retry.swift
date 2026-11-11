@@ -3,6 +3,9 @@ import SwiftUI
 
 /// Round 9 (prefix r9-): a failed post with its automatic retry coming, on every screen that shows it: the Calendar's
 /// Day, 3 Day and Week views, Posts, the inspector and the menu bar. Nothing here is a Problem, so none of them shows a red badge for it.
+/// Round 22 (prefix r22-): the chip is one calm pill ("Retrying Thu 8:00 am", no try count, no error), the inspector keeps
+/// the error behind Details, and Threads' expired sign-in is one "Reconnect Threads in Postiz" item (Problems, the
+/// attention card, the menu bar) while its posts wait.
 extension SnapshotShots {
   static func r9retry(_ c: SnapshotContext) -> [Shot] {
     let pm = c.postiz
@@ -58,6 +61,17 @@ extension SnapshotShots {
       c.view("r9-menubar", width: 320) {
         show(pm)
         return AnyView(MenuBarContent(model: pm, state: MenuBarState(model: pm)))
+      },
+      c.main("r22-posts-signin", pm) { m in
+        show(m)
+        BrowseUI.shared.reset()
+        PostsCardState.shared.expanded = []
+        ListPrefs.shared.setStatus(.posts, PostsTab.problems.rawValue)
+        m.postsSelection = nil
+        m.screen = .posts
+      },
+      c.main("r22-inspector-retrying", pm) { m in
+        scheduled(m) { $0.state == .failed && $0.platform == .tiktok && $0.resolution == "retried" }
       },
     ]
   }

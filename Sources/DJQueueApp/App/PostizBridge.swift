@@ -78,7 +78,7 @@ enum PostizSamples {
     PostizIntegration(id: "sample-ig", name: "djlovd", identifier: "instagram-standalone", profile: "djlovd"),
     PostizIntegration(id: "sample-fb", name: "DJ Lovd Page", identifier: "facebook", profile: "djlovd"),
     PostizIntegration(id: "sample-yt", name: "DJ Lovd", identifier: "youtube", profile: "djlovd"),
-    PostizIntegration(id: "sample-th", name: "djlovd", identifier: "threads", disabled: true, profile: "djlovd"),
+    PostizIntegration(id: "sample-th", name: "djlovd", identifier: "threads", profile: "djlovd", refreshNeeded: true),
     PostizIntegration(id: "sample-x", name: "DJLovd", identifier: "x", profile: "djlovd"),
   ]
 }

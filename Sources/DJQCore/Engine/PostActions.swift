@@ -207,9 +207,20 @@ public final class PostActions: @unchecked Sendable {
       }
       p.state = .due
       p.scheduledAt = now
-      try store.save(p, note: "post now")
+      // Round 22 (R7): a platform set to Postiz sends it through Postiz at the soonest time (now + the lead time); only a
+      // Manual platform hands it to the Calendar to post by hand. The note says which (`PostizService.handedToToday`).
+      try store.save(p, note: PostizService.settingsAllow(p.platform, settings) ? Self.postNowPostizNote : "post now")
     }
     try store.refreshState(videoId: p.videoId)
+  }
+
+  /// The history note of a Post now that goes through Postiz (round 22). It isn't a hand-over to the Calendar, and it
+  /// lifts an earlier one: Eric asked for it to go out now, through Postiz.
+  public static let postNowPostizNote = "post now (Postiz)"
+
+  /// Whether Post now on `p` sends it through Postiz (a platform set to Postiz) or hands it to Eric (Manual).
+  public func postNowGoesThroughPostiz(_ p: PlatformPost) throws -> Bool {
+    PostizService.settingsAllow(p.platform, try store.settings())
   }
 
   /// Missed-slot action: into today's slot for the platform (or the next day it hasn't posted yet); if that slot is

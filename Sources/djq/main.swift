@@ -774,7 +774,7 @@ func run() throws -> Int32 {
     let p = try resolvePost(store, try arg(0, "post id"))
     try actions.postNow(postId: p.id)
     wrote = true
-    print("\(p.platform.displayName) is due now")
+    print(try actions.postNowGoesThroughPostiz(p) ? "\(p.platform.displayName) goes to Postiz to post within minutes" : "\(p.platform.displayName) is due now")
   case "shift-plan":
     let p = try resolvePost(store, try arg(0, "post id"))
     try actions.shiftPlan(postId: p.id)

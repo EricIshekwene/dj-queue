@@ -974,7 +974,9 @@ final class AppModel {
     undoable("\(post.platform.displayName) skipped", "skip-post", ids: [post.videoId], plan: true) { try postActions.skip(postId: post.id) }
   }
   func postNow(_ post: PlatformPost) {
-    let ok = undoable("\(post.platform.displayName) is due now", "post-now", ids: [post.videoId], plan: true) { try postActions.postNow(postId: post.id) }
+    let viaPostiz = (try? postActions.postNowGoesThroughPostiz(post)) == true
+    let ok = undoable(viaPostiz ? "\(post.platform.displayName) goes to Postiz to post within minutes" : "\(post.platform.displayName) is due now",
+                      "post-now", ids: [post.videoId], plan: true) { try postActions.postNow(postId: post.id) }
     guard ok else { return }
     highlightPostId = post.id
     openCalendarDay()

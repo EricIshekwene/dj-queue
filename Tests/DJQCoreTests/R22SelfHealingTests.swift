@@ -384,4 +384,51 @@ import Testing
     let decoded = try JSONDecoder().decode(PostizIntegration.self, from: Data(old.utf8))
     #expect(decoded.refreshNeeded == nil && !decoded.needsSignIn)
   }
+  // MARK: R7
+
+  /// Post now on a platform set to Postiz sends it through Postiz at the soonest time, never to the Calendar by hand: the
+  /// live case was a YouTube post marked Fixed and then Post now.
+  @Test func postNowOnAPostizPlatformGoesThroughPostiz() throws {
+    let rig = try settled(1, [.youtube])
+    let yt = try post(rig, .youtube)
+    try fail(rig, yt, "Internal server error")  // YouTube may have it: Eric checks, then marks it Fixed
+    let actions = PostActions(store: rig.store)
+    let a = try actions.fixed(postId: yt.id)
+    #expect(a.scheduledAt > rig.f.clock.now.addingTimeInterval(3600))
+    #expect(try actions.postNowGoesThroughPostiz(a))
+    try actions.postNow(postId: a.id)
+    let cur = try #require(try rig.store.post(id: a.id))
+    #expect(try !rig.service.handedToToday(cur))
+    #expect(try rig.service.deliversThroughPostiz(cur, router: rig.service.router()))
+    let now = rig.f.clock.now
+    rig.tick()
+    let job = try #require(try rig.job(cur))
+    #expect(job.remoteDate.timeIntervalSince(now) >= PostizService.leadTime && job.remoteDate.timeIntervalSince(now) < PostizService.leadTime + 60)
+    if case .fellBack? = try rig.service.displayState(for: rig.store.post(id: a.id)!) { Issue.record("fell back to manual") }
+    let doctor = DoctorPostizTests.postiz(DoctorPostizTests.doctor(rig.store, keys: rig.keys).run())
+    #expect(doctor["postiz.fallback"] == nil)
+    #expect(!rig.notifier.delivered.contains { $0.postId == a.id && $0.key.hasPrefix("due:") })
+  }
+
+  /// A post Postiz never got that already went to the Calendar (missed): Post now through Postiz takes it back.
+  @Test func postNowAfterAHandOverStillGoesThroughPostiz() throws {
+    let rig = try settled(1, [.x])
+    var x = try post(rig, .x)
+    x.state = .due
+    try rig.store.save(x, note: "due")  // handed to the Calendar earlier
+    #expect(try rig.service.handedToToday(x))
+    try PostActions(store: rig.store).postNow(postId: x.id)
+    #expect(try !rig.service.handedToToday(rig.store.post(id: x.id)!))
+  }
+
+  /// A Manual platform keeps Post now as Eric's task on the Calendar.
+  @Test func postNowOnAManualPlatformStaysByHand() throws {
+    let rig = try settled(1, [.x])
+    let fb = try post(rig, .facebook)
+    let actions = PostActions(store: rig.store)
+    #expect(try !actions.postNowGoesThroughPostiz(fb))
+    try actions.postNow(postId: fb.id)
+    #expect(try rig.service.handedToToday(rig.store.post(id: fb.id)!))
+    #expect(try rig.store.history(postId: fb.id).last?.note == "post now")
+  }
 }

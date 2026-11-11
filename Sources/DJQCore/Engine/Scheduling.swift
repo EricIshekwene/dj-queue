@@ -337,8 +337,8 @@ extension Store {
   func postNowIds() throws -> Set<String> {
     Set(try db.query("""
       SELECT DISTINCT h.post_id AS id FROM post_history h JOIN platform_posts p ON p.id=h.post_id
-      WHERE h.note='post now' AND p.kind='regular' AND p.state IN ('due','overdue','posted')
-      """).compactMap { $0.string("id") })
+      WHERE h.note IN ('post now', ?) AND p.kind='regular' AND p.state IN ('due','overdue','posted')
+      """, [PostActions.postNowPostizNote]).compactMap { $0.string("id") })
   }
 }
 

@@ -56,9 +56,10 @@ struct PostizSignInCard: View {
           HStack(spacing: 6) {
             Text(item.title).font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).lineLimit(1)
             DSBadge("Disconnected", style: .soft(.danger), icon: "bolt.horizontal",
-                    help: item.message.map { "Postiz said: \($0)" } ?? "Postiz lists the channel as needing a new sign-in")
+                    help: (item.channelName.map { "Channel \($0). " } ?? "")
+                      + (item.message.map { "Postiz said: \($0)" } ?? "Postiz lists the channel as needing a new sign-in"))
           }
-          Text("\(item.waitingText)\(item.channelName.map { " · \($0)" } ?? ""). \(PostizSignInProblem.howItWorks)")
+          Text("\(item.waitingText). \(PostizSignInProblem.howItWorks)")
             .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
         }

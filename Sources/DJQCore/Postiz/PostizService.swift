@@ -206,8 +206,10 @@ public final class PostizService: @unchecked Sendable {
   /// Decided from the post's history alone (sticky across re-renders and state changes) until Eric resets the post.
   public func handedToToday(_ p: PlatformPost) throws -> Bool { try Self.handedToToday(p, store: store) }
 
+  /// A reset, or a Post now that goes through Postiz (round 22), starts it over: only a hand-over after that counts.
   static func handedToToday(_ p: PlatformPost, store: Store) throws -> Bool {
-    let reset = try store.db.one("SELECT MAX(id) AS m FROM post_history WHERE post_id=? AND note='reset'", [p.id])?.int64("m") ?? 0
+    let reset = try store.db.one("SELECT MAX(id) AS m FROM post_history WHERE post_id=? AND note IN ('reset', ?)",
+                                 [p.id, PostActions.postNowPostizNote])?.int64("m") ?? 0
     return try store.db.one("""
       SELECT 1 AS x FROM post_history WHERE post_id=? AND id>? AND to_state IN ('due','overdue')
         AND (note IN ('due','post now') OR note LIKE 'missed%' OR note LIKE 'shift plan%')

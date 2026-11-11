@@ -241,7 +241,7 @@ djq post-at <video> --clear [--dry-run] [--json]                # back on the re
 ```
 
 A set time sits outside posts per day: it takes none of the day's regular places, no other clip moves, and the scheduler
-never shifts it. The time must be 10 minutes ahead or more. YouTube from 02:00 to 07:00 UTC goes at 07:30 UTC, and
+never shifts it. The time must be 10 minutes ahead or more. YouTube from 7 pm to midnight Pacific goes at 00:30 Pacific, and
 `--dry-run` says so before anything is written (`plan.platforms[{platform, at, moved, retry}]`, `plan.skipped`, `plan.notes`,
 `plan.blocker`). A time is refused when Postiz sends a copy within 10 minutes ("too late to change").
 A clip still in Edit is sent to the Queue by this command; if something is left to fix it stays in Edit and the blocker
@@ -344,9 +344,11 @@ replaces what Postiz holds. Pinned posts, automatic retries, posts within 30 min
 is that close or has passed stay put, and the command lists each with why. An automatic retry moves only when a post lands
 next to it. Other platforms don't move. Only when Eric asks.
 
-YouTube has a quiet window: nothing is scheduled from 02:00 up to 07:00 UTC, and a slot landing there goes at 07:30 UTC.
-Postiz's shared YouTube quota resets at 07:00 UTC and is usually gone by the afternoon (`docs/postiz.md` §5a), so a morning
-slot is the safe one.
+YouTube has a quiet window: nothing is scheduled from 7 pm up to midnight Pacific (10 pm–3 am New York), and a slot
+landing there goes at 00:30 Pacific. Postiz's shared YouTube quota resets at midnight Pacific (07:00 UTC in summer, 08:00
+UTC in winter) and is usually gone by the afternoon (`docs/postiz.md` §5a), so a morning slot is the safe one. A failed
+post retries by itself with no limit; a channel whose Postiz sign-in broke is one "Reconnect … in Postiz" item and its
+posts wait for it. Never `djq fixed` either.
 
 ## Rules the app applies (so you don't fight them)
 

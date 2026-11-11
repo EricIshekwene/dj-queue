@@ -280,7 +280,7 @@ struct PostRowView: View {
           .frame(width: 36, alignment: .leading)
           .dsTooltip(PostText.attempt(post))
       }
-      PostStatePill(post: post).frame(width: 96, alignment: .leading)
+      PostStatePill(post: post, model: model).frame(width: 96, alignment: .leading)
       Text(PostText.date(post, model: model)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
         .lineLimit(1).frame(width: 104, alignment: .leading)
       Group {
@@ -322,8 +322,11 @@ struct PostRowView: View {
 /// The post's state as a pill (status = chip, never a sentence).
 struct PostStatePill: View {
   let post: PlatformPost
+  /// Round 22: with the model, a failure whose retry is coming (or that waits for its channel's sign-in) reads as one
+  /// calm "Retrying" pill, never a red Failed.
+  var model: AppModel? = nil
   var body: some View {
-    let s = PostText.pill(post)
+    let s = PostText.pill(post, retrying: model?.postizState(post)?.isRetrying == true)
     DSBadge(s.text, style: s.style, icon: s.icon, help: "\(post.platform.displayName): \(s.text.lowercased())")
   }
 }
@@ -342,8 +345,9 @@ extension PostsTab {
 
 /// Shared wording for posts.
 enum PostText {
-  static func pill(_ p: PlatformPost) -> (text: String, style: DSBadgeStyle, icon: String?) {
+  static func pill(_ p: PlatformPost, retrying: Bool = false) -> (text: String, style: DSBadgeStyle, icon: String?) {
     let text = p.stateLabel
+    if retrying && p.state == .failed { return ("Retrying", .soft(.neutral), "clock.arrow.circlepath") }
     switch p.state {
     case .posted: return (text, .soft(.success), nil)
     case .failed: return (text, p.resolution == nil ? .soft(.danger) : .outline, nil)

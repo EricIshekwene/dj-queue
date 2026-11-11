@@ -69,7 +69,7 @@ struct PostInspector: View {
             if let pz = model.postizRowState(post) {
               PostizBadge(model: model, post: post, state: pz)
             } else {
-              PostStatePill(post: post)
+              PostStatePill(post: post, model: model)
             }
             if model.isTestRun(post) { TestRunBadge() }
             Text("v\(post.versionNo) · #\(post.attemptNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
@@ -222,7 +222,7 @@ struct PostInspector: View {
           Text("#\(a.attemptNo)").font(DS.type.captionMedium.monospacedDigit()).foregroundStyle(DS.color.text).frame(width: 24, alignment: .leading)
           Text("v\(a.versionNo)\(a.kind == .regular ? "" : " · \(a.kind.rawValue)")").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
           Spacer(minLength: 4)
-          PostStatePill(post: a)
+          PostStatePill(post: a, model: model)
           Text(Fmt.day(a.scheduledAt, tz: model.tz, style: "d MMM")).font(DS.type.caption.monospacedDigit())
             .foregroundStyle(DS.color.textTertiary).frame(width: 44, alignment: .trailing)
         }

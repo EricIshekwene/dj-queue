@@ -208,15 +208,24 @@ and then a retry double-posts (DECISIONS-R9.md #35). The veto list:
 - policy, rights, account and paid-limit words (violates, DMCA, Content ID, trademark, licensed, song, sound, Community
   Standards, flagged, ban, suspended, restricted, disabled, spam, upgrade, plan, subscription, storage, …);
 - what the same post would hit again: too long, too large, format, codec, aspect ratio, validation (invalid, missing,
-  required, bad request, 400, 413), sign-in (auth, token, expired, permission, reconnect, 401, 403);
+  required, bad request, 400, 413), a bare 403;
 - a platform that says it has the post or may have, in any wording (already, duplicate, published, posted, live,
   permalink, created but, even "could not be posted").
 
 Platform codes count as words: `duration_check_failed` and `FileSizeExceeded` both match. "Exceeds" vetoes a size, never
 a rate or a quota.
 
-YouTube keeps its guard: only the upload quota retries ("daily upload quota" / `defaultVideoInsertPerDayPerProject`, and
-not with a thumbnail or an uploaded video in the message), because any other YouTube error may come after the video
+Round 22 reads two kinds before the veto (`PostizService.classify`), unless a policy word is there too:
+
+- **media** (a media word: media, file, url, upload, download, fetch; and a "gone" word: expired, not found, 404,
+  invalid, unavailable, couldn't be retrieved/fetched): Postiz couldn't get the file. It retries on every platform,
+  YouTube too (no video was made), on the usual backoff, and the retry uploads the media again;
+- **sign-in** (auth, token, session, log in, sign in, reconnect, refresh, permission, scope, 401, unauthorized,
+  disabled): the channel's login, never a media problem even when it says "expired". Its posts wait for the channel
+  (below, **Sign-in**).
+
+YouTube keeps its guard: otherwise only the upload quota retries ("daily upload quota" / `defaultVideoInsertPerDayPerProject`,
+and not with a thumbnail or an uploaded video in the message), because any other YouTube error may come after the video
 exists and a retry would double-post. Those say so in the message and stay with Eric.
 
 **When.** A retryable failure stores its next-retry time at once (kv `postiz.autoRetry.<clip>#<platform>#v<N>`), counted
@@ -226,14 +235,20 @@ from when it happened (the job's `remoteDate`), not from when the Mac noticed:
 |---|---|
 | 1st | +1 h |
 | 2nd | +6 h |
-| 3rd | next morning, 8:00 am in Settings' time zone, at least an hour away |
-| 4th | +1 day (a calendar day: same clock time across a DST change) |
-| 5th | +1 day |
+| 3rd, 4th, … (no end) | the platform's next slot time from Settings at least an hour after the failure |
 
-The YouTube quota skips those: every try goes to the next 07:30 UTC after the failure, whatever Settings' time zone says
-(§5a). A retry never lands within `retryStaggerHours` of another post on the platform that went out or still will (a
+There is no cap (round 22): a retryable failure re-queues until the post goes out. A failure an older build gave up on
+after five tries (its message ends in "automatic retries used up…") re-queues by itself, and the note comes off.
+
+The YouTube quota skips those: every try goes to YouTube's next slot time from Settings that is at least 30 minutes after
+the next midnight Pacific following the failure, and an hour after the failure (§5a). A retry never lands within `retryStaggerHours` of another post on the platform that went out or still will (a
 failed or skipped post doesn't count, so +1 h isn't pushed away from its own failure). A quota retry moves earlier if it
-must, down to the reset; any other moves later.
+must, down to 30 minutes after the reset; any other moves later.
+
+**Fresh media.** Every automatic retry uploads its media again (a cached upload made before the retry is ignored), and
+any cached upload older than three days is uploaded again at create. If Postiz refuses a create over its media while a
+cached upload was used, the cache goes and the next pass uploads and creates again, once, with no refusal, fallback or
+notification; a second refusal with fresh media is a normal refusal.
 
 **Ahead of time.** The sync step that reads the `ERROR` makes the new attempt in the same transaction, through
 `PostActions.fixed`, with `scheduledAt` = that time. The publish step submits it, so Postiz sends it with the Mac off. If
@@ -242,25 +257,34 @@ submit in time never goes overdue and never lands on the Calendar as a task: the
 400 on create or a copy deleted in Postiz still hands it to the Calendar, as for any post.
 
 **No audit.** A post with a retry coming isn't in `problems()`: no alert, no red badge, no Doctor error. The Calendar, Posts,
-the inspector and the menu bar read "Retrying Thu 8:00 am (try 2 of 5)" (`PostizDisplayState.retrying`). The
-tries are retries: 1 of 5 is the first one after the failure. Five failed retries, a vetoed failure, or a retry ruled
-out later (published, copyright, platform skipped in the editor) are loud: Failed, alert, Fixed.
+the inspector and the menu bar read "Retrying Thu 8:00 am" (`PostizDisplayState.retrying`): one calm chip, no try count,
+no error text; the inspector keeps the error behind Details. A vetoed failure, or a retry ruled out later (published,
+copyright, platform skipped in the editor) are loud: Failed, alert, Fixed.
+
+**Sign-in.** A sign-in error, or a channel Postiz lists as `disabled` or `refreshNeeded`, opens a wait for that platform
+(kv `postiz.signIn.<platform>`). It is one item for Eric, "Reconnect TikTok in Postiz · 3 posts wait" (Posts → Problems,
+the attention card, the menu bar, `djq posts --problems`, `djq status`, Doctor `postiz.sign_in`), and one notification per
+platform per outage (`postiz.signIn:<platform>:<since>`, whose action opens Postiz). Its posts don't fall back to Manual
+and don't each show a failure: nothing goes to Postiz on that channel, a post past its time is never missed, and a
+failure's retry waits ("Waits for sign-in"). It ends when the channel list (read every 30 minutes during an outage) shows
+the channel healthy after showing it flagged, or when a post goes out on it; with no word from the list, one post is
+tried every 6 hours. It is never dropped by itself.
 
 **Waiting.** Paused (all or the platform), the platform off Postiz (Manual, off, no usable channel or key), the clip sent
-back to Edit, or another job of the clip + platform open: no retry. It reads "Retry waits (try 2 of 5)" with the reason,
+back to Edit, the channel's sign-in, or another job of the clip + platform open: no retry. It reads "Retry waits" with the reason,
 and runs once when that ends, at now + 3 min if its time passed. An attempt already in Postiz is deleted there by the usual
 pause rules and comes back the same way. Remove from queue takes the attempt out of the plan: its failure waits again,
 and Send to queue brings it back without using a try. Doctor warns (`postiz.auto_retry`) when a retry waits on a setting,
-because a platform left on Manual never brings it back. A day past its time a waiting retry sends one alert and keeps
-waiting (`postiz.retryWaits:<post>`). An attempt nothing stops that still can't be sent (the clip went invalid) goes back
+because a platform left on Manual never brings it back. A day past its time a waiting retry sends one calm note and keeps
+waiting (`postiz.retryWaits:<post>`; none for a sign-in wait, whose one item says it). An attempt nothing stops that still can't be sent (the clip went invalid) goes back
 to Eric after a day plus about an hour awake: it stops being a retry and goes overdue, with the reason. Scheduled → Queue
 is Eric taking the clip out, so no retry: a failure still waiting reads "Unscheduled". Removing the day takes its automatic
 attempt too. Mark posted on a failed row skips
 its live attempt, and the publish step deletes that from Postiz.
 
 Eric's Fixed works on a failure whose retry waits, and that attempt replaces the retry. Once the retry's attempt exists,
-the failure is handled and Fixed refuses, so there's never a second attempt. At most 5 retries per clip + platform +
-version, for life: Fixed doesn't reset them. It never happens once a job of the clip + platform was published or closed
+the failure is handled and Fixed refuses, so there's never a second attempt. There is no limit on retries per clip +
+platform + version. It never happens once a job of the clip + platform was published or closed
 in the TikTok inbox. A retry of a test-run post stays a test run (the attempt's id is kept in the kv row and `submit`
 forces test mode for it), even after Test run is turned off. Doctor (`postiz.auto_retry`) and `djq postiz status` list
 every retry with its time or what it waits for. Manual posts never retry by themselves.
@@ -272,8 +296,9 @@ channel (§5a).
 manual posts and to Postiz posts that never got a job (they fall back to the Calendar). Eric's `fixed` makes a new
 attempt the next day, which the publish step submits again. An automatic retry has its own time (above) and is never missed.
 
-**Fallback.** Per platform: no key, an invalid key, no mapped channel, a disabled channel or a create that fails
-validation → that platform's post goes to the Calendar to post by hand, with the reason. Manual never goes away.
+**Fallback.** Per platform: no key, an invalid key, no mapped channel or a create that fails validation → that platform's
+post goes to the Calendar to post by hand, with the reason. A channel that needs signing in again doesn't fall back
+(round 22): its posts wait for it (**Sign-in**). Manual never goes away.
 
 **Budget.** All calls share the 25-per-hour budget. Order: deletes, creates for the soonest slots, sync, analytics.
 A week of clips on 6 platforms is 6–7 uploads + 42 creates, so it spreads over about two hours; the render horizon
@@ -287,15 +312,19 @@ of its earlier copy is confirmed.
 Postiz support, 2026-11-05: YouTube uploads share one Postiz-wide quota. It resets at 07:00 UTC and is often used up hours
 before. They said to avoid 02:00–07:00 UTC, and that a failed upload never reached YouTube, so a retry can't duplicate it.
 
+Round 22 correction: 07:00 UTC was the summer time of the real reset, midnight Pacific. From 1 November (PST) it is 08:00
+UTC, and every quota retry at 07:30 UTC landed at 11:30 pm Pacific, on the day whose quota was gone: a post failed six
+times while the regular 8:00 am New York slot went out daily. The window now follows `America/Los_Angeles`.
+
 Our own results: quota failures at 15:00, 16:27 and 18:00 New York on three days; success at 05:00 and 08:00 New York. The
 safe time is the morning after the reset, not just outside their window.
 
 | What | Rule |
 |---|---|
-| Reset | 07:00 UTC, fixed. UTC doesn't move with DST; the old midnight Pacific rule did. |
-| Quiet window | From 02:00 up to 07:00 UTC, nothing on YouTube is scheduled. A time that lands there moves to 07:30 UTC (`YouTubeWindow.clear`, the one helper). In New York that's 9 pm–2 am in winter and 10 pm–3 am in summer. Other platforms don't change. |
-| Quota retry | The next 07:30 UTC after the failure, then the usual stagger. |
-| Where it applies | Slot times, staggered extras, retries, a plan shift, and every create (`remoteDate`), so a late slot or Post now on YouTube inside the window waits for 07:30 UTC too. A retry whose 07:30 passed while the Mac slept goes at now + 3 min, unless that's inside the window. |
+| Reset | Midnight Pacific (`America/Los_Angeles`): 07:00 UTC in summer, 08:00 UTC in winter. |
+| Quiet window | From 7 pm up to midnight Pacific, nothing on YouTube is scheduled. A time that lands there moves to 00:30 Pacific (`YouTubeWindow.clear`, the one helper). In New York that's 10 pm–3 am all year, moved to 3:30 am (Settings says it in Eric's clock). Other platforms don't change. A shift keeps a moved post on 00:30 Pacific across both DST changes. |
+| Quota retry | YouTube's next slot time from Settings, at least 30 minutes after the next Pacific midnight and an hour after the failure, then the usual stagger. |
+| Where it applies | Slot times, staggered extras, retries, a plan shift, and every create (`remoteDate`), so a late slot or Post now on YouTube inside the window waits for 00:30 Pacific too. A retry whose time passed while the Mac slept goes at now + 3 min, unless that's inside the window. Posts stored under the old rule that now sit in the window (07:30 UTC in winter) are moved out by the engine's plan step. |
 
 `djq slot youtube 08:00` puts the slot there and moves the unposted future posts with it (`PostActions.setSlot`, undo with
 `djq bulk undo`). The publish step replaces the copies Postiz holds, as for any move, two calls each; when that's more than
