@@ -52,14 +52,15 @@ public final class Queue: @unchecked Sendable {
   }
 
   /// approvedDays = consecutive days with a scheduled slot, from today (from tomorrow when today has none: a clip can't
-  /// take a day whose post times passed); readyDays = waiting clips ÷ posts/day;
+  /// take a day whose post times passed), set-time slots left out: they're one-offs outside the cadence, so a day that
+  /// holds only one isn't a scheduled day; readyDays = waiting clips ÷ posts/day;
   /// totalDays = approvedDays + (waiting + Edit clips with their file) ÷ posts/day.
   public func runway() throws -> Runway {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     let perDay = max(1, settings.postsPerDay)
     let today = store.today(dm)
-    let slots = try store.planSlots(where: "date>=?", [today])
+    let slots = try store.planSlots(where: "date>=? AND exact_at IS NULL", [today])
     let approvedWeeks = Set(try store.db.query("SELECT week_start FROM weeks WHERE state='approved'").compactMap { $0.string("week_start") })
     let withPosts = Set(try store.db.query("SELECT DISTINCT plan_slot_id FROM platform_posts WHERE plan_slot_id IS NOT NULL")
       .compactMap { $0.string("plan_slot_id") })

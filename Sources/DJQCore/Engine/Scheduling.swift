@@ -208,7 +208,8 @@ extension Store {
 /// Occupancy of live regular posts per (platform, plan day, position) — the "never double-post" invariant. Keyed by plan
 /// day (`DayMath.planDay`), never the local posting day: `place` reserves plan days, and a post past midnight must count
 /// for the day it was placed on, or a later Placer sees the wrong day free.
-/// Live = not terminal, or posted. Retries/reposts are staggered extras and don't occupy a position.
+/// Live = not terminal, or posted. Retries/reposts are staggered extras and don't occupy a position, and neither does a
+/// set-time post (round 21): it sits outside the cadence, so it never blocks or shifts a regular post.
 struct Placer {
   let dm: DayMath
   private(set) var taken: Set<String> = []
@@ -220,6 +221,7 @@ struct Placer {
     let postedNow = try store.postNowIds()
     for p in try store.posts(where: "kind='regular'") where !excluding.contains(p.id) && Self.isLive(p) {
       let slot = slots[p.planSlotId ?? ""]
+      if slot?.isExact == true { continue }
       let pos = slot?.position ?? 0
       let day = postedNow.contains(p.id) ? dm.key(p.scheduledAt)
         : dm.planDay(p.scheduledAt, position: pos, slotDate: slot?.date, platform: p.platform, offsetMinutes: offset)
@@ -248,10 +250,12 @@ extension Store {
   }
 
   /// The plan day of a regular post (`DayMath.planDay`). Post now holds its local day: its time is the moment Eric pressed
-  /// it, not a slot time, so it says nothing about a plan day.
+  /// it, not a slot time, so it says nothing about a plan day. A set-time post's plan day is its slot's date: its time
+  /// isn't a slot time either, and its position (100 and up) times the offset would land days away.
   func planDay(of p: PlatformPost, dm: DayMath) throws -> String {
     if try postNowIds().contains(p.id) { return dm.key(p.scheduledAt) }
     let slot = try p.planSlotId.flatMap { try planSlot(id: $0) }
+    if let slot, slot.isExact { return slot.date }
     return dm.planDay(p.scheduledAt, position: slot?.position ?? 0, slotDate: slot?.date, platform: p.platform,
                       offsetMinutes: try settings().secondPostOffsetMinutes)
   }
@@ -267,9 +271,9 @@ extension Store {
 
 extension Store {
   /// Regular posts of a platform at a plan position that a plan shift may move: un-posted, not overdue, and not
-  /// belonging to a pinned slot (a pinned video never moves — Eric's decision).
+  /// belonging to a pinned slot (a pinned video never moves — Eric's decision) or a set-time one (always pinned).
   func movablePosts(platform: Platform, position: Int, after: Date, inclusive: Bool = false, excluding id: String) throws -> [PlatformPost] {
-    let pinned = Set(try planSlots(where: "pinned=1").map(\.id))
+    let pinned = Set(try planSlots(where: "pinned=1 OR exact_at IS NOT NULL").map(\.id))
     return try posts(where: "platform=? AND kind='regular' AND id<>? AND scheduled_at\(inclusive ? ">=" : ">")?",
                      [platform.rawValue, id, after])
       .filter { !$0.state.isTerminal && $0.state != .overdue && !pinned.contains($0.planSlotId ?? "") }

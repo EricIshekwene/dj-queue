@@ -376,7 +376,7 @@ public final class BulkActions: @unchecked Sendable {
       if try !store.planSlots(where: "video_id=? AND date>=?", [v.id, today]).isEmpty { return .skipped("already planned") }
       let perDay = max(1, s.postsPerDay)
       guard let day = try dm.weekDays(dm.weekStart(of: dm.date(week))).first(where: { d in
-        try d >= today && store.planSlots(where: "date=?", [d]).count < perDay
+        try d >= today && store.planSlots(where: "date=? AND exact_at IS NULL", [d]).count < perDay
       }) else { return .skipped("no free day left in the week of \(week)") }
       try planner.pin(videoId: v.id, date: day)
       return .changed

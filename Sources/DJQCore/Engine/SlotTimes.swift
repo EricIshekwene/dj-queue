@@ -52,6 +52,7 @@ extension PostActions {
     let dm = DayMath(settings: s)
     let soon = now.addingTimeInterval(Self.slotHold)
     let pinned = Set(try store.planSlots(where: "pinned=1").map(\.id))
+    let exact = Set(try store.planSlots(where: "exact_at IS NOT NULL").map(\.id))
     // Regular posts first: reposts and manual retries stagger around where those land.
     let future = try store.posts(where: "platform=? AND scheduled_at>?", [p.rawValue, now])
       .filter { PostizService.openStates.contains($0.state) }
@@ -72,7 +73,7 @@ extension PostActions {
     }
     var retries: [PlatformPost] = []
     for post in future {
-      if let why = try keepsItsTime(post, pinned: pinned, soon: soon) {
+      if let why = try keepsItsTime(post, pinned: pinned, exact: exact, soon: soon) {
         change.kept.append(.init(post: post, why: why))
         continue
       }
@@ -105,7 +106,8 @@ extension PostActions {
 
   private static var tooSoon: String { "the new time has passed or is under \(Int(slotHold / 60)) minutes away" }
 
-  private func keepsItsTime(_ post: PlatformPost, pinned: Set<String>, soon: Date) throws -> String? {
+  private func keepsItsTime(_ post: PlatformPost, pinned: Set<String>, exact: Set<String>, soon: Date) throws -> String? {
+    if exact.contains(post.planSlotId ?? "") { return "it has a set time" }  // round 21: a set time is never a slot time
     if pinned.contains(post.planSlotId ?? "") { return "pinned" }
     let job = try store.livePostizJob(postId: post.id)
     if min(post.scheduledAt, job?.remoteDate ?? post.scheduledAt) <= soon { return "it goes out within \(Int(Self.slotHold / 60)) minutes" }

@@ -199,7 +199,7 @@ public final class Doctor: @unchecked Sendable {
     guard !open.isEmpty else { return [] }
     var seen = Set<String>()
     let days = open.map(\.date).filter { seen.insert($0).inserted }
-    let w = try days.map { "\($0): \(try store.planSlots(where: "date=?", [$0]).count)/\(settings.postsPerDay) posts" }
+    let w = try days.map { "\($0): \(try store.planSlots(where: "date=? AND exact_at IS NULL", [$0]).count)/\(settings.postsPerDay) posts" }
     return [.init(id: "plan.gaps", severity: .warning, title: "Open days with clips waiting in the Queue",
                   detail: "\(waiting.count) clip\(waiting.count == 1 ? "" : "s") waiting and days still open: the scheduler should have filled them.",
                   where_: w, fix: "Check the engine is running (`djq status`), then `djq schedule --dry-run` says what it would do and why not; `djq schedule` runs it once.")]

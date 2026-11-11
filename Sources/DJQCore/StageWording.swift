@@ -144,6 +144,43 @@ public enum StageWording {
   /// The event of a clip the scheduler gave a day. `day` is already formatted ("Tue 10 Nov").
   public static func scheduledFor(_ day: String) -> String { "Scheduled for \(day)" }
 
+  // MARK: Post at a set time (round 21)
+
+  /// The event, the `StageMove.note` and the toast of a set time. `when` is already formatted ("Sat 14 Nov 3:15 PM").
+  public static func setFor(_ when: String) -> String { "Set for \(when)" }
+  /// "Set for Sat 14 Nov 3:15 PM", in the Settings time zone.
+  public static func setFor(_ at: Date, settings s: Settings) -> String { setFor(Sched.shortTime(at, s)) }
+  /// The mark on a set-time slot in lists and `djq week`: "set time 3:15 PM".
+  public static func setTimeMark(_ at: Date, settings s: Settings) -> String { "set time \(clockTime(at, s))" }
+  /// The action that takes a set time off again.
+  public static let useRegularSchedule = "Use the regular schedule"
+  /// Its event and `StageMove.note`.
+  public static let regularSchedule = "Back on the regular schedule"
+  /// Why a set time is refused: it isn't ahead of now, or it's inside `Planner.exactLead`.
+  public static let setTimePassed = "That time has passed"
+  public static let setTimeTooSoon = "Pick a time at least 10 minutes from now"
+  /// Why a swap, Post today or Skip next leaves a set-time item alone.
+  public static let hasSetTime = "It has a set time — change the time instead"
+  /// Why Shift plan leaves a missed set-time post alone: it has no slot to go to.
+  public static let setTimeNoShift = "It has a set time — post it now or pick a new time"
+  public static let noSetTime = "It has no set time"
+  /// Before Eric confirms a set time inside YouTube's quiet window: "YouTube moves to 2:30 AM (07:30 UTC)", with the day
+  /// when that's another day than the set time's.
+  public static func youtubeMoves(to at: Date, setFor exact: Date, settings s: Settings) -> String {
+    let dm = DayMath(settings: s)
+    let when = dm.key(at) == dm.key(exact) ? clockTime(at, s) : Sched.shortTime(at, s)
+    return "YouTube moves to \(when) (07:30 UTC)"
+  }
+
+  /// "3:15 PM" in the Settings time zone.
+  static func clockTime(_ d: Date, _ s: Settings) -> String {
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.timeZone = s.tz
+    f.dateFormat = "h:mm a"
+    return f.string(from: d)
+  }
+
   /// Event logged instead of "Moved to Edit" for a clip pinned to a day: it stays on that day and can't post until
   /// fixed. `day` is already formatted ("Tue 10 Nov").
   public static func cantPost(on day: String, _ issues: [ValidationIssue]) -> String {
