@@ -108,6 +108,12 @@ extension SnapshotShots {
         d.photoAspect = .r9x16
         SettingsUIState.shared.draft = d
       },
+      // The narrowest window: the header still holds search, the view toggle, Add photos and the primary.
+      c.main("r21-photos-narrow", size: Shot.narrow) { m in
+        prep(m)
+        m.setViewMode(.wide, for: .edit)
+        m.screen = .edit
+      },
       // D20: a 9:16 photo post with Instagram on waits in Edit and says how to fix it.
       c.main("r21-photos-shape-issue") { m in
         prep(m)

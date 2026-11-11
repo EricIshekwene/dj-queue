@@ -72,7 +72,9 @@ extension AppModel {
 
   private func tookPhotos(_ good: [URL], refused: [PhotoImport.Skipped]) {
     PhotoImportUI.shared.lastSkipped = refused
-    if !refused.isEmpty {
+    // One good photo goes straight in, and its "Added" toast carries the refusals; otherwise they get their own.
+    let straightIn = photoImportRequest == nil && good.count == 1
+    if !refused.isEmpty, !straightIn {
       show(DSToastModel(message: refused.count == 1 ? "1 file can't be added" : "\(refused.count) files can't be added",
                         detail: Self.skippedText(refused), tone: .danger, duration: 8))
     }
@@ -80,7 +82,7 @@ extension AppModel {
     if photoImportRequest != nil {
       photoImportRequest?.files += good  // the same request, so the sheet keeps what was typed
     } else if good.count == 1 {
-      importPhotos(urls: good, mode: .carousel, title: nil)
+      importPhotos(urls: good, mode: .carousel, title: nil, refused: refused)
     } else {
       askImportPhotos(good)
     }
@@ -91,7 +93,8 @@ extension AppModel {
   /// THE import: copies the files into DJ Queue's own Photos folder off the main thread (`PhotoImport.add`) and makes
   /// one carousel or a post per file, in Edit. Then it signals, reloads and says what was added, with Open for the
   /// editor and every skipped file with its reason. The originals are only read. Nothing goes to the Queue.
-  func importPhotos(urls: [URL], mode: PhotoImport.Mode, title: String?) {
+  /// `refused`: files already turned away before this call, listed with the ones the import skips.
+  func importPhotos(urls: [URL], mode: PhotoImport.Mode, title: String?, refused: [PhotoImport.Skipped] = []) {
     let ui = PhotoImportUI.shared
     guard !urls.isEmpty, !ui.importing else { return }
     ui.importing = true
@@ -99,7 +102,11 @@ extension AppModel {
     let name = title?.trimmingCharacters(in: .whitespacesAndNewlines)
     let given = name?.isEmpty == false ? name : nil
     Task.detached(priority: .userInitiated) {
-      let out = Result { try PhotoImport(store: s).add(files: urls, mode: mode, title: given, titleSource: "app") }
+      let out = Result { () throws -> PhotoImport.Result in
+        var r = try PhotoImport(store: s).add(files: urls, mode: mode, title: given, titleSource: "app")
+        r.skipped = refused + r.skipped
+        return r
+      }
       await MainActor.run { self.importedPhotos(out) }
     }
   }
@@ -199,8 +206,19 @@ extension AppModel {
       let img = load()
       await MainActor.run {
         self.posterPending.remove(k)
-        if let img { self.posters[k] = img }
+        guard let img else { return }
+        self.posters[k] = img
+        self.dropFarPhotos(v, from: index)
       }
+    }
+  }
+
+  /// A long carousel stepped end to end would keep every large photo decoded; only the ones near the photo on screen stay.
+  private func dropFarPhotos(_ v: Video, from index: Int) {
+    let prefix = "\(v.id)|photo"
+    for k in posters.keys where k.hasPrefix(prefix) {
+      guard let i = Int(k.dropFirst(prefix.count).prefix { $0 != "|" }), abs(i - index) > 3 else { continue }
+      posters[k] = nil
     }
   }
 

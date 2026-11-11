@@ -16,7 +16,7 @@ struct PhotoImportSheet: View {
 
   var body: some View {
     let n = request.files.count
-    DSDialog("Add \(n) photos", description: "DJ Queue keeps its own copy. The files you picked stay where they are.",
+    DSDialog(n == 1 ? "Add 1 photo" : "Add \(n) photos", description: "DJ Queue keeps its own copy. The files you picked stay where they are.",
              icon: "photo.stack", width: 520, onClose: close) {
       VStack(alignment: .leading, spacing: DS.space.md) {
         strip
