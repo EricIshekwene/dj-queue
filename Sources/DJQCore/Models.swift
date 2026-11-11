@@ -263,15 +263,28 @@ public struct PhotoItem: Codable, Sendable, Hashable, Identifiable {
 public struct StillSource: Codable, Sendable, Hashable {
   /// The photo the video holds, as the photo post had it (DJ Queue's copy under `Paths.photos`).
   public var photo: PhotoItem
-  /// DJ Queue's copy of the audio, relative to the Photos folder, e.g. "Stills/<video id>/audio.mp3".
+  /// DJ Queue's copy of the audio, relative to the Photos folder: "Stills/<video id>/audio.m4a", the AAC the video
+  /// holds (never the picked file, which may be a whole video). A fit change makes the video again from it.
   public var audio: String
   /// The picked file's name, e.g. "Friday mix.mp3" (what the editor's Audio row shows).
   public var audioName: String
   /// Seconds of audio, which is the video's length.
   public var audioDuration: Double
+  /// D12: how the photo sits in the 9:16 video. nil (a row made before this) reads as `fill`.
+  public var fit: Fit? = nil
 
-  public init(photo: PhotoItem, audio: String, audioName: String, audioDuration: Double) {
-    self.photo = photo; self.audio = audio; self.audioName = audioName; self.audioDuration = audioDuration
+  /// `whole`: the whole photo, centred over a blurred copy of itself, in a 9:16 video whose crop is the whole frame.
+  /// `fill`: the video has the photo's own shape and Eric picks the 9:16 crop, as on any clip.
+  public enum Fit: String, Codable, Sendable, CaseIterable {
+    case whole, fill
+    public var displayName: String { self == .whole ? "Whole photo" : "Fill the frame" }
+  }
+
+  /// The fit in force.
+  public var fits: Fit { fit ?? .fill }
+
+  public init(photo: PhotoItem, audio: String, audioName: String, audioDuration: Double, fit: Fit? = nil) {
+    self.photo = photo; self.audio = audio; self.audioName = audioName; self.audioDuration = audioDuration; self.fit = fit
   }
 }
 

@@ -56,13 +56,16 @@ public enum AgentAPI {
     public var audio_seconds: Double
     /// The photo the video holds.
     public var photo: PhotoOut
+    /// D12: "whole" (the whole photo over a blurred copy of itself; the crop is the whole frame) or "fill" (the photo
+    /// fills the frame and Eric picks the 9:16 crop).
+    public var fit: String = "fill"
   }
 
   public static func still(_ v: Video) -> StillOut? {
     v.still.map { s in
       StillOut(audio_name: s.audioName, audio_seconds: s.audioDuration,
                photo: PhotoOut(id: s.photo.id, file: URL(fileURLWithPath: s.photo.file).lastPathComponent, width: s.photo.width,
-                               height: s.photo.height))
+                               height: s.photo.height), fit: s.fits.rawValue)
     }
   }
 

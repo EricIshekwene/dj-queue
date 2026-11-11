@@ -748,6 +748,13 @@ public final class BulkActions: @unchecked Sendable {
         var planTied = false
         for b in before.clips where !restored.contains(b.id) {
           let cur = try clipSnapshot(b.id, renders: b.renders != nil)
+          // Round 23 (D9): what the item is (photo post or video, which audio, which fit) never changes under a day or a
+          // post, by any undo, forced or not.
+          if let why = try stillUndoLock(restoring: b, current: cur) {
+            result.skipped[b.id] = why
+            planTied = planTied || cur.held != b.held || (b.sent != nil && cur.sent != b.sent)
+            continue
+          }
           if let a = afterById[b.id], !Self.same(cur, a), !force {
             result.skipped[b.id] = "changed again since the batch (use force to overwrite)"
             // The clip stays as it is, so its plan must too if the batch took it out of the Queue or sent it: plan alone
@@ -758,11 +765,6 @@ public final class BulkActions: @unchecked Sendable {
           // A crop this batch moved can't go back once a platform could post it: the platforms would end up on different pictures.
           if !force, rec.action == Self.cropOffsetAction, rec.videoIds.contains(b.id),
              let why = try cropLock(try store.posts(where: "video_id=?", [b.id], order: "id")) {
-            result.skipped[b.id] = why
-            continue
-          }
-          // Round 23 (D9): audio isn't added, changed or removed under a day or a post, by an undo either.
-          if let why = try stillUndoLock(rec.action, b.id) {
             result.skipped[b.id] = why
             continue
           }

@@ -103,7 +103,7 @@ import Testing
       try Validation.issues(video: try #require(try video ?? f.store.video(id: v.id)), store: f.store).first { $0.kind == .noTitle }
     }
     let i = try #require(try issue())
-    #expect(i.platform == .youtube && i.message == "Add a title: YouTube would name it after the file")
+    #expect(i.platform == .youtube && i.message == "Add a title: YouTube needs a name for this video")
     #expect(i.kind.editorSection == .title && i.kind.chipLabel == "No title" && !i.kind.isBlock)
     // It keeps the item out of the Queue, and says so.
     let sent = try f.send(v.id)
@@ -292,7 +292,7 @@ import Testing
     let v = try f.still(title: "Flyer", seconds: 2)
     let s = try AgentAPI.summary(v, store: f.store)
     #expect(s.media == "video" && s.photos.isEmpty && s.stage == "edit" && s.duration == v.duration && s.needs_title_help == false)
-    #expect(s.still?.audio_name == "flyer.wav" && s.still?.audio_seconds == v.duration && s.still?.photo.width == 400)
+    #expect(s.still?.audio_name == "flyer.wav" && s.still?.audio_seconds == v.duration && s.still?.photo.width == 400 && s.still?.fit == "fill")
     #expect(s.still?.photo.file.hasPrefix("01-") == true && s.file?.hasSuffix("Stills/\(v.id)/video.mp4") == true)
     func keys(_ id: String) throws -> Set<String> {
       let data = try AgentAPI.encoder.encode(try AgentAPI.summary(try #require(try f.store.video(id: id)), store: f.store))

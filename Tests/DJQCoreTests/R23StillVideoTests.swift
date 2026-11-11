@@ -26,12 +26,15 @@ import Testing
     let photo = f.pictures(["flyer.jpg"])[0], audio = f.tone(seconds: 3.2)
     let before = [try #require(PhotoImport.fingerprint(photo)), try #require(PhotoImport.fingerprint(audio))]
     let seen = Seen()
-    let made = try StillVideo(store: f.store).make(photo: photo, audio: audio, videoId: "post-1") { seen.add($0) }
+    let made = try StillVideo(store: f.store).make(photo: photo, audio: audio, videoId: "post-1", fit: .fill) { seen.add($0) }
     // Where it is: DJ Queue's Photos folder, with its own copy of the audio beside it, and nothing else.
     let dir = f.paths.photos.appendingPathComponent("Stills/post-1")
-    #expect(made.video.path == dir.appendingPathComponent("video.mp4").path && made.audio.path == dir.appendingPathComponent("audio.wav").path)
-    #expect(f.stillFiles("post-1") == ["audio.wav", "video.mp4"] && f.stillLeftovers.isEmpty)
-    #expect(try Data(contentsOf: made.audio) == Data(contentsOf: audio), "the copy is the picked file, byte for byte")
+    #expect(made.video.path == dir.appendingPathComponent("video.mp4").path && made.audio.path == dir.appendingPathComponent("audio.m4a").path)
+    #expect(f.stillFiles("post-1") == ["audio.m4a", "video.mp4"] && f.stillLeftovers.isEmpty)
+    // The copy is the AAC the video holds (not the picked file): sound only, as long as the video.
+    #expect(Tone.probe(made.audio, stream: "a:0", "codec_name,sample_rate,channels") == ["aac", "48000", "2"])
+    let copy = try Data(contentsOf: made.audio), picked = try Data(contentsOf: audio)
+    #expect(Tone.probe(made.audio, stream: "v:0", "codec_name").isEmpty && copy != picked)
     // What it is: H.264 at the photo's size, 30 fps, AAC 48 kHz stereo, as long as the audio.
     let info = try Media.probe(made.video)
     #expect(info.videoCodec == "h264" && info.width == 400 && info.height == 300 && info.fps == 30)
@@ -54,7 +57,7 @@ import Testing
     let photo = f.inbox.appendingPathComponent("halves.png")
     PhotoImages.write(photo, width: 400, height: 300, left: .red, right: .blue, type: .png)
     let source = try #require(PhotoImages.bitmap(photo))
-    let made = try StillVideo(store: f.store).make(photo: photo, audio: f.tone(seconds: 12), videoId: "c")
+    let made = try StillVideo(store: f.store).make(photo: photo, audio: f.tone(seconds: 12), videoId: "c", fit: .fill)
     // At the start, in the middle of a keyframe interval, across one, and at the very end.
     for t in [0.0, 3.3, 7.4, 11.9] {
       let frame = try #require(Tone.frame(made.video, at: t, in: f.dir), "frame at \(t)")
@@ -74,7 +77,7 @@ import Testing
     // EXIF orientation 6: stored 400×300 with red on the left, seen upright as 300×400 with red on top.
     let turned = f.inbox.appendingPathComponent("turned.jpg")
     PhotoImages.write(turned, width: 400, height: 300, left: .red, right: .blue, orientation: 6)
-    let a = try maker.make(photo: turned, audio: tone, videoId: "turned")
+    let a = try maker.make(photo: turned, audio: tone, videoId: "turned", fit: .fill)
     #expect(a.width == 300 && a.height == 400)
     let frame = try #require(Tone.frame(a.video, at: 0.5, in: f.dir))
     #expect(frame.width == 300 && frame.height == 400)
@@ -83,7 +86,7 @@ import Testing
     for (name, w, h, want) in [("wide", 4800, 2400, [3840, 1920]), ("tall", 2400, 4800, [1920, 3840]), ("square", 2600, 2600, [2160, 2160])] {
       let photo = f.inbox.appendingPathComponent("\(name).jpg")
       PhotoImages.write(photo, width: w, height: h, left: .green, right: .yellow)
-      let m = try maker.make(photo: photo, audio: tone, videoId: name)
+      let m = try maker.make(photo: photo, audio: tone, videoId: name, fit: .fill)
       let info = try Media.probe(m.video)
       #expect(info.width == want[0] && info.height == want[1] && m.width == want[0] && m.height == want[1], "\(name): \(info.width)×\(info.height)")
       let fr = try #require(Tone.frame(m.video, at: 1, in: f.dir))
@@ -104,10 +107,14 @@ import Testing
       let src = f.inbox.appendingPathComponent(name)
       let r = try Proc.run(ffmpeg, ["-hide_banner", "-nostats", "-y"] + args + [src.path], timeout: 60)
       try #require(r.status == 0, "\(name): \(r.stderrTail)")
-      let made = try StillVideo(store: f.store).make(photo: photo, audio: src, videoId: name)
+      let made = try StillVideo(store: f.store).make(photo: photo, audio: src, videoId: name, fit: .fill)
       let info = try Media.probe(made.video)
       #expect(info.hasAudio && abs(info.duration - 2) <= 0.06 && info.width == 400, "\(name): \(info.duration)")
-      #expect(made.audio.lastPathComponent == "audio.\(src.pathExtension)")
+      // Whatever was picked, DJ Queue keeps the sound only: a video file's picture is never copied.
+      #expect(made.audio.lastPathComponent == "audio.m4a" && Tone.probe(made.audio, stream: "v:0", "codec_name").isEmpty)
+      #expect(Tone.probe(made.audio, stream: "a:0", "codec_name") == ["aac"])
+      let bytes = (try FileManager.default.attributesOfItem(atPath: made.audio.path)[.size] as? Int) ?? 0
+      #expect(bytes > 0 && bytes < 200_000, "2 s of AAC, not the picked file: \(bytes)")
     }
   }
 
@@ -152,6 +159,14 @@ import Testing
     let broken = f.inbox.appendingPathComponent("broken.jpg")
     try Data("not a picture".utf8).write(to: broken)
     #expect(refused(f.tone(), photo: broken) == "broken.jpg can't be read as a photo")
+    // A photo too small to be a video (under 200 px on its short side).
+    let tiny = f.inbox.appendingPathComponent("tiny.png")
+    PhotoImages.write(tiny, width: 3, height: 5, type: .png)
+    #expect(refused(f.tone(), photo: tiny) == "tiny.png is too small for a video: its short side is under 200 px")
+    let thin = f.inbox.appendingPathComponent("thin.jpg")
+    PhotoImages.write(thin, width: 1200, height: 199)
+    #expect(refused(f.tone(), photo: thin).hasSuffix("its short side is under 200 px"))
+    #expect(StillVideo.sizeRefusal(width: 200, height: 4000, name: "x") == nil)
     // Nothing was written anywhere.
     #expect(!FileManager.default.fileExists(atPath: f.paths.photos.appendingPathComponent("Stills").path) || f.stillFiles("no").isEmpty)
     #expect(!FileManager.default.fileExists(atPath: f.paths.photos.appendingPathComponent("Stills/no").path))
@@ -174,13 +189,35 @@ import Testing
     maker.placeHook = { throw Boom() }
     #expect(throws: Boom.self) { try maker.make(photo: photo, audio: audio, videoId: "x") }
     let after = try Data(contentsOf: first.video)
-    #expect(f.stillFiles("x") == ["audio.wav", "video.mp4"] && after == bytes && f.stillLeftovers.isEmpty)
+    #expect(f.stillFiles("x") == ["audio.m4a", "video.mp4"] && after == bytes && f.stillLeftovers.isEmpty)
     // And one that works takes the next names: a file is never written over.
     maker.placeHook = nil
     let second = try maker.make(photo: photo, audio: f.tone("other.wav", seconds: 2), videoId: "x")
-    #expect(second.video.lastPathComponent == "video-2.mp4" && second.audio.lastPathComponent == "audio-2.wav")
+    #expect(second.video.lastPathComponent == "video-2.mp4" && second.audio.lastPathComponent == "audio-2.m4a")
     let still = try Data(contentsOf: first.video)
-    #expect(f.stillFiles("x") == ["audio-2.wav", "audio.wav", "video-2.mp4", "video.mp4"] && still == bytes)
+    #expect(f.stillFiles("x") == ["audio-2.m4a", "audio.m4a", "video-2.mp4", "video.mp4"] && still == bytes)
+    // A folder another make is using is never taken away by one that fails (only a folder it made and left empty).
+    let other = f.paths.photos.appendingPathComponent("Stills/y")
+    maker.placeHook = {
+      try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+      try Data("theirs".utf8).write(to: other.appendingPathComponent("video.mp4"))
+      throw Boom()
+    }
+    #expect(throws: Boom.self) { try maker.make(photo: photo, audio: audio, videoId: "y") }
+    #expect(f.stillFiles("y") == ["video.mp4"], "the other make's file is still there")
+    // Leftovers of a make that was cut short are swept once they are a day old, and nothing else is.
+    maker.placeHook = nil
+    let fm = FileManager.default
+    let oldWork = f.paths.work.appendingPathComponent("still-old"), newWork = f.paths.work.appendingPathComponent("still-new")
+    let oldTemp = f.paths.photos.appendingPathComponent("Stills/x/.old.mp4"), newTemp = f.paths.photos.appendingPathComponent("Stills/x/.new.mp4")
+    for d in [oldWork, newWork] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+    for u in [oldTemp, newTemp] { try Data("t".utf8).write(to: u) }
+    let twoDaysAgo = Date().addingTimeInterval(-2 * 86_400)
+    for u in [oldWork, oldTemp] { try fm.setAttributes([.modificationDate: twoDaysAgo], ofItemAtPath: u.path) }
+    maker.sweepLeftovers()
+    #expect(!fm.fileExists(atPath: oldWork.path) && !fm.fileExists(atPath: oldTemp.path))
+    #expect(fm.fileExists(atPath: newWork.path) && fm.fileExists(atPath: newTemp.path))
+    #expect(f.stillFiles("x").filter { !$0.hasPrefix(".") } == ["audio-2.m4a", "audio.m4a", "video-2.mp4", "video.mp4"])
   }
 
   /// The budget: three minutes of audio on a 4K photo in under 30 seconds (measured 3 s on this Mac; 20 minutes takes
@@ -191,7 +228,7 @@ import Testing
     PhotoImages.write(photo, width: 3840, height: 2160, left: .grey, right: .green)
     let audio = f.tone("three.wav", seconds: 180)
     let started = Date()
-    let made = try StillVideo(store: f.store).make(photo: photo, audio: audio, videoId: "big")
+    let made = try StillVideo(store: f.store).make(photo: photo, audio: audio, videoId: "big", fit: .fill)
     let took = Date().timeIntervalSince(started)
     let info = try Media.probe(made.video)
     #expect(took < 30, "took \(took) s")

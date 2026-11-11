@@ -73,11 +73,13 @@ extension Fixture {
     try photoPost(name, count: 1, title: title, width: width, height: height)
   }
 
-  /// A video made from a fresh photo and a tone, as "Add audio" makes it.
+  /// A video made from a fresh photo and a tone, as "Add audio" makes it. `fit` is `fill` here unless a test asks for
+  /// the default (`whole`): these tests are mostly about the clip rules, where the crop is Eric's to pick.
   @discardableResult
-  func still(_ name: String = "flyer", title: String? = "Saturday flyer", seconds: Double = 3, width: Int = 400, height: Int = 300) throws -> Video {
+  func still(_ name: String = "flyer", title: String? = "Saturday flyer", seconds: Double = 3, width: Int = 400, height: Int = 300,
+             fit: StillSource.Fit = .fill) throws -> Video {
     let v = try singlePhoto(name, title: title, width: width, height: height)
-    return try StillVideo(store: store).addAudio(to: v.id, audio: tone("\(name).wav", seconds: seconds)).video
+    return try StillVideo(store: store).addAudio(to: v.id, audio: tone("\(name).wav", seconds: seconds), fit: fit).video
   }
 
   /// The files in an item's Stills folder, sorted.

@@ -46,16 +46,17 @@ import Testing
     let audio = f.tone("Friday mix.wav", seconds: 4)
     let prints = [try #require(PhotoImport.fingerprint(audio)), try #require(PhotoImport.fingerprint(f.inbox.appendingPathComponent("flyer-1.jpg")))]
     let versionsBefore = try f.store.versions(videoId: before.id)
-    let change = try StillVideo(store: f.store).addAudio(to: before.id, audio: audio)
+    let change = try StillVideo(store: f.store).addAudio(to: before.id, audio: audio, fit: .fill)
     let v = change.video
     // The same item, now a video of that photo with that audio.
     #expect(v.id == before.id && v.isStill && !v.isPhoto && v.photos == nil && v.needsNoScore)
-    #expect(v.still?.photo == photo && v.still?.audioName == "Friday mix.wav" && v.still?.audio == "Stills/\(v.id)/audio.wav")
+    #expect(v.still?.photo == photo && v.still?.audioName == "Friday mix.wav" && v.still?.audio == "Stills/\(v.id)/audio.m4a")
+    #expect(v.still?.fit == .fill)
     #expect(abs((v.still?.audioDuration ?? 0) - 4) <= 0.05 && v.duration == v.still?.audioDuration)
     #expect(v.file == "Stills/\(v.id)/video.mp4" && v.start == 0 && v.end == v.duration)
     #expect(v.fingerprint != nil && (v.fileSize ?? 0) > 0 && v.sourceWidth == 400 && v.sourceHeight == 300)
     #expect(try f.store.fileURL(for: v)?.path == f.paths.photos.appendingPathComponent("Stills/\(v.id)/video.mp4").path)
-    #expect(f.stillFiles(v.id) == ["audio.wav", "video.mp4"] && f.stillLeftovers.isEmpty)
+    #expect(f.stillFiles(v.id) == ["audio.m4a", "video.mp4"] && f.stillLeftovers.isEmpty)
     // Kept: title, name, kind, session, score, and it is still in Edit, not sent anywhere.
     #expect(v.title == "Saturday flyer" && v.titleSource == before.titleSource && v.name == before.name && v.tags == before.tags)
     #expect(v.kind == before.kind && v.sessionId == Session.photosId && !v.inManifest && v.type == .short && v.createdAt == before.createdAt)
@@ -111,10 +112,10 @@ import Testing
     #expect(try f.store.fileURL(for: v).map { FileManager.default.fileExists(atPath: $0.path) } == true)
     // The batch is closed; the made files are still there and nothing points at them.
     #expect(try bulk.batch(id: try #require(change.batchId))?.undoneAt != nil)
-    #expect(f.stillFiles(v.id) == ["audio.wav", "video.mp4"])
+    #expect(f.stillFiles(v.id) == ["audio.m4a", "video.mp4"])
     // Adding again takes new names, so the first entry's files are never written over.
     let again = try StillVideo(store: f.store).addAudio(to: v.id, audio: f.tone("b.wav", seconds: 2)).video
-    #expect(again.file == "Stills/\(v.id)/video-2.mp4" && again.still?.audio == "Stills/\(v.id)/audio-2.wav")
+    #expect(again.file == "Stills/\(v.id)/video-2.mp4" && again.still?.audio == "Stills/\(v.id)/audio-2.m4a")
   }
 
   @Test func anUndoNeverOverwritesLaterWorkAndIsRefusedOnceItIsScheduled() throws {
@@ -138,6 +139,62 @@ import Testing
     #expect(try f.store.video(id: v.id)?.isStill == true && f.store.video(id: v.id)?.state == .planned)
   }
 
+  /// Review B1: the lock is about what a restore would do, not what the batch is called. A forced undo of an older
+  /// batch whose snapshot holds other media must not change what a scheduled item is.
+  @Test func aForcedUndoOfAnOlderBatchNeverChangesWhatAScheduledItemIs() throws {
+    let f = try Fixture.engine(1)
+    let bulk = BulkActions(store: f.store), maker = StillVideo(store: f.store), planner = Planner(store: f.store)
+    let locked = "It's scheduled or posted now: send it back to Edit first"
+    // 1. A title batch recorded on the photo post, forced after the item became a video and got a day.
+    let a = try f.singlePhoto("a", title: "First")
+    let titleA = try #require(try bulk.setTitle([a.id], "Renamed").batchId)
+    _ = try maker.addAudio(to: a.id, audio: f.tone(seconds: 2))
+    try f.send(a.id)
+    try planner.autoSchedule()
+    let before = try f.stored(a.id)
+    #expect(try f.store.posts(where: "video_id=?", [a.id]).count == 6)
+    for force in [false, true] {
+      let r = try bulk.undo(titleA, force: force)
+      #expect(r.changed.isEmpty && r.skipped[a.id] == locked, "force \(force): \(r.skipped)")
+    }
+    #expect(try f.stored(a.id) == before, "still a video, with its six posts, YouTube included")
+    #expect(try f.store.video(id: a.id)?.isStill == true && f.store.posts(where: "video_id=? AND platform='youtube'", [a.id]).count == 1)
+    // 2. The other way: a batch recorded on the made video, forced after Remove audio and a day for the photo post.
+    let b = try f.still("b", title: "Second")
+    let titleB = try #require(try bulk.setTitle([b.id], "Renamed too").batchId)
+    _ = try maker.removeAudio(videoId: b.id)
+    try f.send(b.id)
+    try planner.autoSchedule()
+    let photoBefore = try f.stored(b.id)
+    #expect(try bulk.undo(titleB, force: true).skipped[b.id] == locked)
+    #expect(try f.stored(b.id) == photoBefore)
+    #expect(try f.store.video(id: b.id)?.isPhoto == true && f.store.posts(where: "video_id=? AND platform='youtube'", [b.id]).isEmpty)
+    // 3. An older batch forced after Change audio (and after a fit change): the old audio never comes back under a day.
+    let c = try f.still("c", title: "Third", seconds: 4)
+    let titleC = try #require(try bulk.setTitle([c.id], "Third again").batchId)
+    _ = try maker.changeAudio(videoId: c.id, audio: f.tone("other.wav", seconds: 2))
+    let d = try f.still("d", title: "Fourth")
+    let titleD = try #require(try bulk.setTitle([d.id], "Fourth again").batchId)
+    _ = try maker.setFit(videoId: d.id, fit: .whole)
+    for id in [c.id, d.id] { try f.send(id) }
+    try planner.autoSchedule()
+    let (cBefore, dBefore) = (try f.stored(c.id), try f.stored(d.id))
+    #expect(try bulk.undo(titleC, force: true).skipped[c.id] == locked)
+    #expect(try bulk.undo(titleD, force: true).skipped[d.id] == locked)
+    #expect(try f.stored(c.id) == cBefore && f.stored(d.id) == dBefore)
+    #expect(try f.store.video(id: c.id)?.still?.audioName == "other.wav" && f.store.video(id: d.id)?.still?.fit == .whole)
+    // While nothing is scheduled the same forced undo is Eric's to make: the item is in Edit.
+    let e = try f.still("e", title: "Fifth", seconds: 4)
+    let titleE = try #require(try bulk.setTitle([e.id], "Fifth again").batchId)
+    _ = try maker.changeAudio(videoId: e.id, audio: f.tone("other.wav", seconds: 2))
+    #expect(try bulk.undo(titleE).skipped[e.id] == "changed again since the batch (use force to overwrite)")
+    #expect(try bulk.undo(titleE, force: true).changed == [e.id])
+    #expect(try f.store.video(id: e.id)?.still?.audioName == "e.wav" && f.store.video(id: e.id)?.title == "Fifth")
+    // An ordinary clip's undo, scheduled or not, is what it always was.
+    let clipTitle = try #require(try bulk.setTitle(["clip-0"], "Clip").batchId)
+    #expect(try bulk.undo(clipTitle).changed == ["clip-0"])
+  }
+
   @Test func changeAudioMakesTheVideoAgainAndClearsTrimsThatNoLongerFit() throws {
     let f = try Fixture(clips: [], longform: false)
     let made = try f.still(seconds: 6)
@@ -148,17 +205,29 @@ import Testing
     e.platformTrims = [.x: TrimRange(start: 0, end: 5), .tiktok: TrimRange(start: 0.5, end: 2)]
     e.coverTime = 5.8
     try f.store.save(e, videoId: made.id)
+    // Three texts: one that starts past the new length, one that only ends past it, one inside it.
+    var one = Version(number: 1)
+    one.text = "Late"
+    one.textStart = 4
+    one.textEnd = 5.5
+    one.moreText = [TextLayer(id: "long", text: "Runs on", start: 1, end: 5), TextLayer(id: "short", text: "Early", start: 0.5, end: 2)]
+    try f.store.save(one, videoId: made.id)
     let stored = try f.stored(made.id)
     let maker = StillVideo(store: f.store)
     let change = try maker.changeAudio(videoId: made.id, audio: f.tone("Shorter.wav", seconds: 3))
     let v = change.video
     #expect(v.isStill && v.still?.photo == made.still?.photo && v.still?.audioName == "Shorter.wav" && abs(v.duration - 3) <= 0.05)
-    #expect(v.file == "Stills/\(v.id)/video-2.mp4" && v.still?.audio == "Stills/\(v.id)/audio-2.wav" && v.end == v.duration)
-    #expect(v.fingerprint != made.fingerprint && f.stillFiles(v.id) == ["audio-2.wav", "audio.wav", "video-2.mp4", "video.mp4"])
+    #expect(v.file == "Stills/\(v.id)/video-2.mp4" && v.still?.audio == "Stills/\(v.id)/audio-2.m4a" && v.end == v.duration)
+    #expect(v.fingerprint != made.fingerprint && f.stillFiles(v.id) == ["audio-2.m4a", "audio.m4a", "video-2.mp4", "video.mp4"])
+    #expect(v.still?.fit == made.still?.fit, "the fit stays")
     let after = try f.store.edit(videoId: v.id)
     #expect(after.crop == e.crop, "the crop stays")
     #expect(after.trimIn == nil && after.trimOut == nil && after.coverTime == nil)
     #expect(after.platformTrims == [.tiktok: TrimRange(start: 0.5, end: 2)], "the trim that still fits stays")
+    // Text windows follow the new length like trims: past it → the whole clip; ending past it → to the end; inside → kept.
+    let fitted = try #require(try f.store.versions(videoId: v.id).first)
+    #expect(fitted.text == "Late" && fitted.textStart == nil && fitted.textEnd == nil)
+    #expect(fitted.moreText?.map(\.start) == [1, 0.5] && fitted.moreText?.map(\.end) == [nil, 2])
     #expect(try BulkActions(store: f.store).batch(id: try #require(change.batchId))?.action == "photo-audio-change")
     #expect(ClipStage.of(v) == .edit && !v.sentToQueue)
     // A longer audio keeps every trim.
@@ -207,7 +276,7 @@ import Testing
     #expect(try Validation.issues(video: v, store: f.store).isEmpty)
     #expect(try BulkActions(store: f.store).batch(id: try #require(change.batchId))?.action == "photo-audio-remove")
     // The made files stay, so undo only points the row back.
-    #expect(f.stillFiles(v.id) == ["audio.wav", "video.mp4"])
+    #expect(f.stillFiles(v.id) == ["audio.m4a", "video.mp4"])
     let undo = try BulkActions(store: f.store).undo(try #require(change.batchId))
     #expect(undo.changed == [v.id])
     #expect(try f.stored(made.id) == stored)
@@ -269,6 +338,10 @@ import Testing
     let out = try f.singlePhoto("out")
     try f.store.setExcluded(out.id, true)
     #expect(refused { try maker.addAudio(to: out.id, audio: tone) } == "It's excluded: include it first")
+    // A photo too small to be a video.
+    let small = try f.singlePhoto("small", width: 150, height: 300)
+    #expect(refused { try maker.addAudio(to: small.id, audio: tone) } == "small-1 is too small for a video: its short side is under 200 px")
+    #expect(f.stillFiles(small.id).isEmpty)
     // None of the refusals left a file or changed a row.
     for v in [carousel, queued, timed, lost, out] {
       #expect(try f.stillFiles(v.id).isEmpty && f.store.video(id: v.id)?.isPhoto == true)
@@ -291,7 +364,8 @@ import Testing
     #expect(try f.store.planSlots().isEmpty && f.store.posts().isEmpty)
     #expect(seen.values.last == 1 && seen.values == seen.values.sorted())
     // Each has its own files and its own copy of the audio.
-    for v in r.videos { #expect(f.stillFiles(v.id) == ["audio.wav", "video.mp4"]) }
+    for v in r.videos { #expect(f.stillFiles(v.id) == ["audio.m4a", "video.mp4"]) }
+    #expect(r.failed.isEmpty && r.videos.allSatisfy { $0.still?.fit == .whole }, "the whole photo unless asked otherwise")
     // The same as importing the photo and adding the audio: edit, versions, and everything on the row but its identity.
     let post = try #require(try PhotoImport(store: f.store).add(files: [files[2]], mode: .separate, title: "Saturday").posts.first)
     let control = try StillVideo(store: f.store).addAudio(to: post.id, audio: tone).video

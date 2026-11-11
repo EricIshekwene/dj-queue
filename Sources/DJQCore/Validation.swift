@@ -98,7 +98,8 @@ public enum Validation {
         if let why = PhotoRules.shapeProblem(re.aspect, platform: p) { out.append(.init(kind: .photoShape, platform: p, message: why)) }
       }
     } else {
-      if edit.crop == nil { out.append(.init(kind: .noCrop, platform: nil, message: "Confirm the crop")) }
+      // (`re.cropConfirmed` is "the edit has a crop", and also true for a made video that shows the whole photo, D12.)
+      if !re.cropConfirmed { out.append(.init(kind: .noCrop, platform: nil, message: "Confirm the crop")) }
     }
     if !v.isPhoto, !r.hasDrawnText && !r.noText {
       out.append(.init(kind: .noText, platform: nil,
@@ -139,7 +140,7 @@ public enum Validation {
                          count: Double(t.count), limit: Double(lim)))
       }
       // Round 23 (D10): a video made from a photo has no marker tag to fall back on, so with no Title, no text on it
-      // and no YouTube title typed, YouTube would name it after the photo's file.
+      // and no YouTube title typed, YouTube would get no name for it.
       if v.isStill, v.titleText == nil, r.youtubeTitle.isEmpty, !r.hasText {
         out.append(.init(kind: .noTitle, platform: .youtube, message: StillVideo.youtubeTitleIssue))
       }

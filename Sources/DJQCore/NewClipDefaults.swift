@@ -269,9 +269,17 @@ public enum EditResolver {
     if e.aspectOverride == nil { defaulted.insert(.aspect) }
     let size = sourceSize ?? v.sourceWidth.flatMap { w in v.sourceHeight.map { CGSize(width: w, height: $0) } }
     var crop = e.crop
+    var confirmed = e.crop != nil
     if crop == nil {
       defaulted.insert(.crop)
-      if let size, size.width > 0, size.height > 0 { crop = d.defaultCrop(for: v, source: size, aspect: aspect, lastUsed: lastUsedCrop) }
+      if let size, size.width > 0, size.height > 0 {
+        crop = d.defaultCrop(for: v, source: size, aspect: aspect, lastUsed: lastUsedCrop)
+        // D12: a made video that shows the whole photo is 9:16 already. Its crop is the whole frame and needs no confirming.
+        if v.still?.fits == .whole, aspect == .r9x16 {
+          crop = CropRect(x: 0, y: 0, w: Double(size.width), h: Double(size.height))
+          confirmed = true
+        }
+      }
     }
     let def = d.trim(for: v)
     if e.trimIn == nil { defaulted.insert(.trimIn) }
@@ -292,7 +300,7 @@ public enum EditResolver {
     if e.coverIncludesTextOverride == nil { defaulted.insert(.coverIncludesText) }
     let skipped = Set(Platform.allCases.filter { e.isSkipped($0, defaults: d) })
     if e.skippedPlatforms.isEmpty && e.includedPlatforms.isEmpty { defaulted.insert(.platforms) }
-    return ResolvedEdit(aspect: aspect, crop: crop, cropConfirmed: e.crop != nil, trimIn: tIn, trimOut: tOut,
+    return ResolvedEdit(aspect: aspect, crop: crop, cropConfirmed: confirmed, trimIn: tIn, trimOut: tOut,
                         coverTime: cover, coverIncludesText: e.coverIncludesTextOverride ?? d.coverIncludesText,
                         platformTrims: e.platformTrims, skippedPlatforms: skipped, defaulted: defaulted)
   }
