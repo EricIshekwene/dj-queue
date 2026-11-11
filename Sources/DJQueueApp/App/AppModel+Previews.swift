@@ -90,7 +90,7 @@ extension AppModel {
       guard let v = videoById[id] else { continue }
       requestPoster(v)
     }
-    let playAgain = recentProxyIds.filter(ids.contains)
+    let playAgain = recentProxyIds.filter { ids.contains($0) && videoById[$0]?.isPhoto != true }
     if !playAgain.isEmpty { requestProxies(playAgain, keepOthersVisible: true) }
     // Nothing on screen is waiting for these: no "Updating" state lingers for clips no list will ask about.
     previewUpdating.subtract(ids.subtracting(playAgain))
@@ -121,9 +121,14 @@ extension AppModel {
   /// `requestPoster`, which does it) when the clip appears.
   func clipPreview(_ v: Video, version: Int = 1) -> ClipPreview {
     let stamp = previewStamp(v.id, version: version)
-    let proxy = v.missing || v.type != .short ? nil : proxyURLs[v.id]
+    // A photo post has nothing to play (round 21): no proxy, no overlay. Its cover is the first photo as it posts.
+    let proxy = v.missing || v.type != .short || v.isPhoto ? nil : proxyURLs[v.id]
     var p = ClipPreview(stamp: stamp, proxyURL: proxy, cover: version == 1 ? poster(v) : poster(v, version: version), loopRange: nil,
                         isUpdating: proxy == nil && previewUpdating.contains(v.id), version: version)
+    if v.isPhoto {
+      p.aspectRatio = p.cover.flatMap { $0.size.height > 0 ? Double($0.size.width / $0.size.height) : nil } ?? settings.defaults.photoAspect.ratio
+      return p
+    }
     if v.type == .short, let info = previewInfo[Self.infoKey(v.id, version)], info.stamp == stamp {
       p.aspectRatio = info.aspect.ratio
       guard info.textKey != "none" else { return p }
@@ -199,7 +204,7 @@ extension AppModel {
 
   /// The current render's file for version 1 (editHash matches, file exists), else nil. Off the main thread.
   func currentRenderFile(_ v: Video, version: Int = 1) async -> URL? {
-    guard v.type == .short, !v.missing else { return nil }
+    guard v.type == .short, !v.missing, !v.isPhoto else { return nil }
     let r = renderer, id = v.id
     return await Task.detached(priority: .userInitiated) { () -> URL? in
       guard let render = try? r.currentRender(videoId: id, versionNo: version, platform: nil), let path = render.outputPath,
@@ -218,7 +223,8 @@ extension AppModel {
 
   /// Loads (or refreshes after a cache eviction) the overlay + timing of `v` at `version`.
   func requestPreviewInfo(_ v: Video, version: Int) {
-    guard v.type == .short, !v.missing else { return }
+    // A photo's thumbnail already carries its text; nothing is drawn over it.
+    guard v.type == .short, !v.missing, !v.isPhoto else { return }
     let key = Self.infoKey(v.id, version)
     let stamp = previewStamp(v.id, version: version)
     if let i = previewInfo[key], i.stamp == stamp, i.layers.allSatisfy({ Self.overlayCache.value($0.key) != nil }) { return }
@@ -265,7 +271,7 @@ extension AppModel {
   /// Loads `originalPoster` off-main once.
   func requestOriginalPoster(_ v: Video) {
     let k = "orig|\(v.id)|\(v.fingerprint ?? v.file)"
-    guard posters[k] == nil, !posterPending.contains(k), !v.missing, let url = clipURL(v) else { return }
+    guard posters[k] == nil, !posterPending.contains(k), !v.missing, !v.isPhoto, let url = clipURL(v) else { return }
     posterPending.insert(k)
     let t = (v.markerIn ?? 0) + 0.5
     let load: @Sendable () -> NSImage? = {

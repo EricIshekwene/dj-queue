@@ -9,7 +9,8 @@ extension AppModel {
   ///
   /// - title: `displayName` (Title, else the raw tag verbatim); subtitle: session name.
   /// - poster: cached cover (call `requestPoster(v)` to load it; ClipCollection does); proxyURL: `proxyURLs[v.id]`.
-  /// - kind: only "Talking" (DJ vid shows nothing). Never the version.
+  /// - kind: only "Talking" (DJ vid shows nothing). Never the version. A photo post: `photos` (its mark and
+  ///   pictures), no session, no length.
   /// - issues (warning chips) / blocks (danger chips) from `issuesByVideo`, as short text ("No crop",
   ///   "Too long for X · 2:32 > 2:20").
   /// - suggestions: up to 3, only on Score/Edit and only while the clip has no Title.
@@ -22,6 +23,13 @@ extension AppModel {
     applyPreview(clipPreview(v), to: &c)
     c.durationText = Fmt.duration(clipDuration(v))
     c.kind = v.kind == .talking ? "Talking" : nil
+    if let label = v.photoLabel {
+      // Round 21 (D18): a photo post says "Photo" / "Carousel · 5" where a clip names its night, length and kind.
+      c.subtitle = nil
+      c.durationText = nil
+      c.kind = label
+      c.photos = clipPhotos(v, label: label)
+    }
     c.score = v.score
     c.isMissing = v.missing
     c.isPinned = nextSlotByVideo[v.id]?.pinned ?? false
@@ -62,6 +70,10 @@ extension AppModel {
     let id = c.id, version = p.version
     c.reloadOverlay = p.overlayMissing ? { [weak self] in self?.reloadOverlay(id, version: version) } : nil
   }
+
+  /// What sits under a clip's name in rows that have one line for it: the session, or "Photo" / "Carousel · 5" for a
+  /// photo post ("Photos" is a folder, not a night: D18).
+  func clipContext(_ v: Video) -> String { v.photoLabel ?? sessionName(v) }
 
   /// Length shown on cards: Eric's markers when set (the default trim), else the clip file.
   func clipDuration(_ v: Video) -> Double {

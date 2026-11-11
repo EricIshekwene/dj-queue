@@ -43,8 +43,18 @@ struct EditView: View {
           selection: prefs.statusBinding(.edit), allCount: scope.count, allTooltip: "Show every clip in Edit")
         }
       } sort: {
-        if !all.isEmpty { ListSortMenu(page: .edit) }
+        // The page's own order is by score, and a photo needs none: say where those go. Only under that order (the
+        // others put them elsewhere) and only while there is such a photo.
+        if !all.isEmpty {
+          let own = prefs.sort(.edit) == .natural && all.contains { $0.isPhoto && $0.score == nil }
+          ListSortMenu(page: .edit, notes: own ? ["Photos with no score come first, oldest first"] : [])
+        }
       } trailing: {
+        // Round 21: photos come in here (also ⌘K "Add photos…" and a drop on this page). Outline: the page's one
+        // primary stays Send to Queue.
+        DSButton("Add photos", icon: "photo.badge.plus", variant: .outline,
+                 tooltip: "Pick photos for a photo post or a carousel. They land here in Edit") { model.askAddPhotos() }
+          .background(ScriptAnchor("Add photos"))
         DSButton("Send to Queue with defaults", variant: sel.isEmpty ? .primary : .outline,
                  disabledReason: list.isEmpty ? "Nothing to edit" : nil,
                  tooltip: sel.isEmpty ? "Send \(AppModel.pipelineClips(ids.count)) shown to the Queue"
@@ -57,8 +67,11 @@ struct EditView: View {
         Color.clear
       } else if all.isEmpty {
         DSEmptyState(icon: "pencil", title: "Nothing to edit",
-                     message: "Scored clips that still need a crop, text or caption show up here.",
-                     actionTitle: "Open Queue") { model.screen = .queue }
+                     message: "Scored clips that still need a crop, text or caption show up here. So do photos you add.",
+                     actionTitle: "Open Queue",
+                     secondary: .init(title: "Add photos", icon: "photo.badge.plus", tooltip: "Pick photos for a photo post or a carousel") {
+                       model.askAddPhotos()
+                     }) { model.screen = .queue }
       } else if list.isEmpty {
         ListNoMatches(model: model, page: .edit, title: "No clips match", message: "Nothing in Edit fits this search or these filters.") {
           model.clearListFilters(.edit)
@@ -76,6 +89,7 @@ struct EditView: View {
     .dsBulkBar(isPresented: !sel.isEmpty) {
       EditBulkBar(model: model, ids: sel) { makeReady(sel) }
     }
+    .photoDrop(model)
   }
 
   static let nothingToFixId = "nothing-to-fix"
@@ -101,11 +115,18 @@ struct EditView: View {
   }
 
   private func makeReady(_ ids: [String]) {
-    model.pipelineBulk("Send \(AppModel.pipelineClips(ids.count)) to the Queue?", verb: "Send to Queue", ids: ids,
-                       changes: [.init(field: "Held clips", value: "Released: clips you sent back go to the Queue too"),
-                                 .init(field: "Crop", value: "Default anchor, confirmed where missing"),
-                                 .init(field: "Text, caption, cover", value: "Keep following New clip defaults"),
-                                 .init(field: "Title", value: "Not set by this — clips without one still need text")]) { b, dry in
+    // Round 21: photo posts go the same way, with no score. A selection of only photos says what happens to a photo.
+    let photosOnly = !ids.contains { model.video($0)?.isPhoto != true }
+    let what = model.pipelineItems(ids)
+    let changes: [DSChangeList.Change] = photosOnly
+      ? [.init(field: "Held posts", value: "Released: posts you sent back go to the Queue too"),
+         .init(field: "Crop", value: "Centred, confirmed where a photo has none"),
+         .init(field: "Score", value: "Not needed: they take the next open days")]
+      : [.init(field: "Held clips", value: "Released: clips you sent back go to the Queue too"),
+         .init(field: "Crop", value: "Default anchor, confirmed where missing"),
+         .init(field: "Text, caption, cover", value: "Keep following New clip defaults"),
+         .init(field: "Title", value: "Not set by this — clips without one still need text")]
+    model.pipelineBulk("Send \(what) to the Queue?", verb: "Send to Queue", ids: ids, changes: changes) { b, dry in
       try b.makeReadyWithDefaults(ids, dryRun: dry)
     }
   }
@@ -133,55 +154,71 @@ private struct EditBulkBar: View {
   let makeReady: () -> Void
 
   var body: some View {
-    let n = AppModel.pipelineClips(ids.count)
+    // Round 21: a selection of only photo posts leaves out what can't apply to a photo (title suggestions, Kind, the
+    // agent prompt, Back to Score) and says "photo posts" where it would say "clips".
+    let photosOnly = !ids.contains { model.video($0)?.isPhoto != true }
+    let anyPhoto = ids.contains { model.video($0)?.isPhoto == true }
+    let n = model.pipelineItems(ids)
     ScreenBulkBar(model: model, screen: .edit) {
-      let noSuggestions = !ids.contains { !(model.suggestionsByVideo[$0] ?? []).isEmpty }
-      let noTitlesWhy = "No title suggestions yet — More › Copy agent prompt asks your agent"
-      // Soft-disabled (dimmed, still hoverable so the tooltip can say why; a click says it again).
-      Button("Top title", systemImage: "text.badge.checkmark") {
-        if noSuggestions { model.show(noTitlesWhy, error: true); return }
-        let ids = ids
-        model.pipelineBulk("Accept the top title for \(n)?", verb: "Accept titles", ids: ids,
-                           changes: [.init(field: "Title", value: "Top suggestion from metadata (clips without a title)")]) { b, dry in
-          try b.acceptTopTitleSuggestion(ids, dryRun: dry)
-        }
-      }
-      .opacity(noSuggestions ? 0.45 : 1)
-      .dsTooltip("Use each clip's top suggested title", disabledReason: noSuggestions ? noTitlesWhy : nil)
-      Button("Caption", systemImage: "text.alignleft") { model.captionDialogIds = ids }
-        .dsTooltip("Set a template and hashtag groups for the selected clips")
-        .background(ScriptAnchor("Caption"))
-      Button("Crop", systemImage: "crop") { model.cropDialogIds = ids }
-        .dsTooltip("Move the crop for the selected clips and check each one")
-        .background(ScriptAnchor("Crop"))
-    } more: {
-      // Native items show no tooltip: titles carry the consequence.
-      Button("Back to Score (clears their scores)", systemImage: "chevron.left") { model.stageBack(ids) }
-      Divider()
-      Menu("Kind") {
-        ForEach(Kind.allCases, id: \.self) { k in
-          Button(k.displayName) {
-            let ids = ids
-            model.pipelineBulk("Set \(n) to \(k.displayName)?", verb: "Set kind", ids: ids,
-                               changes: [.init(field: "Kind", value: k.displayName)]) { b, dry in try b.setKind(ids, k, dryRun: dry) }
+      if !photosOnly {
+        let noSuggestions = !ids.contains { !(model.suggestionsByVideo[$0] ?? []).isEmpty }
+        let noTitlesWhy = "No title suggestions yet — More › Copy agent prompt asks your agent"
+        // Soft-disabled (dimmed, still hoverable so the tooltip can say why; a click says it again).
+        Button("Top title", systemImage: "text.badge.checkmark") {
+          if noSuggestions { model.show(noTitlesWhy, error: true); return }
+          let ids = ids
+          model.pipelineBulk("Accept the top title for \(n)?", verb: "Accept titles", ids: ids,
+                             changes: [.init(field: "Title", value: "Top suggestion from metadata (clips without a title)")]) { b, dry in
+            try b.acceptTopTitleSuggestion(ids, dryRun: dry)
           }
         }
+        .opacity(noSuggestions ? 0.45 : 1)
+        .dsTooltip("Use each clip's top suggested title", disabledReason: noSuggestions ? noTitlesWhy : nil)
       }
-      Button("Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") { model.copyAgentPrompt(ids) }
+      Button("Caption", systemImage: "text.alignleft") { model.captionDialogIds = ids }
+        .dsTooltip(photosOnly ? "Set a template and hashtag groups for the selected posts" : "Set a template and hashtag groups for the selected clips")
+        .background(ScriptAnchor("Caption"))
+      // D17: bulk crop leaves photos alone. With clips in the selection it opens and skips the photos; with only
+      // photos it says why instead.
+      let photosWhy = "Photos are cropped in the editor, one by one"
+      Button("Crop", systemImage: "crop") {
+        if photosOnly { model.show(photosWhy, error: true) } else { model.cropDialogIds = ids }
+      }
+      .opacity(photosOnly ? 0.45 : 1)
+      .dsTooltip("Move the crop for the selected clips and check each one", disabledReason: photosOnly ? photosWhy : nil)
+      .background(ScriptAnchor("Crop"))
+    } more: {
+      // Native items show no tooltip: titles carry the consequence.
+      if !photosOnly {
+        Button("Back to Score (clears their scores)", systemImage: "chevron.left") { model.stageBack(ids) }
+        Divider()
+        Menu("Kind") {
+          ForEach(Kind.allCases, id: \.self) { k in
+            Button(k.displayName) {
+              let ids = ids
+              model.pipelineBulk("Set \(n) to \(k.displayName)?", verb: "Set kind", ids: ids,
+                                 changes: [.init(field: "Kind", value: k.displayName)]) { b, dry in try b.setKind(ids, k, dryRun: dry) }
+            }
+          }
+        }
+        Button("Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") { model.copyAgentPrompt(ids) }
+      }
       EditApplyDefaultsMenu(model: model, ids: ids)
       Menu("Skip platform") {
         ForEach(model.settings.activePlatforms) { p in
           Button(p.displayName) {
             let ids = ids
             model.pipelineBulk("Skip \(p.displayName) for \(n)?", verb: "Skip \(p.displayName)", ids: ids,
-                               changes: [.init(field: p.displayName, value: "Skipped — these clips won't post there")],
+                               changes: [.init(field: p.displayName, value: photosOnly ? "Skipped — these posts won't go out there"
+                                                 : "Skipped — these clips won't post there")],
                                versionScope: .every) { b, dry in
               try b.setPlatform(ids, p, skipped: true, dryRun: dry)
             }
           }
         }
       }
-      Button("Re-render (make the post videos again)", systemImage: "arrow.triangle.2.circlepath") {
+      Button(photosOnly ? "Re-render (make the post photos again)" : anyPhoto ? "Re-render (make the posts again)"
+               : "Re-render (make the post videos again)", systemImage: "arrow.triangle.2.circlepath") {
         let ids = ids
         model.pipelineBulk("Re-render \(n)?", verb: "Re-render", ids: ids,
                            changes: [.init(field: "Renders", value: "Made again on the next engine tick")]) { b, dry in
@@ -191,6 +228,7 @@ private struct EditBulkBar: View {
     } primary: {
       DSButton("Send to Queue", variant: .primary, size: .sm,
                tooltip: "Send \(n) selected to the Queue", action: makeReady)
+        .background(ScriptAnchor("Send selected to Queue"))
     }
   }
 }
@@ -202,8 +240,13 @@ struct EditApplyDefaultsMenu: View {
 
   var body: some View {
     // The title says what happens: the section's own edits go and New clip defaults apply (asks for > 1, undoable).
+    // A photo post has no trim and no cover frame (its first photo is the cover), so those two aren't offered for
+    // a selection of only photos.
+    let photosOnly = !ids.contains { model.video($0)?.isPhoto != true }
     Menu("Reset to New clip defaults") {
-      ForEach(BulkSection.allCases, id: \.self) { s in Button(Self.title(s)) { apply([s]) } }
+      ForEach(BulkSection.allCases.filter { !photosOnly || ($0 != .trim && $0 != .cover) }, id: \.self) { s in
+        Button(Self.title(s)) { apply([s]) }
+      }
       Divider()
       Button("Every section") { apply(Set(BulkSection.allCases)) }
     }
@@ -224,7 +267,7 @@ struct EditApplyDefaultsMenu: View {
     let ids = ids
     let what = sections.count == BulkSection.allCases.count ? "every section"
       : BulkSection.allCases.filter(sections.contains).map { Self.title($0).lowercased() }.joined(separator: ", ")
-    model.pipelineBulk("Apply defaults (\(what)) to \(AppModel.pipelineClips(ids.count))?", verb: "Apply defaults", ids: ids,
+    model.pipelineBulk("Apply defaults (\(what)) to \(model.pipelineItems(ids))?", verb: "Apply defaults", ids: ids,
                        changes: BulkSection.allCases.filter(sections.contains).map { .init(field: Self.title($0), value: "Default") },
                        done: "Defaults applied", versionScope: .of(sections), keepsWords: sections.contains(.text)) { b, dry in
       try b.applyDefaults(ids, sections: sections, dryRun: dry)

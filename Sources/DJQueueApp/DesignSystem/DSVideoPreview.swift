@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import DJQCore
 import Observation
 import SwiftUI
 
@@ -278,10 +279,12 @@ struct DSVideoPreview: View {
 
 /// Neutral placeholder when there is no cover yet.
 struct DSPosterPlaceholder: View {
+  /// "film" for a clip, "photo" for a photo post.
+  var symbol = "film"
   var body: some View {
     ZStack {
       DS.color.surfaceSunken
-      Image(systemName: "film").font(.system(size: 18, weight: .light)).foregroundStyle(DS.color.textTertiary)
+      Image(systemName: symbol).font(.system(size: 18, weight: .light)).foregroundStyle(DS.color.textTertiary)
     }
   }
 }
@@ -477,5 +480,115 @@ final class DSPlayerNSView: NSView {
     player = nil
     playerLayer.player = nil
     key = nil
+  }
+}
+
+// MARK: - Photo posts (round 21)
+
+/// A photo post's picture: the photo exactly as it will post, at its own shape, and still. There is no player here: no
+/// sound, no scrubber, nothing on hover. `steps` gives a carousel's large previews ‹ › and dots (Single view, quick
+/// look); small cards show the first photo only.
+struct DSPhotoPreview: View {
+  /// How many photos the post has.
+  let count: Int
+  /// Width ÷ height as posted, used until a picture is loaded (a loaded picture brings its own shape).
+  var aspectRatio: Double = Aspect.r4x5.ratio
+  /// The first photo, small: what every card shows.
+  var poster: NSImage? = nil
+  /// Photo `i` at preview size, when loaded (large previews).
+  var image: (Int) -> NSImage? = { _ in nil }
+  /// Asks for photo `i` at preview size.
+  var load: (Int) -> Void = { _ in }
+  /// The post's preview stamp. A large preview loads its photo again whenever this moves (a title, a crop, a skipped
+  /// platform: any change drops the loaded photos), not only when ‹ › is clicked.
+  var stamp = ""
+  var steps = false
+  var cornerRadius: CGFloat = 0
+  /// Fill the box with a quiet mat and fit the photo inside it (grid tiles keep one shape). Off: only the photo is
+  /// drawn, fitted and centred in the space given.
+  var mat = false
+  /// Where the photo sits in a box that isn't its shape.
+  var alignment: Alignment = .center
+  /// Names the step for scripted runs ("<name> 2 of 3").
+  var anchor: String? = nil
+  @State private var index = 0
+
+  private var shown: Int { min(max(0, index), max(0, count - 1)) }
+  private var canStep: Bool { steps && count > 1 }
+
+  var body: some View {
+    let i = shown
+    let picture = (steps ? image(i) : nil) ?? (i == 0 ? poster : nil)
+    let ratio = picture.flatMap { $0.size.height > 0 ? Double($0.size.width / $0.size.height) : nil } ?? aspectRatio
+    let inner = mat ? min(cornerRadius, DS.radius.xs) : cornerRadius
+    ZStack {
+      if mat { DS.color.surfaceSunken }
+      Group {
+        if let picture {
+          Image(nsImage: picture).resizable()
+        } else {
+          DSPosterPlaceholder(symbol: "photo")
+        }
+      }
+      .aspectRatio(ratio, contentMode: .fit)
+      .clipShape(RoundedRectangle(cornerRadius: inner, style: .continuous))
+      // Scripted runs: what a large preview is drawing now (the photo at preview size, the small cover, or nothing).
+      .background { if steps { ScriptAnchor("\(anchor ?? "Photo") picture \(image(i) != nil ? "large" : picture != nil ? "cover" : "none")") } }
+      .overlay { if !mat { RoundedRectangle(cornerRadius: inner, style: .continuous).strokeBorder(DS.color.border) } }
+      .overlay { if canStep { stepper(i) } }
+      .padding(mat ? 6 : 0)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    .overlay { if mat { RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(DS.color.border) } }
+    .task(id: "\(stamp)|\(i)|\(steps)") {
+      guard steps else { return }
+      load(i)
+      if i + 1 < count { load(i + 1) }
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(count > 1 ? "Photo \(i + 1) of \(count)" : "Photo")
+  }
+
+  /// ‹ › at the sides and the dots at the bottom. A side with nothing further shows no button.
+  private func stepper(_ i: Int) -> some View {
+    ZStack {
+      HStack {
+        if i > 0 {
+          DSMediaActionButton("Previous photo", systemImage: "chevron.left", tooltip: "Show the photo before this one") { index = i - 1 }
+            .background(ScriptAnchor("Previous photo"))
+        }
+        Spacer(minLength: 0)
+        if i < count - 1 {
+          DSMediaActionButton("Next photo", systemImage: "chevron.right", tooltip: "Show the next photo") { index = i + 1 }
+            .background(ScriptAnchor("Next photo"))
+        }
+      }
+      .padding(.horizontal, 10)
+      VStack {
+        Spacer(minLength: 0)
+        position(i).padding(.bottom, 10)
+      }
+    }
+  }
+
+  /// Dots for a short carousel, "3 of 12" for a long one.
+  private func position(_ i: Int) -> some View {
+    Group {
+      if count <= 10 {
+        HStack(spacing: 5) {
+          ForEach(0..<count, id: \.self) { n in
+            Circle().fill(Color.white.opacity(n == i ? 1 : 0.45)).frame(width: 6, height: 6)
+          }
+        }
+        .padding(.horizontal, 8)
+      } else {
+        Text("\(i + 1) of \(count)").font(DS.type.micro.monospacedDigit()).foregroundStyle(.white).padding(.horizontal, 8)
+      }
+    }
+    .frame(height: 18)
+    .background(Color.black.opacity(0.55), in: Capsule())
+    .background(ScriptAnchor("\(anchor ?? "Photo") \(i + 1) of \(count)"))
+    .dsTooltip("Photo \(i + 1) of \(count)")
   }
 }

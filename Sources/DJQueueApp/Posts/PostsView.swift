@@ -263,7 +263,7 @@ struct PostRowView: View {
       BrowsePoster(model: model, video: v, width: 24, height: 42, post: post)
       VStack(alignment: .leading, spacing: 1) {
         Text(v.map(model.displayName) ?? post.videoId).font(DS.type.callout).foregroundStyle(DS.color.text).lineLimit(1)
-        if let v { Text(model.sessionName(v)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1) }
+        if let v { Text(model.clipContext(v)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1) }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       DSPlatformIcon(platform: post.platform, size: 22, showsLabel: !compact)

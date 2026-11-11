@@ -76,6 +76,9 @@ extension AppModel {
       })
     }
 
+    // Round 21: the same picker as Edit's "Add photos" button.
+    c.append(.init(id: "photos.add", title: "Add photos…", symbol: "photo.badge.plus",
+                   subtitle: "Pick one photo or several for a carousel. They land in Edit") { [weak self] in self?.askAddPhotos() })
     c.append(.init(id: "calendar.open", title: "Open Calendar", symbol: "calendar", subtitle: "See today, the week or the month going out") { [weak self] in
       self?.editor = nil
       self?.screen = .calendar
@@ -143,8 +146,10 @@ extension AppModel {
   /// A clip as a palette row: opens its action page.
   func paletteClipRow(_ v: Video, title: String? = nil) -> PaletteCommand {
     let chip = libraryIsMissing(v) ? "File missing" : libraryStateChip(v).text
-    let meta = [sessionName(v), v.type == .long ? "Long-form" : v.score.map { "Score \($0)" }, chip].compactMap { $0 }.filter { !$0.isEmpty }
-    return PaletteCommand(id: "clip.\(v.id)", title: title ?? displayName(v), symbol: v.type == .long ? "rectangle" : "rectangle.portrait",
+    // A photo post says "Photo" / "Carousel · 5" where a clip names its night (D18).
+    let meta = [clipContext(v), v.type == .long ? "Long-form" : v.score.map { "Score \($0)" }, chip].compactMap { $0 }.filter { !$0.isEmpty }
+    let symbol = v.isPhoto ? (v.isCarousel ? "photo.stack" : "photo") : v.type == .long ? "rectangle" : "rectangle.portrait"
+    return PaletteCommand(id: "clip.\(v.id)", title: title ?? displayName(v), symbol: symbol,
                           hint: "Actions ›", group: "Clips", subtitle: meta.joined(separator: " · "), keepsOpen: true) {
       let ui = BrowseUI.shared
       ui.paletteReturnQuery = ui.paletteQuery
@@ -167,6 +172,7 @@ extension AppModel {
     c.append(.init(id: "clip.\(v.id).preview", title: "Quick look", symbol: "eye",
                    disabled: missing ? "File missing" : nil) { [weak self] in self?.previewVideo = v })
     c.append(.init(id: "clip.\(v.id).score", title: v.score == nil ? "Set score…" : "Change score (\(v.score!))…", symbol: "number",
+                   subtitle: v.isPhoto && v.score == nil ? "Optional for a photo: without one it takes the next open day" : nil,
                    disabled: longWhy) { [weak self] in self?.scorePrompt = v })
     c.append(.init(id: "clip.\(v.id).pinDate", title: "Pin to date…", symbol: "calendar", disabled: longWhy ?? (v.excluded ? "Excluded" : nil)) {
       [weak self] in self?.pinPrompt = v
@@ -201,19 +207,25 @@ extension AppModel {
       [weak self] in self?.setExcluded([v.id], !v.excluded)
     })
     if short {
-      c.append(.init(id: "clip.\(v.id).agentPrompt", title: "Copy agent prompt", symbol: "text.bubble",
-                     subtitle: "Ask your agent for a title") { [weak self] in self?.copyAgentPrompt([v.id]) })
-      for k in Kind.allCases where k != v.kind {
-        c.append(.init(id: "clip.\(v.id).kind.\(k.rawValue)", title: "Set kind: \(k.displayName)", symbol: "tag") { [weak self] in self?.setKind([v.id], k) })
+      // Round 21: a photo post has no song to look up, no kind, and one version this round (D16): no repost.
+      let photo = v.isPhoto
+      if !photo {
+        c.append(.init(id: "clip.\(v.id).agentPrompt", title: "Copy agent prompt", symbol: "text.bubble",
+                       subtitle: "Ask your agent for a title") { [weak self] in self?.copyAgentPrompt([v.id]) })
+        for k in Kind.allCases where k != v.kind {
+          c.append(.init(id: "clip.\(v.id).kind.\(k.rawValue)", title: "Set kind: \(k.displayName)", symbol: "tag") { [weak self] in self?.setKind([v.id], k) })
+        }
       }
       c.append(.init(id: "clip.\(v.id).rerender", title: "Re-render", symbol: "arrow.triangle.2.circlepath",
-                     subtitle: "Make the post video again on the next tick",
+                     subtitle: photo ? "Make the post photos again on the next tick" : "Make the post video again on the next tick",
                      disabled: missing ? "File missing" : nil) { [weak self] in self?.forceReRender([v.id]) })
-      c.append(.init(id: "clip.\(v.id).duplicateVersion", title: "Duplicate latest version", symbol: "plus.square.on.square",
-                   subtitle: "Copy its edits into a new version (for reposts)") { [weak self] in
-        self?.duplicateVersion(v.id)
-      })
-      for p in settings.activePlatforms where repostBlocker(v.id, p) == nil {
+      if !photo {
+        c.append(.init(id: "clip.\(v.id).duplicateVersion", title: "Duplicate latest version", symbol: "plus.square.on.square",
+                     subtitle: "Copy its edits into a new version (for reposts)") { [weak self] in
+          self?.duplicateVersion(v.id)
+        })
+      }
+      for p in settings.activePlatforms where !photo && repostBlocker(v.id, p) == nil {
         c.append(.init(id: "clip.\(v.id).repost.\(p.rawValue)", title: "Repost on \(p.displayName)", symbol: "arrow.uturn.forward",
                        subtitle: "Plan a new \(p.displayName) post of the latest version") { [weak self] in
           self?.repost(v.id, p)
@@ -276,7 +288,9 @@ extension AppModel {
   func menuSetScore(_ ids: [String], _ score: Int?) {
     let n = AppModel.pipelineClips(ids.count)
     pipelineBulk(score.map { "Score \(n) \($0)?" } ?? "Clear the score of \(n)?", verb: score == nil ? "Clear score" : "Set score", ids: ids,
-                 changes: [.init(field: "Score", value: score.map(String.init) ?? "None · back to Score")],
+                 // A photo keeps its place without a score (round 21, D4); a clip goes back to Score.
+                 changes: [.init(field: "Score", value: score.map(String.init)
+                                   ?? (ids.contains { video($0)?.isPhoto != true } ? "None · back to Score" : "None"))],
                  done: score.map { "Score \($0)" } ?? "Score cleared") { b, dry in try b.setScore(ids, score, dryRun: dry) }
   }
 
@@ -609,11 +623,12 @@ struct VideoContextMenu: View {
       Button("Post today", systemImage: "bolt") { model.postTodayAsking([video.id]) }
       Button("Pin to tomorrow", systemImage: "pin") { model.pin(video.id, dayKey: model.dm.addDays(model.todayKey, 1)) }
       Button("Move one slot later", systemImage: "forward.end") { model.skipNext(video.id) }
-      RepostMenu(model: model, videoId: video.id)
+      // Round 21 (D16): a photo post has one version this round, so nothing to repost or duplicate.
+      if !video.isPhoto { RepostMenu(model: model, videoId: video.id) }
       Divider()
       StageMenuItems(model: model, video: video, targets: targets)
       Divider()
-      Button("Duplicate version", systemImage: "plus.square.on.square") { model.duplicateVersion(video.id) }
+      if !video.isPhoto { Button("Duplicate version", systemImage: "plus.square.on.square") { model.duplicateVersion(video.id) } }
       Button(model.libraryIsMissing(video) ? "Re-render — file missing" : "Re-render", systemImage: "arrow.triangle.2.circlepath") {
         model.forceReRender([video.id])
       }
@@ -621,8 +636,11 @@ struct VideoContextMenu: View {
     } else {
       StageMenuItems(model: model, video: video, targets: targets)
     }
-    Menu(many ? "Kind (\(targets.count))" : "Kind") {
-      ForEach(Kind.allCases, id: \.self) { k in Button(k.displayName) { model.menuSetKind(targets, k) } }
+    // A photo post has no kind (DJ vid or Talking is about a clip).
+    if targets.contains(where: { model.video($0)?.isPhoto != true }) {
+      Menu(many ? "Kind (\(targets.count))" : "Kind") {
+        ForEach(Kind.allCases, id: \.self) { k in Button(k.displayName) { model.menuSetKind(targets, k) } }
+      }
     }
     Menu(many ? "Score (\(targets.count))" : "Score") {
       ForEach([90, 80, 70, 60, 50, 40, 30], id: \.self) { s in Button("\(s)") { model.menuSetScore(targets, s) } }
@@ -653,8 +671,10 @@ struct PostContextMenu: View {
       Button("Copy caption", systemImage: "text.quote") { model.copyCaption(post) }
       if post.platform == .youtube { Button("Copy title", systemImage: "textformat") { model.copyTitle(post) } }
       Button("Open upload page", systemImage: "safari") { model.openUploadPage(post) }
-      Button("Reveal in Finder", systemImage: "folder") { model.revealFile(post) }
-      Button("Copy file", systemImage: "doc.on.doc") { model.copyFile(post) }
+      // Round 21: a photo post's render is one file per photo, and these give every one of them.
+      let photos = model.video(post.videoId)?.photoCount ?? 0
+      Button("Reveal in Finder", systemImage: "folder") { model.revealFiles(post) }
+      Button(photos > 1 ? "Copy \(photos) photos" : "Copy file", systemImage: "doc.on.doc") { model.copyFiles(post) }
       Divider()
     }
     if !post.state.isTerminal || post.state == .posted {

@@ -17,7 +17,14 @@ extension AppModel {
   func editFixes(_ v: Video, ids: [String]) -> [EditFix] {
     var out: [EditFix] = []
     // A scored clip whose file went missing sits in Edit (round 4 S1): the one fix is to find the file again.
-    if v.missing {
+    if v.missing, v.isPhoto {
+      // A photo post's copy isn't found again by fingerprint (Core: `photos.missing`); Doctor says which file is gone.
+      out.append(EditFix(id: "photo-missing", title: "See what's missing", icon: "stethoscope",
+                         tooltip: "Open Health › Doctor, which names the missing photo", disabledReason: nil) { [self] in
+        screen = .health
+        runDoctor()
+      })
+    } else if v.missing {
       out.append(EditFix(id: "relink", title: "Relink", icon: "magnifyingglass",
                          tooltip: "Look for the moved file now (intake finds it by fingerprint); Health › Doctor shows more",
                          disabledReason: nil) { [self] in
@@ -62,6 +69,19 @@ extension AppModel {
                            tooltip: "Open the editor to write a caption just for \(name)", disabledReason: nil) { [self] in
           openEditor(v.id, in: ids)
         })
+      case .photoShape:
+        // Round 21 (D20): Instagram refuses a 9:16 photo. Two ways out, each one a click: another shape, or skip it.
+        out.append(EditFix(id: "shape-\(p.rawValue)", title: "Pick another shape", icon: "aspectratio",
+                           tooltip: "Open the editor to change the photo shape. \(name) takes 4:5 to 16:9", disabledReason: nil) { [self] in
+          openEditor(v.id, in: ids)
+        })
+        let id = v.id
+        out.append(EditFix(id: "skip-shape-\(p.rawValue)", title: "Skip \(name)", icon: "forward",
+                           tooltip: "Don't post this on \(name); the others keep the shape", disabledReason: nil) { [self] in
+          pipelineBulk("Skip \(name) for this post?", verb: "Skip \(name)", ids: [id], done: "\(name) skipped for this post") { b, dry in
+            try b.setPlatform([id], p, skipped: true, dryRun: dry)
+          }
+        })
       case .titleTooLong:
         out.append(EditFix(id: "yt-title", title: "Shorten YouTube title", icon: "textformat",
                            tooltip: "Open the editor to shorten the YouTube title (100 max)", disabledReason: nil) { [self] in
@@ -78,9 +98,11 @@ extension AppModel {
   static func article(_ p: Platform) -> String { [.x, .instagram].contains(p) ? "an" : "a" }
 
   /// Titles help: no Title yet. `addTitle` = no suggestions either (show the inline field).
+  /// A photo post has no song to look up, so it never asks for an agent; its title is optional and the field stays.
   func editTitleNeeds(_ v: Video) -> (addTitle: Bool, askAgent: Bool) {
-    guard v.titleText == nil else { return (false, needsTitleHelp.contains(v.id)) }
-    return ((suggestionsByVideo[v.id] ?? []).isEmpty, needsTitleHelp.contains(v.id))
+    let ask = needsTitleHelp.contains(v.id) && !v.isPhoto
+    guard v.titleText == nil else { return (false, ask) }
+    return ((suggestionsByVideo[v.id] ?? []).isEmpty, ask)
   }
 }
 
@@ -264,20 +286,27 @@ struct EditClipMenu: View {
       }
     }
     Divider()
-    Menu("Kind") {
-      ForEach(Kind.allCases, id: \.self) { k in
-        Button {
-          model.pipelineBulk("Set \(n) to \(k.displayName)?", verb: "Set kind", ids: targets,
-                             changes: [.init(field: "Kind", value: k.displayName)]) { b, dry in try b.setKind(targets, k, dryRun: dry) }
-        } label: {
-          if targets.count == 1 && video.kind == k { Label(k.displayName, systemImage: "checkmark") } else { Text(k.displayName) }
+    // Round 21: a photo post has no kind and no song to ask an agent about, and bulk crop leaves it alone (D17).
+    let photosOnly = !targets.contains { model.video($0)?.isPhoto != true }
+    if !photosOnly {
+      Menu("Kind") {
+        ForEach(Kind.allCases, id: \.self) { k in
+          Button {
+            model.pipelineBulk("Set \(n) to \(k.displayName)?", verb: "Set kind", ids: targets,
+                               changes: [.init(field: "Kind", value: k.displayName)]) { b, dry in try b.setKind(targets, k, dryRun: dry) }
+          } label: {
+            if targets.count == 1 && video.kind == k { Label(k.displayName, systemImage: "checkmark") } else { Text(k.displayName) }
+          }
         }
       }
     }
     Button("Caption…", systemImage: "text.alignleft") { model.captionDialogIds = targets }
-    Button("Crop…", systemImage: "crop") { model.cropDialogIds = targets }
-    Button(targets.count == 1 ? "Copy agent prompt" : "Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") {
-      model.copyAgentPrompt(targets)
+    Button(photosOnly ? "Crop — \(PhotoRules.bulkCropReason)" : "Crop…", systemImage: "crop") { model.cropDialogIds = targets }
+      .disabled(photosOnly)
+    if !photosOnly {
+      Button(targets.count == 1 ? "Copy agent prompt" : "Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") {
+        model.copyAgentPrompt(targets)
+      }
     }
     EditApplyDefaultsMenu(model: model, ids: targets)
     Divider()

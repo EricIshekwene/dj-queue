@@ -43,7 +43,7 @@ struct QueueCardList: View {
     c.position = positions[v.id]
     var cfg = DSClipCardConfig()
     let p = model.playback
-    cfg.autoplay = PreviewPlayback.plays(p, layout: .cards, hovered: hovered == v.id, focused: false)
+    cfg.autoplay = !v.isPhoto && PreviewPlayback.plays(p, layout: .cards, hovered: hovered == v.id, focused: false)
     cfg.unmuteOnHover = p.hoverSound
     cfg.selectionMode = !sel.isEmpty
     cfg.showsDragHandle = true

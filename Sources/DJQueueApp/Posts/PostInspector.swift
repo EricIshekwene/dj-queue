@@ -24,7 +24,8 @@ struct PostInspector: View {
           }
           if post.state == .posted { section("Metrics") { metrics } }
           section("Attempts") { attempts }
-          section("Repost") { repost }
+          // Round 21 (D16): a photo post has one version this round, so there is nothing to repost.
+          if v?.isPhoto != true { section("Repost") { repost } }
           section("Actions", last: true) { actions(fixes) }
         }
       }
@@ -104,10 +105,18 @@ struct PostInspector: View {
         }
       }
       row("Render") {
-        if let rid = post.renderId, let r = try? model.store.render(id: rid), let path = r.outputPath {
-          Button((path as NSString).lastPathComponent) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
-            .buttonStyle(.plain).foregroundStyle(DS.color.accent).lineLimit(1).truncationMode(.middle)
-            .dsTooltip("Show the rendered file in Finder")
+        // Every file of the render: one for a clip, one per photo for a photo post (`Render.allPaths`). The link shows
+        // them all in Finder and can be dragged out as files.
+        let files = model.renderFiles(post)
+        if let first = files.first {
+          Button(files.count == 1 ? first.lastPathComponent : "\(files.count) photos · \(first.lastPathComponent)") {
+            NSWorkspace.shared.activateFileViewerSelecting(files)
+          }
+          .buttonStyle(.plain).foregroundStyle(DS.color.accent).lineLimit(1).truncationMode(.middle)
+          .overlay { FileDragSource(urls: files) { NSWorkspace.shared.activateFileViewerSelecting(files) } }
+          .dsTooltip(files.count == 1 ? "Click to show the file in Finder, or drag it out"
+                       : "Click to show all \(files.count) photos in Finder, or drag them out")
+          .accessibilityLabel(files.count == 1 ? "Rendered file \(first.lastPathComponent)" : "\(files.count) rendered photos")
         } else {
           Text("Not rendered yet").foregroundStyle(DS.color.textTertiary)
         }

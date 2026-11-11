@@ -43,7 +43,7 @@ struct BulkCropDialog: View {
 
   private var current: CropPreview? { previews.indices.contains(index) ? previews[index] : previews.first }
   private var changing: Int { previews.filter(\.changes).count }
-  private var verb: String { "Apply to \(AppModel.pipelineClips(max(changing, 1)))" }
+  private var verb: String { changing == 0 ? "Nothing to apply" : "Apply to \(AppModel.pipelineClips(changing))" }
   private var disabledReason: String? {
     if !loaded { return "Checking these clips…" }
     return changing == 0 ? "Nothing would change" : nil
@@ -57,6 +57,18 @@ struct BulkCropDialog: View {
   // MARK: The frame and the output
 
   @ViewBuilder private var stage: some View {
+    if let v = current.flatMap({ model.video($0.id) }), v.isPhoto {
+      // Round 21 (D17): bulk crop leaves a photo post alone. Show it, so the walk through says which post stays.
+      DSPhotoPreview(count: v.photoCount, aspectRatio: model.clipPreview(v).aspectRatio, poster: model.poster(v),
+                     cornerRadius: DS.radius.md, mat: true)
+        .frame(height: 279)
+        .onAppear { model.requestPoster(v) }
+    } else {
+      clipStage
+    }
+  }
+
+  @ViewBuilder private var clipStage: some View {
     HStack(alignment: .top, spacing: DS.space.md) {
       CropFrameView(image: current.flatMap { frames[$0.id] }, source: current?.source, crop: current?.crop,
                     canDrag: current?.skipped == nil, onMove: moveThisClip)

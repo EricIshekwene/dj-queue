@@ -26,10 +26,15 @@ struct EditedClipPlayer: View {
   var maxHeight: CGFloat = 560
   @State private var renderURL: URL?
 
-  static func hasToggle(_ v: Video) -> Bool { v.type == .short && !v.missing }
+  /// A photo post has one look, as it will post: no "Original" side, and nothing to play.
+  static func hasToggle(_ v: Video) -> Bool { v.type == .short && !v.missing && !v.isPhoto }
 
   var body: some View {
     let v = model.video(video.id) ?? video
+    if v.isPhoto { PhotoPostPreview(model: model, video: v, maxHeight: maxHeight) } else { player(v) }
+  }
+
+  @ViewBuilder private func player(_ v: Video) -> some View {
     let edited = Self.hasToggle(v) && source == .edited
     let p = model.clipPreview(v)
     VStack(spacing: DS.space.sm) {
@@ -71,6 +76,26 @@ struct EditedClipPlayer: View {
   }
 }
 
+/// A photo post in a quick look (round 21): each photo exactly as it will post, at its own shape. A carousel steps
+/// with ‹ › and dots. No player is ever made for it.
+struct PhotoPostPreview: View {
+  @Bindable var model: AppModel
+  let video: Video
+  var maxHeight: CGFloat = 560
+
+  var body: some View {
+    let p = model.clipPreview(video)
+    DSPhotoPreview(count: video.photoCount, aspectRatio: p.aspectRatio, poster: p.cover,
+                   image: { model.photoImage(video, index: $0) }, load: { model.requestPhoto(video, index: $0) },
+                   stamp: p.stamp, steps: true, cornerRadius: DS.radius.md, anchor: "Quick look photo")
+      .aspectRatio(p.aspectRatio, contentMode: .fit)
+      .frame(maxHeight: maxHeight)
+      .frame(maxWidth: .infinity)
+      .onAppear { model.requestPoster(video) }
+      .task(id: p.stamp) { model.requestPoster(video) }
+  }
+}
+
 /// Quick look (⌘K "Preview", context menu, Space in some lists): the clip as it will post, 9:16 — the current render
 /// when there is one, else the proxy + live text — with an "Original" toggle for the 16:9 source (S6). In-window
 /// dialog, presented by MainWindowView while `model.previewVideo` is set.
@@ -81,12 +106,15 @@ struct ClipPreviewSheet: View {
 
   var body: some View {
     let edited = EditedClipPlayer.hasToggle(video) && source == .edited
-    DSDialog(model.displayName(video), description: [model.sessionName(video), Fmt.duration(model.clipDuration(video))]
-      .filter { !$0.isEmpty }.joined(separator: " · "), width: edited ? 420 : 760, onClose: close) {
+    let v = model.video(video.id) ?? video
+    // A photo post says "Photo" / "Carousel · 5" where a clip names its night and length (D18).
+    let about = v.photoLabel ?? [model.sessionName(video), Fmt.duration(model.clipDuration(video))].filter { !$0.isEmpty }.joined(separator: " · ")
+    DSDialog(model.displayName(video), description: about, width: v.isPhoto ? 480 : edited ? 420 : 760, onClose: close) {
       EditedClipPlayer(model: model, video: video, source: $source)
     } footer: {
       DSButton("Close", variant: .ghost, shortcut: "esc", action: close).keyboardShortcut(.cancelAction)
-      DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .primary, tooltip: "Edit crop, text, caption and cover") {
+      DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .primary,
+               tooltip: v.isPhoto ? "Edit photos, crop, text and caption" : "Edit crop, text, caption and cover") {
         close()
         model.openEditor(video.id)
       }

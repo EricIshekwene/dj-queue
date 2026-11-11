@@ -226,7 +226,8 @@ struct MenuBarContent: View {
           .contentTransition(.numericText())
       }
       HStack(spacing: DS.space.sm) {
-        DSXThumb(model: model, video: v, width: 27)
+        // `BrowsePoster` fits a photo post's first photo whole, at its own shape (round 21); a clip looks as before.
+        BrowsePoster(model: model, video: v, width: 27, height: 48)
         VStack(alignment: .leading, spacing: 3) {
           Text(v.map(model.displayName) ?? "Missing clip").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).lineLimit(2)
           HStack(spacing: 5) {

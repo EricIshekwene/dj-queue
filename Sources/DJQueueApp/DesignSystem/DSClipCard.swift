@@ -26,6 +26,22 @@ struct DSClipPlatform: Identifiable, Hashable {
   var id: Platform { platform }
 }
 
+/// A photo post on a card (round 21): its photos as they will post. A card with this has no player, no length and
+/// nothing that moves on hover.
+struct DSClipPhotos {
+  var count: Int
+  /// "Photo" · "Carousel · 5": the mark a clip's kind or length would be.
+  var label: String
+  /// Width ÷ height as posted, until a picture is loaded.
+  var aspectRatio: Double = Aspect.r4x5.ratio
+  /// Photo `i` at preview size, when loaded. Large previews step through these; the card's `poster` is photo 0.
+  var image: (Int) -> NSImage? = { _ in nil }
+  var load: (Int) -> Void = { _ in }
+
+  var symbol: String { count > 1 ? "photo.stack" : "photo" }
+  var help: String { count > 1 ? "\(count) photos, posted together as a carousel" : "One photo, posted as a picture" }
+}
+
 /// Everything a clip card can show. All optional except id/title; the card hides what's nil/empty.
 /// Never put the version here (DESIGN-v2 §4: no versions on cards).
 struct DSClip: Identifiable {
@@ -71,9 +87,11 @@ struct DSClip: Identifiable {
   var isPinned = false
   /// File missing: danger chip "File missing · Relink" and no autoplay.
   var isMissing = false
+  /// A photo post: the card shows the first photo, a "Photo" / "Carousel · 5" mark and never plays.
+  var photos: DSClipPhotos? = nil
 
   /// "Afroween Jazz Piano · 0:42 · DJ vid".
-  var meta: String { [subtitle, durationText, kind].compactMap { $0 }.joined(separator: " · ") }
+  var meta: String { [subtitle, durationText, photos == nil ? kind : nil].compactMap { $0 }.joined(separator: " · ") }
 }
 
 /// Card behaviour shared by all modes.
@@ -125,7 +143,7 @@ struct DSClipCard<Actions: View>: View {
   private var hot: Bool { forced == .hover || forced == .pressed || hovering || DSClipCardDebug.hoverIds.contains(clip.id) }
   private var playHot: Bool { forced == .hover || forced == .pressed || pointerOn || DSClipCardDebug.hoverIds.contains(clip.id) }
   private var showCheck: Bool { onToggleSelect != nil && mode != .single && (config.selectionMode || isSelected || hot) }
-  private var autoplay: Bool { config.autoplay && !clip.isMissing }
+  private var autoplay: Bool { config.autoplay && !clip.isMissing && clip.photos == nil }
 
   var body: some View {
     Group {
@@ -160,6 +178,7 @@ struct DSClipCard<Actions: View>: View {
     if let s = clip.score { parts.append("score \(s)") }
     if let st = clip.status?.text { parts.append(st) }
     if let d = clip.dateText { parts.append(d) }
+    if let ph = clip.photos { parts.append(ph.label) }
     if clip.isMissing { parts.append("file missing") }
     if clip.isUpdatingPreview && !clip.isMissing { parts.append("updating preview") }
     return parts.joined(separator: ", ")
@@ -167,14 +186,35 @@ struct DSClipCard<Actions: View>: View {
 
   // MARK: Shared pieces
 
-  private func media(radius: CGFloat, active: Bool, mute: Bool = true, muteAlignment: Alignment = .bottomTrailing,
-                     scrubber: Bool = false, updating: DSPreviewUpdatingStyle = .label) -> some View {
-    DSVideoPreview(url: clip.isMissing ? nil : clip.proxyURL, poster: clip.poster, isActive: active, isPriority: isFocused,
-                   loopRange: clip.loopRange, unmuteOnHover: config.unmuteOnHover, isHovered: playHot, showsMuteButton: mute,
-                   muteAlignment: muteAlignment, showsScrubber: scrubber, cornerRadius: radius,
-                   overlays: clip.overlays, isUpdating: clip.isUpdatingPreview && !clip.isMissing,
-                   updatingStyle: updating, needsOverlay: clip.overlayMissing, onNeedsOverlay: clip.reloadOverlay)
-      .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.color.border) }
+  /// The clip's picture. A photo post is a still at its own shape (`photoMat`: on a mat that fills the box;
+  /// `photoSteps`: ‹ › and dots for a carousel); a clip is the looping preview.
+  @ViewBuilder private func media(radius: CGFloat, active: Bool, mute: Bool = true, muteAlignment: Alignment = .bottomTrailing,
+                                  scrubber: Bool = false, updating: DSPreviewUpdatingStyle = .label,
+                                  photoMat: Bool = false, photoSteps: Bool = false) -> some View {
+    if let ph = clip.photos {
+      DSPhotoPreview(count: ph.count, aspectRatio: ph.aspectRatio, poster: clip.poster, image: ph.image, load: ph.load,
+                     stamp: clip.previewStamp, steps: photoSteps, cornerRadius: radius, mat: photoMat, alignment: photoSteps ? .top : .center,
+                     anchor: "Photo \(clip.id)")
+    } else {
+      DSVideoPreview(url: clip.isMissing ? nil : clip.proxyURL, poster: clip.poster, isActive: active, isPriority: isFocused,
+                     loopRange: clip.loopRange, unmuteOnHover: config.unmuteOnHover, isHovered: playHot, showsMuteButton: mute,
+                     muteAlignment: muteAlignment, showsScrubber: scrubber, cornerRadius: radius,
+                     overlays: clip.overlays, isUpdating: clip.isUpdatingPreview && !clip.isMissing,
+                     updatingStyle: updating, needsOverlay: clip.overlayMissing, onNeedsOverlay: clip.reloadOverlay)
+        .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.color.border) }
+    }
+  }
+
+  /// A clip's file is found again by fingerprint; a photo post's copy has to be put back (Doctor names it).
+  private var missingHelp: String {
+    clip.photos == nil ? "The source file moved or was deleted — Health › Doctor relinks it"
+      : "A photo of this post is gone from DJ Queue's Photos folder — Health › Doctor names it"
+  }
+
+  /// "Photo" / "Carousel · 5", where a clip says its session, length and kind.
+  @ViewBuilder private func photoMark(_ ph: DSClipPhotos, size: DSBadgeSize = .md) -> some View {
+    DSBadge(ph.label, style: .outline, icon: ph.symbol, size: size, help: ph.help)
+      .background(ScriptAnchor("Photo mark \(clip.id) \(ph.label)"))
   }
 
   /// 20 pt circle (DESIGN-v2 §4).
@@ -187,6 +227,10 @@ struct DSClipCard<Actions: View>: View {
     Group {
       if let s = clip.score {
         Text("\(s)").font(DS.type.score).foregroundStyle(DS.color.text).dsTooltip("Score \(s) — it sets the posting order")
+      } else if clip.photos != nil {
+        // A photo needs no score: say so quietly instead of a dash that reads as something missing.
+        Text("No score").font(DS.type.caption).foregroundStyle(DS.color.textTertiary).lineLimit(1).fixedSize()
+          .dsTooltip("Photos need no score. Without one it takes the next open day")
       } else {
         Text("—").font(DS.type.score).foregroundStyle(DS.color.textTertiary).dsTooltip("Not scored yet — score it in Score")
       }
@@ -195,7 +239,18 @@ struct DSClipCard<Actions: View>: View {
 
   private var durationBadge: some View {
     Group {
-      if let d = clip.durationText {
+      if let ph = clip.photos {
+        HStack(spacing: 4) {
+          Image(systemName: ph.symbol).font(.system(size: 9, weight: .semibold))
+          Text(ph.label).font(DS.type.micro)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 6).frame(height: 18)
+        .background(Color.black.opacity(0.63), in: Capsule())
+        .fixedSize()
+        .background(ScriptAnchor("Photo mark \(clip.id) \(ph.label)"))
+        .dsTooltip(ph.help)
+      } else if let d = clip.durationText {
         Text(d).font(DS.type.micro.monospacedDigit()).foregroundStyle(.white)
           .padding(.horizontal, 6).frame(height: 18)
           .background(Color.black.opacity(0.63), in: Capsule())
@@ -230,8 +285,7 @@ struct DSClipCard<Actions: View>: View {
   private var chipItems: [AnyView] {
     var out: [AnyView] = []
     if clip.isMissing {
-      out.append(AnyView(DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark",
-                                 help: "The source file moved or was deleted — Health › Doctor relinks it")))
+      out.append(AnyView(DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark", help: missingHelp)))
     }
     out += clip.blocks.map { AnyView(DSBadge($0, style: .soft(.danger), help: "Blocks posting until fixed in the editor")) }
     out += clip.issues.map { AnyView(DSBadge($0, style: .soft(.warning), help: "Still needed before it can go to the Queue — open the editor")) }
@@ -275,7 +329,11 @@ struct DSClipCard<Actions: View>: View {
                 .dsTooltip("Pinned to a day")
             }
           }
-          if !clip.meta.isEmpty { Text(clip.meta).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1) }
+          if let ph = clip.photos {
+            photoMark(ph)
+          } else if !clip.meta.isEmpty {
+            Text(clip.meta).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+          }
         }
         DSFlowLayout(spacing: 6) { chips() }
       }
@@ -283,7 +341,8 @@ struct DSClipCard<Actions: View>: View {
       HStack(spacing: DS.space.md) {
         platformsRow
         dateChip
-        scoreText.frame(minWidth: 34, alignment: .trailing)
+        // Its own width: a row squeezed by platforms and a date must not push "No score" over the date chip.
+        scoreText.frame(minWidth: 34, alignment: .trailing).fixedSize()
         HStack(spacing: 2) { actions }
       }
     }
@@ -303,7 +362,7 @@ struct DSClipCard<Actions: View>: View {
 
   private var grid: some View {
     VStack(alignment: .leading, spacing: 8) {
-      media(radius: DS.radius.md, active: autoplay, mute: true, muteAlignment: .bottomTrailing)
+      media(radius: DS.radius.md, active: autoplay, mute: true, muteAlignment: .bottomTrailing, photoMat: true)
         .aspectRatio(9 / 16, contentMode: .fit)
         .overlay(alignment: .topLeading) { if showCheck { selectCircle(onMedia: true).padding(8).transition(.opacity) } }
         .overlay(alignment: .topTrailing) {
@@ -335,17 +394,22 @@ struct DSClipCard<Actions: View>: View {
 
   private var single: some View {
     HStack(alignment: .top, spacing: DS.space.xxl) {
-      media(radius: DS.radius.xl, active: autoplay, mute: true, muteAlignment: .topTrailing, scrubber: true)
+      // A photo keeps the column a clip's player has, and sits at the top of it at its own shape.
+      media(radius: DS.radius.xl, active: autoplay, mute: true, muteAlignment: .topTrailing, scrubber: true, photoSteps: true)
         .aspectRatio(9 / 16, contentMode: .fit)
       VStack(alignment: .leading, spacing: DS.space.lg) {
         VStack(alignment: .leading, spacing: 4) {
           Text(clip.title).font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(3)
-          if !clip.meta.isEmpty { Text(clip.meta).font(DS.type.callout).foregroundStyle(DS.color.textSecondary) }
+          if let ph = clip.photos {
+            photoMark(ph)
+          } else if !clip.meta.isEmpty {
+            Text(clip.meta).font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+          }
         }
         // Score and next date (Queue §6.3) — the same facts the wide card shows on its right edge.
-        if clip.score != nil || clip.dateText != nil {
+        if clip.score != nil || clip.dateText != nil || clip.photos != nil {
           HStack(spacing: DS.space.sm) {
-            if clip.score != nil {
+            if clip.score != nil || clip.photos != nil {
               HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("Score").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
                 scoreText
@@ -394,12 +458,20 @@ struct DSClipCard<Actions: View>: View {
       }
       .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
       if clip.isMissing {
-        DSBadge("File missing", style: .soft(.danger), size: .sm, help: "The source file moved or was deleted — Health › Doctor relinks it")
+        DSBadge("File missing", style: .soft(.danger), size: .sm, help: missingHelp)
+      } else if let ph = clip.photos {
+        // `kind` carries the mark plus whatever the screen added to it (Library: the stage).
+        DSBadge(clip.kind ?? ph.label, style: .outline, icon: ph.symbol, size: .sm, help: ph.help)
+          .background(ScriptAnchor("Photo mark \(clip.id) \(ph.label)"))
       } else if let k = clip.kind {
         DSBadge(k, style: .outline, size: .sm, help: "Kind: \(k) (Talking clips start with no text)")
       }
       Group {
-        if let s = clip.score { Text("\(s)").foregroundStyle(DS.color.text) } else { Text("—").foregroundStyle(DS.color.textTertiary) }
+        if let s = clip.score {
+          Text("\(s)").foregroundStyle(DS.color.text)
+        } else {
+          Text("—").foregroundStyle(DS.color.textTertiary).dsTooltip(clip.photos == nil ? nil : "No score. Photos need none")
+        }
       }
       .font(DS.type.calloutSemibold.monospacedDigit()).frame(width: 40, alignment: .trailing)
       Text(clip.dateText ?? "").font(DS.type.caption).foregroundStyle(DS.color.textSecondary).frame(width: 96, alignment: .leading).lineLimit(1)

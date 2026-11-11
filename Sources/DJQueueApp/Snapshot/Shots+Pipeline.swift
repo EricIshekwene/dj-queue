@@ -70,7 +70,8 @@ extension SnapshotShots {
       c.main("16d-edit-bulk-crop") { m in
         SampleData.pipelineEditExtras(m)
         mode(m, .edit, .wide)
-        let ids = Array(m.editList.prefix(3).map(\.id))
+        // Clips with a file: the dialog is about a clip's crop (photo posts and a missing clip sort first in Edit).
+        let ids = Array(m.editList.filter { !$0.isPhoto && !$0.missing }.prefix(3).map(\.id))
         m.visibleIds[.edit] = m.editList.map(\.id)
         m.setSelection(ids, screen: .edit)
         m.cropDialogIds = ids

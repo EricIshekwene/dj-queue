@@ -153,8 +153,11 @@ extension AppModel {
   func paletteSessionRow(_ s: Session) -> PaletteCommand {
     let n = videos.lazy.filter { $0.sessionId == s.id }.count
     let date = s.date.map { Fmt.day(dm.date($0), tz: tz, style: "d MMM yyyy") }
-    let subtitle = ([date, "\(n) clip\(n == 1 ? "" : "s")"] as [String?]).compactMap { $0 }.joined(separator: " · ")
-    return searchRow(SearchId.session(s.id), Captions.setName(s.name), symbol: "rectangle.stack", group: .session, subtitle: subtitle) {
+    // Round 21: the Photos session holds photo posts, not clips.
+    let count = s.isPhotos ? "\(n) photo post\(n == 1 ? "" : "s")" : "\(n) clip\(n == 1 ? "" : "s")"
+    let subtitle = ([date, count] as [String?]).compactMap { $0 }.joined(separator: " · ")
+    return searchRow(SearchId.session(s.id), Captions.setName(s.name), symbol: s.isPhotos ? "photo.stack" : "rectangle.stack", group: .session,
+                     subtitle: subtitle) {
       [weak self] in self?.openSession(s.id)
     }
   }

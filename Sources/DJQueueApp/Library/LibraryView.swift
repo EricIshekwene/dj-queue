@@ -136,7 +136,8 @@ struct LibraryView: View {
       } header: {
         if mode != .single && !longs.isEmpty {
           LongformSection(model: model, videos: longs, mode: mode, showsHeader: true, onOpen: quickLook)
-          LibrarySectionLabel(title: "Short clips", count: shorts.count)
+          // Photo posts are listed with the short clips (round 21); the label says so when there are some.
+          LibrarySectionLabel(title: shorts.contains(where: \.isPhoto) ? "Short clips and photos" : "Short clips", count: shorts.count)
         }
       }
     }
@@ -369,7 +370,8 @@ extension AppModel {
   /// File missing on disk (danger chip "File missing · Relink", no autoplay).
   func libraryIsMissing(_ v: Video) -> Bool { v.missing || v.state == .missingFile }
   /// Gone from videos.json and not kept by Eric (L.S5: Keep / Exclude).
-  func libraryIsRemoved(_ v: Video) -> Bool { !v.inManifest && !keptRemoved.contains(v.id) }
+  /// Never a photo post: photos are added in the app and were never in a videos.json (round 21).
+  func libraryIsRemoved(_ v: Video) -> Bool { !v.inManifest && !v.isPhoto && !keptRemoved.contains(v.id) }
 
   func libraryState(_ v: Video) -> LibraryClipState {
     if libraryIsMissing(v) { return .missing }

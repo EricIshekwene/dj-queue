@@ -114,8 +114,10 @@ struct QueueSortMenu: View {
                  if let d = SortDirection(rawValue: new), d != model.settings.sort { model.update { $0.sort = d } }
                }),
                tooltip: "Order the Queue by score",
-               notes: ["Ties: the older set first, then part, then start time",
-                       "Re-lays the calendar; pinned days stay"])
+               // Round 21 (D4): a photo needs no score and goes ahead of scored clips. Said only when there is one.
+               notes: (model.queueClips.contains { $0.isPhoto && $0.score == nil } ? ["Photos with no score take the next open day, ahead of scored clips"] : [])
+                 + ["Ties: the older set first, then part, then start time",
+                    "Re-lays the calendar; pinned days stay"])
   }
 }
 

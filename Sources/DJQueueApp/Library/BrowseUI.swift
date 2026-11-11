@@ -129,20 +129,30 @@ struct BrowsePoster: View {
 
   var body: some View {
     let postCover = post.flatMap { model.clipPreview(post: $0)?.cover }
-    Color.clear
-      .frame(width: width, height: height)
-      .aspectRatio(aspect, contentMode: .fit)
-      .overlay {
-        if let img = postCover {
-          Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
-        } else if let v = video, let img = model.poster(v) {
-          Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
-        } else {
-          DSPosterPlaceholder()
-        }
+    Group {
+      if let v = video, v.isPhoto {
+        // Round 21: a photo post shows its first photo as it will post, whole, at its own shape inside the slot.
+        DSPhotoPreview(count: v.photoCount, aspectRatio: model.settings.defaults.photoAspect.ratio, poster: postCover ?? model.poster(v),
+                       cornerRadius: radius)
+          .frame(width: width, height: height)
+          .aspectRatio(aspect, contentMode: .fit)
+      } else {
+        Color.clear
+          .frame(width: width, height: height)
+          .aspectRatio(aspect, contentMode: .fit)
+          .overlay {
+            if let img = postCover {
+              Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+            } else if let v = video, let img = model.poster(v) {
+              Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+            } else {
+              DSPosterPlaceholder()
+            }
+          }
+          .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+          .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.color.border) }
       }
-      .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-      .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.color.border) }
+    }
       .onAppear { request() }
       .task(id: post.map { model.previewStamp($0.videoId, version: $0.versionNo) } ?? video.map { model.previewStamp($0.id) } ?? "") {
         request()
