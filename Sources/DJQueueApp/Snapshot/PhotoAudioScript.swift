@@ -23,7 +23,8 @@ import SwiftUI
 /// `DJQ_PHOTO_AUDIO_SABOTAGE` shows the checks can fail: `queue` sends the made video to the Queue behind the add's
 /// back (the "still in Edit, not sent" checks fail), `silent` hands over a file with no sound in it (no video is made:
 /// every check from the add on fails), `photo` skips the add (the item stays a photo post), `fit` leaves out the click
-/// on Fill the frame (the "Confirm the crop" checks fail).
+/// on Fill the frame (the "Confirm the crop" checks fail), `crop` leaves out the click on the Crop field's Reset (the
+/// "whole frame again" checks fail).
 @MainActor
 enum PhotoAudioScript {
   static func run(model: AppModel, store: Store, out: URL, scratch: URL) async -> Int32 {
@@ -245,6 +246,8 @@ enum PhotoAudioScript {
     ui.progress = 0.4
     await wait(500)
     check("the overlay over the editor says Making the video", has("Making the video") && has("Audio row busy"))
+    check("the header's Done, Undo, Redo and stage control are off meanwhile, with that reason", has("Done off") && !has("Done")
+          && model.stageBlocker(made ?? flyer, .forward) == PhotoAudioUI.busyReason)
     await shot("making-the-video-overlay")
     ui.busy = nil
     await wait(400)
@@ -281,6 +284,33 @@ enum PhotoAudioScript {
     check("Whole photo: nothing to fix again, and the toast says so", issues(flyer.id).isEmpty && has("Fit whole") && clipEditor.edit.crop == frame
           && model.toast?.message == "Shows the whole photo")
     await shot("whole-photo-nothing-to-fix")
+
+    // 3c. Review round 2 (S4): the Crop field on a whole-photo video. The whole frame is how it was made, so there is
+    // no Reset to press until Eric zooms in, and Reset never brings "Confirm the crop" back.
+    clipEditor.scrollTarget = .frame
+    await wait(900)
+    let reset = EditorFrameSection.wholeResetHelp
+    check("the header says Nothing to fix, and the whole frame has no Reset", has("Nothing to fix") && !has("To fix") && !has(reset) && !clipEditor.cropIsCustom)
+    note("stand-in: the Zoom slider's drag; the script calls the editor function it calls")
+    clipEditor.setZoom(1.5)
+    await wait(700)
+    check("zoomed in: the crop is Eric's own, and the field offers Reset", clipEditor.cropIsCustom && has(reset) && clipEditor.edit.crop != nil
+          && clipEditor.edit.crop != frame && has("Nothing to fix"))
+    await shot("whole-photo-zoomed-crop-with-reset")
+    if sabotage == "crop" {
+      note("SABOTAGE: the click on the Crop field's Reset is left out")
+    } else {
+      check("a real click on the Crop field's Reset", await click(reset))
+    }
+    await wait(700)
+    EditorModel.flushLiveAndWait()
+    let afterReset = try? store.edit(videoId: flyer.id)
+    check("Reset: no crop is stored, and the crop is the whole frame again", afterReset != nil && afterReset?.crop == nil && clipEditor.edit.crop == nil
+          && frame.map { abs(clipEditor.crop.w - $0.w) < 1 && abs(clipEditor.crop.h - $0.h) < 1 && clipEditor.crop.x == 0 && clipEditor.crop.y == 0 } == true)
+    check("it never says Confirm the crop: the header still says Nothing to fix, in the editor and in Core",
+          has("Nothing to fix") && !has("To fix") && !has("Use this crop") && clipEditor.cropIsSet && !clipEditor.liveIssues.contains { $0.kind == .noCrop }
+          && issues(flyer.id).isEmpty && ((try? store.resolvedEdit(videoId: flyer.id))?.cropConfirmed ?? false))
+    await shot("crop-reset-still-nothing-to-fix")
 
     // 4. Trim to 6 s and a timed text, as on any clip.
     note("stand-in: the trim handle and the text bar's drags; the script calls the editor functions they call (the text-layers check drives the real drags)")
@@ -350,18 +380,42 @@ enum PhotoAudioScript {
       try? Media.writePNG(frame, to: out.appendingPathComponent("render-frame-whole-at-2s-\(look).png"))
       note("shot render-frame-whole-at-2s-\(look).png (a frame of the rendered post: the whole photo over its blurred copy, with the timed text)")
       // The photo is a landscape frame, so it sits across the middle; above and below it is its blurred, darkened copy.
+      // The average colour of a 24 px square of the frame around a spot (fractions from the top left).
       func pixel(_ fx: Double, _ fy: Double) -> (Int, Int, Int) {
         var px = [UInt8](repeating: 0, count: 4)
+        let box = 24.0, w = Double(frame.width), h = Double(frame.height)
         px.withUnsafeMutableBytes { b in
           if let ctx = CGContext(data: b.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
-            ctx.draw(frame, in: CGRect(x: -fx * Double(frame.width), y: -(1 - fy) * Double(frame.height) + 1, width: Double(frame.width), height: Double(frame.height)))
+            ctx.interpolationQuality = .high
+            ctx.draw(frame, in: CGRect(x: -(fx * w - box / 2) / box, y: -((1 - fy) * h - box / 2) / box, width: w / box, height: h / box))
           }
         }
         return (Int(px[0]), Int(px[1]), Int(px[2]))
       }
-      let bands = [pixel(0.5, 0.06), pixel(0.2, 0.1), pixel(0.5, 0.94), pixel(0.8, 0.9)]
-      check("above and below the photo the render shows its blurred copy, not black bars \(bands)", bands.allSatisfy { $0.0 + $0.1 + $0.2 > 24 })
+      // What should be there: the same photo enlarged to cover the frame, blurred and darkened to 65 % (`StillVideo`).
+      // Worked out here from the photo's own pixels and compared, so black bars, a grey fill or the photo at full
+      // brightness all fail.
+      let spots = [(0.5, 0.06), (0.2, 0.1), (0.5, 0.94), (0.8, 0.9)]
+      let got = spots.map { pixel($0.0, $0.1) }
+      let still = fresh(flyer.id)
+      let want: [(Int, Int, Int)] = still.flatMap { v in
+        guard let photo = v.still?.photo, let url = try? store.photoURL(photo, of: v), let w = v.sourceWidth, let h = v.sourceHeight else { return nil }
+        return Self.blurredCopy(of: url, frame: (w, h), at: spots)
+      } ?? []
+      func close(_ a: (Int, Int, Int), _ b: (Int, Int, Int)) -> Bool { abs(a.0 - b.0) <= 26 && abs(a.1 - b.1) <= 26 && abs(a.2 - b.2) <= 26 }
+      check("above and below the photo the render shows its blurred, darkened copy: \(got) for \(want)",
+            want.count == got.count && zip(got, want).allSatisfy { close($0, $1) } && want.contains { $0.0 + $0.1 + $0.2 > 60 })
+      // And the photo itself across the middle, at its own brightness (a spot well clear of the text).
+      let spot = (0.1, 0.56)
+      let middle = pixel(spot.0, spot.1)
+      let own: (Int, Int, Int)? = still.flatMap { v in
+        guard let photo = v.still?.photo, let url = try? store.photoURL(photo, of: v), let h = v.sourceHeight else { return nil }
+        let l = StillVideo.layout(width: photo.width, height: photo.height, fit: .whole)
+        let top = Double(l.offset.y) / Double(h), tall = Double(l.photo.height) / Double(h)
+        return Self.photoColour(of: url, at: (spot.0, (spot.1 - top) / tall))
+      }
+      check("the photo itself is across the middle at its own brightness: \(middle) for \(own.map { "\($0)" } ?? "-")", own.map { close(middle, $0) } == true)
     }
 
     // 7. A second photo: audio, then ⌘Z brings the photo post back with its crop.
@@ -575,6 +629,59 @@ enum PhotoAudioScript {
   }
 
   /// One colour all over: the window server had nothing drawn yet.
+  /// The photo as a small sRGB bitmap (upright), for working out what a frame should show.
+  private static func small(_ url: URL, width: Int = 320) -> (px: [UInt8], w: Int, h: Int)? {
+    guard let img = PhotoRenderer.load(url, maxPixel: 1200) else { return nil }
+    let w = width, h = max(1, Int((Double(img.height) / Double(img.width) * Double(width)).rounded()))
+    var px = [UInt8](repeating: 255, count: w * h * 4)
+    let ok = px.withUnsafeMutableBytes { b -> Bool in
+      guard let ctx = CGContext(data: b.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
+      ctx.interpolationQuality = .high
+      ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+      return true
+    }
+    return ok ? (px, w, h) : nil
+  }
+
+  /// What a whole-photo video shows behind the photo at `spots` (fractions of the frame, from the top left): the
+  /// photo enlarged to cover the `frame`, blurred (a Gaussian, sigma 40 px in a 2160-wide frame) and darkened to 65 %.
+  static func blurredCopy(of photo: URL, frame: (Int, Int), at spots: [(Double, Double)]) -> [(Int, Int, Int)]? {
+    guard let s = small(photo) else { return nil }
+    let fw = Double(frame.0), fh = Double(frame.1)
+    let cover = max(fw / Double(s.w), fh / Double(s.h))  // frame pixels per pixel of the small photo
+    let sigma = max(0.5, 40 * fw / 2160 / cover)  // in pixels of the small photo
+    let reach = Int((sigma * 3).rounded(.up))
+    return spots.map { fx, fy in
+      let cx = Double(s.w) / 2 + (fx - 0.5) * fw / cover, cy = Double(s.h) / 2 + (fy - 0.5) * fh / cover
+      var sum = (0.0, 0.0, 0.0), weight = 0.0
+      for dy in -reach...reach {
+        for dx in -reach...reach {
+          // The blur reads past the picture's edge as the edge itself.
+          let x = min(s.w - 1, max(0, Int(cx.rounded()) + dx)), y = min(s.h - 1, max(0, Int(cy.rounded()) + dy))
+          let k = exp(-Double(dx * dx + dy * dy) / (2 * sigma * sigma)), i = (y * s.w + x) * 4
+          sum.0 += k * Double(s.px[i]); sum.1 += k * Double(s.px[i + 1]); sum.2 += k * Double(s.px[i + 2])
+          weight += k
+        }
+      }
+      return (Int(sum.0 / weight * 0.65), Int(sum.1 / weight * 0.65), Int(sum.2 / weight * 0.65))
+    }
+  }
+
+  /// The photo's own colour around `spot` (fractions of the photo, from the top left).
+  static func photoColour(of photo: URL, at spot: (Double, Double)) -> (Int, Int, Int)? {
+    guard let s = small(photo) else { return nil }
+    let cx = min(s.w - 4, max(3, Int(spot.0 * Double(s.w)))), cy = min(s.h - 4, max(3, Int(spot.1 * Double(s.h))))
+    var sum = (0, 0, 0)
+    for y in (cy - 3)...(cy + 3) {
+      for x in (cx - 3)...(cx + 3) {
+        let i = (y * s.w + x) * 4
+        sum.0 += Int(s.px[i]); sum.1 += Int(s.px[i + 1]); sum.2 += Int(s.px[i + 2])
+      }
+    }
+    return (sum.0 / 49, sum.1 / 49, sum.2 / 49)
+  }
+
   static func isBlank(_ img: CGImage) -> Bool {
     let w = 64, h = 40
     var data = [UInt8](repeating: 0, count: w * h * 4)

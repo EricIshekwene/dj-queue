@@ -199,9 +199,13 @@ struct EditorHeader: View {
 
   private var index: Int? { videoIds.firstIndex(of: model.videoId) }
 
+  /// Round 23: while this item's video is being made, everything here that saves, undoes or leaves is off, with the
+  /// reason the inspector's cover gives (`PhotoAudioUI` is observed by being read here).
+  private var making: String? { PhotoAudioUI.shared.busy == model.videoId ? PhotoAudioUI.busyReason : nil }
+
   var body: some View {
     HStack(spacing: DS.space.xs) {
-      DSButton("Back", icon: "chevron.left", variant: .ghost, size: .sm, tooltip: "Save and go back") { done() }
+      DSButton("Back", icon: "chevron.left", variant: .ghost, size: .sm, disabledReason: making, tooltip: "Save and go back") { done() }
       DSSeparator(vertical: true).frame(height: 20)
       Button { model.scrollTarget = .title; model.focusTitle += 1 } label: {
         VStack(alignment: .leading, spacing: 0) {
@@ -226,10 +230,10 @@ struct EditorHeader: View {
       HStack(spacing: 2) {
         // Round 21: from a photo post the neighbour may be a clip or a photo post, so it isn't named.
         DSIconButton("chevron.left", tooltip: model.isPhoto ? "Save and open the one before" : "Save and open the previous clip", size: .sm, shortcut: "↑ or ⌘[",
-                     disabledReason: (index ?? 0) <= 0 ? (model.isPhoto ? "This is the first in the list" : "This is the first clip in the list") : nil) { go(-1) }
+                     disabledReason: making ?? ((index ?? 0) <= 0 ? (model.isPhoto ? "This is the first in the list" : "This is the first clip in the list") : nil)) { go(-1) }
           .keyboardShortcut("[", modifiers: .command)
         DSIconButton("chevron.right", tooltip: model.isPhoto ? "Save and open the next one" : "Save and open the next clip", size: .sm, shortcut: "↓ or ⌘]",
-                     disabledReason: (index ?? videoIds.count) >= videoIds.count - 1 ? (model.isPhoto ? "This is the last in the list" : "This is the last clip in the list") : nil) { go(1) }
+                     disabledReason: making ?? ((index ?? videoIds.count) >= videoIds.count - 1 ? (model.isPhoto ? "This is the last in the list" : "This is the last clip in the list") : nil)) { go(1) }
           .keyboardShortcut("]", modifiers: .command)
           .background(ScriptAnchor("Next clip"))
         if let i = index, videoIds.count > 1 {
@@ -243,8 +247,9 @@ struct EditorHeader: View {
       saveIndicator
       undoButtons
       if !model.isPhoto { versionPicker }  // round 21 (D16): one version per photo post
-      DSButton("Done", variant: .primary, size: .md, tooltip: "Save and close", shortcut: "⌘↩") { done() }
+      DSButton("Done", variant: .primary, size: .md, disabledReason: making, tooltip: "Save and close", shortcut: "⌘↩") { done() }
         .keyboardShortcut(.return, modifiers: .command)
+        .background(ScriptAnchor(making == nil ? "Done" : "Done off"))
     }
     .padding(.horizontal, DS.space.sm)
     .frame(height: DS.size.toolbar)
@@ -263,7 +268,7 @@ struct EditorHeader: View {
 
   /// The editor's own change history (EditorModel.undo/redo, also ⌘Z / ⇧⌘Z).
   private var undoButtons: some View {
-    let off = model.readOnly ? "Editing is off for this \(model.noun)" : nil
+    let off = making ?? (model.readOnly ? "Editing is off for this \(model.noun)" : nil)
     return HStack(spacing: 0) {
       DSIconButton("arrow.uturn.backward", tooltip: "Undo the last change", size: .sm, shortcut: "⌘Z",
                    disabledReason: off ?? (model.canUndo ? nil : "Nothing to undo yet")) { model.undo() }
@@ -291,7 +296,7 @@ struct EditorHeader: View {
   private func go(_ d: Int) { EditorView.open(d, model: model, in: videoIds) }
 
   private var versionPicker: some View {
-    Button { showVersions.toggle() } label: {
+    Button { if making == nil { showVersions.toggle() } } label: {
       HStack(spacing: 4) {
         Text("v\(model.versionNo)").font(DS.type.calloutSemibold)
         if model.isRepostReady(model.versionNo) {
@@ -300,9 +305,10 @@ struct EditorHeader: View {
         Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).opacity(0.7)
       }
     }
-    .buttonStyle(DSButtonStyle(variant: .outline, size: .sm))
+    .buttonStyle(DSButtonStyle(variant: .outline, size: .sm, softDisabled: making != nil))
     .dsTooltip(model.isRepostReady(model.versionNo) ? "Switch or add text versions for reposts · v\(model.versionNo) is ready to repost"
-                                                     : "Switch or add text versions for reposts")
+                                                     : "Switch or add text versions for reposts", disabledReason: making)
+    .dsAccessibilityDisabled(making)
     .background(ScriptAnchor("Versions"))
     .popover(isPresented: $showVersions, arrowEdge: .bottom) {
       EditorVersionList(model: model) { n in
@@ -341,6 +347,7 @@ struct EditorHeader: View {
       // No "Ready" label: only Send to Queue, in the stage control beside it, moves the clip on (round 13).
       DSBadge("Nothing to fix", style: .soft(.success), icon: "checkmark")
         .dsTooltip("Nothing missing. Press Send to Queue when it's ready to post.")
+        .background(ScriptAnchor("Nothing to fix"))
     } else {
       // Round 7 (C1): jump to the first issue that has a section; a held clip is fixed with the stage control beside the
       // chip ("Send to Queue"), so the chip says that instead of pointing at an inspector section.

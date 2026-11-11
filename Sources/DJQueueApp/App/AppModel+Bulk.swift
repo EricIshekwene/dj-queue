@@ -190,7 +190,10 @@ extension AppModel {
           if let s = self.editorSession { self.editorSession = (try? self.bulk.begin(s.action, ids: s.ids)) ?? s }
           // Round 23: an undone audio change turns the item into something else: its previews and an open editor follow.
           self.audioUndone(r, action: action)
-          let left = r.summary.contains("plan left as it is") ? "plan left as it is"
+          // Round 23: what is skipped because it has a day or a post says so ("changed since" would send Eric looking
+          // for an edit, and force can't lift it).
+          let left = r.skipped.values.allSatisfy(StillVideo.isUndoLock) ? "scheduled or posted: send back to Edit first"
+            : r.summary.contains("plan left as it is") ? "plan left as it is"
             : r.skipped.values.allSatisfy { $0.hasSuffix("so its crop stays") } ? "their crops are locked" : "changed since"
           self.show(DSToastModel(message: r.changed.isEmpty && !r.skipped.isEmpty ? "Nothing undone" : label.map { "Undone: \($0)" } ?? "Undone",
                                  detail: r.skipped.isEmpty ? nil : "\(r.skipped.count) skipped · \(left)",

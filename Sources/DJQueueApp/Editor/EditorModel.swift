@@ -410,7 +410,19 @@ final class EditorModel: ObservableObject {
   var defaultTrim: TrimRange { video.map { defaults.trim(for: $0) } ?? TrimRange(start: 0, end: 0) }
   var cropIsSet: Bool {
     if isPhoto { return currentPhoto.map { PhotoRules.hasOwnCrop($0, edit: edit, aspect: aspect) } ?? false }
-    return edit.crop != nil
+    // What Core says (`Validation`): the edit has a crop, or the item is a whole-photo video, whose crop is its whole
+    // frame with or without one stored (round 23: Crop → Reset must not bring "Confirm the crop" back).
+    return resolvedEdit.cropConfirmed
+  }
+  /// A video made from a photo that shows the whole photo, at the 9:16 it was made in (round 23, D12).
+  var isWholePhoto: Bool { video?.still?.fits == .whole && aspect == .r9x16 }
+  /// The Crop field shows "Custom" and its Reset: the crop is Eric's own. A whole-photo video's whole frame is how it
+  /// was made, not a change, so only a crop he zoomed or moved counts there (and Reset goes back to the whole frame).
+  var cropIsCustom: Bool {
+    guard isWholePhoto else { return cropIsSet }
+    guard let c = edit.crop else { return false }
+    let whole = CropRect(x: 0, y: 0, w: Double(sourceSize.width), h: Double(sourceSize.height))
+    return EditorGeometry.even(c, source: sourceSize) != EditorGeometry.even(whole, source: sourceSize)
   }
   /// The crop exactly as the export uses it (even pixels, `Media.pixelCrop`). For a photo post: the current photo's.
   var crop: CropRect {
@@ -563,7 +575,7 @@ final class EditorModel: ObservableObject {
                          count: Double(w.count), limit: Double(w.limit), countWithoutHashtags: w.countWithoutHashtags))
       }
     } else if v.type == .short {
-      if edit.crop == nil { out.append(.init(kind: .noCrop, platform: nil, message: "Confirm the crop")) }
+      if !resolvedEdit.cropConfirmed { out.append(.init(kind: .noCrop, platform: nil, message: "Confirm the crop")) }
       let r = resolved
       if !r.hasDrawnText && !r.noText {
         out.append(.init(kind: .noText, platform: nil,

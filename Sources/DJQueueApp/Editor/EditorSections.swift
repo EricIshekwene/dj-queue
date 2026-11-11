@@ -26,14 +26,26 @@ struct EditorFrameSection: View {
     }
   }
 
+  /// Round 23: a video made from a photo isn't a "wide recording", and its framing never follows the anchor in Settings.
+  private var cropHelp: String {
+    guard model.video?.isStill == true else { return "Which part of the wide recording is shown" }
+    return model.isWholePhoto ? "The whole photo is shown. Zoom in to show part of the frame" : "Which part of the photo is shown"
+  }
+  private var cropResetHelp: String {
+    guard model.video?.isStill == true else { return "Back to the \(model.defaults.cropAnchor.displayName) framing (confirm again)" }
+    return model.isWholePhoto ? Self.wholeResetHelp : "Back to the centred framing (confirm again)"
+  }
+  /// Also the name scripted runs find the Reset by.
+  static let wholeResetHelp = "Back to the whole photo"
+
   private var summary: String {
     if model.isPhoto { return model.aspect.rawValue + (model.cropIsSet ? " · Your crop" : " · Centred crop") }
     return model.aspect.rawValue + (model.cropIsSet ? " · Crop confirmed" : " · Default crop")
   }
 
   private var crop: some View {
-    EditorField(label: "Crop", help: "Which part of the wide recording is shown", isCustom: model.cropIsSet,
-                resetHelp: "Back to the \(model.defaults.cropAnchor.displayName) framing (confirm again)",
+    EditorField(label: "Crop", help: cropHelp, isCustom: model.cropIsCustom, resetHelp: cropResetHelp,
+                customHelp: model.isWholePhoto ? "Zoomed in or moved: part of the frame is shown" : "Changed from your New clip defaults",
                 onReset: { model.resetEdit(.crop) }) {
       VStack(alignment: .leading, spacing: DS.space.sm) {
         if !model.cropIsSet {
@@ -72,7 +84,7 @@ struct EditorFrameSection: View {
           Text("\(Int(model.crop.w)) × \(Int(model.crop.h)) px").font(DS.type.mono).foregroundStyle(DS.color.textTertiary)
           Spacer(minLength: 0)
           if model.canvasMode != .frame {
-            DSButton("Edit on canvas", variant: .ghost, size: .sm, tooltip: "Show the whole recording to drag the crop") {
+            DSButton("Edit on canvas", variant: .ghost, size: .sm, tooltip: model.video?.isStill == true ? "Show the whole picture to drag the crop" : "Show the whole recording to drag the crop") {
               model.canvasMode = .frame
             }
           }
