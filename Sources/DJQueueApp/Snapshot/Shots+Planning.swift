@@ -79,6 +79,37 @@ extension SnapshotShots {
         SnapshotHover.id = nil
         calendar(m, .month)
       },
+      // Round 21: "Post at a set time". The dialog over Edit, the Calendar and a selection; the set-time item's day.
+      c.main("post-at-dialog-photo") { m in  // a ready photo post in Edit
+        m.setViewMode(.wide, for: .edit)
+        m.screen = .edit
+        if let v = m.editList.first(where: { $0.isPhoto && !$0.isCarousel }) ?? m.editList.first(where: \.isPhoto) { m.askPostAt([v.id]) }
+      },
+      c.main("post-at-dialog-fix-first") { m in  // still something to fix: the reason, and the button off
+        m.setViewMode(.wide, for: .edit)
+        m.screen = .edit
+        if let v = m.editList.first(where: { !$0.isPhoto && !(m.issuesByVideo[$0.id] ?? []).isEmpty && m.postAtBlocker($0) == nil }) { m.askPostAt([v.id]) }
+      },
+      c.main("post-at-dialog-change") { m in  // an item that has a set time
+        calendar(m, .week)
+        if let id = m.calendarData.setTimes.values.min(by: { ($0.exactAt ?? .distantFuture) < ($1.exactAt ?? .distantFuture) })?.videoId { m.askPostAt([id]) }
+      },
+      c.main("post-at-dialog-several") { m in  // a selection from the Queue
+        m.setViewMode(.wide, for: .queue)
+        m.screen = .queue
+        let ids = Array(m.queueClips.prefix(3).map(\.id))
+        m.setSelection(ids, screen: .queue)
+        m.askPostAt(ids)
+      },
+      c.main("post-at-dialog-editor") { m in  // from the editor's header, over the editor
+        if let v = m.queueClips.first(where: { !$0.isPhoto && ClipStage.of($0) == .queue && m.postAtBlocker($0) == nil }) {
+          m.openEditor(v.id)
+          m.askPostAt([v.id])
+        }
+      },
+      c.main("calendar-day-set-time") { m in
+        calendar(m, .day, anchor: m.calendarData.setTimes.values.compactMap(\.exactAt).min().map { m.dm.key($0) } ?? m.dm.addDays(m.todayKey, 1))
+      },
       c.view("29-menubar-normal", width: 320) { AnyView(MenuBarContent(model: model, state: menuState(model, .normal))) },
       c.view("29-menubar-due-now", width: 320) { AnyView(MenuBarContent(model: model, state: menuState(model, .due))) },
       c.view("29-menubar-problems", width: 320) { AnyView(MenuBarContent(model: model, state: menuState(model, .problems))) },

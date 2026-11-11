@@ -135,6 +135,30 @@ fails at publish time, on a day Eric isn't looking, with the other four platform
 - **`UnplanItem.setTime` is new and `pinned` stays true for a set-time slot.** Existing words still read right; the UI can say "set time 3:15 PM" instead of "pinned".
 - **`djq week --json` slots don't carry `exact_at` yet.** `AgentAPI.WeekOut.SlotOut` is in the photo builder's file this round; `position` 100 or more marks a set time there and `djq video --json` has `plan[].exactAt`. Two lines to add at integration.
 
+## Decisions made while building (B3: set time and Calendar screens)
+
+- **The day is picked in a small month grid and the time is typed** ("7pm", "7:30 pm", "19:00", "730p", "noon"), both built from the design system. *Why:* a native date picker can't be driven by the hidden check and doesn't take the tokens; a typed time is the fastest way to say 9:15.
+- **Four quick times: In 1 hour (on the next five minutes), Tonight 7:00 PM, Tomorrow 12:00 PM, Saturday 6:00 PM.** One that has passed or is under 10 minutes away isn't offered. *Why:* they are the times a DJ post usually wants; anything else is two keystrokes.
+- **The dialog opens on the time the item has, else the next round hour at least an hour away.**
+- **The time field's own problem (passed, under 10 minutes, not a time, a clock time the day doesn't have) shows under the field; every other reason takes the place of the platform rows.** Both turn the primary button off with the reason as its tooltip. *Why:* the field error is about what Eric typed, the rest is about the item.
+- **Several items: one row per item ("6 platforms" or "stays — why").** The button is on when at least one can take the time, and it reads "Change time" only when every item already has one. "Use the regular schedule" then acts on the ones that have a time.
+- **The clock on the stage control is a ghost icon button, filled once the item has a set time.** It shows for Edit, Queue and Scheduled items; Score comes first and Posted is done. *Why:* one more secondary action, never a second primary.
+- **"Use the regular schedule" from a menu runs at once, with Undo on the toast.** *Why:* it is one reversible step on one item, like Pin.
+- **On the Calendar a set-time card carries a clock where a pinned card carries a pin.** A set time is always pinned, and the clock says the stronger thing. The pin item is left out of its menu.
+- **Set-time cards sit among the day's cards by their own time** (the earliest platform time of each card). Position 100 and up is never shown or sorted on.
+- **A day that only has set-time items still shows a small "Open" under them.** *Why:* D12: a set time takes none of the day's places, and the Queue will still fill the day.
+- **YouTube moved out of its quiet hours past midnight shows as its own chip on the next day**; the card's clock tooltip names that time, and the chip says why it is there.
+- **A photo post's Calendar cover is drawn at the post's own shape (4:5 by default), never stretched or cropped to 9:16**, with "Photo" or "Carousel · N" on it. Month chips and Day headers keep the small 9:16 thumb. Nothing about a photo card plays or asks for a proxy.
+- **A missed set-time post's row offers "Change set time…" where a regular post offers Shift.** *Why:* Core refuses the shift ("post it now or pick a new time"), so the row offers the two things that work.
+- **Month chips lead with the set time ("3:15p") before the title.** *Why:* the platform row has no room for it at 7 columns, and the time is the point of the chip.
+- **The primary button stays off ("Checking this time…") until Core's dry run for the picked day and time is on screen (review M1).** Rows asked for another time, or before the item changed, never count. *Why:* type-then-Return would set a time whose rows, YouTube note or blocker Eric hadn't seen. Given up: Return can't be typed ahead of the rows.
+- **An item "has a set time" only while that slot still has a post to come (review m1).** One whose posts all went out is history: the clock goes back to "Post at a set time", and "Use the regular schedule" is offered only where Core can do it (nothing posted yet).
+- **A refusal that arrives after the dialog was closed shows as a toast (review m3);** one that arrives while it is open stays in the dialog and the rows are asked for again.
+- **The dialog closes by itself when every item it was opened for is gone,** and re-asks Core when an item's stage, day or posts change underneath it (review m4).
+- **Several items: the whole reason sits under the item that stays, notes carry the item's name, and one line says that through Postiz they go out a minute apart (review m5).**
+- **The day grid takes the arrow keys once it has the keyboard** (← → a day, ↑ ↓ a week), with the focus ring on the picked day (review m10). On-media marks keep white on a dark capsule like the pin: there is no on-media token.
+- **In the live check a drag between days and the card's ⋯ menu are stand-ins** (the drop's own function and the menu item's function), and a Queue card's hover is `SnapshotHover`. macOS pulls a drag session and a menu onto a display.
+
 ## Decisions made while building (core photos)
 
 - **A post holds at most 35 photos** (`PhotoRules.maxPerPost`), and files past that are skipped with the reason. *Why:* 35 is the largest

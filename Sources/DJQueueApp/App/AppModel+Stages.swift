@@ -73,7 +73,8 @@ extension AppModel {
       || ids.contains { id in (postsByVideo[id] ?? []).contains { !$0.state.isTerminal } }
   }
 
-  /// "Thu 5 Nov · 6 platforms · pinned" (prefixed with the clip's name when several clips are involved).
+  /// "Thu 5 Nov · 6 platforms · pinned", or "… · set time 3:15 PM" (prefixed with the clip's name when several clips are
+  /// involved).
   func unplannedLines(_ r: BulkResult) -> [String] {
     let all = (r.unplanned ?? [:]).sorted { $0.key < $1.key }
     return all.flatMap { id, items in
@@ -81,7 +82,9 @@ extension AppModel {
         let day = Fmt.day(dm.date(i.date), tz: tz, style: "EEE d MMM")
         let what = i.platforms.isEmpty ? "scheduled" : "\(i.platforms.count) platform\(i.platforms.count == 1 ? "" : "s")"
         let name = all.count > 1 ? (video(id).map(displayName) ?? id) + " — " : ""
-        return name + day + " · " + what + (i.pinned ? " · pinned" : "")
+        // A set time is always pinned: its own words say more.
+        let mark = i.setTime.map { " · \(StageWording.setTimeMark($0, settings: settings))" } ?? (i.pinned ? " · pinned" : "")
+        return name + day + " · " + what + mark
       }
     }
   }
@@ -210,6 +213,9 @@ extension AppModel {
 /// The per-clip stage control: "‹ Back to <stage>" (ghost) and "<Next action> ›" (outlined, never a second
 /// primary), each tooltipped with exactly what happens and disabled with the reason when impossible.
 /// `compact` = icon-only round buttons (grid tiles, tight rows).
+///
+/// Round 21: an item in Edit, the Queue or on the Calendar also gets a clock button, "Post at a set time" (D12). It is
+/// one more secondary action; on an item that has a time it reads "Set for Sat 14 Nov 3:15 PM — change".
 struct StageControl: View {
   @Bindable var model: AppModel
   let video: Video
@@ -218,6 +224,9 @@ struct StageControl: View {
 
   /// Clips in the Queue schedule themselves: there is no forward move to offer.
   private var hasForward: Bool { ClipStage.of(video) != .queue }
+
+  /// Edit, Queue and Scheduled items can take a set time. Score comes first, and Posted is done.
+  private var hasSetTime: Bool { [.edit, .queue, .scheduled].contains(ClipStage.of(video)) }
 
   var body: some View {
     let back = model.stageBlocker(video, .back)
@@ -229,17 +238,45 @@ struct StageControl: View {
         DSIconButton("chevron.right", tooltip: fwd == nil ? "\(model.stageForwardTitle(video)) — \(model.stageForwardHelp(video))" : model.stageForwardTitle(video), size: .sm,
                      disabledReason: fwd) { model.stageForward([video.id]) }
       }
-    } else {
+      if hasSetTime { clock(.sm) }
+    } else if size == .sm {
       HStack(spacing: 4) {
-        DSButton(model.stageBackTitle(video), icon: "chevron.left", variant: .ghost, size: size, disabledReason: back,
-                 tooltip: model.stageBackHelp(video)) { model.stageBack([video.id]) }
-        if hasForward {
-          DSButton(model.stageForwardTitle(video), trailingIcon: "chevron.right", variant: .outline, size: size, disabledReason: fwd,
-                   tooltip: model.stageForwardHelp(video)) { model.stageForward([video.id]) }
-        }
+        moves(back, fwd)
+        if hasSetTime { clock(size) }
       }
       .fixedSize()
+    } else {
+      // The Single view's side panel is a stack of labelled buttons, 280 pt wide: the set time gets its own line.
+      VStack(alignment: .leading, spacing: DS.space.sm) {
+        HStack(spacing: 4) { moves(back, fwd) }.fixedSize()
+        if hasSetTime {
+          let at = model.setTime(video.id)
+          DSButton(at.map { StageWording.setFor($0, settings: model.settings) } ?? AppModel.postAtTitle, icon: at == nil ? "clock" : "clock.fill",
+                   variant: .ghost, size: size, disabledReason: model.postAtBlocker(video),
+                   tooltip: at == nil ? "Pick the exact day and minute it posts" : "Change the set time, or go back to the regular schedule") {
+            model.askPostAt([video.id])
+          }
+          .background(ScriptAnchor("Post at \(video.id)"))
+        }
+      }
     }
+  }
+
+  @ViewBuilder private func moves(_ back: String?, _ fwd: String?) -> some View {
+    DSButton(model.stageBackTitle(video), icon: "chevron.left", variant: .ghost, size: size, disabledReason: back,
+             tooltip: model.stageBackHelp(video)) { model.stageBack([video.id]) }
+    if hasForward {
+      DSButton(model.stageForwardTitle(video), trailingIcon: "chevron.right", variant: .outline, size: size, disabledReason: fwd,
+               tooltip: model.stageForwardHelp(video)) { model.stageForward([video.id]) }
+    }
+  }
+
+  /// The clock: filled once the item has a set time, so it reads as "on" at a glance.
+  private func clock(_ size: DSButtonSize) -> some View {
+    let has = model.setTime(video.id) != nil
+    return DSIconButton(has ? "clock.fill" : "clock", tooltip: model.postAtHelp(video), size: size,
+                        disabledReason: model.postAtBlocker(video), isOn: has) { model.askPostAt([video.id]) }
+      .background(ScriptAnchor("Post at \(video.id)"))
   }
 }
 
@@ -263,6 +300,13 @@ struct StageMenuItems: View {
         model.stageForward(targets)
       }
       .disabled(fwd != nil)
+    }
+    // Round 21: the same door as the clock button, for one clip or the selection.
+    let timeWhy = model.postAtBlocker(targets)
+    Button(menuTitle(model.postAtMenuTitle(targets), blocker: timeWhy), systemImage: "clock") { model.askPostAt(targets) }
+      .disabled(timeWhy != nil)
+    if model.clearSetTimeBlocker(targets) == nil {
+      Button(StageWording.useRegularSchedule, systemImage: "arrow.uturn.backward") { model.clearSetTimeAsking(targets) }
     }
   }
 

@@ -13,6 +13,10 @@ import SwiftUI
 /// title · 12:30 PM – 7 PM · ⓣⓘⓕⓨⓣⓧ                    └───┴────────────┘ └───┴────────────┘ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
 /// ```
 /// Drag a card onto another day to move it (a full day swaps); past days are 50 % and refuse drops.
+///
+/// Round 21 (Buffer's week cards, Klaviyo's time cards): a set-time item shows its own clock time with a clock mark and
+/// sits among the day's cards by that time; a photo post shows its first photo at the post's shape with "Photo" or
+/// "Carousel · N", and nothing about it plays.
 struct CalendarColumns: View {
   enum Style { case threeDay, week }
 
@@ -23,7 +27,10 @@ struct CalendarColumns: View {
 
   var body: some View {
     let gap = DS.space.sm
-    let ids = days.flatMap { model.calendarClips($0).map(\.video.id) }
+    let clips = days.flatMap { model.calendarClips($0).map(\.video) }
+    let ids = clips.map(\.id)
+    // A photo post has nothing to play: it never asks for a proxy.
+    let playable = clips.filter { !$0.isPhoto }.map(\.id)
     GeometryReader { g in
       let n = CGFloat(days.count)
       let colW = max(96, (g.size.width - 2 * gutter - (n - 1) * gap) / n)
@@ -48,7 +55,7 @@ struct CalendarColumns: View {
     .task(id: ids.joined(separator: ",") + "|\(model.playback.autoplay)|\(model.playback.loop.rawValue)") {
       for id in ids { if let v = model.video(id) { model.requestPoster(v) } }
       guard model.playback.autoplay else { return }
-      model.requestProxies(ids)
+      model.requestProxies(playable)
     }
   }
 }
@@ -109,6 +116,9 @@ struct CalendarDayColumn: View {
       if clips.isEmpty {
         CalendarOpenDay(model: model, day: day, targeted: targeted, height: style == .week ? width * 16 / 9 : CalendarCover.smallHeight + 2 * DS.space.xs)
           .opacity(isPast ? 0.5 : 1)
+      } else if !isPast, clips.allSatisfy({ $0.slot.isExact }), model.calendarDayCanFill(day) {
+        // Only set-time items here: they take none of the day's regular places, so the day is still open (D12).
+        CalendarOpenDay(model: model, day: day, targeted: targeted, height: 72)
       }
     }
     .frame(maxWidth: .infinity, alignment: .top)
@@ -192,15 +202,100 @@ struct CalendarCover: View {
   private var firstPost: PlatformPost? { clip.posts.values.min { $0.platform.rawValue < $1.platform.rawValue } }
 
   var body: some View {
+    if clip.video.isPhoto {
+      CalendarPhotoCover(model: model, clip: clip, width: width)
+    } else {
+      player
+    }
+  }
+
+  private var player: some View {
     let p = model.playback
     let pv = firstPost.flatMap { model.clipPreview(post: $0) } ?? model.clipPreview(clip.video)
-    DSVideoPreview(url: pv.proxyURL, poster: pv.cover,
+    return DSVideoPreview(url: pv.proxyURL, poster: pv.cover,
                    isActive: PreviewPlayback.plays(p, layout: .grid, hovered: hovering, focused: false) && (hovering || !isPast),
                    isPriority: hovering, loopRange: pv.loopRange, unmuteOnHover: false, isHovered: hovering, muteAlignment: .bottomTrailing,
                    overlays: pv.overlays, isUpdating: pv.isUpdating, updatingStyle: .label,
                    needsOverlay: pv.overlayMissing, onNeedsOverlay: { model.reloadOverlay(clip.video.id, version: pv.version) })
       .task(id: pv.stamp) { if let f = firstPost { model.requestPreview(post: f) } else { model.requestPreview(clip.video) } }
       .frame(width: width, height: width * 16 / 9)
+  }
+}
+
+/// A photo post's cover: its first photo as it posts, at the post's own shape (4:5 by default), never taller than a
+/// clip's cover. A still picture: no player, no hover playback, no proxy.
+struct CalendarPhotoCover: View {
+  @Bindable var model: AppModel
+  let clip: CalendarClip
+  let width: CGFloat
+
+  private var firstPost: PlatformPost? { clip.posts.values.min { $0.platform.rawValue < $1.platform.rawValue } }
+
+  var body: some View {
+    let img = firstPost.flatMap { model.clipPreview(post: $0)?.cover } ?? model.poster(clip.video)
+    // Width over height of the picture as it posts; 4:5 until it has loaded.
+    let ratio = img.flatMap { $0.size.height > 0 ? $0.size.width / $0.size.height : nil } ?? 0.8
+    let height = min(width / max(ratio, 0.1), width * 16 / 9)
+    Group {
+      if let img {
+        Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+      } else {
+        DSPosterPlaceholder()
+      }
+    }
+    .frame(width: width, height: height)
+    .clipped()
+    .overlay(alignment: .bottomTrailing) { CalendarPhotoMark(video: clip.video).padding(DS.space.xxs) }
+    .task(id: firstPost.map { model.previewStamp($0.videoId, version: $0.versionNo) } ?? model.previewStamp(clip.video.id)) {
+      if let f = firstPost { model.requestPreview(post: f) } else { model.requestPoster(clip.video) }
+    }
+    .accessibilityLabel(clip.video.photoLabel ?? "Photo")
+  }
+}
+
+/// "Photo" / "Carousel · 3" on a cover, in the dark capsule the pin and clock marks use on media.
+struct CalendarPhotoMark: View {
+  let video: Video
+
+  var body: some View {
+    if let label = video.photoLabel {
+      HStack(spacing: 3) {
+        Image(systemName: video.isCarousel ? "square.on.square" : "photo").font(DS.type.microCompact)
+        Text(label).font(DS.type.microCompact).lineLimit(1)
+      }
+      .foregroundStyle(.white)
+      .padding(.horizontal, 6)
+      .frame(height: 20)
+      .background(Color.black.opacity(0.55), in: Capsule())
+      .dsTooltip(video.isCarousel ? "A carousel of \(video.photoCount) photos — the first is the cover" : "A photo post")
+      .accessibilityLabel(label)
+      .background(ScriptAnchor("Photo mark \(video.id)"))
+    }
+  }
+}
+
+/// The set-time mark beside a card's time: a small clock and the exact minute ("3:15 PM"), with what it means on hover.
+struct CalendarSetTimeMark: View {
+  @Bindable var model: AppModel
+  let slot: PlanSlot
+  /// The day the card shows on, when it can differ from the slot's (Day view): the mark then names the weekday.
+  var day: String? = nil
+
+  var body: some View {
+    if let exact = slot.exactAt {
+      let other = day.map { $0 != slot.date } ?? false
+      HStack(spacing: 3) {
+        Image(systemName: "clock").font(DS.type.microCompact)
+        Text((other ? Fmt.day(exact, tz: model.tz, style: "EEE") + " " : "") + AppModel.clockText(exact, tz: model.tz))
+          .font(DS.type.captionMedium.monospacedDigit()).lineLimit(1)
+      }
+      .foregroundStyle(DS.color.text)
+      .contentShape(Rectangle())
+      .dsTooltip(model.setTimeHelp(slot))
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(model.setTimeHelp(slot) ?? "Set time")
+      .background(ScriptAnchor("Set time mark \(slot.id)"))
+    }
   }
 }
 
@@ -215,7 +310,12 @@ private struct CoverBadges: ViewModifier {
     content
       .overlay(alignment: .topLeading) {
         HStack(spacing: 4) {
-          if clip.slot.pinned {
+          if clip.slot.isExact {
+            // A set time is always pinned; the clock says the stronger thing.
+            Image(systemName: "clock.fill").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.white)
+              .frame(width: 20, height: 20).background(Color.black.opacity(0.55), in: Circle())
+              .dsTooltip(model.setTimeHelp(clip.slot))
+          } else if clip.slot.pinned {
             Image(systemName: "pin.fill").font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
               .frame(width: 20, height: 20).background(Color.black.opacity(0.55), in: Circle())
               .dsTooltip(CalendarWords.pinned)
@@ -258,13 +358,14 @@ private struct CardBehaviour: ViewModifier {
       .dsElevation(DS.elevation.e1)
       .contentShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
       .onHover { h in dsWithAnimation(DS.motion.hover) { hovering = h } }
-      .dsPlaybackHover { pointerOn = $0 }
+      .dsPlaybackHover { pointerOn = $0 && !clip.video.isPhoto }  // a photo post has nothing to play
       .onTapGesture(count: 2) { model.openEditor(clip.video.id) }
       .modifier(SlotDrag(enabled: blocker == nil, id: clip.slot.id, poster: model.poster(clip.video)))
       .contextMenu { CalendarClipMenu(model: model, video: clip.video, slot: clip.slot, posts: clip.posts) }
-      .dsTooltip(blocker.map { "\($0) · double-click to edit" } ?? "Double-click to edit · drag to another day")
+      .dsTooltip(blocker.map { "\($0) · double-click to edit" } ?? (clip.slot.isExact ? "Double-click to edit · drag to another day, same time"
+                                                                     : "Double-click to edit · drag to another day"))
       .accessibilityElement(children: .contain)
-      .accessibilityLabel("\(model.displayName(clip.video)), \(model.calendarTimeRange(clip))")
+      .accessibilityLabel("\(model.displayName(clip.video)), \(clip.slot.isExact ? "set time " : "")\(model.calendarTimeRange(clip))")
   }
 }
 
@@ -289,7 +390,11 @@ struct CalendarWeekCard: View {
           .font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
           .lineLimit(2).fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)
-        Text(model.calendarTimeRange(clip)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+        if clip.slot.isExact {
+          CalendarSetTimeMark(model: model, slot: clip.slot)
+        } else {
+          Text(model.calendarTimeRange(clip)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+        }
         if let retry = model.calendarRetryNote(clip) {
           Text(retry).font(DS.type.caption).foregroundStyle(DS.color.info).lineLimit(2).fixedSize(horizontal: false, vertical: true)
         }
@@ -340,6 +445,7 @@ struct CalendarThreeDayCard: View {
           .font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
           .lineLimit(2).fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)
+        if clip.slot.isExact { CalendarSetTimeMark(model: model, slot: clip.slot).padding(.leading, DS.space.xxs) }
         VStack(spacing: 2) {
           ForEach(clip.platforms, id: \.self) { p in chip(p) }
         }

@@ -4,7 +4,7 @@ import SwiftUI
 /// The Calendar's shared hover and tooltip words.
 enum CalendarWords {
   static let pinned = "Pinned: stays on this day"
-  static let moreHelp = "Move, unschedule or skip a platform"
+  static let moreHelp = "Move, set a time, unschedule or skip"
 }
 
 /// A clip's actions on every card and row (⋯ and right-click, `C.CTX` Motion's Do later · Unschedule menu). Native menu
@@ -20,17 +20,28 @@ struct CalendarClipMenu: View {
 
   var body: some View {
     let moveWhy = model.calendarMoveBlocker(slot, posts: posts)
+    // Round 21: a set-time item keeps its minute. Post today would drop it, so it says why not (Core's words).
+    // Only a set time that is still to come counts: one that already went out leaves nothing to keep or take off.
+    let timed = model.setTime(video.id) != nil
     Button("Move to…" + AppModel.menuReason(moveWhy), systemImage: "calendar") { model.calendarPinTarget = [video.id] }
       .disabled(moveWhy != nil)
-    if let slot, slot.date == day ?? slot.date {
+    if let slot, !timed, slot.date == day ?? slot.date {
       Button(slot.pinned ? "Pinned to this day" : "Pin to this day" + AppModel.menuReason(moveWhy), systemImage: "pin") {
         model.pin(video.id, dayKey: slot.date)
       }
       .disabled(slot.pinned || moveWhy != nil)
     }
-    Button("Post today" + AppModel.menuReason(moveWhy), systemImage: "bolt") { model.postTodayAsking([video.id]) }
-      .disabled(moveWhy != nil)
+    let todayWhy = timed ? StageWording.hasSetTime : moveWhy
+    Button("Post today" + AppModel.menuReason(todayWhy), systemImage: "bolt") { model.postTodayAsking([video.id]) }
+      .disabled(todayWhy != nil)
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }
+    Divider()
+    let timeWhy = model.postAtBlocker(video)
+    Button((timed ? "Change set time…" : "Post at a set time…") + AppModel.menuReason(timeWhy), systemImage: "clock") { model.askPostAt([video.id]) }
+      .disabled(timeWhy != nil)
+    if model.canClearSetTime(video.id) {
+      Button(StageWording.useRegularSchedule, systemImage: "arrow.uturn.backward") { model.clearSetTimeAsking([video.id]) }
+    }
     Divider()
     let unscheduleWhy = model.calendarUnscheduleBlocker(video, slot: slot)
     Button("Unschedule" + AppModel.menuReason(unscheduleWhy), systemImage: "calendar.badge.minus") { model.calendarUnschedule(video.id) }
@@ -94,6 +105,8 @@ struct ExtraPostChip: View {
     case .repost: return "Repost of \(name) (new version)"
     case .retry: return "Re-queued attempt #\(post.attemptNo) of \(name)"
     default:
+      // A set-time post is on another day only when YouTube's quiet hours put it there.
+      if model.hasSetTime(post) { return "\(post.platform.displayName) post of \(name), set time moved out of YouTube's quiet hours" }
       return "\(post.platform.displayName) post of \(name)" + (model.calendarWasMoved(post) ? ", moved to this day" : ", just after midnight")
     }
   }
