@@ -12,6 +12,8 @@ struct PhotoImportRequest: Identifiable, Equatable {
   var files: [URL]
   /// Round 23: the audio chosen in the sheet (nil = none: photo posts). With it, each photo becomes a video.
   var audio: URL? = nil
+  /// D12: how each photo sits in its video (shown once audio is chosen).
+  var fit: StillSource.Fit = .whole
 }
 
 /// The import's state outside `AppModel` (extensions can't hold it): the sheet's button reads `importing`, and the
@@ -186,7 +188,8 @@ extension AppModel {
   }
 
   /// What came in while that import was copying: a queued import first, then files that were picked or dropped.
-  private func importNext() {
+  /// (Also run at the end of an import with audio, `AppModel+PhotoAudio.swift`.)
+  func importNext() {
     let ui = PhotoImportUI.shared
     guard !ui.importing else { return }
     if !ui.queued.isEmpty {

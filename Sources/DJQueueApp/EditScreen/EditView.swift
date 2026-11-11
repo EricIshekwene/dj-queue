@@ -155,9 +155,9 @@ private struct EditBulkBar: View {
 
   var body: some View {
     // Round 21: a selection of only photo posts leaves out what can't apply to a photo (title suggestions, Kind, the
-    // agent prompt, Back to Score) and says "photo posts" where it would say "clips".
-    let photosOnly = !ids.contains { model.video($0)?.isPhoto != true }
-    let anyPhoto = ids.contains { model.video($0)?.isPhoto == true }
+    // agent prompt, Back to Score) and says "photo posts" where it would say "clips". Round 23: the same for videos
+    // made from a photo, which have no song, no kind, no Score stage and no bulk crop either (as the ⋯ menu has it).
+    let photosOnly = !ids.contains { model.video($0)?.needsNoScore != true }
     let n = model.pipelineItems(ids)
     ScreenBulkBar(model: model, screen: .edit) {
       if !photosOnly {
@@ -180,7 +180,8 @@ private struct EditBulkBar: View {
         .background(ScriptAnchor("Caption"))
       // D17: bulk crop leaves photos alone. With clips in the selection it opens and skips the photos; with only
       // photos it says why instead.
-      let photosWhy = "Photos are cropped in the editor, one by one"
+      let photosWhy = ids.contains { model.video($0)?.isStill == true } ? "Photos, with audio or not, are cropped in the editor, one by one"
+        : "Photos are cropped in the editor, one by one"
       Button("Crop", systemImage: "crop") {
         if photosOnly { model.show(photosWhy, error: true) } else { model.cropDialogIds = ids }
       }
@@ -218,7 +219,9 @@ private struct EditBulkBar: View {
           }
         }
       }
-      Button(photosOnly ? "Re-render (make the post photos again)" : anyPhoto ? "Re-render (make the posts again)"
+      // (What is rendered is JPEGs only for photo posts; a video made from a photo renders a video.)
+      let jpegsOnly = !ids.contains { model.video($0)?.isPhoto != true }, anyJpeg = ids.contains { model.video($0)?.isPhoto == true }
+      Button(jpegsOnly ? "Re-render (make the post photos again)" : anyJpeg ? "Re-render (make the posts again)"
                : "Re-render (make the post videos again)", systemImage: "arrow.triangle.2.circlepath") {
         let ids = ids
         model.pipelineBulk("Re-render \(n)?", verb: "Re-render", ids: ids,
@@ -242,7 +245,7 @@ struct EditApplyDefaultsMenu: View {
   var body: some View {
     // The title says what happens: the section's own edits go and New clip defaults apply (asks for > 1, undoable).
     // A photo post has no trim and no cover frame (its first photo is the cover), so those two aren't offered for
-    // a selection of only photos.
+    // a selection of only photos. (A video made from a photo has both.)
     let photosOnly = !ids.contains { model.video($0)?.isPhoto != true }
     Menu("Reset to New clip defaults") {
       ForEach(BulkSection.allCases.filter { !photosOnly || ($0 != .trim && $0 != .cover) }, id: \.self) { s in

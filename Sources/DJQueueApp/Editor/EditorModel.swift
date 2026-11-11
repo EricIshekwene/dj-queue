@@ -94,11 +94,12 @@ struct EditorAppHooks {
   var arrowStep: (() -> ArrowStep)?
   var setArrowStep: ((ArrowStep) -> Void)?
   /// Round 23: the Audio row asks the app to pick a file and make the video (or take the audio off); the app reloads
-  /// this editor when it lands. `audioBlocker` is why that can't be done now (nil = it can).
+  /// this editor when it lands.
   var addAudio: ((String) -> Void)?
   var changeAudio: ((String) -> Void)?
   var removeAudio: ((String) -> Void)?
-  var audioBlocker: ((Video) -> String?)?
+  /// D12: Whole photo or Fill the frame. The app makes the video again and reloads this editor.
+  var setAudioFit: ((String, StillSource.Fit) -> Void)?
 }
 
 /// A caption length problem for one platform (live, from the in-memory version).
@@ -202,6 +203,8 @@ final class EditorModel: ObservableObject {
   private var loadToken = 0
   /// A typed Title that hasn't been committed yet (nil = not editing). Saved on ↩, blur, clip switch and Done.
   @Published var titleDraft: String?
+  /// Round 23: why the Audio row's actions are off (nil = they work). Cached with the item, never read while drawing.
+  @Published var audioBlocker: String?
   /// True while a trim handle is being dragged (expensive derived work waits for the drag end).
   @Published private(set) var trimDragging = false
   @Published private var zoneSelections: [String: Set<Platform>] = [:]
@@ -256,6 +259,7 @@ final class EditorModel: ObservableObject {
     var video: Video?, sessionName = "", fileURL: URL?, fileMissing = false, suggestions: [TitleSuggestion] = []
     var textSuggestions: [TitleSuggestion] = []
     var edit = Edit(), versions: [Version] = [], posts: [PlatformPost] = [], issues: [ValidationIssue] = []
+    var audioBlocker: String?
     var error: String?, readOnly = false
   }
 
@@ -283,6 +287,7 @@ final class EditorModel: ObservableObject {
       }
       l.posts = try store.posts(where: "video_id=?", [id])
       l.issues = try Validation.issues(video: v, store: store)
+      l.audioBlocker = Self.audioBlocker(store, v)
     } catch {
       l.error = l.readOnly ? "This \(l.video?.isPhoto == true ? "post" : "clip")'s saved edit can't be read, so editing is off to protect it. Run Doctor."
         : "Couldn't load: \(error)"
@@ -340,6 +345,7 @@ final class EditorModel: ObservableObject {
     video = l.video; sessionName = l.sessionName; fileURL = l.fileURL; fileMissing = l.fileMissing
     suggestions = l.suggestions; textSuggestions = l.textSuggestions; edit = l.edit; versions = l.versions; syncedVersions = l.versions; posts = l.posts; issues = l.issues
     readOnly = l.readOnly; loadError = l.error
+    audioBlocker = l.audioBlocker
     fieldRevision &+= 1
     if let v = l.video, let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
     if !posting(previewPlatform) { previewPlatform = postingPlatforms.first ?? .tiktok }
@@ -1662,11 +1668,34 @@ final class EditorModel: ObservableObject {
     let store = store, id = videoId
     Self.saveQueue.async { [weak self] in
       guard let v = try? store.video(id: id), let issues = try? Validation.issues(video: v, store: store) else { return }
+      let blocker = Self.audioBlocker(store, v)
       DispatchQueue.main.async {
         guard let self, self.videoId == id else { return }
         self.issues = issues
+        self.audioBlocker = blocker
       }
     }
+  }
+
+  /// Why audio can't be added, changed or removed, or the fit changed (nil = it can), read off the main thread with the
+  /// item (load, revalidate, each save) so the Audio row never reads the store while drawing.
+  private nonisolated static func audioBlocker(_ store: Store, _ v: Video) -> String? {
+    guard v.isPhoto || v.isStill else { return nil }
+    return (try? StillVideo(store: store).blocker(v)) ?? nil
+  }
+
+  /// The item became something else under the editor (audio added, changed or removed, a fit change, or the undo of
+  /// one). What the editor holds belongs to what the item was, so none of it is written: typed drafts go, pending
+  /// changes are dropped, and the item is read again.
+  func reloadDiscardingPending() {
+    saveTask?.cancel()
+    captionDraftTask?.cancel()
+    captionDraft = nil
+    titleDraft = nil
+    dropTimeDraft()
+    pendingEdit = false
+    pendingVersions = []
+    load(videoId)
   }
 
   // MARK: Saving
@@ -1721,10 +1750,12 @@ final class EditorModel: ObservableObject {
         }
         let fresh = try store.video(id: id) ?? video
         let issues = try Validation.issues(video: fresh, store: store)
+        let blocker = Self.audioBlocker(store, fresh)
         ChangeSignal.post()
         DispatchQueue.main.async {
           guard let self, self.videoId == id else { return }
           self.issues = issues
+          self.audioBlocker = blocker
           self.saving = self.pendingEdit || !self.pendingVersions.isEmpty
           self.lastSaved = Date()
         }

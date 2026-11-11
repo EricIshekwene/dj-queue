@@ -32,6 +32,9 @@ final class PhotoAudioUI {
   @ObservationIgnored var asked: String?
   @ObservationIgnored var said: [String] = []
 
+  /// Why an item's stage controls and Audio row are off while its video is made.
+  nonisolated static let busyReason = "Making the video…"
+
   /// "Making the video… 40 %".
   var line: String { Self.line(progress) }
   nonisolated static func line(_ p: Double) -> String { "Making the video… \(Int((min(1, max(0, p)) * 100).rounded())) %" }
@@ -40,10 +43,17 @@ final class PhotoAudioUI {
 extension AppModel {
   // MARK: What can be done
 
-  /// Why audio can't be added to, changed on or removed from `v` now (nil = it can). Core's words (D3, D9).
+  /// Why audio can't be added to, changed on or removed from `v` now (nil = it can), in Core's words (D3, D9), from
+  /// what the model has loaded: menus and commands ask this for every card, so it never reads the store. Core checks
+  /// again when the action runs (`StillVideo.blocker`).
   func audioBlocker(_ v: Video) -> String? {
-    if PhotoAudioUI.shared.busy != nil { return "Still making the last video" }
-    return (try? StillVideo(store: store).blocker(v)) ?? nil
+    if let busy = PhotoAudioUI.shared.busy { return busy == v.id ? PhotoAudioUI.busyReason : "Still making the last video" }
+    guard v.isPhoto || v.isStill else { return "\(displayName(v)) isn't a photo post" }
+    if v.isCarousel { return StillVideo.carouselReason }
+    if v.isPhoto, v.photoCount == 0 { return "Add a photo first" }
+    if v.excluded { return "It's excluded: include it first" }
+    if ClipStage.of(v) != .edit || nextSlotByVideo[v.id] != nil || !(postsByVideo[v.id] ?? []).isEmpty { return StillVideo.lockedReason }
+    return nil
   }
 
   /// The audio file types the picker offers (`StillVideo.audioExtensions`).
@@ -94,6 +104,9 @@ extension AppModel {
     pickAudio("Choose audio", "Each photo becomes a video with this audio.") { [weak self] url in self?.setImportAudio(url) }
   }
 
+  /// D12: the import sheet's Whole photo | Fill the frame.
+  func setImportFit(_ fit: StillSource.Fit) { photoImportRequest?.fit = fit }
+
   /// Puts an audio file on the open import sheet (nil takes it off). A file that can't be the audio is refused in a
   /// toast, in Core's words, and the sheet keeps what it had.
   func setImportAudio(_ url: URL?) {
@@ -118,9 +131,18 @@ extension AppModel {
   /// THE "Add audio": turns a one-photo post into a video with this audio, in place (`StillVideo.addAudio`), off the
   /// main thread, with its progress in a toast and in the editor's row. Then it reloads, says "Now a video with audio"
   /// with Undo, and an editor open on the item goes on as the clip editor. Nothing is sent to the Queue.
-  func addAudio(to id: String, audio: URL) {
+  func addAudio(to id: String, audio: URL, fit: StillSource.Fit = .whole) {
     makeVideo(id, said: "Now a video with audio", label: "Add audio") { s, progress in
-      try StillVideo(store: s).addAudio(to: id, audio: audio, progress: progress)
+      try StillVideo(store: s).addAudio(to: id, audio: audio, fit: fit, progress: progress)
+    }
+  }
+
+  /// D12, "Whole photo | Fill the frame": the video is made again from the item's own audio, and the crop resets (the
+  /// whole frame, or none to confirm). The same path as Change audio: covered editor, a toast with Undo.
+  func setAudioFit(videoId id: String, fit: StillSource.Fit) {
+    guard let v = video(id), let still = v.still, still.fits != fit else { return }
+    makeVideo(id, said: fit == .whole ? "Shows the whole photo" : "Fills the frame · confirm the crop", label: "Change fit") { s, progress in
+      try StillVideo(store: s).setFit(videoId: id, fit: fit, progress: progress)
     }
   }
 
@@ -148,8 +170,14 @@ extension AppModel {
     guard let v = video(id) else { return }
     if let why = audioBlocker(v) { show(why, error: true); return }
     let ui = PhotoAudioUI.shared
-    // The editor's edits so far are their own entry, so the history reads Edits → Add audio → Edits (`splitEditorSession`
-    // also lands the open editor's pending writes before the row changes under it).
+    // Everything the open editor holds for this item is written first (typed drafts included): from here until the
+    // video lands nothing in it can change the item (it is covered, for the pointer and for keys), and what it holds
+    // then is dropped, not written (`reloadOpenEditor`).
+    if let live = EditorModel.live, live.videoId == id, editor != nil {
+      live.flushAndWait()
+      NSApp.keyWindow?.makeFirstResponder(nil)
+    }
+    // The editor's edits so far are their own entry, so the history reads Edits → Add audio → Edits.
     splitEditorSession()
     ui.busy = id
     ui.progress = 0
@@ -201,16 +229,27 @@ extension AppModel {
 
   /// An editor open on `id` reads the item again: after audio is added it goes on as the clip editor, after it is
   /// removed as the photo editor. The editor stays open on the same item, and its session carries on after the change.
+  /// When the item is another kind of thing than the editor holds (photo post or video, another audio, another fit),
+  /// what the editor holds is dropped, never written over the new item.
   func reloadOpenEditor(_ id: String) {
     guard editor != nil, let live = EditorModel.live, live.videoId == id else { return }
-    live.load(id)
+    let now = try? store.video(id: id)
+    if now?.isPhoto != live.video?.isPhoto || now?.still != live.video?.still {
+      live.reloadDiscardingPending()
+    } else {
+      live.load(id)
+    }
   }
 
-  /// After an undo: an item that went from photo post to video or back (or to another audio) gets fresh previews, and
-  /// an editor open on it reads it again.
-  func audioUndone(_ r: BulkResult) {
+  /// After an undo: an item that went from photo post to video or back (or to another audio or fit) gets fresh
+  /// previews, and an editor open on it reads it again. Decided from the batch that was undone and from what the open
+  /// editor holds, never from the model's own list (which may or may not have caught up with the change).
+  func audioUndone(_ r: BulkResult, action: String?) {
     for id in r.changed {
-      guard let now = try? store.video(id: id), let was = videoById[id], now.isPhoto != was.isPhoto || now.still != was.still else { continue }
+      let live = EditorModel.live.flatMap { $0.videoId == id ? $0 : nil }
+      let now = try? store.video(id: id)
+      let differs = live.map { now?.isPhoto != $0.video?.isPhoto || now?.still != $0.video?.still } ?? false
+      guard action.map(StillVideo.isAudioAction) == true || differs else { continue }
       proxyURLs[id] = nil
       refreshPreviewStamps([id])
       reloadOpenEditor(id)
@@ -221,7 +260,7 @@ extension AppModel {
 
   /// The import sheet with an audio file chosen: a video per photo, each with that audio (`StillVideo.add`), in Edit.
   /// The same rules as `importPhotos`: one at a time, the sheet stays open on a failure, nothing goes to the Queue.
-  func importPhotos(urls: [URL], audio: URL, title: String?) {
+  func importPhotos(urls: [URL], audio: URL, title: String?, fit: StillSource.Fit = .whole) {
     let ui = PhotoImportUI.shared, audioUI = PhotoAudioUI.shared
     guard !urls.isEmpty else { return }
     if ui.importing || audioUI.busy != nil {
@@ -237,7 +276,7 @@ extension AppModel {
     let name = title?.trimmingCharacters(in: .whitespacesAndNewlines)
     let given = name?.isEmpty == false ? name : nil
     Task.detached(priority: .userInitiated) {
-      let out = Result { try StillVideo(store: s).add(photos: urls, audio: audio, title: given, titleSource: "app") { p in
+      let out = Result { try StillVideo(store: s).add(photos: urls, audio: audio, title: given, titleSource: "app", fit: fit) { p in
         Task { @MainActor in if PhotoAudioUI.shared.busy != nil { PhotoAudioUI.shared.progress = max(PhotoAudioUI.shared.progress, p) } }
       } }
       await MainActor.run { self.importedWithAudio(out) }
@@ -248,6 +287,9 @@ extension AppModel {
     let ui = PhotoImportUI.shared
     ui.importing = false
     PhotoAudioUI.shared.busy = nil
+    // Photos picked or dropped while the videos were being made were told "these are added next": add them now,
+    // whichever way this import ended.
+    defer { importNext() }
     switch out {
     case .failure(let e):
       ui.lastPosts = []
@@ -255,19 +297,22 @@ extension AppModel {
       refresh()
       show(DSToastModel(message: "The videos weren't made", detail: e.localizedDescription, tone: .danger, duration: 8))
     case .success(let r):
-      photoImportRequest = nil
+      // A photo that couldn't be added at all stays in the sheet to try again; the ones that were made don't, so a
+      // retry can't make them twice.
+      if r.failed.isEmpty { photoImportRequest = nil } else { photoImportRequest?.files = r.failed }
       ui.lastPosts = r.videos.map(\.id)
       ui.lastSkipped = r.skipped
       ChangeSignal.post()
       refresh()
       let skipped = r.skipped.isEmpty ? nil : Self.skippedText(r.skipped)
+      let left = r.failed.isEmpty ? nil : (r.failed.count == 1 ? "1 photo is still in the sheet to try again" : "\(r.failed.count) photos are still in the sheet to try again")
       guard let first = r.videos.first else {
-        show(DSToastModel(message: "No videos made", detail: skipped, tone: .danger, duration: 8))
+        show(DSToastModel(message: "No videos made", detail: [skipped, left].compactMap { $0 }.joined(separator: "\n"), tone: .danger, duration: 8))
         return
       }
       let ids = r.videos.map(\.id)
       show(DSToastModel(message: r.videos.count == 1 ? "Added 1 video to Edit" : "Added \(r.videos.count) videos to Edit",
-                        detail: [first.still.map(Self.audioLine), skipped].compactMap { $0 }.joined(separator: "\n"),
+                        detail: [first.still.map(Self.audioLine), skipped, left].compactMap { $0 }.joined(separator: "\n"),
                         tone: .success, actionTitle: "Open", action: { [weak self] in self?.openEditor(first.id, in: ids) },
                         duration: r.skipped.isEmpty ? 6 : 10))
     }

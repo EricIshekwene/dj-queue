@@ -18,13 +18,14 @@ struct MainWindowView: View {
                      deleteGroup: { model.confirmDeleteGroup($0, undoHint: "Undo on the message that follows brings it back.") },
                      beforeGroupWrite: { model.splitEditorSession() },
                      afterGroupEdit: { model.groupEdited($0, message: $1) },
-                     isCovered: { model.overlayCoversEditor },
+                     // While this item's video is being made the editor is covered too: no key reaches it.
+                     isCovered: { model.overlayCoversEditor || PhotoAudioUI.shared.busy == ed.videoId },
                      arrowStep: { model.playback.arrowStep },
                      setArrowStep: { s in model.setPlayback { $0.arrowStep = s } },
                      addAudio: { model.askAddAudio(to: $0) },
                      changeAudio: { model.askChangeAudio($0) },
                      removeAudio: { model.removeAudio(videoId: $0) },
-                     audioBlocker: { model.audioBlocker($0) }),
+                     setAudioFit: { model.setAudioFit(videoId: $0, fit: $1) }),
                    headerAccessory: { id in AnyView(EditorStageControl(model: model, videoId: id)) })
           .transition(.opacity)
       } else {

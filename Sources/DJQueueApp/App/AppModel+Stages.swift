@@ -18,6 +18,8 @@ extension AppModel {
   /// Why `direction` can't move `v` (nil = it can). Core's data-free reasons (`StageWording.blocker`) plus the ones
   /// that need loaded posts (mirrors `BulkActions.blocker`; no DB read).
   func stageBlocker(_ v: Video, _ direction: StageDirection) -> String? {
+    // Round 23: a stage move while its video is being made would throw the making away (Core refuses the result).
+    if PhotoAudioUI.shared.busy == v.id { return PhotoAudioUI.busyReason }
     if let why = StageWording.blocker(v, direction) { return why }
     switch (ClipStage.of(v), direction) {
     case (.scheduled, .back): return removeFromQueueBlocker(v)

@@ -4,22 +4,26 @@ import SwiftUI
 
 /// `DJQ_PHOTO_AUDIO_SCRIPT=1 DJQueueApp --snapshot <dir>` (round 23): photo with audio, in the real main window on the
 /// throwaway sample. The sample's single photo "Saturday flyer" gets a 12-second tone and becomes a video while its
-/// editor is open; the editor carries on as the clip editor (a player, the Audio row); it is trimmed, gets a timed
-/// text, goes to the Queue with no score and is rendered by the video renderer. A second photo gets audio and Undo
-/// brings the photo post back with its crop; then Change audio and Remove audio; then the import sheet makes two
-/// videos from two photos and one audio file.
+/// editor is open; the editor carries on as the clip editor (a player, the Audio row). It shows the whole photo with
+/// nothing to fix (D12); Fill the frame asks for the crop, and Whole photo takes it back. It is trimmed, gets a timed
+/// text, goes to the Queue with no score and is rendered by the video renderer (the whole photo over its blurred
+/// copy). A second photo gets audio and ⌘Z brings the photo post back with its crop; with the editor open, Undo on the
+/// toast does the same and the photo editor is back; then Change audio and Remove audio; then the import sheet makes
+/// two videos from two photos and one audio file, and a photo picked while videos are being made is added next.
 ///
 /// Stand-ins, since macOS puts these on a display: the audio file picker (the script hands the tone to
 /// `model.addAudio`, `changeAudio` and `setImportAudio`, the functions a pick ends in, after a real click on the
 /// button that opens the picker), the photo file picker (`model.takePhotos`), the ⋯ menu (its items are built from
 /// `model.audioBlocker`, which is what is checked), the trim handle and text-bar drags (the editor functions they
-/// call; `text-layers` drives the real drags), and the progress overlay's picture (drawn once at 40 %: the real one
-/// is up for under a second). Each is said in the log where it happens. Everything else is a real click or key sent
+/// call; `text-layers` drives the real drags), the progress overlay's picture (drawn once at 40 %: the real one
+/// is up for under a second), the toast's Undo button (its action) and the Queue's search field. Each is said in the
+/// log where it happens. Everything else is a real click or key sent
 /// to this window, which sits off every display, and the audio is a sine tone written here. Players are silent.
 ///
 /// `DJQ_PHOTO_AUDIO_SABOTAGE` shows the checks can fail: `queue` sends the made video to the Queue behind the add's
 /// back (the "still in Edit, not sent" checks fail), `silent` hands over a file with no sound in it (no video is made:
-/// every check from the add on fails), `photo` skips the add (the item stays a photo post).
+/// every check from the add on fails), `photo` skips the add (the item stays a photo post), `fit` leaves out the click
+/// on Fill the frame (the "Confirm the crop" checks fail).
 @MainActor
 enum PhotoAudioScript {
   static func run(model: AppModel, store: Store, out: URL, scratch: URL) async -> Int32 {
@@ -119,10 +123,10 @@ enum PhotoAudioScript {
         window.sendEvent(e)
       }
     }
-    /// A real click in the middle of the control.
-    func click(_ label: String) async -> Bool {
+    /// A real click in the middle of the control (or `at`, 0…1 across it: a segment of a segmented control).
+    func click(_ label: String, at x: CGFloat = 0.5) async -> Bool {
       guard let f = anchor(label) else { note("no control “\(label)”"); return false }
-      let p = NSPoint(x: f.midX, y: f.midY)
+      let p = NSPoint(x: f.minX + f.width * x, y: f.midY)
       mouse(.leftMouseDown, p)
       await wait(40)
       mouse(.leftMouseUp, p)
@@ -143,6 +147,10 @@ enum PhotoAudioScript {
       model.closeEditor()
       await wait(1200)
       model.refreshNow()
+    }
+    func issues(_ id: String) -> [ValidationIssue.Kind] {
+      EditorModel.flushLiveAndWait()
+      return fresh(id).flatMap { try? Validation.issues(video: $0, store: store) }?.map(\.kind) ?? [.corrupt]
     }
 
     // 1. Edit, with the two photo posts: audio goes on the single photo, not on the carousel (D3).
@@ -226,7 +234,11 @@ enum PhotoAudioScript {
     let active = model.settings.activePlatforms
     check("it posts on every platform, YouTube included (\(clipEditor.postingPlatforms.count) of \(active.count))",
           Set(clipEditor.postingPlatforms) == Set(active) && clipEditor.postingPlatforms.contains(.youtube) && active.count == 6)
-    check("it starts with no text and no confirmed crop", clipEditor.resolved.noText && clipEditor.edit.crop == nil)
+    // D12: the whole photo by default. Its crop is the whole frame, so there is nothing to confirm.
+    let frame = made.flatMap { v in v.sourceWidth.flatMap { w in v.sourceHeight.map { CropRect(x: 0, y: 0, w: Double(w), h: Double($0)) } } }
+    check("it shows the whole photo: a 9:16 video whose crop is the whole frame", made?.still?.fit == .whole
+          && made.map { ($0.sourceWidth ?? 0) * 16 == ($0.sourceHeight ?? 0) * 9 } == true && clipEditor.edit.crop == frame && frame != nil)
+    check("it starts with no text and nothing to fix", clipEditor.resolved.noText && issues(flyer.id).isEmpty && has("Fit whole"))
     await shot("clip-editor-with-audio")
     note("stand-in: the progress overlay as it is drawn at 40 % (the real one was up for under a second)")
     ui.busy = flyer.id
@@ -237,11 +249,43 @@ enum PhotoAudioScript {
     ui.busy = nil
     await wait(400)
 
+    // 3b. D12: Fill the frame, and back to Whole photo, with real clicks on the control.
+    model.toast = nil
+    if sabotage == "fit" {
+      note("SABOTAGE: the click on Fill the frame is left out")
+    } else {
+      check("a real click on Fill the frame", await click("Fit whole", at: 0.75))
+    }
+    check("the video is made again, filling the frame", await until(30) { ui.busy == nil && fresh(flyer.id)?.still?.fit == .fill })
+    if let e = await editor(flyer.id, photo: false) {
+      e.scrollTarget = .title
+      await wait(900)
+      let now = fresh(flyer.id)
+      check("Fill the frame: the video has the photo's own shape, and the item says Confirm the crop",
+            now.map { ($0.sourceWidth ?? 0) > ($0.sourceHeight ?? 0) } == true && issues(flyer.id) == [.noCrop] && e.edit.crop == nil && has("Fit fill"))
+      check("the same audio, from DJ Queue's own copy, with Undo on the toast", now?.still?.audioName == "Friday mix.wav" && now?.still?.audio == made?.still?.audio
+            && model.toast?.message == "Fills the frame · confirm the crop" && model.toast?.actionTitle == "Undo")
+      await shot("fill-the-frame-confirm-the-crop")
+      model.toast = nil
+      check("a real click on Whole photo", await click("Fit fill", at: 0.25))
+      check("the video is made again, showing the whole photo", await until(30) { ui.busy == nil && fresh(flyer.id)?.still?.fit == .whole })
+    } else {
+      check("the editor is open after the fit change", false)
+    }
+    guard let clipEditor = await editor(flyer.id, photo: false) else {
+      check("the editor is open on the whole-photo video", false)
+      return 1
+    }
+    clipEditor.scrollTarget = .title
+    await wait(900)
+    check("Whole photo: nothing to fix again, and the toast says so", issues(flyer.id).isEmpty && has("Fit whole") && clipEditor.edit.crop == frame
+          && model.toast?.message == "Shows the whole photo")
+    await shot("whole-photo-nothing-to-fix")
+
     // 4. Trim to 6 s and a timed text, as on any clip.
     note("stand-in: the trim handle and the text bar's drags; the script calls the editor functions they call (the text-layers check drives the real drags)")
     clipEditor.setTrimOut(6)
     clipEditor.commitTrim()
-    clipEditor.confirmCrop()
     clipEditor.setNoText(false)
     clipEditor.setText("Doors at ten")
     clipEditor.setTextTime(TextLayer.firstId, start: 1, end: 4)
@@ -250,7 +294,7 @@ enum PhotoAudioScript {
     EditorModel.flushLiveAndWait()
     let trimmed = try? store.resolvedEdit(videoId: flyer.id)
     let timed = try? store.resolvedVersion(videoId: flyer.id, number: 1)
-    check("the trim is 0 to 6 s and the crop is confirmed", trimmed.map { $0.trimIn == 0 && abs($0.trimOut - 6) < 0.01 && $0.cropConfirmed } == true)
+    check("the trim is 0 to 6 s and the whole-frame crop needs no confirming", trimmed.map { $0.trimIn == 0 && abs($0.trimOut - 6) < 0.01 && $0.cropConfirmed } == true)
     check("the text shows from 1 s to 4 s", timed.map { $0.text == "Doors at ten" && !$0.noText && $0.textStart == 1 && $0.textEnd == 4 } == true)
     check("nothing is left to fix", ((try? Validation.issues(video: fresh(flyer.id) ?? flyer, store: store)) ?? [.init(kind: .corrupt, platform: nil, message: "")]).isEmpty)
     await shot("trimmed-with-timed-text")
@@ -303,8 +347,21 @@ enum PhotoAudioScript {
     check("1080×1920 H.264 with an audio stream, 6 s long", rendered.1.map { $0.width == 1080 && $0.height == 1920 && $0.videoCodec == "h264" && $0.hasAudio
           && abs($0.duration - 6) < 0.15 } == true)
     if let path = rendered.0?.outputPath, let frame = Media.frame(URL(fileURLWithPath: path), at: 2, maxSize: CGSize(width: 540, height: 960)) {
-      try? Media.writePNG(frame, to: out.appendingPathComponent("render-frame-at-2s-\(look).png"))
-      note("shot render-frame-at-2s-\(look).png (a frame of the rendered post, with its timed text)")
+      try? Media.writePNG(frame, to: out.appendingPathComponent("render-frame-whole-at-2s-\(look).png"))
+      note("shot render-frame-whole-at-2s-\(look).png (a frame of the rendered post: the whole photo over its blurred copy, with the timed text)")
+      // The photo is a landscape frame, so it sits across the middle; above and below it is its blurred, darkened copy.
+      func pixel(_ fx: Double, _ fy: Double) -> (Int, Int, Int) {
+        var px = [UInt8](repeating: 0, count: 4)
+        px.withUnsafeMutableBytes { b in
+          if let ctx = CGContext(data: b.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            ctx.draw(frame, in: CGRect(x: -fx * Double(frame.width), y: -(1 - fy) * Double(frame.height) + 1, width: Double(frame.width), height: Double(frame.height)))
+          }
+        }
+        return (Int(px[0]), Int(px[1]), Int(px[2]))
+      }
+      let bands = [pixel(0.5, 0.06), pixel(0.2, 0.1), pixel(0.5, 0.94), pixel(0.8, 0.9)]
+      check("above and below the photo the render shows its blurred copy, not black bars \(bands)", bands.allSatisfy { $0.0 + $0.1 + $0.2 > 24 })
     }
 
     // 7. A second photo: audio, then ⌘Z brings the photo post back with its crop.
@@ -348,7 +405,7 @@ enum PhotoAudioScript {
     model.addAudio(to: second.id, audio: tone5)
     check("audio added from the list", await until(40) { ui.busy == nil && fresh(second.id)?.isStill == true })
     model.refreshNow()
-    check("its own crop and shape went with the photo post", ((try? store.edit(videoId: second.id)).map { $0.photoCrops.isEmpty && $0.aspectOverride == nil && $0.crop == nil }) == true)
+    check("its own crop and shape went with the photo post", ((try? store.edit(videoId: second.id)).map { $0.photoCrops.isEmpty && $0.aspectOverride == nil }) == true)
     await shot("second-photo-now-a-video")
     check("the newest undo is Add audio", model.undoHistory.top?.label == "Add audio")
     let z = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
@@ -368,12 +425,36 @@ enum PhotoAudioScript {
     check("and the toast says what was undone", model.toast?.message == "Undone: Add audio")
     await shot("undone-a-photo-post-again")
 
-    // 8. Change audio and Remove audio, in the editor.
+    // 8. With the editor open: add audio, then Undo on the toast. The photo editor is back, on a photo post.
+    model.toast = nil
+    model.openEditor(second.id, in: [second.id])
+    if await editor(second.id, photo: true) != nil {
+      model.addAudio(to: second.id, audio: tone5)
+      check("audio added with the editor open", await until(40) { ui.busy == nil && fresh(second.id)?.isStill == true })
+      check("the editor carried on as the clip editor", await editor(second.id, photo: false)?.video?.isStill == true)
+      check("the toast offers Undo", model.toast?.message == "Now a video with audio" && model.toast?.actionTitle == "Undo")
+      note("stand-in: the toast's Undo button; the script runs its action")
+      model.toast?.action?()
+      check("Undo brings the photo post back", await until(10) { fresh(second.id)?.isPhoto == true })
+      if let photo = await editor(second.id, photo: true) {
+        photo.scrollTarget = .title
+        await wait(900)
+        check("the open editor is the photo editor again, showing a photo post", photo.isPhoto && photo.video?.isPhoto == true && photo.playback.player == nil
+              && model.editor?.videoId == second.id && has("Audio row None") && has("Add audio") && !has("Change audio"))
+        check("and the post is exactly as it was", stored(second.id) == before)
+        await shot("undo-from-the-toast-photo-editor-back")
+      } else {
+        check("the open editor is the photo editor again", false)
+      }
+    } else {
+      check("the second photo opens in the photo editor", false)
+    }
+
+    // 8b. Change audio and Remove audio, in the editor.
     model.toast = nil
     model.addAudio(to: second.id, audio: tone5)
     _ = await until(40) { ui.busy == nil && fresh(second.id)?.isStill == true }
     model.refreshNow()
-    model.openEditor(second.id, in: [second.id])
     if let e = await editor(second.id, photo: false) {
       e.scrollTarget = .title
       await wait(700)
@@ -435,19 +516,44 @@ enum PhotoAudioScript {
     check("the row shows the file, and the sheet says what will be made", has("Import audio Intro.wav") && has("Clear import audio")
           && has("Import plan: 2 videos, each with this audio"))
     check("A post per photo is on and locked", has("A post per photo locked") && !has("A post per photo"))
+    // D12: the same choice in the sheet, Whole photo to start with.
+    check("the sheet has Whole photo | Fill the frame, on Whole photo", has("Import fit whole") && model.photoImportRequest?.fit == .whole)
+    check("a real click on Fill the frame, and back", await click("Import fit whole", at: 0.75) && model.photoImportRequest?.fit == .fill && has("Import fit fill"))
+    check("and Whole photo again", await click("Import fit fill", at: 0.25) && model.photoImportRequest?.fit == .whole)
     await shot("import-sheet-with-audio")
     check("Add to Edit is there to click", await click("Add to Edit"))
     check("the videos are made and the sheet closes", await until(60) { !importUI.importing && ui.busy == nil && model.photoImportRequest == nil && importUI.lastPosts.count == 2 })
     await wait(800)
     model.refreshNow()
     let pairMade = model.videos.filter { $0.isStill && !stillsBefore.contains($0.id) }
-    check("two new videos, one per photo, each with that audio", pairMade.count == 2 && Set(pairMade.map(\.id)) == Set(importUI.lastPosts)
-          && pairMade.allSatisfy { $0.still?.audioName == "Intro.wav" && abs($0.duration - 5) < 0.06 })
+    check("two new videos, one per photo, each with that audio, showing the whole photo", pairMade.count == 2 && Set(pairMade.map(\.id)) == Set(importUI.lastPosts)
+          && pairMade.allSatisfy { $0.still?.audioName == "Intro.wav" && abs($0.duration - 5) < 0.06 && $0.still?.fit == .whole })
     check("both are in Edit; nothing was sent to the Queue", pairMade.allSatisfy { ClipStage.of($0) == .edit && !$0.sentToQueue }
           && Set(model.queueClips.map(\.id)) == queueBefore.union([flyer.id]))
     check("the toast says 2 videos were added, with Open", model.toast?.message == "Added 2 videos to Edit" && model.toast?.actionTitle == "Open")
     check("the picked photos and audio are untouched", pair.map(PhotoImport.fingerprint) == pairPrints && [tone12, tone5, tone8].map(PhotoImport.fingerprint) == tonePrints)
     await shot("two-videos-in-edit")
+
+    // 10. A photo picked while videos are being made is added next (not left waiting for some later import).
+    do {
+      let one = try SampleData.photoFiles(store: store, count: 1, dir: scratch.appendingPathComponent("one-more"), offset: 9, name: "encore")
+      let late = try SampleData.photoFiles(store: store, count: 1, dir: scratch.appendingPathComponent("late"), offset: 11, name: "late")
+      note("stand-in: the import sheet's Add to Edit with audio chosen (model.importPhotos), then the photo picker during it (model.takePhotos)")
+      model.toast = nil
+      model.importPhotos(urls: one, audio: tone5, title: "Encore")
+      check("videos are being made", importUI.importing)
+      model.takePhotos(late)
+      check("a photo picked meanwhile is told it is next", importUI.waiting == late && model.toast?.message == "Still adding the last photos")
+      check("and it is added when the videos are done", await until(60) {
+        !importUI.importing && ui.busy == nil && importUI.waiting.isEmpty
+          && ((try? store.videos(where: "photos IS NOT NULL"))?.contains { $0.name.hasPrefix("late") } ?? false)
+      })
+      model.refreshNow()
+      check("both are in Edit: the video and the photo post", model.videos.contains { $0.isStill && $0.titleText == "Encore" && ClipStage.of($0) == .edit }
+            && model.videos.contains { $0.isPhoto && $0.name.hasPrefix("late") && ClipStage.of($0) == .edit })
+    } catch {
+      check("sample photos for the last step", false)
+    }
 
     note(failures == 0 ? "all passed" : "\(failures) failed")
     return failures == 0 ? 0 : 1

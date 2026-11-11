@@ -48,6 +48,7 @@ extension AppModel {
   /// Why `v` can't take a set time at all (nil = the dialog can open). What is still missing in Edit isn't a reason
   /// here: the dialog says it, in Send to Queue's words.
   func postAtBlocker(_ v: Video) -> String? {
+    if PhotoAudioUI.shared.busy == v.id { return PhotoAudioUI.busyReason }
     guard let stage = ClipStage.of(v) else { return StageWording.noStageReason(v) }
     if v.missing, stage == .edit { return StageWording.fileMissing }
     if let p = (postsByVideo[v.id] ?? []).filter({ ($0.kind == .regular || $0.kind == .retry) && $0.state == .posted })

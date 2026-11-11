@@ -178,6 +178,7 @@ extension AppModel {
   private func runUndo(_ id: String, confirmGoLive: Bool) {
     splitEditorSession()
     let label = undoHistory.entries.first { $0.batchId == id }?.label
+    let action = (try? bulk.batch(id: id))?.action
     undoHistory.remove(id)
     let finish: @Sendable (Result<BulkResult, Error>) -> Void = { out in
       DispatchQueue.main.async {
@@ -188,7 +189,7 @@ extension AppModel {
           // journaled by the split above), so closing the editor never re-applies what was just undone.
           if let s = self.editorSession { self.editorSession = (try? self.bulk.begin(s.action, ids: s.ids)) ?? s }
           // Round 23: an undone audio change turns the item into something else: its previews and an open editor follow.
-          self.audioUndone(r)
+          self.audioUndone(r, action: action)
           let left = r.summary.contains("plan left as it is") ? "plan left as it is"
             : r.skipped.values.allSatisfy { $0.hasSuffix("so its crop stays") } ? "their crops are locked" : "changed since"
           self.show(DSToastModel(message: r.changed.isEmpty && !r.skipped.isEmpty ? "Nothing undone" : label.map { "Undone: \($0)" } ?? "Undone",

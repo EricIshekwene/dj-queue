@@ -149,6 +149,19 @@ struct PhotoImportSheet: View {
       .frame(height: DS.size.controlMd)
       .dsSurface(DS.color.surfaceSunken, radius: DS.radius.sm, border: nil)
       .background(ScriptAnchor("Import audio \(audio?.lastPathComponent ?? "None")"))
+      // D12: once there is audio, how each photo sits in its video.
+      if audio != nil {
+        DSSegmented(selection: Binding(get: { request.fit }, set: { model.setImportFit($0) }),
+                    segments: StillSource.Fit.allCases.map { f in
+                      DSSegment(value: f, title: f.displayName,
+                                tooltip: f == .whole ? "Show the whole photo in each video, over a blurred copy of itself"
+                                  : "Let each photo fill its video. You pick the crop in the editor",
+                                disabledReason: ui.importing && f != request.fit ? "Making the videos…" : nil)
+                    }, size: .sm, fullWidth: true)
+          .background(ScriptAnchor("Import fit \(request.fit.rawValue)"))
+          .accessibilityLabel("How each photo sits in its video")
+        EditorHint(StillVideo.fitHint(request.fit))
+      }
     }
   }
 
@@ -183,7 +196,7 @@ struct PhotoImportSheet: View {
 
   private func add() {
     guard !ui.importing else { return }
-    if let audio { model.importPhotos(urls: request.files, audio: audio, title: title); return }
+    if let audio { model.importPhotos(urls: request.files, audio: audio, title: title, fit: request.fit); return }
     model.importPhotos(urls: request.files, mode: mode, title: title)
   }
 
