@@ -280,7 +280,15 @@ enum PhotoAudioScript {
     model.toast = nil
     model.setViewMode(.wide, for: .queue)
     model.screen = .queue
+    note("stand-in: the Queue's search field, set on the model, so its card is on screen among \(model.queueClips.count)")
+    ListPrefs.shared.setSearch(.queue, "Saturday flyer")
+    await wait(600)
+    if let v = model.video(flyer.id) {
+      let card = model.dsClip(v, for: .queue)
+      check("its Queue card says Photo + audio, with no score and no day yet", card.subtitle == "Photo + audio" && card.score == nil && card.noScoreHelp != nil)
+    }
     await shot("in-the-queue")
+    ListPrefs.shared.setSearch(.queue, "")
 
     // 6. The video renderer makes its post file.
     let renderer = Renderer(store: store)

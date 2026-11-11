@@ -39,7 +39,7 @@ public final class StillVideo: @unchecked Sendable {
   /// The made video: 30 fps H.264 (D5), one keyframe every `keyframeSeconds`.
   public static let fps = 30
   /// A still needs one real picture per keyframe and nothing between them, so the gap sets both the file's size and
-  /// how far a seek has to decode. Five seconds keeps a 3-minute 4K video near 20 MB and an exact frame under half a second.
+  /// how far a seek has to decode. Five seconds keeps a 3-minute 4K video near 25 MB (audio included) and an exact frame under half a second.
   public static let keyframeSeconds = 5
   /// The frame a photo is fitted into: 3840×2160 for a wide photo, 2160×3840 for a tall or square one. Never enlarged.
   public static let longSide = 3840, shortSide = 2160
