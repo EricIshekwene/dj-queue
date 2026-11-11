@@ -137,13 +137,14 @@ still self-healing-retrying $H/r22-inspector-retrying-light
 still self-healing-signin   $H/r22-posts-signin-light
 
 U=photo-audio
-# Round 23: photo with audio. The Audio row as a photo post gets its audio and the editor carries on as the clip
-# editor, then the fit switch (D12): the top of the inspector only (the Audio row is the point, and a capture taken
-# while the Mac is locked draws the player black). The import sheet with an audio file chosen, and a frame of the
-# rendered post: the whole photo over its blurred copy.
-CROP=iw*0.25:ih*0.56:iw*0.75:0 gif photo-audio $U/audio-03-photo-editor-audio-none-light $U/audio-05-making-the-video-overlay-light \
-                 $U/audio-04-clip-editor-with-audio-light $U/audio-14-audio-changed-light $U/audio-15-audio-removed-photo-editor-light
-CROP=iw*0.25:ih*0.56:iw*0.75:0 gif photo-audio-fit $U/audio-04-clip-editor-with-audio-light $U/audio-06-fill-the-frame-confirm-the-crop-light \
-                 $U/audio-07-whole-photo-nothing-to-fix-light
-still photo-audio-import $U/audio-17-import-sheet-with-audio-light
+# Round 23: photo with audio. The whole editor as a photo post gets its audio and carries on as the clip editor, then
+# the fit switch (D12) and the Crop field's Reset. Capture these on an unlocked Mac: a capture taken while it is locked
+# draws the player black. The import sheet with an audio file chosen, and a frame of the rendered post: the whole
+# photo over its blurred copy.
+gif photo-audio $U/audio-03-photo-editor-audio-none-light $U/audio-05-making-the-video-overlay-light \
+                 $U/audio-04-clip-editor-with-audio-light $U/audio-16-audio-changed-light $U/audio-17-audio-removed-photo-editor-light
+gif photo-audio-fit $U/audio-04-clip-editor-with-audio-light $U/audio-06-fill-the-frame-confirm-the-crop-light \
+                 $U/audio-07-whole-photo-nothing-to-fix-light $U/audio-08-whole-photo-zoomed-crop-with-reset-light \
+                 $U/audio-09-crop-reset-still-nothing-to-fix-light
+still photo-audio-import $U/audio-19-import-sheet-with-audio-light
 still photo-audio-whole  $U/render-frame-whole-at-2s-light

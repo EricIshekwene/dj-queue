@@ -210,11 +210,15 @@ djq photo audio <id> --remove [--json]                    # take the audio off: 
 - `fit` (`still.fit`): `whole` (the default) shows the whole photo in a 9:16 video over a blurred copy of itself; its
   crop is the whole frame, so there is no "No crop". `fill` makes the video at the photo's shape and Eric picks the
   9:16 crop in the editor ("No crop" until then). Don't change the fit unless Eric asks; a change resets the crop.
+  A `whole` video is always exactly 9:16; where New clip defaults ask for another shape its edit says `aspect` 9:16
+  itself. Leave that as it is.
 - Adding audio keeps the id, title, caption, hashtag groups and texts. The photo's crop, its shape and "shows on photos"
   ranges go (it is 9:16, and each text shows for the whole clip until timed), and YouTube is no longer forced off. A carousel is refused ("Audio goes on a post with one photo").
 - `photo audio` works only while the item is in Edit with no day and no post ("Send it back to Edit first"). Each
   change is one batch: `djq bulk undo <batch>`. No undo, forced or not, changes what a scheduled or posted item is
-  (photo post or video, which audio, which fit).
+  (photo post or video, which audio, which fit) or the posts planned for it: such an item is skipped with "It's
+  scheduled or posted now: send it back to Edit first", the batch's plan part is left as it is, and `--force` doesn't
+  help. Send it back to Edit, then undo again.
 - It needs no score, starts with no text, `{set}` and `{tag}` are empty, and `needs_title_help` is false: don't look up
   a song for it. With YouTube on and nothing to name it (no Title, no text on it, no typed YouTube title) it has the
   reason "No title" and stays in Edit: ask Eric for the title.

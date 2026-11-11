@@ -52,11 +52,11 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 
 **Photo with audio (v0.17.0).** Pick a photo and an audio file and DJ Queue makes a video of that photo, as long as the audio. The whole photo shows by default, in a 9:16 video over a blurred copy of itself, so a flyer or a square photo loses nothing; Fill the frame crops it like a clip instead. From then on it is a clip: the clip editor (trim, timed texts, cover, captions), the Queue with no score, the same loudness as every clip, and every platform a video posts to, YouTube Shorts included. Add audio from a photo post's editor or its ⋯ menu, or choose it in the import sheet and every photo becomes its own video. Change the audio or take it off again while nothing of it is scheduled; each step has Undo. The photo and the audio you picked are only read.
 
-| The Audio row — add audio and the editor carries on as the clip editor; change it or take it off again | Photos with audio in one go — each photo becomes its own video |
+| Add audio — the photo's editor carries on as the clip editor; change the audio or take it off again | Photos with audio in one go — each photo becomes its own video |
 |---|---|
-| ![The editor's Audio row: none, making the video, the audio's name and length, then changed and removed](docs/media/photo-audio.gif) | ![The import sheet with an audio file chosen for two photos](docs/media/photo-audio-import.jpg) |
-| **Whole photo or Fill the frame** — one switch under the audio; Fill asks for the crop, Whole has nothing to fix | **The post** — the whole photo over a blurred copy of itself, with a timed text |
-| ![Switching between Whole photo and Fill the frame in the editor](docs/media/photo-audio-fit.gif) | ![A frame of the rendered post: the whole photo across the middle of a 9:16 video](docs/media/photo-audio-whole.jpg) |
+| ![The editor as a photo post gets its audio: no audio yet, the video being made, the clip editor with the audio's name and length, then the audio changed and removed](docs/media/photo-audio.gif) | ![The import sheet with an audio file chosen for two photos](docs/media/photo-audio-import.jpg) |
+| **Whole photo or Fill the frame** — one switch under the audio; Fill asks for the crop, Whole has nothing to fix, also after zooming in and Crop's Reset | **The post** — the whole photo over a blurred copy of itself, with a timed text |
+| ![Switching between Whole photo and Fill the frame in the editor, then zooming the crop in and resetting it](docs/media/photo-audio-fit.gif) | ![A frame of the rendered post: the whole photo across the middle of a 9:16 video](docs/media/photo-audio-whole.jpg) |
 
 ## What it does
 

@@ -389,16 +389,20 @@ duration, fingerprint and size from the made file, source size = the video's pix
 **Files.** `Photos/Stills/<video id>/video.mp4` and DJ Queue's copy of the audio, `audio.m4a`: the AAC the video holds, never the picked file
 (the sound of an MP4 costs no more than a song). A later Change audio writes `video-2.mp4` / `audio-2.m4a` beside them, a fit change
 `video-3.mp4` only, and nothing is ever written over or deleted, so the undo of any audio change only points the row back at files that
-are still there (the same idea as a removed photo's copy staying in Originals). The picked files are only read. Leftovers of a make that
+are still there (the same idea as a removed photo's copy staying in Originals). A fit change back points the row at the video already
+made from this audio (`StillSource.other`, checked by probe first), so flipping the fit leaves two videos per audio. The picked files are only read. Leftovers of a make that
 was cut short (`work/still-*`, dot-files in `Stills/<id>/`) are swept by `checkFiles` once a day old.
 
 **Fit (D12).** `StillVideo.layout(width:height:fit:)`: `fill` is the photo's own shape (`frameSize`); `whole` is a 9:16 frame, 2160×3840 or
 smaller so the photo isn't enlarged (a multiple of 18 wide), with the photo fitted inside. The background is drawn once in the same ffmpeg
 graph, before the frame is repeated: the photo scaled to cover, cropped, `gblur` (sigma 40 at 2160 wide), darkened to 65 %, the photo
-overlaid centred. A photo within 1 % of 9:16 is made the same way for both. A `whole` video's crop is the whole frame: stored at make
-time, and `EditResolver` gives the same (confirmed) when the override is cleared, so `noCrop` is never raised and the renderer always has a
-crop. `setFit` makes the video again from the item's audio copy (`prepared(from:)`, a stream copy) and resets the crop; journal action
-`photo-audio-fit`.
+overlaid centred on an even pixel (`Layout.offset`: 4:2:0 shares a colour sample between two rows). The frame is exactly 9:16 for every
+photo; one within half a percent of it once fitted (`nearNineSixteen`) covers the frame with no background. A `whole` video's crop is the
+whole frame: stored at make time, and `EditResolver` gives the same (confirmed) when the override is cleared, so `noCrop` is never raised
+and the renderer always has a crop it takes. Where New clip defaults ask for another shape its edit says 9:16 itself (`aspectOverride`,
+set by add, a fit change and Change audio; cleared by `fill` and Remove audio). The editor reads the same resolved "confirmed"
+(`EditorModel.cropIsSet`, `liveIssues`). `setFit` makes the video again from the item's audio copy (`prepared(from:)`, a stream copy), or
+reuses the one made before, and resets the crop; journal action `photo-audio-fit`.
 
 **Making it (`StillVideo.make`).** Three ffmpeg steps, each with a timeout: the audio's first stream to AAC 256 kbps 48 kHz stereo in the work
 folder (its measured length is the video's length, since a header's can be an estimate); the photo, upright through ImageIO, at its own
@@ -429,7 +433,8 @@ for any length, where decoding 20 minutes of 4K took 104 s), and falls back to t
 fields) is set only for a made video, so every other journal compares and restores as before; `restoreStill` turns the row back either
 way. `StillVideo.blocker` is D3 and D9 in one place (one photo; in Edit, no plan slot, no post). `stillUndoLock(restoring:current:)` refuses
 any restore that would change what the item is (photo post or video, another audio, another fit) under a day or a post, force or not,
-whatever batch it comes from.
+whatever batch it comes from; such a skip also ties the batch's plan part (`planTied`), so none of the item's old slots or posts come
+back under what it is now, and the summary says "send it back to Edit, then undo again" instead of "use force".
 
 **API the UI calls.**
 - `StillVideo(store:).addAudio(to:audio:journal:progress:) -> Change{video, batchId}`: a one-photo post becomes a video in place (D2).
