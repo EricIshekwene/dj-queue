@@ -89,6 +89,25 @@ replaces the post instead, §5).
 | Threads | `threads` | — | none | 500 |
 | X | `x` | — (`who_can_reply_post` documented as required by the CLI, optional in the live schema) | `who_can_reply_post: "everyone"`, `post_type: "post"` | 280 (4000 only for X Premium accounts, decided at connect time) |
 
+**Photo posts (round 21, `PostizPayload.photoSpec`).** Same request, with one `image` entry per photo
+(`[{id, path}, …]`, posting order, no `thumbnailTimestamp`, no thumbnail upload). Each photo is uploaded once per
+render as `image/jpeg` and cached in `postiz_media` as `photo1`, `photo2`, …. The photos go up before the post is
+claimed, as many as the hourly budget allows, and the post is created once every photo is cached: a carousel larger than
+an hour's budget (TikTok takes 35, the default budget is 25) finishes in the next hour, and the posts behind it aren't
+held up by it. A carousel longer than a platform takes sends its first photos there. Instagram takes photos from 4:5 to
+1.91:1 only, so a 9:16 photo post can't be sent to the Queue while Instagram is on for it (DECISIONS-R21 D20).
+
+| DJ Queue | Photos per post | Settings sent for a photo post |
+|---|---|---|
+| Instagram | 10 | `post_type: "post"` (a feed post; a carousel with several). No `is_trial_reel`. |
+| TikTok | 35 | The video keys without `video_made_with_ai`: `content_posting_method` (Eric's setting; `UPLOAD` in a test run), `privacy_level`, `duet`, `stitch`, `comment`, `autoAddMusic: "no"` (never a library track), the brand toggles, `title` = the Title. |
+| Facebook | 10 | `post_type: "post"`, no `title`. |
+| Threads | 20 | none |
+| X | 4 | `who_can_reply_post`, `post_type: "post"` |
+| YouTube Shorts | 0 | Never sent: a photo post has no YouTube post, and asking for its payload is an error. |
+
+Test run is as for videos: Instagram, Facebook, Threads and X become drafts, TikTok goes to the inbox.
+
 Notes that shape the build:
 - **TikTok `UPLOAD`** doesn't publish: the video lands in the TikTok app inbox, must be finished there within 24 h, and
   every setting except `title` is dropped. Postiz still reports it `PUBLISHED`. TikTok Business has **no privacy field for

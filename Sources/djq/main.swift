@@ -23,6 +23,7 @@ usage: djq <command> [args]
   videos [--stage S] [--state S] [--repost-ready] [--json]   clips (stage: score edit queue scheduled posted; state: a stored state, unscored, scored, needs-edit, repost-ready, all)
   video <video> [--json]              one clip: title, suggestions, edit (+resolved), versions, captions, posts
   defaults [--json]                   new clip defaults (Settings → New clip defaults)
+  photo add <file>… [--separate] [--title "<t>"] [--json] | photo list [--json]   photo posts (djq photo help)
 
   title <video> "<title>" | --clear   set Eric's title (agents: prefer suggest)
   suggest [<video>] --file <json>     add title and/or on-video text suggestions
@@ -243,10 +244,11 @@ func run() throws -> Int32 {
   }
   // Round 7 (C7): help, usage and unknown commands never open (or migrate) the database.
   if args.contains("--help") || args.contains("-h") || (args.first == "help" && cmd != "bulk") {
-    print(cmd == "postiz" ? PostizCommand.usage : usage); return 0
+    print(cmd == "postiz" ? PostizCommand.usage : cmd == "photo" ? PhotoCommand.usage : usage); return 0
   }
   if cmd == "postiz" && args.isEmpty { print(PostizCommand.usage); return 0 }
-  guard knownCommands.contains(cmd) else { throw CLIError("unknown command \(cmd)\n\n\(usage)") }
+  if cmd == "photo" && args.isEmpty { print(PhotoCommand.usage); return 0 }
+  guard knownCommands.contains(cmd) || cmd == PhotoCommand.name else { throw CLIError("unknown command \(cmd)\n\n\(usage)") }
   let store = try Store(paths: paths)
   let settings = try store.settings()
   let dm = DayMath(settings: settings)
@@ -392,6 +394,9 @@ func run() throws -> Int32 {
       for (p, c) in d.captions.sorted(by: { $0.key < $1.key }) where c != shared { print("  caption for \(p): \(Captions.oneLine(c))") }
     }
     for i in d.issues { print("  issue  \(i.message)") }
+
+  case PhotoCommand.name:
+    return try PhotoCommand.run(store, &wrote)
 
   case "defaults":
     if flag("--json") { try printJSON(settings.defaults); return 0 }

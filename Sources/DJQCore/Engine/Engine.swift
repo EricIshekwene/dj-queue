@@ -279,7 +279,8 @@ public final class Engine: @unchecked Sendable {
     guard let ps = proxyService else { return "off" }
     guard ctx.rendered == 0, ctx.rendersWaiting == 0, !isRendering else { return "waiting for renders" }
     let rank: [VideoState: Int] = [.needsEdit: 1, .ready: 2, .planned: 2]
-    let vids = try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND state IN ('needs_edit','ready','planned')")
+    // Photo posts have no preview video (round 21).
+    let vids = try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND photos IS NULL AND state IN ('needs_edit','ready','planned')")
       .sorted { a, b in
         let ra = a.score == nil ? 0 : rank[a.state] ?? 3, rb = b.score == nil ? 0 : rank[b.state] ?? 3
         return (ra, a.part ?? 0, a.start ?? 0, a.id) < (rb, b.part ?? 0, b.start ?? 0, b.id)
@@ -468,19 +469,43 @@ public final class Engine: @unchecked Sendable {
   func moveAndCleanup() throws -> String {
     let settings = try store.settings()
     let fm = FileManager.default
-    var moved = 0, deleted = 0, unneeded = 0
+    var moved = 0, deleted = 0, unneeded = 0, stuck = 0
+    var stuckWhy: String?
+    let waiting = "/Ready to Post/Shortform/"
     for r in try store.renders(where: "deleted_at IS NULL AND status='done' AND output_path IS NOT NULL") {
-      guard let out = r.outputPath, out.contains("/Ready to Post/Shortform/") else { continue }
+      // Any file still in Ready to Post (round 21: a photo post has several, and a move that failed part-way is
+      // picked up again here on the next tick).
+      guard let out = r.outputPath, (r.allPaths + [r.coverPath].compactMap { $0 }).contains(where: { $0.contains(waiting) }) else { continue }
       let users = try store.posts(where: "render_id=?", [r.id])
       guard !users.isEmpty, users.allSatisfy({ $0.state.isTerminal }) else { continue }
       let open = try store.posts(where: "video_id=? AND version_no=?", [r.videoId, r.versionNo]).filter { !$0.state.isTerminal }
       guard open.isEmpty else { continue }
-      let newOut = try moveToPosted(out)
-      var newCover = r.coverPath
-      if let c = r.coverPath, c.contains("/Ready to Post/Shortform/") { newCover = try moveToPosted(c) }
-      try store.setRenderOutput(id: r.id, outputPath: newOut, coverPath: newCover)
-      try store.logEvent("move", "Moved \(URL(fileURLWithPath: out).lastPathComponent) → Posted/Shortform", videoId: r.videoId)
-      moved += 1
+      // Every file first (one that can't move stays where it is and is tried again), then both columns together.
+      var failures: [String] = [], changed = false
+      func move(_ path: String) -> String {
+        guard path.contains(waiting) else { return path }
+        do {
+          let new = try moveToPosted(path)
+          if new != path { changed = true }
+          return new
+        } catch {
+          failures.append("\(URL(fileURLWithPath: path).lastPathComponent): \(error.localizedDescription)")
+          return path
+        }
+      }
+      let newOut = move(out)
+      let newCover = r.coverPath.map(move)
+      let newMore = r.morePaths.map { $0.map(move) }
+      if changed {
+        try store.setRenderFiles(id: r.id, outputPath: newOut, coverPath: newCover, morePaths: newMore)
+        try store.logEvent("move", "Moved \(URL(fileURLWithPath: out).lastPathComponent) → Posted/Shortform", videoId: r.videoId)
+        moved += 1
+      }
+      if !failures.isEmpty {
+        stuck += failures.count
+        stuckWhy = stuckWhy ?? failures[0]
+        Log.shared.warn("move to Posted: \(failures.joined(separator: " | "))")
+      }
     }
     if case .deleteAfter(let days) = settings.cleanup {
       let cutoff = store.clock.now.addingTimeInterval(-Double(days) * 86400)
@@ -488,7 +513,8 @@ public final class Engine: @unchecked Sendable {
         let users = try store.posts(where: "render_id=?", [r.id])
         guard !users.isEmpty, users.allSatisfy({ $0.state.isTerminal }),
               (users.map { $0.postedAt ?? $0.updatedAt }.max() ?? .distantFuture) < cutoff else { continue }
-        for path in [r.outputPath, r.coverPath].compactMap({ $0 }) where path.contains("/Posted/Shortform/") {
+        for path in r.allPaths + [r.coverPath].compactMap({ $0 })
+        where path.contains("/Posted/Shortform/") && store.paths.owns(URL(fileURLWithPath: path)) {
           try? fm.removeItem(atPath: path)
         }
         try store.markRenderDeleted(id: r.id)
@@ -501,7 +527,13 @@ public final class Engine: @unchecked Sendable {
       try renderer.deleteRenders(except: keep)
       unneeded = before - (try store.renders().count)
     }
-    return "moved \(moved)\(deleted > 0 ? " · deleted \(deleted)" : "")\(unneeded > 0 ? " · unneeded \(unneeded)" : "")"
+    let summary = "moved \(moved)\(deleted > 0 ? " · deleted \(deleted)" : "")\(unneeded > 0 ? " · unneeded \(unneeded)" : "")"
+    // A file that couldn't move is a tick error, as it always was (`djq tick` exits 1); the other renders, the cleanup
+    // and the sweep above still ran, and the file is tried again on the next tick.
+    if stuck > 0 {
+      throw EngineError("\(summary) · \(stuck) file\(stuck == 1 ? "" : "s") still to move to Posted (\(stuckWhy ?? "unknown"))")
+    }
+    return summary
   }
 
   /// Renders referenced by any live or posted post, current renders for scheduled posts within the horizon, renders
@@ -537,6 +569,8 @@ public final class Engine: @unchecked Sendable {
   func moveToPosted(_ path: String) throws -> String {
     let fm = FileManager.default
     let src = URL(fileURLWithPath: path)
+    // Only files under this store's root are ever moved (round 21): a path a copied database names elsewhere stays put.
+    guard store.paths.owns(src) else { return path }
     let session = src.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let dir = session.appendingPathComponent("Posted/Shortform")
     try fm.createDirectory(at: dir, withIntermediateDirectories: true)

@@ -38,6 +38,25 @@ public enum AgentAPI {
     public var text_suggestion_count: Int = 0
     /// Round 20: the versions Eric marked ready to repost, in order (empty = none).
     public var repost_ready_versions: [Int] = []
+    /// Round 21: "video", or "photo" for a photo post (one photo or a carousel). A photo post has `duration` 0, needs
+    /// no score and never posts to YouTube Shorts.
+    public var media: String = "video"
+    /// Round 21: a photo post's photos in posting order (empty for a video). The first is the cover.
+    public var photos: [PhotoOut] = []
+  }
+
+  /// Round 21: one photo of a photo post. `id` stays the same when the order changes.
+  public struct PhotoOut: Codable, Sendable {
+    public var id: String
+    /// The file's name inside DJ Queue's own Photos folder (the original Eric picked is never touched).
+    public var file: String
+    /// Upright pixel size.
+    public var width: Int
+    public var height: Int
+  }
+
+  public static func photos(_ v: Video) -> [PhotoOut] {
+    (v.photos ?? []).map { PhotoOut(id: $0.id, file: URL(fileURLWithPath: $0.file).lastPathComponent, width: $0.width, height: $0.height) }
   }
 
   public struct SuggestionOut: Codable, Sendable {
@@ -137,6 +156,8 @@ public enum AgentAPI {
       public var display_name: String
       public var score: Int?
       public var posts: [PostOut]
+      /// Round 21: the moment of a set-time slot (its `position` is then 100 or above). Absent on a regular slot.
+      public var exact_at: Date?
     }
     public var week_start: String
     public var state: String
@@ -165,7 +186,8 @@ public enum AgentAPI {
       issues: issues.map(\.message), held_in_edit: v.heldInEdit, sent_to_queue: v.sentToQueue, stage: ClipStage.of(v)?.rawValue,
       reasons: ClipStage.of(v) == .edit ? issues.sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText) : [],
       text_suggestion_count: try store.suggestionCount(.text, videoId: v.id),
-      repost_ready_versions: v.type == .short ? ((try? store.repostReadyVersions(videoId: v.id)) ?? []) : [])
+      repost_ready_versions: v.type == .short ? ((try? store.repostReadyVersions(videoId: v.id)) ?? []) : [],
+      media: v.isPhoto ? "photo" : "video", photos: photos(v))
   }
 
   static func suggestion(_ s: TitleSuggestion) -> SuggestionOut {
@@ -204,11 +226,11 @@ public enum AgentAPI {
     if let r1, v.type == .short {
       let session = try store.session(id: v.sessionId)?.name ?? ""
       let sets = try store.hashtagSets(), templates = try store.captionTemplates()
-      for p in settings.activePlatforms {
+      for p in settings.activePlatforms where !v.isPhoto || p.supportsPhotos {
         captions[p.rawValue] = Captions.caption(for: p, version: r1, video: v, sessionName: session, sets: sets,
                                                 templates: templates, settings: settings)
       }
-      yt = Captions.youtubeTitle(r1, video: v, settings: settings)
+      if !v.isPhoto { yt = Captions.youtubeTitle(r1, video: v, settings: settings) }  // a photo post never goes to YouTube
     }
     let trim = try store.resolvedEdit(videoId: id, settings: settings).trim()
     return VideoDetail(
@@ -233,7 +255,7 @@ public enum AgentAPI {
         let v = try store.video(id: s.videoId)
         return WeekOut.SlotOut(slot_id: s.id, position: s.position, pinned: s.pinned, video_id: s.videoId,
                                display_name: v?.displayName ?? s.videoId, score: v?.score,
-                               posts: try store.posts(where: "plan_slot_id=?", [s.id]).map(post))
+                               posts: try store.posts(where: "plan_slot_id=?", [s.id]).map(post), exact_at: s.exactAt)
       })
     }
     return WeekOut(week_start: weekStart, state: w.state.rawValue, approved_at: w.approvedAt, days: days)

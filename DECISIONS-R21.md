@@ -93,6 +93,12 @@ template is empty for a photo post. *Why:* "Photos" is a storage folder, not a n
 
 **D19. Test mode behaves as it does for clips** (drafts where the platform has them, TikTok to the inbox).
 
+**D20. A 9:16 photo post can't go to Instagram, and DJ Queue says so before the Queue.** Instagram's publishing API takes photos only
+from 4:5 to 1.91:1, so 4:5, 1:1 and 16:9 are fine everywhere and 9:16 is refused there. A 9:16 photo post with Instagram on has the issue
+"Instagram takes photos from 4:5 to 16:9 — pick another shape or turn Instagram off for this post" (`photoShape`, fixed in Frame), the
+aspect picker and Instagram's row say it too, and Send to Queue leaves the post in Edit until one of the two is done. *Why:* otherwise it
+fails at publish time, on a day Eric isn't looking, with the other four platforms already out.
+
 ## Not in this round
 
 - Photo reposts and versions (D16).
@@ -128,3 +134,62 @@ template is empty for a photo post. *Why:* "Photos" is a storage folder, not a n
 - **The preview runs the real thing in a transaction and rolls it back.** A second copy of the rules would drift.
 - **`UnplanItem.setTime` is new and `pinned` stays true for a set-time slot.** Existing words still read right; the UI can say "set time 3:15 PM" instead of "pinned".
 - **`djq week --json` slots don't carry `exact_at` yet.** `AgentAPI.WeekOut.SlotOut` is in the photo builder's file this round; `position` 100 or more marks a set time there and `djq video --json` has `plan[].exactAt`. Two lines to add at integration.
+
+## Decisions made while building (core photos)
+
+- **A post holds at most 35 photos** (`PhotoRules.maxPerPost`), and files past that are skipped with the reason. *Why:* 35 is the largest
+  platform cap (TikTok), so a 36th photo could never be posted anywhere.
+- **A photo post's name is made unique** ("IMG_1234", then "IMG_1234 2"). *Why:* renders are named after the post, and two imports of the
+  same file name would overwrite each other's files in Ready to Post.
+- **Removing a photo keeps DJ Queue's copy in `Originals/`.** *Why:* undo has to bring the photo back, and the copy is small.
+- **Append, remove and reorder are journal entries** (`photo-add`, `photo-remove`, `photo-reorder`), and an open editor session records them
+  with its other changes (`ClipSnap.photos`). *Why:* the journal is how every single-clip edit gets undo; no second undo system.
+- **YouTube is kept off in three places** (read, save, resolve), not one. *Why:* the planner reads raw edits, and an old journal entry or a
+  restore could write a row without the skip; reading it back with the skip makes that harmless.
+- **A stored crop that doesn't fit the post's aspect is ignored**, not cleared. *Why:* changing 4:5 to 1:1 and back keeps Eric's 4:5 crops,
+  and nothing is ever stretched.
+- **A photo with no text never raises "No text"**, also when "No text" was switched off with nothing typed. *Why:* D7 says most photos
+  want no text; a blank text draws nothing, so there is nothing to fix.
+- **`{text}` falls back to the Title only and `{tag}` is empty for a photo post.** *Why:* a photo's tag is its file name, and "IMG_1234"
+  must never reach a caption.
+- **TikTok photo posts follow Eric's posting-method setting** (Direct post by default, inbox in a test run), with `autoAddMusic: "no"`
+  always. *Why:* D10 is about the music; sending photos public while Eric set TikTok to the inbox would surprise.
+- **Clearing a photo's score doesn't take it out of the Queue.** *Why:* it never needed one.
+- **`photos.missing` is its own Doctor finding** rather than part of `files.missing`. *Why:* the fix differs (no relink by fingerprint; put
+  the copy back or remove the photo).
+- **One new issue kind, `noPhotos`**, for a post row with an empty photo list (it can't be made through the app). Two existing tests list
+  every kind on purpose and gained that case: `R7CaptionTests.everyIssueKindMapsDeliberately` and the count in `R4StageTests`.
+- **`PhotoItem.fingerprint`** was added to the foundation model (optional). *Why:* the render hash needs each photo's content identity
+  without re-reading files on every tick.
+- **Agents' `djq photo add` sets `title_source: "agent"`**, the app's import `"app"`.
+- **`renders.more_paths` is stored with plain slashes** (`JSONCoding.pathList`), and `scripts/live-checks.sh` now also rewrites and checks
+  the JSON-escaped form of the real root. *Why:* the live checks run on a copy of Eric's database with every stored path pointed at the
+  dev root by text replacement; an escaped path (`\/a\/b`) slipped through both the replacement and its check, and the scratch
+  engine would then have moved or deleted Eric's real rendered photos.
+
+### After the review (reviews/core-photos.md)
+
+- **A photo render's file name carries the post id** ("<name> – v1 – a1b2c3d4 – 01.jpg"), and post names are compared as file names
+  (case, ":" and "/"). *Why:* "Flyer" and "flyer" were two names and one file, so one post went out with the other's photo.
+- **A carousel's photos are uploaded ahead of the Postiz claim, as the hourly budget allows; the post is created when all are up.** The
+  earliest slot takes the budget first, and a post that waits doesn't stop the ones behind it. *Why:* 30 photos never fitted the default
+  25 calls an hour, so nothing was uploaded, ever, and every later create waited behind it.
+- **Nothing outside the store's root is moved or deleted, and photo paths come from `Paths.photos`**, not the session row. *Why:* path
+  safety rested on a text rewrite of the database copy; now a dev process can't reach a real file whatever the copy says.
+- **With YouTube on its own sort order, YouTube takes its own next clip on a photo's slot** (the existing override behaviour, never the
+  photo); without an override that day's YouTube position stays empty.
+- **Clips keep their old order on a tie in Edit**; only photos tie-break by import time.
+- **`scripts/seed-paths.sh`** holds the path rewrite `live-checks.sh` used to do inline, so a test can run it on a made-up database.
+- **Two tests that list every issue kind gained `photoShape`** (`R7CaptionTests.everyIssueKindMapsDeliberately`, the count in `R4StageTests`).
+
+### After the second review (reviews/core-photos-2.md)
+
+- **A path is inside the root as written or after resolving symlinks.** *Why:* resolving only stopped a clip's render from being moved or
+  cleaned when its Ready to Post folder is a link to another drive, which worked before. Given up: a dev root holding a folder link into
+  the real root would be managed (`make-devroot.sh` makes only real folders and file links).
+- **A file that can't move to Posted is a tick error again**, raised after the other renders, the cleanup and the sweep have run.
+- **Photo uploads take a per-render lock**, and a failing upload leaves a closed job with the error and one event, like a clip's.
+- **`seed-paths.sh` fails closed**: an unreadable or empty database is an error, and every column is rewritten and checked, in plain,
+  JSON-escaped and `%20` forms.
+- **Not changed:** photo renders made under the first file naming of this branch (dev and test data only; the day-old sweep removes them),
+  and the "budget used up" wording after a 429 (the same sentence clips get; changing it changes clips).

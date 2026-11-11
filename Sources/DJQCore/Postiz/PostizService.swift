@@ -311,6 +311,7 @@ public final class PostizService: @unchecked Sendable {
   /// The engine's `publish` step: reconcile every open job (deletes first), then submit every Postiz-routed post that
   /// is due for submission (render attached, slot within the render horizon, its clip + platform not blocked).
   public func publish() throws -> String {
+    uploadFailed = []
     let settings = try store.settings()
     let open = try store.openPostizJobs()
     try sweepSettling()  // also while Postiz is off, so no pending-change row outlives its job
@@ -381,6 +382,7 @@ public final class PostizService: @unchecked Sendable {
           case .created: created += 1
           case .rejected: rejected += 1
           case .skipped: break
+          case .waiting: waiting += 1
           }
         } catch {
           failed += 1
@@ -465,7 +467,24 @@ public final class PostizService: @unchecked Sendable {
     try store.logEvent("postiz", "Removed from Postiz (\(why))", videoId: j.videoId, postId: j.postId)
   }
 
-  enum SubmitOutcome { case created, rejected, skipped }
+  /// Renders whose photo upload failed in this publish pass: their other platform posts wait for the next one rather
+  /// than spend a call each on the same failure.
+  var uploadFailed: Set<String> = []
+
+  /// The lock a process holds while it uploads a render's photos ahead of the claim (`flock`, released by the kernel if
+  /// the process dies), so the app's engine and a `djq tick` never upload the same photos at once.
+  func uploadLock(_ renderId: String) throws -> Int32? {
+    try FileManager.default.createDirectory(at: store.paths.work, withIntermediateDirectories: true)
+    let fd = open(store.paths.work.appendingPathComponent("postiz-upload-\(renderId).lock").path, O_CREAT | O_RDWR, 0o644)
+    guard fd >= 0 else { throw EngineError("Can't open the upload lock for render \(renderId) (errno \(errno))") }
+    if flock(fd, LOCK_EX | LOCK_NB) == 0 { return fd }
+    close(fd)
+    return nil
+  }
+
+  /// `waiting`: a photo post whose photos don't all fit this hour's budget yet. What fitted is uploaded and cached;
+  /// the next tick carries on, and the posts behind it are still tried.
+  enum SubmitOutcome { case created, rejected, skipped, waiting }
 
   /// Test hook: runs right after Postiz answered a create, before DJ Queue records it (simulates a crash or a
   /// database error at the worst moment).
@@ -496,30 +515,72 @@ public final class PostizService: @unchecked Sendable {
     } catch {
       return .skipped  // e.g. the render file isn't there yet
     }
-    let cachedVideo = try store.postizMedia(renderId: spec.renderId, kind: "video")
+    // A photo post uploads one file per photo (round 21), each cached per render like the video is.
+    let kinds = Self.mediaKinds(spec)
+    var cachedMedia = try kinds.map { try store.postizMedia(renderId: spec.renderId, kind: $0.kind) }
     let cachedCover = spec.uploadsCover ? try store.postizMedia(renderId: spec.renderId, kind: "cover") : nil
-    let needed = 1 + (cachedVideo == nil ? 1 : 0) + (spec.uploadsCover && cachedCover == nil ? 1 : 0)
-    let budget = try store.postizBudget()
-    guard !budget.isPaused(now: now),
-          budget.remaining(now: now, limit: settings.publishing.hourlyBudget) - PostizCallKind.create.reserve >= needed else {
-      throw PostizError.overBudget
-    }
     let date = try remoteDate(for: p.scheduledAt, platform: p.platform, integrationId: integrationId)
     var job = PostizJob(postId: p.id, videoId: p.videoId, platform: p.platform, integrationId: integrationId,
                         renderId: spec.renderId, contentHash: spec.contentHash, scheduledAt: p.scheduledAt, remoteDate: date,
                         testMode: spec.testMode, postType: spec.type, createdAt: now, updatedAt: now)
     job.lineage = PostizJob.lineage(p)
     job.content = spec.content
-    guard try store.claimPostizJob(job) else { return .skipped }  // another process, or the lineage is blocked
     let c = client(settings)
-    var video: PostizMedia, cover: PostizMedia?
+    func room() throws -> Int {
+      let b = try store.postizBudget()
+      if b.isPaused(now: now) { throw PostizError.overBudget }  // after a 429: nothing is sent, for any post
+      return b.remaining(now: now, limit: settings.publishing.hourlyBudget) - PostizCallKind.create.reserve
+    }
+    if spec.isPhotoPost {
+      // A carousel can need more uploads than an hour allows (TikTok takes 35, the default budget is 25), so its photos
+      // go up ahead of the claim, as many as fit: an upload is cached per render and never repeated, and without a
+      // claim nothing can be half sent. The create waits until every photo is up. One process at a time uploads a
+      // render's photos (another waits for its next tick), and each photo is looked up again right before it goes.
+      if uploadFailed.contains(spec.renderId) { return .waiting }
+      guard let lock = try uploadLock(spec.renderId) else { return .waiting }
+      defer { flock(lock, LOCK_UN); close(lock) }
+      for (i, k) in kinds.enumerated() where cachedMedia[i] == nil {
+        cachedMedia[i] = try store.postizMedia(renderId: spec.renderId, kind: k.kind)
+        if cachedMedia[i] != nil { continue }
+        guard try room() >= 1 else { return .waiting }
+        do {
+          _ = try upload(k.path, k.kind, spec.renderId, c, settings)
+          cachedMedia[i] = try store.postizMedia(renderId: spec.renderId, kind: k.kind)
+        } catch let e as PostizError {
+          switch e {
+          case .overBudget: return .waiting
+          case .validation, .payloadTooLarge:
+            guard try store.claimPostizJob(job) else { return .skipped }
+            if case .validation(let m) = e { try reject(job, p, m, settings) } else { try reject(job, p, "a photo is too large for Postiz", settings) }
+            return .rejected
+          default:
+            // Reported the way a video's failed upload is: a closed job row that carries the error, and the publish
+            // step counts it failed. Plus one line in the post's history per kind of failure, so the reason is on record.
+            uploadFailed.insert(spec.renderId)
+            if try store.claimPostizJob(job) { try store.closePostizJob(id: job.id, reason: .interrupted, note: "\(e)") }
+            if try store.markNotified("postiz.uploadRetry:\(p.id):\(spec.renderId):\(Self.failureKind(e))") {
+              try store.logEvent("postiz", "\(p.platform.displayName): couldn't upload photo \(i + 1) to Postiz (\(e)) — trying again on the next tick",
+                                 videoId: p.videoId, postId: p.id)
+            }
+            throw e
+          }
+        }
+      }
+      guard try room() >= 1 else { return .waiting }
+    }
+    let needed = 1 + cachedMedia.filter { $0 == nil }.count + (spec.uploadsCover && cachedCover == nil ? 1 : 0)
+    guard try room() >= needed else { throw PostizError.overBudget }
+    guard try store.claimPostizJob(job) else { return .skipped }  // another process, or the lineage is blocked
+    var media: [PostizMedia] = [], cover: PostizMedia?
     do {
-      video = try cachedVideo.map { PostizMedia(id: $0.mediaId, path: $0.mediaPath) } ?? upload(spec.renderPath, "video", spec.renderId, c, settings)
+      for (k, cached) in zip(kinds, cachedMedia) {
+        media.append(try cached.map { PostizMedia(id: $0.mediaId, path: $0.mediaPath) } ?? upload(k.path, k.kind, spec.renderId, c, settings))
+      }
       if spec.uploadsCover, let cp = spec.coverPath {
         cover = try cachedCover.map { PostizMedia(id: $0.mediaId, path: $0.mediaPath) } ?? upload(cp, "cover", spec.renderId, c, settings)
       }
-      job.mediaId = video.id
-      job.mediaPath = video.path
+      job.mediaId = media[0].id  // a photo post's job carries its first photo
+      job.mediaPath = media[0].path
       job.coverMediaId = cover?.id
       job.coverMediaPath = cover?.path
       job.submittedAt = now  // persisted BEFORE the create: from here on the outcome may be "unknown"
@@ -534,9 +595,15 @@ public final class PostizService: @unchecked Sendable {
       try store.closePostizJob(id: job.id, reason: .interrupted, note: "\(error)")
       throw error
     }
+    // A photo render's files are replaced in place: if another process re-rendered while these went up, the media may
+    // be a mix of the two. Nothing is created from a render that is no longer the live one.
+    if spec.isPhotoPost, try store.render(id: spec.renderId).map({ $0.deletedAt != nil || $0.status != .done }) ?? true {
+      try store.closePostizJob(id: job.id, reason: .interrupted, note: "the render was replaced while its photos uploaded")
+      return .skipped
+    }
     let created: [PostizCreated]
     do {
-      created = try call(.create, settings) { try c.createPost(spec.body(date: date, video: video, cover: cover)) }
+      created = try call(.create, settings) { try c.createPost(spec.body(date: date, media: media, cover: cover)) }
       try afterCreateHook?()
     } catch let e as PostizError {
       switch e {
@@ -605,9 +672,16 @@ public final class PostizService: @unchecked Sendable {
                        videoId: job.videoId, postId: job.postId)
   }
 
+  /// What a spec uploads as its media, in order, with the `postiz_media` kind each is cached under: "video", or
+  /// "photo1", "photo2", … for a photo post.
+  static func mediaKinds(_ spec: PostizPostSpec) -> [(kind: String, path: String)] {
+    spec.isPhotoPost ? spec.photoPaths.enumerated().map { ("photo\($0.offset + 1)", $0.element) } : [("video", spec.renderPath)]
+  }
+
   func upload(_ path: String, _ kind: String, _ renderId: String, _ c: PostizClient, _ settings: Settings) throws -> PostizMedia {
     let url = URL(fileURLWithPath: path)
-    let mime = kind == "cover" ? (url.pathExtension.lowercased() == "png" ? "image/png" : "image/jpeg") : "video/mp4"
+    let mime = kind.hasPrefix("photo") ? "image/jpeg"
+      : kind == "cover" ? (url.pathExtension.lowercased() == "png" ? "image/png" : "image/jpeg") : "video/mp4"
     var m = try call(.create, settings) { try c.upload(file: url, mimeType: mime) }
     if m.status == "processing" {
       // Short wait for processing media (each check is a budgeted call; give up after three).
@@ -1129,16 +1203,20 @@ public final class PostizService: @unchecked Sendable {
     let settings = try store.settings()
     guard let v = try store.video(id: videoId) else { throw EngineError("No video \(videoId)") }
     guard let r = try store.renders(where: "deleted_at IS NULL AND status='done' AND video_id=? AND version_no=1", [videoId])
-      .last(where: { $0.outputPath.map { FileManager.default.fileExists(atPath: $0) } ?? false }) else {
+      .last(where: { !$0.allPaths.isEmpty && $0.allPaths.allSatisfy { FileManager.default.fileExists(atPath: $0) } }) else {
       throw EngineError("\(v.tag) has no finished render — run `djq render \(videoId)` first")
     }
     let cache: PostizChannelCache? = try store.kv(PostizChannelCache.kvKey)
     let date = now.addingTimeInterval(86400)
     var out = PostizTestRun(videoId: videoId, renderId: r.id, draft: draft, platforms: [])
     let c = client(settings)
-    var video: PostizMedia?
+    var uploaded: [String: PostizMedia] = [:]  // by media kind, so each file goes up once for all platforms
     for p in Platform.allCases.sorted() {
       let id = settings.publishing.channels[p]
+      if v.isPhoto, !p.supportsPhotos {  // round 21 (D8): never asked for a payload
+        out.platforms.append(.init(platform: p, channelId: id, body: "", postizId: nil, skipped: PhotoRules.youtubeReason))
+        continue
+      }
       let provider = cache?.integrations.first { $0.id == id }?.identifier ?? PostizPlatforms.provider(p)
       let post = PlatformPost(id: "test-\(p.rawValue)", videoId: videoId, platform: p, versionNo: 1, attemptNo: 0, kind: .regular,
                               planSlotId: nil, scheduledAt: date, renderId: r.id, state: .rendered, publisher: "postiz",
@@ -1148,24 +1226,32 @@ public final class PostizService: @unchecked Sendable {
                                         provider: provider)
       if draft { spec.type = "draft" }
       var row = PostizTestRun.Row(platform: p, channelId: id, body: "", postizId: nil, skipped: nil)
+      let kinds = Self.mediaKinds(spec)
       if !draft {
-        row.body = Self.pretty(spec.body(date: date, video: PostizMedia(id: "<uploaded media id>", path: "<uploaded media path>"),
+        let placeholders = kinds.count == 1 ? [PostizMedia(id: "<uploaded media id>", path: "<uploaded media path>")]
+          : kinds.indices.map { PostizMedia(id: "<uploaded photo \($0 + 1) id>", path: "<uploaded photo \($0 + 1) path>") }
+        row.body = Self.pretty(spec.body(date: date, media: placeholders,
                                          cover: spec.uploadsCover ? PostizMedia(id: "<uploaded cover id>", path: "<uploaded cover path>") : nil))
         if id == nil { row.skipped = "no Postiz channel picked" }
         out.platforms.append(row)
         continue
       }
       guard id != nil else { row.skipped = "no Postiz channel picked"; out.platforms.append(row); continue }
-      if video == nil {
-        video = try store.postizMedia(renderId: r.id, kind: "video").map { PostizMedia(id: $0.mediaId, path: $0.mediaPath) }
-          ?? upload(spec.renderPath, "video", r.id, c, settings)
+      var media: [PostizMedia] = []
+      for k in kinds {
+        if uploaded[k.kind] == nil {
+          uploaded[k.kind] = try store.postizMedia(renderId: r.id, kind: k.kind).map { PostizMedia(id: $0.mediaId, path: $0.mediaPath) }
+            ?? upload(k.path, k.kind, r.id, c, settings)
+        }
+        media.append(uploaded[k.kind]!)
       }
+      let video = media.first
       var cover: PostizMedia?
       if spec.uploadsCover, let cp = spec.coverPath {
         cover = try store.postizMedia(renderId: r.id, kind: "cover").map { PostizMedia(id: $0.mediaId, path: $0.mediaPath) }
           ?? upload(cp, "cover", r.id, c, settings)
       }
-      let body = spec.body(date: date, video: video!, cover: cover)
+      let body = spec.body(date: date, media: media, cover: cover)
       row.body = Self.pretty(body)
       do {
         let created = try call(.create, settings) { try c.createPost(body) }

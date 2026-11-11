@@ -100,6 +100,13 @@ struct MainWindowView: View {
     if let v = model.longformTarget {
       ModalHost(onDismiss: { model.longformTarget = nil }) { LongformPostedSheet(model: model, video: v).id(v.id) }
     }
+    // Round 21: in-window dialogs, over the editor too.
+    if let r = model.postAtRequest {
+      ModalHost(onDismiss: { model.postAtRequest = nil }) { PostAtDialog(model: model, request: r).id(r.id) }
+    }
+    if let r = model.photoImportRequest {
+      ModalHost(onDismiss: { model.photoImportRequest = nil }) { PhotoImportSheet(model: model, request: r).id(r.id) }
+    }
     // ⌘K works from anywhere, so it sits above every modal. A confirmation it asks for still goes on top.
     if model.showPalette {
       CommandPalette(model: model).transition(.opacity)

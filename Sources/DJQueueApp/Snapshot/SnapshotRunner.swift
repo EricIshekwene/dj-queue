@@ -35,8 +35,10 @@ enum SnapshotRunner {
       defer { try? FileManager.default.removeItem(at: tmp) }
 
       // 1. Throwaway copy of the dev database (never the source DB).
-      let paths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("support"), logs: tmp.appendingPathComponent("logs"),
+      var paths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("support"), logs: tmp.appendingPathComponent("logs"),
                         launchAgents: tmp.appendingPathComponent("LaunchAgents"))
+      // Round 21: this run's photo posts live in its own throwaway folder, never in the shared dev footage folder.
+      paths.photosOverride = tmp.appendingPathComponent("Photos")
       try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
       try FileManager.default.createDirectory(at: src.thumbs, withIntermediateDirectories: true)
       try FileManager.default.createSymbolicLink(at: paths.thumbs, withDestinationURL: src.thumbs)
@@ -51,6 +53,10 @@ enum SnapshotRunner {
       if try store.videos().isEmpty { try Intake(store: store).run() }
       try SampleData.seed(store: store, clock: clock, now: now)
       clock.set(now)
+      // Round 21: photo posts in Edit, the Queue and on the Calendar at a set time (`DJQ_SAMPLE_PHOTOS=0` leaves them out).
+      if ProcessInfo.processInfo.environment["DJQ_SAMPLE_PHOTOS"] != "0" {
+        try SampleData.addPhotoPosts(store: store, now: now, scratch: tmp.appendingPathComponent("photo-samples"))
+      }
 
       let model = AppModel(store: store)
       model.frozen = true
@@ -73,8 +79,9 @@ enum SnapshotRunner {
       empty.refreshNow()
       // 3. Postiz model (round 6): a copy of the seeded sample with Postiz turned on for most platforms, sample
       // channels and a Postiz job behind posts in every state. No key, no Keychain, no network.
-      let pPaths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("psupport"), logs: tmp.appendingPathComponent("plogs"),
+      var pPaths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("psupport"), logs: tmp.appendingPathComponent("plogs"),
                          launchAgents: tmp.appendingPathComponent("pLA"))
+      pPaths.photosOverride = paths.photosOverride
       try FileManager.default.createDirectory(at: pPaths.appSupport, withIntermediateDirectories: true)
       try FileManager.default.createSymbolicLink(at: pPaths.thumbs, withDestinationURL: src.thumbs)
       try store.db.backup(to: pPaths.database.path)
@@ -94,6 +101,12 @@ enum SnapshotRunner {
 
       if ProcessInfo.processInfo.environment["DJQ_SEND_TO_QUEUE_SCRIPT"] != nil {
         return await SendToQueueScript.run(model: model, store: store, out: out)
+      }
+      if ProcessInfo.processInfo.environment["DJQ_PHOTO_IMPORT_SCRIPT"] != nil {
+        return await PhotoImportScript.run(model: model, store: store, out: out, scratch: tmp.appendingPathComponent("photo-picked"))
+      }
+      if ProcessInfo.processInfo.environment["DJQ_POST_AT_SCRIPT"] != nil {
+        return await PostAtScript.run(model: model, store: store, clock: clock, out: out)
       }
       let ctx = SnapshotContext(model: model, empty: empty, store: store, now: now, postiz: pModel)
       var shots = SnapshotShots.shell(ctx) + SnapshotShots.pipeline(ctx) + SnapshotShots.planning(ctx)
@@ -164,6 +177,8 @@ struct SnapshotContext {
     m.cropDialogIds = nil
     m.pendingConfirm = nil
     m.previewVideo = nil
+    m.postAtRequest = nil
+    m.photoImportRequest = nil
     m.toast = nil
     m.selection = [:]
     m.selectionAnchor = [:]

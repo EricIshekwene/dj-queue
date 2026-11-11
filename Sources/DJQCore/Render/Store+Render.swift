@@ -16,7 +16,7 @@ extension Store {
 
   /// A photo render's files after the first (round 21), at their current location. nil = none (a video).
   public func setRenderMorePaths(id: String, _ paths: [String]?) throws {
-    try db.run("UPDATE renders SET more_paths=? WHERE id=?", [paths.map { JSONCoding.string($0) }, id])
+    try db.run("UPDATE renders SET more_paths=? WHERE id=?", [paths.map { JSONCoding.pathList($0) }, id])
   }
 
   /// Marks a render deleted (sets `deleted_at` only; files are the caller's business).
@@ -41,6 +41,22 @@ extension Store {
     try db.run("""
       UPDATE renders SET status='done', error=NULL, output_path=?, cover_path=?, loudness=?, duration=?, size=? WHERE id=?
       """, [outputPath, coverPath, loudness.map { JSONCoding.string($0) }, duration, size, id])
+  }
+
+  /// Records a finished photo render in one statement: the first file, the rest and the total size together, so a row
+  /// is never `done` with some of its files unlisted.
+  func finishPhotoRender(id: String, paths: [String], size: Int64) throws {
+    try db.run("""
+      UPDATE renders SET status='done', error=NULL, output_path=?, more_paths=?, cover_path=NULL, loudness=NULL, duration=0, size=?
+        WHERE id=?
+      """, [paths.first, JSONCoding.pathList(Array(paths.dropFirst())), size, id])
+  }
+
+  /// Where every file of a render is now, in one statement (the engine calls this after moving files to Posted).
+  /// `morePaths` nil leaves that column as it is (a video).
+  public func setRenderFiles(id: String, outputPath: String?, coverPath: String?, morePaths: [String]?) throws {
+    try db.run("UPDATE renders SET output_path=?, cover_path=?, more_paths=COALESCE(?, more_paths) WHERE id=?",
+               [outputPath, coverPath, morePaths.map { JSONCoding.pathList($0) }, id])
   }
 
   /// The oldest live, unfinished row for a render key (all writers converge on it).

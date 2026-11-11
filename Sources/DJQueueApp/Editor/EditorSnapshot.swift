@@ -29,8 +29,9 @@ enum EditorSnapshot {
       let src = Paths.standard
       let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("djq-editor-\(UUID().uuidString)")
       defer { try? FileManager.default.removeItem(at: tmp) }
-      let paths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("support"), logs: tmp.appendingPathComponent("logs"),
+      var paths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("support"), logs: tmp.appendingPathComponent("logs"),
                         launchAgents: tmp.appendingPathComponent("LaunchAgents"))
+      paths.photosOverride = tmp.appendingPathComponent("Photos")  // round 21: this run's photo posts stay in its own folder
       try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
       if FileManager.default.fileExists(atPath: src.database.path) {
         try Store(paths: src).db.backup(to: paths.database.path)
@@ -75,6 +76,10 @@ enum EditorSnapshot {
       if let dir = env["DJQ_EDITOR_KEYS_SCRIPT"] {
         return await EditorKeysScript.run(store: store, video: pick.id, ids: ids, dir: dir,
                                           appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
+      }
+      if let dir = env["DJQ_PHOTO_EDITOR_SCRIPT"] {
+        try SampleData.addPhotoPosts(store: store, now: store.clock.now, scratch: tmp.appendingPathComponent("photo-samples"))
+        return await PhotoEditorScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
       }
       if let dir = env["DJQ_REPOST_READY_SCRIPT"] {
         return await RepostReadyScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")

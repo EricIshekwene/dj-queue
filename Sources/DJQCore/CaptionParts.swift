@@ -26,7 +26,7 @@ public enum CaptionParts {
     }
 
     public init(version r: ResolvedVersion, video: Video, sessionName: String, link: String) {
-      self.init(text: Captions.oneLine(Captions.textValue(r, video: video)), set: Captions.setName(sessionName),
+      self.init(text: Captions.oneLine(Captions.textValue(r, video: video)), set: Captions.setValue(sessionName, video: video),
                 link: Captions.oneLine(link), title: video.titleText.map(Captions.oneLine))
     }
 

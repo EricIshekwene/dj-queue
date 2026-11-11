@@ -163,6 +163,10 @@ final class AppModel {
   var markPostedTarget: PlatformPost?
   var reportTarget: PlatformPost?
   var longformTarget: Video?
+  /// Round 21: the "Post at a set time" dialog (`Shared/PostAtDialog.swift`, opened with `askPostAt`).
+  var postAtRequest: PostAtRequest?
+  /// Round 21: the photo import sheet (`Shared/PhotoImportSheet.swift`, opened with `askAddPhotos` or a drop).
+  var photoImportRequest: PhotoImportRequest?
   var confirmPause = false
   /// The one toast (`.dsToast`). Set through `show(_:)`.
   var toast: DSToastModel?

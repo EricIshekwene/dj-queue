@@ -93,6 +93,8 @@ public struct NewClipDefaults: Codable, Sendable, Hashable {
   public var safeZonePlatforms: Set<Platform> = [.tiktok, .instagram]
   /// Kind for new clips (videos.json `content-type: talking` still wins).
   public var kind: Kind = .djVid
+  /// Round 21 (D5): the shape a new photo post is cropped to. Every photo of a carousel uses the post's one aspect.
+  public var photoAspect: Aspect = .r4x5
 
   public init() {}
 
@@ -100,7 +102,7 @@ public struct NewClipDefaults: Codable, Sendable, Hashable {
     case aspect, cropAnchor, trimMode, extraSecondsBefore, extraSecondsAfter, textStyle, textSize, textPosX, textPosY,
          textAlign, textTiming, textFirstSeconds, textSource, noTextForTalking, coverIncludesText, coverFrame,
          coverOffsetSeconds, captionTemplateId, hashtagSetIds, extraHashtags, youtubeTitleTemplate, youtubeTitleTemplateId,
-         platformCaptionTemplates, platforms, safeZonePlatforms, kind
+         platformCaptionTemplates, platforms, safeZonePlatforms, kind, photoAspect
   }
 
   /// Every key is optional, so stored JSON from an older build (or a hand-edited one) keeps working.
@@ -134,6 +136,7 @@ public struct NewClipDefaults: Codable, Sendable, Hashable {
     platforms = v(.platforms, z.platforms)
     safeZonePlatforms = v(.safeZonePlatforms, z.safeZonePlatforms)
     kind = v(.kind, z.kind)
+    photoAspect = v(.photoAspect, z.photoAspect)
   }
 
   /// Default text timing relative to the trim start (nil, nil = whole clip).
@@ -251,6 +254,7 @@ public enum EditResolver {
   /// Pure resolution. `sourceSize` (or the video's cached size) is needed for the default crop.
   public static func resolve(_ e: Edit, video v: Video, defaults d: NewClipDefaults, sourceSize: CGSize? = nil,
                              lastUsedCrop: CGPoint? = nil) -> ResolvedEdit {
+    if let photos = v.photos { return resolvePhotos(e, photos, defaults: d) }
     var defaulted = Set<EditField>()
     let aspect = e.aspectOverride ?? d.aspect
     if e.aspectOverride == nil { defaulted.insert(.aspect) }
@@ -284,11 +288,30 @@ public enum EditResolver {
                         platformTrims: e.platformTrims, skippedPlatforms: skipped, defaulted: defaulted)
   }
 
+  /// A photo post (round 21). The aspect follows `defaults.photoAspect`; `crop` is the first photo's (every photo
+  /// resolves through `PhotoRules.crop`), confirmed when each photo has its own; the "trim" is one unit per photo
+  /// (0…count), so a text's window reads as a range of photos; platforms that take no photos are always skipped.
+  static func resolvePhotos(_ e: Edit, _ photos: [PhotoItem], defaults d: NewClipDefaults) -> ResolvedEdit {
+    var defaulted: Set<EditField> = [.trimIn, .trimOut, .coverTime]
+    let aspect = PhotoRules.aspect(e, defaults: d)
+    if e.aspectOverride == nil { defaulted.insert(.aspect) }
+    let confirmed = !photos.isEmpty && photos.allSatisfy { PhotoRules.hasOwnCrop($0, edit: e, aspect: aspect) }
+    if !confirmed { defaulted.insert(.crop) }
+    if e.coverIncludesTextOverride == nil { defaulted.insert(.coverIncludesText) }
+    let never = Set(Platform.allCases.filter { !$0.supportsPhotos })
+    let skipped = Set(Platform.allCases.filter { e.isSkipped($0, defaults: d) }).union(never)
+    if e.skippedPlatforms.subtracting(never).isEmpty && e.includedPlatforms.subtracting(never).isEmpty { defaulted.insert(.platforms) }
+    return ResolvedEdit(aspect: aspect, crop: photos.first.map { PhotoRules.crop(for: $0, edit: e, aspect: aspect) },
+                        cropConfirmed: confirmed, trimIn: 0, trimOut: Double(photos.count), coverTime: 0,
+                        coverIncludesText: e.coverIncludesTextOverride ?? d.coverIncludesText, platformTrims: [:],
+                        skippedPlatforms: skipped, defaulted: defaulted)
+  }
+
   /// Clears the override fields that belong to `field` (the editor's "Reset to default").
   public static func reset(_ e: inout Edit, _ field: EditField) {
     switch field {
     case .aspect: e.aspectOverride = nil
-    case .crop: e.crop = nil
+    case .crop: e.crop = nil; e.photoCrops = [:]
     case .trimIn: e.trimIn = nil
     case .trimOut: e.trimOut = nil
     case .coverTime: e.coverTime = nil

@@ -56,10 +56,17 @@ public enum Captions {
 
   /// `{text}` for captions and titles: the overlay text, else Eric's title, else the raw marker tag verbatim.
   /// Never tidied or guessed (round 2 #9).
+  /// A photo post (round 21) never falls back to its tag: that is a file name ("IMG_1234"), not Eric's words.
   public static func textValue(_ v: ResolvedVersion, video: Video) -> String {
     if v.hasText { return v.text }
-    return video.titleText ?? video.tag
+    return video.titleText ?? tagValue(video)
   }
+
+  /// `{tag}`: the raw marker tag. Empty for a photo post, whose tag is its file name.
+  public static func tagValue(_ video: Video) -> String { video.isPhoto ? "" : video.tag }
+
+  /// `{set}`: the session name without its date. Empty for a photo post (D18: "Photos" is a storage folder, not a night).
+  public static func setValue(_ sessionName: String, video: Video) -> String { video.isPhoto ? "" : setName(sessionName) }
 
   /// The template a platform's caption is built from when no caption is written: the version's chosen template,
   /// else the platform's default template, else the default template.
@@ -219,7 +226,7 @@ public enum Captions {
     }
     let tid = templateId(for: platform, version: v, settings: settings)
     let tpl = templates.first { $0.id == tid }?.template ?? Defaults.captionTemplates[0].template
-    return fill(tpl, text: textValue(v, video: video), tag: video.tag, set: setName(sessionName), hashtags: tags,
+    return fill(tpl, text: textValue(v, video: video), tag: tagValue(video), set: setValue(sessionName, video: video), hashtags: tags,
                 title: legacy ? nil : video.titleText ?? "", link: legacy ? nil : settings.captionLink)
   }
 

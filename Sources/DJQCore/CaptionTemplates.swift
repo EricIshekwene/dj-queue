@@ -103,7 +103,7 @@ public enum CaptionTemplates {
     }
     var values: [(token: String, value: String)] = [("{text}", Captions.oneLine(Captions.textValue(r, video: video)))]
     if let title = video.titleText { values.append(("{title}", Captions.oneLine(title))) }
-    values += [("{set}", Captions.setName(sessionName)), ("{link}", Captions.oneLine(link))]
+    values += [("{set}", Captions.setValue(sessionName, video: video)), ("{link}", Captions.oneLine(link))]
     var seen = Set<String>()
     for (token, value) in values.filter({ !$0.value.isEmpty && seen.insert($0.value.lowercased()).inserted })
       .sorted(by: { $0.value.count > $1.value.count }) {
@@ -150,7 +150,7 @@ public enum CaptionTemplates {
     guard let template = from.templates.first(where: { $0.id == id })?.template else { return }
     for (version, r) in zip(versions, all) where uses(r, id, from.settings) && (r.captionTemplateId ?? from.settings.defaults.captionTemplateId) == id {
       var written = version
-      written.caption = Captions.fill(template, text: Captions.textValue(r, video: v), tag: v.tag, set: Captions.setName(session),
+      written.caption = Captions.fill(template, text: Captions.textValue(r, video: v), tag: Captions.tagValue(v), set: Captions.setValue(session, video: v),
                                       hashtags: ["{hashtags}"], title: v.titleText ?? "", link: from.settings.captionLink)
       try store.save(written, videoId: v.id)
     }

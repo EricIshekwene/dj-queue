@@ -27,6 +27,9 @@ problems use the `dj-queue-doctor` skill.
   Postiz **drafts** (`djq postiz test <video> --draft`, nothing reaches a platform). Never read, print or ask for the
   Postiz API key (Keychain only; Eric enters it in Settings → Publishing).
 
+- **Photo posts follow the same rule.** `djq photo add` only makes the post; it lands in Edit and stays there until
+  Eric sends it. Never edit, move or delete anything under `Photos/Originals/` (DJ Queue's own copies).
+
 `djq` is on PATH when the app is installed. A dev build (`swift build`, `.build/debug/djq`) refuses to start without
 `DJQ_ROOT` (the "DJ Video" folder) + `DJQ_HOME`, so it only works on a dev copy. Ids can be shortened to a unique prefix.
 
@@ -50,6 +53,9 @@ X", "File missing", "Sent back from Queue", …). `state` keeps its stored value
 Edit, `ready` = Queue), but say the stage name to Eric — never "ready", "needs edit" or "unready".
 `held_in_edit`: sent back to Edit from the Queue ("Back to Edit"); it stays in Edit with the reason "Sent back from
 Queue" until it's sent to the Queue again.
+
+Round 21: every item also has `media` (`"video"` or `"photo"`) and `photos[{id, file, width, height}]` (empty for a
+video; posting order, the first is the cover). See "Photo posts" below.
 
 `video` adds: `title_tracks, title_suggestions[{id,text,tracks,confidence,source,origin}]`, `text_suggestions` (same
 shape, for the text on the video), `edit` (stored overrides
@@ -150,6 +156,37 @@ djq videos --repost-ready [--json]               # same filter on the clip list 
   on v1; a later version that took its caption from v1 keeps it as it was (`captionsOwn: true` on that version: it
   stops inheriting captions, and anything it doesn't set follows the defaults). `apply-defaults --sections text`
   resets the text look and place on every version and keeps each version's words.
+
+## Photo posts (round 21)
+
+A photo post is one photo, or a carousel of several, that DJ Queue treats like a clip: same list, same editor ideas,
+same stages minus Score. In `--json` it is an item with `media: "photo"`, `duration: 0`, `photos[...]` and no score.
+
+```sh
+djq photo add <file>… [--title "<title>"] [--json]   # one post from every file, in the order given (a carousel when several)
+djq photo add <file>… --separate [--json]             # a post per file
+djq photo list [--json]                               # every photo post (the same items as `djq videos`)
+```
+
+- JPEG, PNG, HEIC, WebP and TIFF. Each file is **copied** into `~/Movies/DJ Video/Photos/Originals/<post id>/`; the
+  file you point at is never moved or changed. A file that can't be used is listed under `skipped` with the reason;
+  exit 1 when no post was made. A post holds at most 35 photos.
+- The post lands in **Edit** with no score (photos skip Score), no text on the picture, a centred 4:5 crop and
+  YouTube Shorts off. It never goes to the Queue by itself: `djq requeue <id>` / `djq stage <id> forward` are Eric's
+  Send to Queue, on Eric's word only, like any clip. Never send one because you added it.
+- What works on it: `title`, `caption`, `text` and `overlay` (a text shows on a range of photos: `--start 1 --end 3`
+  is photos 2–3, since photo N is the unit N-1…N), `bulk` caption, title and platform actions, `stage`, `unqueue`,
+  `requeue`, `render` (one JPEG per photo in `Photos/Ready to Post/Shortform/`), `postiz test`.
+- What doesn't: `bulk crop-offset` skips it ("photos are cropped in the editor"), YouTube can't be turned on for it
+  (`bulk unskip-platform youtube` says why), `stage <id> back` from Edit ("Photos have no Score stage"), and it needs
+  no title help (`needs_title_help` is false: there is no song to look up).
+- A carousel longer than a platform takes sends its first photos there: X 4, Instagram 10, Facebook 10, Threads 20,
+  TikTok 35. That is a notice, not a problem.
+- Shapes: 4:5 (the default), 1:1, 16:9 and 9:16. Instagram doesn't take 9:16 photos, so a 9:16 post with Instagram on
+  has the reason "Wrong shape for Instagram" and stays in Edit until Eric picks another shape or turns Instagram off
+  for it. Don't choose for Eric.
+- Captions: `{set}` and `{tag}` are empty for a photo post, and `{text}` is the text on the picture, else the Title,
+  else nothing (never the file name). Give it a title or a written caption when the template leans on those.
 
 ## Stages: move a clip back or forward
 
@@ -321,3 +358,5 @@ slot is the safe one.
 - A clip can be in the Queue when its crop is confirmed, its text resolves (or No text), a caption resolves, every
   posting platform's limits fit, its file exists, and it wasn't sent back by hand; otherwise it's in Edit and
   `reasons` says why.
+- A photo post needs less: its photo files, a caption that resolves and fits each platform. No score, no crop to
+  confirm (Send to Queue writes the centred one down), no text rule, no length, and nothing about YouTube.

@@ -270,3 +270,97 @@ Eric picks an exact day and time for an item; every platform it posts to goes ou
 - `Version.repostReady` (per version, never carried forward) and `Version.captionsOwn` are optional JSON keys: no schema change. `Sources/DJQCore/RepostReady.swift`: `Store.setRepostReady` writes only the flag (no `updated_at`, no `refreshState`; a v1 written just for the mark is stamped 0, which `PreviewStampTable` skips), `repostReadyVersions()` (one query, for `AppModel.repostReady`, filters and search), and the repost round's read-only inputs `nextRepostReadyVersion(videoId:platform:)` / `RepostReady.candidates`. `VersionMerge.keepingOutsideChanges` keeps the mark and a bulk pin when an open editor saves.
 - `VersionResolver`: caption fields resolve through `captionChain`, cut at the latest version with `captionsOwn`, so a pinned version never inherits captions from earlier ones. `BulkActions.keepLaterCaptions` pins every later version a caption-family change on v1 would reach (and those that follow a pinned one); `applyDefaults(.text)` resets the look on every version. Bulk undo ignores and keeps `repostReady`.
 - UI: `EditorRepostReadyRow` (inspector), a switch per `EditorVersionList` row, the picker's check; `EditorModel.setRepostReady` writes through the store directly. `ListFilterKey.repost` on Edit, Queue and Library. `BulkVersionScope` (DJQCore) + `BulkRequest.versionScope` + `BulkVersionNote` say which versions a bulk change reaches. Live check `repost-ready` (`Editor/RepostReadyScript.swift`).
+
+## Round 21 additions: photo posts
+Decisions: `DECISIONS-R21.md` (D1–D11, D15–D19 and "Decisions made while building (core photos)"). Core, CLI and tests only; no screen
+knows about photos yet. The UI starts from the API list at the end of this section.
+
+**Model.** A photo post is a `Video` with `photos: [PhotoItem]` (`isPhoto`): `type .short`, `duration 0`, `sessionId = Session.photosId`,
+`inManifest false`, `contentType "photo"`, `score nil`, `file` = its first photo. `name` is the first file's base name, made unique among
+photo posts as a file name would be ("IMG_1234", "IMG_1234 2"; "Flyer" and "flyer", or "a:b" and "a-b", count as one name:
+`PhotoImport.fileNameKey`); `tags` = [that base name]. `PhotoItem` is `id` (stable across
+reorders, the key of `Edit.photoCrops`), `file` (relative to the Photos folder), upright `width`/`height`, and `fingerprint` (size + SHA-256
+of the copy). `Video.fingerprint` hashes the photos' fingerprints in order and `fileSize` is their total, so a reorder changes the preview
+stamp. `Video.photoCount`, `isCarousel`, `photoLabel` ("Photo" / "Carousel · 5") and `kindLabel` are the words for cards.
+
+**Files.** `Paths.photos` = `<DJ Video>/Photos`. Copies live in `Originals/<post id>/NN-<photo id>.<ext>` (NN counts up and is never reused
+in a post; a removed photo's copy stays so undo can bring it back). Renders go to
+`Ready to Post/Shortform/<name> – v1 – <post id, 8 characters> – NN.jpg` (the id keeps two posts from ever sharing a file) and move to
+`Posted/Shortform/`. The file Eric picked is only read, and a symlink is imported as a copy of the file it points at. Every photo path is
+resolved from `Paths.photos` (`Store.photoURL`, `fileURL(for:)`, the render folder), never from the session row's folder, and intake puts
+that row's folder back to `Paths.photos` when it differs. Intake's manifest pass never sees the Photos session or its posts;
+`PhotoImport.checkFiles` (end of `Intake.run`) marks a post `missing` while one of its photo files is gone. Doctor: `photos.missing`.
+
+**Stages (D4).** `ClipStage.of`: an unscored photo post is in Edit, never Score. `Queue.toScore` leaves photos out; `needsEdit`, `candidates`,
+`ordered` and `Store.wasInQueue` take them unscored. Queue order: unscored photos first, oldest `createdAt` first, then the existing rules
+(a scored photo sorts like a clip). `BulkActions.send` needs no score for a photo and `confirmDefaultCrop` writes the centred crop of every
+photo that has none into `photoCrops`. Back from Edit is blocked (`PhotoRules.noScoreStage`); clearing a photo's score doesn't unsend it.
+
+**Edit rules.** `EditResolver.resolve` on a photo post: aspect = `aspectOverride ?? defaults.photoAspect` (4:5), `crop` = the first photo's,
+`cropConfirmed` = every photo has its own crop, trim = 0…photo count (one unit per photo), cover 0, and every platform with
+`maxPhotos == 0` skipped. **YouTube is off three ways** (D8): `Store.edit(videoId:)` adds the skip on every read, `Store.save(_:videoId:)`
+stores it, and the resolver adds it; `BulkActions.setPlatform` refuses to turn it on with `PhotoRules.youtubeReason`. So `Planner.createPosts`,
+`Planner.usable` and `Queue.ordered(platform:)` never give a photo a YouTube post, through code that doesn't know about photos.
+`PhotoRules.crop(for:edit:aspect:)` is a photo's crop: its own in `photoCrops` when it still fits the aspect, else centred (a crop made for
+another aspect is ignored, never stretched). `VersionResolver`: text nothing sets is "No text" on a photo post (extra texts still draw),
+and default text timing is no window, whatever `defaults.textTiming` says (its seconds would read as photos).
+
+**Validation.** For a photo post: `missingFile`, `heldInEdit`, `corrupt`, `noPhotos` (new kind; section `IssueSection.photos`), `photoShape`
+(new kind, D20; per platform, section Frame: Instagram takes photos from 4:5 to 1.91:1, so 9:16 with Instagram on is an issue;
+`PhotoRules.shapeProblem`), `noCaption`, `captionTooLong`. Never `noCrop`, `noText`, `tooLong` or anything about YouTube. Captions: `{set}` and `{tag}` are empty and `{text}` falls
+back to the Title only (`Captions.setValue`, `tagValue`, `textValue`). Bulk crop skips photos (`PhotoRules.bulkCropReason`).
+
+**Text on photos (D7).** Same `Version` fields and `TextLayer`s. A window is in photo units: photo *i* (0-based) is [*i*, *i*+1) and a text
+shows on it when `PreviewKeys.layerWindows(version, trimDuration: count)` overlaps that (`PhotoRules.shows`, `layers(_:onPhoto:of:)`).
+"Photos 2–4" is `start 1, end 4` (`PhotoRules.window(fromPhoto:toPhoto:)`); no window = every photo. A window names positions, not photos:
+after a reorder or a removal the text stays on photos 2–4, whichever photos those now are.
+
+**Render (D6).** `PhotoRenderer` (`Render/PhotoRenderer.swift`): `load` reads a photo upright through ImageIO, `compose` cuts the crop with
+`Media.pixelCrop`, scales into the size with high interpolation on an opaque sRGB canvas and draws `TextOverlay.image(for: layers, aspect:)`.
+The final files, `preview` and `Media.thumbnail` all call `compose`, so the editor is WYSIWYG. `Renderer` branches on `isPhoto` in `scope`
+(always "all"), `editHash`, `currentRender` and `ensureRender` (same row, claim and lock as a video). Output: JPEG 0.9, 1080 wide, no
+metadata. `Render.outputPath` is the first file, `morePaths` the rest (`[]` for one photo), `coverPath` nil, `duration` 0, `size` the total,
+written in one statement (`Store.finishPhotoRender`); a row with fewer files than the post has photos is never the current render.
+`more_paths` is stored with plain slashes (`JSONCoding.pathList`) so a dev copy's path rewrite (`scripts/seed-paths.sh`) reaches it.
+The hash covers `PhotoRenderer.pipelineVersion` ("photo-1"), the photos' fingerprints in order, the aspect, each resolved crop, the drawn
+texts with look and window and, when there is text, `TextOverlay.drawingVersion` (bump it when text drawing changes pixels); video hashes
+and `Renderer.pipelineVersion` are untouched. A render that replaces another deletes the files it didn't overwrite; a failure while moving
+files into place retires the rows whose files were overwritten, so no finished row points at a mix. **Nothing outside the store's root is
+moved or deleted** (`Paths.owns`, used by `Renderer.isAppOutput`, `Engine.moveToPosted` and the cleanup): a path a copied database names
+elsewhere stays put. A path counts as inside the root as it is written or after resolving symlinks, so a `Ready to Post` folder that is a
+link to another drive is managed as before. Engine: `renderAhead` works unchanged; `moveAndCleanup` moves every file of a render, then writes all its paths together
+(`Store.setRenderFiles`); a file that couldn't move is a tick error (as it was for clips) after the rest of the step has run, and is
+tried again on the next tick; cleanup and `deleteRenders` handle every path, the proxies step
+and `ProxyService` skip photos, and nothing probes one (`Media.sourceSize` answers from the row).
+
+**Publishing (D8–D11, D19).** `PreparedPost.moreFileURLs` / `allFileURLs`; `ManualPublisher` and `PostizPublisher` fill them with the first
+`platform.maxPhotos` files. `PostizPayload.photoSpec` builds a photo post's spec (`photoPaths`, no thumbnail time, no cover) and throws for
+YouTube; `PostizPostSpec.body(date:media:cover:)` puts one `image` entry per photo. Settings per platform are in `docs/postiz.md`.
+`PostizService.submit` and `testPost` upload each photo once per render (`postiz_media` kinds `photo1`…) and put the first photo on the
+job. A photo post's uploads happen before the job is claimed, as many as the hourly budget allows; the create waits until every photo is
+cached (`SubmitOutcome.waiting`, which doesn't stop the posts behind it), so a carousel larger than an hour's budget goes out an hour or
+two later instead of never. One process at a time uploads a render's photos (`flock` on `work/postiz-upload-<render>.lock`; another
+waits for its next tick). An upload that fails is reported as a video's is (a closed `interrupted` job with the error, "failed" in the
+publish step) plus one event per kind of failure, and the render's other platform posts wait for the next tick. Nothing is created from a
+render that was replaced while its photos went up. The pure `PostizPayload.spec(post:…)` now throws (YouTube for a photo post). A video's payload and content hash are byte-identical to before.
+
+**CLI and JSON.** `djq photo add <file>… [--separate] [--title T] [--json]`, `djq photo list [--json]` (`Sources/djq/PhotoCommand.swift`).
+`AgentAPI.VideoSummary` gains `media` ("photo" | "video") and `photos[{id, file, width, height}]`.
+
+**What the UI calls** (all in DJQCore):
+- `PhotoImport(store:).add(files:mode:title:titleSource:) -> Result{posts, skipped[{file, reason}]}`: import (`.carousel` | `.separate`). It copies and hashes files, so call it off the main thread, and post `ChangeSignal` yourself.
+- `PhotoImport.refusal(_ url:) -> String?`: why a dropped file can't be a photo, before importing. `PhotoRules.extensions`: for the file picker.
+- `PhotoImport.append(files:to:journal:)`, `remove(photoId:from:journal:)`, `reorder(videoId:ids:journal:) -> Change{video, skipped, batchId}`: one journal entry each (`photo-add`, `photo-remove`, `photo-reorder`) for ⌘Z; pass `journal: false` inside an open editor entry (`BulkActions.begin`), whose `commit` records photo changes with the rest (`ClipSnap.photos`). Removing the last photo throws.
+- `Store.photoURL(_:of:)`, `photoURLs(_:)`: where a photo's file is.
+- `PhotoRenderer.preview(store:video:index:size:withText:version:) -> CGImage?`: one photo of a saved post as it posts (size nil = output size).
+- `PhotoRenderer.image(_:photo:index:count:edit:version:defaults:size:) -> CGImage?`: the same from the editor's unsaved edit and resolved version (version nil = no text); pair it with `PhotoRenderer.load(_:maxPixel:)`.
+- `PhotoRenderer.compose(_:sourceSize:crop:aspect:size:layers:)`: the one drawing function, when you hold the crop and layers yourself.
+- `Media.thumbnail(store:video:maxHeight:version:photo:) -> URL?`: cached JPG of photo `photo` (0 = the cover) as it posts.
+- `PhotoRules.aspect(_:defaults:)`, `aspects`, `crop(for:edit:aspect:)`, `centredCrop(_:aspect:)`, `hasOwnCrop(_:edit:aspect:)`: frame and crop per photo; write a crop to `Edit.photoCrops[photo.id]` (upright source pixels) and save the edit as for a clip.
+- `PhotoRules.layers(_:onPhoto:of:)`, `photoRange(of:in:count:)`, `rangeLabel(_:count:)`, `window(fromPhoto:toPhoto:)`: which photos a text shows on, and the stored window for a range.
+- `PhotoRules.sent(count:platform:) -> (sent, dropped)`, `notice(count:platform:)` ("X gets the first 4 of 7 photos"), `platformNote(count:aspect:platform:)` (what a platform row says: `youtubeReason`, else the shape problem, else the notice), `maxPerPost` (35).
+- `PhotoRules.aspectNote(_:posting:)` ("Instagram doesn't take 9:16 photos") for the aspect picker; `takes(_:platform:)`, `refusing(_:posting:)`, `shapeProblem(_:platform:)` (the `photoShape` issue's message).
+- The YouTube row of a photo post: show it off and disabled with `PhotoRules.youtubeReason`. An edit held in memory can still be changed, but every save and every read puts the skip back.
+- `Video.isPhoto`, `photoCount`, `isCarousel`, `photoLabel`, `kindLabel`; `Settings.defaults.photoAspect`; `StageWording.backTitle/backHelp/blocker` already say "Photos have no Score stage".
+- `Render.allPaths`, `PreparedPost.allFileURLs`: every file of a photo post, for Reveal, drag-out and the Calendar's post sheet.
+- `ValidationIssue.Kind.noPhotos` → `IssueSection.photos`. `EditorModel.section(for:)` maps `.photos` to Frame for now: point it at the photos strip when that exists.

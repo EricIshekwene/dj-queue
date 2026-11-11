@@ -160,8 +160,12 @@ public enum Media {
   /// defaults). When "cover includes text" is on, the texts at that frame (`PreviewKeys.coverLayers`) are composited
   /// exactly like the renderer's cover (`coverComposite`). Cache key covers video id, crop, aspect, time, size, those
   /// texts and cover-includes-text.
+  ///
+  /// A photo post (round 21): photo `photo` (0 = the first, which is the cover) exactly as it posts, cropped, with the
+  /// texts that show on it; `seconds` doesn't apply.
   public static func thumbnail(store: Store, video: Video, at seconds: Double? = nil, maxHeight: Int = 320,
-                               version: Int = 1) -> URL? {
+                               version: Int = 1, photo: Int = 0) -> URL? {
+    if video.isPhoto { return photoThumbnail(store: store, video: video, index: photo, maxHeight: maxHeight, version: version) }
     guard let src = try? store.fileURL(for: video), FileManager.default.fileExists(atPath: src.path) else { return nil }
     let settings = (try? store.settings()) ?? Settings()
     let raw = (try? store.edit(videoId: video.id)) ?? Edit()
@@ -194,6 +198,38 @@ public enum Media {
       try FileManager.default.createDirectory(at: store.paths.thumbs, withIntermediateDirectories: true)
       try writeJPEG(img, to: url, quality: 0.8)
       if seconds == nil { pruneThumbnails(in: store.paths.thumbs, videoId: video.id, slot: slot, keep: url.lastPathComponent) }
+      return url
+    } catch {
+      Log.shared.warn("thumbnail failed for \(video.id): \(error)")
+      return nil
+    }
+  }
+
+  /// A photo post's thumbnail: one cached JPG per photo and size, keyed by everything that changes its pixels.
+  static func photoThumbnail(store: Store, video: Video, index: Int, maxHeight: Int, version: Int) -> URL? {
+    guard let photos = video.photos, photos.indices.contains(index), let src = try? store.photoURL(photos[index], of: video),
+          FileManager.default.fileExists(atPath: src.path) else { return nil }
+    let photo = photos[index]
+    let settings = (try? store.settings()) ?? Settings()
+    let edit = (try? store.edit(videoId: video.id)) ?? Edit()
+    let aspect = PhotoRules.aspect(edit, defaults: settings.defaults)
+    let crop = PhotoRules.crop(for: photo, edit: edit, aspect: aspect)
+    let rv = (try? store.resolvedVersion(videoId: video.id, number: version, settings: settings)) ?? nil
+    let layers = PhotoRules.layers(rv, onPhoto: index, of: photos.count)
+    let key = [video.id, photo.id, photo.fingerprint ?? photo.file, "\(crop.x),\(crop.y),\(crop.w),\(crop.h)", aspect.rawValue,
+               String(maxHeight), PreviewKeys.coverKey(layers, aspect: aspect)].joined(separator: "|")
+    // The first photo is the post's cover and shares the cover's slot name; the others have one slot per photo.
+    let slot = index == 0 ? "\(video.id)-c\(version)h\(maxHeight)-" : "\(video.id)-p\(photo.id)v\(version)h\(maxHeight)-"
+    let url = store.paths.thumbs.appendingPathComponent("\(slot)\(PreviewKeys.short(key)).jpg")
+    if FileManager.default.fileExists(atPath: url.path) { return url }
+    let size = CGSize(width: max(2, Int((Double(maxHeight) * aspect.ratio).rounded())), height: maxHeight)
+    guard let img = PhotoRenderer.load(src, maxPixel: PhotoRenderer.loadSize(photo, crop: crop, target: size)),
+          let out = PhotoRenderer.compose(img, sourceSize: CGSize(width: photo.width, height: photo.height), crop: crop,
+                                          aspect: aspect, size: size, layers: layers) else { return nil }
+    do {
+      try FileManager.default.createDirectory(at: store.paths.thumbs, withIntermediateDirectories: true)
+      try writeJPEG(out, to: url, quality: 0.8)
+      pruneThumbnails(in: store.paths.thumbs, videoId: video.id, slot: slot, keep: url.lastPathComponent)
       return url
     } catch {
       Log.shared.warn("thumbnail failed for \(video.id): \(error)")

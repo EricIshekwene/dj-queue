@@ -124,10 +124,16 @@ public enum SearchCorpus {
     }
     for t in v.titleTracks ?? [] { add("Track", [t.title, t.artist].compactMap { $0 }.joined(separator: " · ")) }
     add("Notes", v.notes)
-    add("Session", session.map { Captions.setName($0.name) })
-    add("File", v.file)
+    if let photos = v.photos {
+      // Round 21 (D18): a photo post says "Photo" or "Carousel · 5" where a clip names its night and kind.
+      add("Type", v.photoLabel)
+      for p in photos { add("File", URL(fileURLWithPath: p.file).lastPathComponent) }
+    } else {
+      add("Session", session.map { Captions.setName($0.name) })
+      add("File", v.file)
+    }
     add("File", v.name == v.tag ? nil : v.name)
-    add("Kind", v.kind.displayName)
+    if !v.isPhoto { add("Kind", v.kind.displayName) }
     add("Stage", ClipStage.of(v)?.displayName)
     if v.excluded { add("State", "Excluded") }
     if v.missing { add("State", "File missing") }

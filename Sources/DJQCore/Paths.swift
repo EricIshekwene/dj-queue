@@ -7,6 +7,9 @@ public struct Paths: Sendable {
   public var appSupport: URL  // ~/Library/Application Support/DJ Queue
   public var logs: URL  // ~/Library/Logs/DJ Queue
   public var launchAgents: URL  // ~/Library/LaunchAgents
+  /// Round 21: where the Photos session lives when it isn't `<root>/Photos`. Only `DJQ_PHOTOS` sets it: a scripted run
+  /// shares the dev footage folder with other runs, and keeps its imported photos in its own scratch folder instead.
+  public var photosOverride: URL? = nil
 
   public init(root: URL, appSupport: URL, logs: URL, launchAgents: URL) {
     self.root = root; self.appSupport = appSupport; self.logs = logs; self.launchAgents = launchAgents
@@ -30,8 +33,11 @@ public struct Paths: Sendable {
       ?? home.appendingPathComponent("Movies/DJ Video")
     if let h = env["DJQ_HOME"] {
       let base = URL(fileURLWithPath: h)
-      return Paths(root: root, appSupport: base.appendingPathComponent("support"),
-                   logs: base.appendingPathComponent("logs"), launchAgents: base.appendingPathComponent("LaunchAgents"))
+      var p = Paths(root: root, appSupport: base.appendingPathComponent("support"),
+                    logs: base.appendingPathComponent("logs"), launchAgents: base.appendingPathComponent("LaunchAgents"))
+      // Dev runs only (DJQ_HOME is set): the real app always keeps photos under the root.
+      if let photos = env["DJQ_PHOTOS"], !photos.isEmpty { p.photosOverride = URL(fileURLWithPath: photos) }
+      return p
     }
     return Paths(root: root,
                  appSupport: home.appendingPathComponent("Library/Application Support/DJ Queue"),
@@ -42,7 +48,7 @@ public struct Paths: Sendable {
   public var sessions: URL { root.appendingPathComponent("Sessions") }
   /// Round 21: the Photos session folder. The app's copies of imported photos live in `Originals/<post id>/`, and photo
   /// renders in `Ready to Post/Shortform/` and `Posted/Shortform/` below it, like any session.
-  public var photos: URL { root.appendingPathComponent("Photos") }
+  public var photos: URL { photosOverride ?? root.appendingPathComponent("Photos") }
   public var appFolder: URL { root.appendingPathComponent("_app") }
   public var backups: URL { appFolder.appendingPathComponent("backups") }
   public var database: URL { appSupport.appendingPathComponent("queue.sqlite") }
@@ -52,6 +58,20 @@ public struct Paths: Sendable {
   public var overlays: URL { appSupport.appendingPathComponent("overlays") }
   public var engineLog: URL { logs.appendingPathComponent("engine.log") }
   public var agentPlist: URL { launchAgents.appendingPathComponent("com.djlovd.queue.engine.plist") }
+
+  /// `url` is inside the DJ Video root: as its path is written, or once symlinks are resolved (a root that is itself a
+  /// link). Nothing is moved or deleted outside it: a database copied from another root names paths under that root
+  /// either way, so a dev process can't reach a real file whatever the copy says. A folder inside the root that is a
+  /// link to somewhere else (Ready to Post kept on another drive) still counts, as it always has.
+  public func owns(_ url: URL) -> Bool {
+    func inside(_ dir: String, _ base: String) -> Bool { dir == base || dir.hasPrefix(base.hasSuffix("/") ? base : base + "/") }
+    let dir = url.deletingLastPathComponent()
+    // The Photos folder counts too when a scripted run keeps it outside the root (`photosOverride`).
+    return ([root] + (photosOverride.map { [$0] } ?? [])).contains { base in
+      inside(dir.standardizedFileURL.path, base.standardizedFileURL.path)
+        || inside(dir.resolvingSymlinksInPath().standardizedFileURL.path, base.resolvingSymlinksInPath().standardizedFileURL.path)
+    }
+  }
 
   public func ensure() throws {
     for d in [appSupport, logs, work, thumbs, proxies, overlays] {

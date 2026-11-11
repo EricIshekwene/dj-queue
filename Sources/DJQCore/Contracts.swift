@@ -29,9 +29,15 @@ public struct PreparedPost: Sendable, Hashable {
   public var caption: String
   public var title: String?  // YouTube
   public var uploadURL: URL
-  public init(postId: String, platform: Platform, fileURL: URL, coverURL: URL?, caption: String, title: String?, uploadURL: URL) {
+  /// Round 21: a photo post's files after the first, in order, already capped at the platform's `maxPhotos`. Empty for
+  /// a video.
+  public var moreFileURLs: [URL]
+  /// Every file to post, in order (one for a video).
+  public var allFileURLs: [URL] { [fileURL] + moreFileURLs }
+  public init(postId: String, platform: Platform, fileURL: URL, coverURL: URL?, caption: String, title: String?, uploadURL: URL,
+              moreFileURLs: [URL] = []) {
     self.postId = postId; self.platform = platform; self.fileURL = fileURL; self.coverURL = coverURL
-    self.caption = caption; self.title = title; self.uploadURL = uploadURL
+    self.caption = caption; self.title = title; self.uploadURL = uploadURL; self.moreFileURLs = moreFileURLs
   }
 }
 

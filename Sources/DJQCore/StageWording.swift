@@ -71,14 +71,18 @@ public enum StageWording {
   public static let queueSchedulesItself = "Clips in the Queue schedule themselves"
 
   /// Back label for `v`: "Back to Score" / "Back to Edit"; "Back" when it has no back move.
-  public static func backTitle(_ v: Video) -> String { ClipStage.of(v)?.backTitle ?? "Back" }
+  public static func backTitle(_ v: Video) -> String {
+    if v.isPhoto, ClipStage.of(v) == .edit { return "Back" }  // a photo post has no Score stage to go back to
+    return ClipStage.of(v)?.backTitle ?? "Back"
+  }
 
   /// Forward label for `v`: "Score it" / "Send to Queue" / "Mark posted…"; "Forward" otherwise.
   public static func forwardTitle(_ v: Video) -> String { ClipStage.of(v)?.forwardTitle ?? "Forward" }
 
   /// Back tooltip for `v` (falls back to the blocker, then "Back a stage").
   public static func backHelp(_ v: Video) -> String {
-    ClipStage.of(v)?.backHelp(score: v.score) ?? blocker(v, .back) ?? "Back a stage"
+    if v.isPhoto, ClipStage.of(v) == .edit { return PhotoRules.noScoreStage }
+    return ClipStage.of(v)?.backHelp(score: v.score) ?? blocker(v, .back) ?? "Back a stage"
   }
 
   /// Forward tooltip for `v` (falls back to the blocker, then "Forward a stage").
@@ -93,6 +97,7 @@ public enum StageWording {
     guard let st = ClipStage.of(v) else { return noStageReason(v) }
     if v.missing, st == .edit { return fileMissing }
     switch (st, direction) {
+    case (.edit, .back) where v.isPhoto: return PhotoRules.noScoreStage
     case (.score, .back): return "Score is the first stage"
     case (.queue, .forward): return queueSchedulesItself
     case (.posted, .back): return "Posted — use Repost (next version) or Reset a wrongly marked post in Posts"
@@ -254,6 +259,8 @@ extension ValidationIssue.Kind {
     case .corrupt: "Edit unreadable"
     case .missingFile: "File missing"
     case .heldInEdit: "Sent back from Queue"
+    case .noPhotos: "No photos"
+    case .photoShape: "Photo shape"
     }
   }
 
@@ -272,14 +279,16 @@ extension ValidationIssue.Kind {
     case .corrupt: "The saved edit can't be read — see Doctor"
     case .missingFile: "The clip file is gone — relink it in Health"
     case .heldInEdit: "You sent it back from the Queue — send it to the Queue again when it's done"
+    case .noPhotos: "Still needed before it can go to the Queue: add a photo in the editor"
+    case .photoShape: "Blocks posting: a platform doesn't take photos in this shape — pick another shape or turn that platform off for this post"
     }
   }
 
   /// Missing pieces (warning) vs hard blocks (danger) — the card colours them differently.
   public var isBlock: Bool {
     switch self {
-    case .tooLong, .tooLarge, .captionTooLong, .titleTooLong, .corrupt, .missingFile: true
-    case .noCrop, .noText, .noCaption, .noTitle, .heldInEdit: false
+    case .tooLong, .tooLarge, .captionTooLong, .titleTooLong, .corrupt, .missingFile, .photoShape: true
+    case .noCrop, .noText, .noCaption, .noTitle, .heldInEdit, .noPhotos: false
     }
   }
 
@@ -287,22 +296,24 @@ extension ValidationIssue.Kind {
   public var chipOrder: Int {
     switch self {
     case .heldInEdit: -1
-    case .noCrop: 0
-    case .noText: 1
-    case .noCaption: 2
-    case .noTitle: 3
-    case .tooLong: 4
-    case .captionTooLong: 5
-    case .tooLarge: 6
-    case .titleTooLong: 7
-    case .corrupt: 8
-    case .missingFile: 9
+    case .noPhotos: 0
+    case .noCrop: 1
+    case .noText: 2
+    case .noCaption: 3
+    case .noTitle: 4
+    case .photoShape: 5
+    case .tooLong: 6
+    case .captionTooLong: 7
+    case .tooLarge: 8
+    case .titleTooLong: 9
+    case .corrupt: 10
+    case .missingFile: 11
     }
   }
 
   /// Every kind in chip order.
   public static var inChipOrder: [ValidationIssue.Kind] {
-    [.heldInEdit, .noCrop, .noText, .noCaption, .noTitle, .tooLong, .captionTooLong, .tooLarge, .titleTooLong, .corrupt,
+    [.heldInEdit, .noPhotos, .noCrop, .noText, .noCaption, .noTitle, .photoShape, .tooLong, .captionTooLong, .tooLarge, .titleTooLong, .corrupt,
      .missingFile]
   }
 }
@@ -317,6 +328,7 @@ extension ValidationIssue {
     case .tooLarge: return p.map { "Too large for \($0)" } ?? "Too large"
     case .captionTooLong: return p.map { "Caption too long for \($0)" } ?? "Caption too long"
     case .titleTooLong: return "YouTube title too long"
+    case .photoShape: return p.map { "Wrong shape for \($0)" } ?? "Wrong shape"
     default: return kind.chipLabel
     }
   }

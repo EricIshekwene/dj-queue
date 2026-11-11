@@ -16,6 +16,9 @@ public final class Queue: @unchecked Sendable {
   ///
   /// Ties: older session first, then `part`, then `start` (keeps the night's order).
   /// Videos marked with "skip next" move one place later.
+  ///
+  /// Round 21 (D4): a photo post needs no score. Unscored photos come first, oldest import first; a photo with a score
+  /// sorts by it like a clip.
   public func ordered(platform: Platform? = nil) throws -> [Video] {
     let settings = try store.settings()
     let slotted = try slottedVideoIds(settings)
@@ -35,20 +38,28 @@ public final class Queue: @unchecked Sendable {
     return try applySkips(out, slotted: slotted)
   }
 
-  /// Short-form, not excluded/missing, score == nil.
+  /// Short-form, not excluded/missing, score == nil. Never a photo post: photos skip Score.
   public func toScore() throws -> [Video] {
-    try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND score IS NULL")
+    try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND score IS NULL AND photos IS NULL")
       .sorted { ($0.part ?? 0, $0.start ?? 0, $0.name) < ($1.part ?? 0, $1.start ?? 0, $1.name) }
   }
 
   /// The Edit stage (`ClipStage.of == .edit`): scored, something still missing (or sent back), plus scored clips whose
   /// file is missing and that aren't scheduled or posted (round 4: they show in Edit with "File missing").
+  /// Photo posts are here scored or not; the unscored ones come first, oldest import first. Clips order exactly as
+  /// before (score, part, start; a tie keeps the order they were read in).
   public func needsEdit() throws -> [Video] {
     try store.videos(where: """
-      type='short-form' AND excluded=0 AND score IS NOT NULL AND
+      type='short-form' AND excluded=0 AND (score IS NOT NULL OR photos IS NOT NULL) AND
       ((missing=0 AND state='needs_edit') OR (missing=1 AND state IN ('needs_edit','ready','missing_file')))
       """)
-      .sorted { ($0.score ?? 0, $0.part ?? 0, $0.start ?? 0) < ($1.score ?? 0, $1.part ?? 0, $1.start ?? 0) }
+      .sorted { a, b in
+        let ka = (a.score ?? (a.isPhoto ? -1 : 0), a.part ?? 0, a.start ?? 0), kb = (b.score ?? (b.isPhoto ? -1 : 0), b.part ?? 0, b.start ?? 0)
+        if ka != kb { return ka < kb }
+        // A tie: clips stay as they were read (and ahead of photos); photos go oldest import first.
+        guard a.isPhoto, b.isPhoto else { return !a.isPhoto && b.isPhoto }
+        return a.createdAt != b.createdAt ? a.createdAt < b.createdAt : a.id < b.id
+      }
   }
 
   /// approvedDays = consecutive days with a scheduled slot, from today (from tomorrow when today has none: a clip can't
@@ -108,8 +119,9 @@ public final class Queue: @unchecked Sendable {
     return Set(try store.planSlots().filter { !stale.contains($0.id) }.map(\.videoId))
   }
 
+  /// Scored clips, and photo posts with or without a score.
   func candidates() throws -> [Video] {
-    try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND score IS NOT NULL")
+    try store.videos(where: "type='short-form' AND excluded=0 AND missing=0 AND (score IS NOT NULL OR photos IS NOT NULL)")
   }
 
   /// Edit valid. `ready` already means valid; videos in other states (planned elsewhere, override posts) are re-checked.
@@ -123,6 +135,10 @@ public final class Queue: @unchecked Sendable {
 
   func sort(_ vids: [Video], direction: SortDirection, sessionDates: [String: String]) -> [Video] {
     vids.sorted { a, b in
+      // Round 21 (D4): unscored photo posts go ahead of everything scored, oldest import first.
+      let ua = a.isPhoto && a.score == nil, ub = b.isPhoto && b.score == nil
+      if ua != ub { return ua }
+      if ua, a.createdAt != b.createdAt { return a.createdAt < b.createdAt }
       let sa = a.score ?? 0, sb = b.score ?? 0
       if sa != sb { return direction == .worstFirst ? sa < sb : sa > sb }
       let da = sessionDates[a.sessionId] ?? "9999", db = sessionDates[b.sessionId] ?? "9999"

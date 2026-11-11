@@ -30,7 +30,7 @@ public enum ClipStage: String, Codable, Sendable, CaseIterable, Comparable {
   }
 
   /// The clip's stage from its stored state, or nil when it has none (long-form, excluded, unscored with its file
-  /// missing).
+  /// missing). A photo post skips Score: unscored, it is in Edit.
   ///
   /// Round 4 (S1): a scored clip whose file is missing is in Edit (reason chip "File missing") unless it already
   /// has a day or posted — then it stays Scheduled/Posted and shows the problem (`Store.computeState`
@@ -41,10 +41,11 @@ public enum ClipStage: String, Codable, Sendable, CaseIterable, Comparable {
       switch v.state {
       case .planned, .posting: return .scheduled
       case .posted, .partial: return .posted
-      default: return v.score == nil ? nil : .edit
+      default: return v.score == nil && !v.isPhoto ? nil : .edit
       }
     }
-    if v.score == nil { return .score }
+    // Round 21 (D4): a photo post needs no score, so it is never in Score.
+    if v.score == nil && !v.isPhoto { return .score }
     switch v.state {
     case .needsEdit: return .edit
     case .ready: return .queue

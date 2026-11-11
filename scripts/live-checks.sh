@@ -38,14 +38,9 @@ echo "live-checks: seed ${seed[1]:t}"
 mkdir -p "$HOME_DIR/support"
 SEED_DB="$HOME_DIR/support/queue.sqlite"
 cp "$seed[1]" "$SEED_DB"
-# The database stores absolute paths. Point every one at the dev root, or checks would open the real footage.
-REAL_ROOT="$HOME/Movies/DJ Video"
-columns=("${(@f)$(sqlite3 "$SEED_DB" "SELECT m.name || '.' || p.name FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND p.type LIKE '%TEXT%'")}")
-for col in $columns; do
-  sqlite3 "$SEED_DB" "UPDATE \"${col%%.*}\" SET \"${col#*.}\" = replace(\"${col#*.}\", '$REAL_ROOT', '$DEV/DJ Video') WHERE instr(\"${col#*.}\", '$REAL_ROOT') > 0" || exit 2
-  left=$(sqlite3 "$SEED_DB" "SELECT count(*) FROM \"${col%%.*}\" WHERE instr(\"${col#*.}\", '$REAL_ROOT') > 0")
-  [[ "$left" == 0 ]] || { echo "live-checks: $col still points at the real footage" >&2; exit 2; }
-done
+# The database stores absolute paths. Point every one at the dev root, or checks would open the real footage
+# (plain and JSON-escaped forms; it fails when either is left anywhere).
+scripts/seed-paths.sh "$SEED_DB" "$HOME/Movies/DJ Video" "$DEV/DJ Video" || { echo "live-checks: the seed still points at the real footage" >&2; exit 2; }
 
 typeset -A checks
 checks=(
@@ -69,15 +64,20 @@ checks=(
   settings-group "DJQ_SNAPSHOT_EDITOR=1 DJQ_SETTINGS_GROUP_SCRIPT=@"
   editor-keys    "DJQ_SNAPSHOT_EDITOR=1 DJQ_EDITOR_KEYS_SCRIPT=@"
   repost-ready   "DJQ_SNAPSHOT_EDITOR=1 DJQ_REPOST_READY_SCRIPT=@"
+  photo-import   "DJQ_PHOTO_IMPORT_SCRIPT=1"
+  photo-editor   "DJQ_SNAPSHOT_EDITOR=1 DJQ_PHOTO_EDITOR_SCRIPT=@"
+  post-at        "DJQ_POST_AT_SCRIPT=1"
 )
 # The editor scripts take one look per run; these are the same checks in dark.
-for name in text-layers bulk-caption bulk-crop editor-group editor-caption editor-template settings-group editor-keys repost-ready; do
+for name in text-layers bulk-caption bulk-crop editor-group editor-caption editor-template settings-group editor-keys repost-ready \
+            photo-import photo-editor post-at; do
   checks[$name-dark]="${checks[$name]} DJQ_EDITOR_LIVE_APPEARANCE=dark"
 done
 order=(guard screens gallery editor editor-selftest editor-live tooltip tooltip-pass hover search send-to-queue text-layers
        bulk-caption bulk-crop editor-group editor-caption editor-template settings-group editor-keys repost-ready
        text-layers-dark bulk-caption-dark bulk-crop-dark editor-group-dark editor-caption-dark editor-template-dark settings-group-dark
-       editor-keys-dark repost-ready-dark)
+       editor-keys-dark repost-ready-dark
+       photo-import photo-editor post-at photo-import-dark photo-editor-dark post-at-dark)
 (( $# )) && order=("$@")
 
 failed=0

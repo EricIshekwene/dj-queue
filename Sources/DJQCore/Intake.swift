@@ -3,6 +3,9 @@ import Foundation
 
 /// Reads every `Sessions/*/videos.json` and keeps the database in step (spec §4).
 /// Never writes to session folders.
+///
+/// Round 21: photo posts aren't in any videos.json and their session (`Session.photosId`) isn't under `Sessions/`, so
+/// the manifest pass leaves both alone; `PhotoImport.checkFiles` then marks a post whose photo file is gone.
 public struct IntakeReport: Sendable, Codable {
   public var sessionsSeen = 0
   public var newVideos: [String] = []
@@ -165,11 +168,14 @@ public final class Intake: @unchecked Sendable {
       report.removedFromManifest.append(v.name)
       try store.logEvent("intake", "Removed from videos.json: \(v.name)", videoId: v.id)
     }
-    for var s in try store.sessions() where !seenSessionIds.contains(s.id) && !s.missing {
+    for var s in try store.sessions() where !seenSessionIds.contains(s.id) && !s.missing && !s.isPhotos {
       s.missing = true
       try store.save(s)
       try store.logEvent("intake", "Session folder missing: \(s.name)")
     }
+
+    // Photo posts: their own file check (never part of the manifest pass above).
+    report.missing += try PhotoImport(store: store).checkFiles()
 
     // Untracked clips (Doctor finding).
     let tracked = try relinkedPaths()
@@ -276,7 +282,7 @@ public final class Intake: @unchecked Sendable {
   private func relink(_ v: Video, session: Session) throws -> URL? {
     guard let fp = v.fingerprint, let size = v.fileSize else { return nil }
     let ownDir = URL(fileURLWithPath: session.folder)
-    let others = try store.sessions().map { URL(fileURLWithPath: $0.folder) }.filter { $0 != ownDir }
+    let others = try store.sessions().filter { !$0.isPhotos }.map { URL(fileURLWithPath: $0.folder) }.filter { $0 != ownDir }
     for dir in [ownDir] + others {
       guard let en = fm.enumerator(at: dir, includingPropertiesForKeys: [.fileSizeKey]) else { continue }
       for case let f as URL in en {
