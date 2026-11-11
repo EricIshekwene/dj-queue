@@ -110,3 +110,24 @@ still bulk-caption-versions $R/repost-10-bulk-caption-versions-note-light
 
 du -sh "$OUT"
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }
+
+# Round 21: photo posts and "Post at a set time". No player in these, so the whole window shows.
+P=photo-import
+gif photo-import     $P/photo-01-edit-before-light $P/photo-03-import-sheet-light $P/photo-04-import-sheet-post-per-photo-light \
+                 $P/photo-06-edit-cards-added-light $P/photo-11-quicklook-photo-1-light $P/photo-12-quicklook-photo-2-light
+still photo-import-sheet $P/photo-03-import-sheet-light
+still photos-in-edit     $P/photo-06-edit-cards-added-light
+E=photo-editor
+gif photo-editor     $E/photo-01-open-carousel-light $E/photo-04-frame-crop-zoom-light $E/photo-05-text-on-photo-3-light \
+                 $E/photo-06-shows-on-2-3-light $E/photo-08-style-and-colour-light $E/photo-09-reordered-new-cover-light \
+                 $E/photo-13-platform-note-first-4-of-6-light
+still photo-editor       $E/photo-08-style-and-colour-light
+still photo-editor-crop  $E/photo-04-frame-crop-zoom-light
+still photo-editor-shape $E/photo-16-instagram-9x16-issue-light
+still photo-preview-export $E/compare-canvas-export-light
+A=post-at
+gif post-at          $A/post-at-01-edit-photo-ready-light $A/post-at-02-dialog-open-light $A/post-at-05-two-days-out-light \
+                 $A/post-at-06-set-toast-light $A/post-at-07-calendar-week-light $A/post-at-11-moved-next-day-light
+still post-at-dialog     $A/post-at-05-two-days-out-light
+still post-at-youtube    $A/post-at-22-youtube-quiet-hours-light
+still calendar-set-time  $A/post-at-07-calendar-week-light

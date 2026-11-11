@@ -246,13 +246,17 @@ struct DSXThumb: View {
   var post: PlatformPost? = nil
 
   var body: some View {
-    let h = width * 16 / 9
     let postCover = post.flatMap { model.clipPreview(post: $0)?.cover }
+    // Round 21: a photo keeps its own shape, whole (a 4:5 photo is never cut to 9:16): the thumb is as wide as a
+    // clip's and as tall as the photo makes it.
+    let photo = video.flatMap { $0.isPhoto ? (postCover ?? model.poster($0)) : nil }
+    let ratio: CGFloat = video?.isPhoto == true
+      ? photo.flatMap { $0.size.height > 0 ? $0.size.width / $0.size.height : nil } ?? CGFloat(model.settings.defaults.photoAspect.ratio)
+      : 9.0 / 16
+    let h = width / ratio
     Group {
       if let v = video, v.isPhoto {
-        // Round 21: a photo keeps its own shape, whole, inside the slot (a 4:5 photo is never cut to 9:16).
-        DSPhotoPreview(count: v.photoCount, aspectRatio: model.settings.defaults.photoAspect.ratio, poster: postCover ?? model.poster(v),
-                       cornerRadius: DS.radius.xs, mat: true)
+        DSPhotoPreview(count: v.photoCount, aspectRatio: Double(ratio), poster: photo, cornerRadius: DS.radius.xs)
       } else if let img = postCover {
         Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
       } else if let v = video, let img = model.poster(v) {

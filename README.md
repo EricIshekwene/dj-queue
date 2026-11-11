@@ -1,8 +1,8 @@
 # DJ Queue
 
-A native macOS app that runs my DJ content pipeline: it turns raw 4K clips from a DJ set into vertical short-form videos, plans what posts where and when across six platforms, renders the final files in the background, and tracks every post — including missed slots, failures and copyright blocks.
+A native macOS app that runs my DJ content pipeline: it turns raw 4K clips from a DJ set into vertical short-form videos, takes photo posts and carousels too, plans what posts where and when across six platforms, renders the final files in the background, and tracks every post — including missed slots, failures and copyright blocks.
 
-Built for my own use as DJ Lovd (TikTok, Instagram, Facebook, YouTube Shorts, Threads, X). SwiftUI + AVFoundation + SQLite + ffmpeg, ~890 automated tests. Designed, specified and shipped with a team of AI coding agents that I directed — v1 in one day, then a full redesign the next — see [How it was built](#how-it-was-built).
+Built for my own use as DJ Lovd (TikTok, Instagram, Facebook, YouTube Shorts, Threads, X). SwiftUI + AVFoundation + SQLite + ffmpeg, ~1,050 automated tests. Designed, specified and shipped with a team of AI coding agents that I directed — v1 in one day, then a full redesign the next — see [How it was built](#how-it-was-built).
 
 ![Queue](docs/media/queue.jpg)
 
@@ -30,6 +30,18 @@ Recorded off screen from the app's own click-through checks (v0.12.1): each fram
 | **Every version in one list** | **Filters › Reposts: Ready to repost** |
 | ![Version list with Ready to repost switches](docs/media/repost-versions.jpg) | ![Library filtered to clips with a version ready to repost](docs/media/repost-filter.jpg) |
 
+**Photo posts and set-time posts (v0.15.0).** A photo, or a carousel of several, goes through the same life as a clip: add it, edit it (shape, a crop per photo, texts on the photos you pick, caption, hashtag groups), send it to the Queue with no score, and track it on the Calendar. YouTube Shorts is skipped because it takes video only, and a carousel longer than a platform allows sends its first photos there and says so. Any Queue item, photo or clip, can also go out at an exact day and minute, outside the regular schedule, without moving anything else.
+
+| Add photos — pick or drop them, one carousel or a post per photo | The photo editor — crop each photo, put a text on photos 2–3, reorder, platform notes |
+|---|---|
+| ![Adding three photos as a carousel and stepping through them](docs/media/photo-import.gif) | ![Editing a carousel: crop, text on a range of photos, new cover](docs/media/photo-editor.gif) |
+| **Post at a set time** — pick the day and minute, see when each platform goes out, then it's on the Calendar | **The dialog** — quick times, the time in your zone, one row per platform |
+| ![Setting a time for a photo post and seeing it on the Calendar](docs/media/post-at.gif) | ![Post at a set time dialog](docs/media/post-at-dialog.jpg) |
+| **A crop per photo** — the whole photo with the crop, thirds grid and zoom | **Instagram and 9:16** — said before the Queue, with the two fixes one click away |
+| ![Cropping one photo of a carousel](docs/media/photo-editor-crop.jpg) | ![The 9:16 note for Instagram with its one-click fixes](docs/media/photo-editor-shape.jpg) |
+| **Calendar** — set-time items show their own time with a clock mark beside the regular plan | **A clip at a set time** — YouTube stays out of its quiet hours, and the dialog says where it moves |
+| ![Calendar week with photo posts at set times](docs/media/calendar-set-time.jpg) | ![YouTube moved out of the quiet window](docs/media/post-at-youtube.jpg) |
+
 ## What it does
 
 The app follows a clip's life — **Score → Edit → Queue → Calendar** — with one job and one primary action per screen, on a calm, rounded design system modelled on ChatGPT's look and shadcn/ui component anatomy.
@@ -38,6 +50,8 @@ The app follows a clip's life — **Score → Edit → Queue → Calendar** — 
 - **Score & queue** — I score each clip 0–100 on a large autoplaying preview; the queue orders the backlog worst → best (to warm up new accounts) or best → worst. Every list has Cards / Grid / Single / List views and one shared header (search, view modes, page chips, one Filters popover with removable chips, sort; remembered per page, ⌘F to search). Lists show each clip as it will post: small background-generated proxies carry the crop and trim, the text overlay is drawn live during its window, and covers include the text. Small previews show their cover and play only under the pointer; large ones play by themselves.
 - **Search everything** — ⌘K finds clips (by caption, overlay text, hashtags, notes and file name too), posts, weeks ("12 nov"), sessions, every setting and every action from anywhere in the app, literally and without guessing. ⌘F stays a filter for the list on screen.
 - **Keyboard-first editor** — Space plays or pauses even right after typing (a click on the picture or Esc lets go of the field), ← / → jump by a step you choose (2 s by default, ⇧ for one frame) with a try-it strip in Settings, and ↑ / ↓ move to the previous or next clip.
+- **Photo posts** — add one photo or a carousel (JPEG, PNG, HEIC, WebP, TIFF; the app keeps its own copy and never touches the original). The same editor opens in a photo mode: a shape for the post (4:5 by default), a crop per photo, the same texts and looks shown on the photos you choose, captions, templates and hashtag groups, with the canvas drawn by the code that makes the posted JPEGs. Photos need no score.
+- **Post at a set time** — an exact day and minute for any Queue item, on every platform at once, outside the posts-per-day plan. It never takes a regular place, nothing else moves for it, and the scheduler never shifts it.
 - **Vertical editor** — crop a 4K 16:9 frame to 9:16, trim starting on my original markers (with grace to extend), overlay text (up to 12 timed texts like CapCut, each with its own start, end, font and colours, tucked behind a collapsed Advanced row), captions with per-platform limits, a cover frame, versions for reposts (each one marked *Ready to repost* when it's done), multi-platform safe zones and realistic phone previews of each platform's UI with the real caption and handle.
 - **No intelligence in the app, by design** — the app is a UI over scripts. Song names and titles come from metadata my agents write (`title_suggestions` in the manifest) and show up as chips; when a name is ambiguous, *Ask an agent* copies a ready-made prompt. Outside agents read and change everything through the `djq` CLI (JSON in/out), documented as a Claude skill.
 - **Stage = readiness** — there are no Ready / Needs edit labels: a clip in Edit isn't ready, the Queue only ever holds ready clips, and a queued clip that becomes invalid (crop cleared, a platform limit changed, file missing) moves back to Edit by itself with a chip saying why. Any clip can move one stage back or forward from wherever it is (e.g. *Back to Edit* from the Queue; a scheduled clip can go back to the Queue), with the reason shown when a move isn't allowed (nothing already posted is ever pulled back) and one-step undo.
