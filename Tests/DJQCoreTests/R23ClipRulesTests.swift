@@ -4,17 +4,20 @@ import Testing
 
 /// Round 23 (A3, A4, A6, D6, D7, D10): a video made from a photo is a clip everywhere, with four differences: no score,
 /// no text by default (and no `{set}`/`{tag}`), its own mark, and a title before YouTube.
+///
+/// Each rule is run for both fits (D12): "Fill the frame", where the crop is Eric's, and "Whole photo", where the crop
+/// is the whole frame. The fit changes the picture, never the rules.
 @Suite(.enabled(if: Tone.haveTools, "ffmpeg and ffprobe aren't installed")) struct R23ClipRulesTests {
-  @Test func itIsInEditWithoutAScoreAndSortsAheadOfScoredClips() throws {
+  @Test(arguments: StillSource.Fit.allCases) func itIsInEditWithoutAScoreAndSortsAheadOfScoredClips(fit: StillSource.Fit) throws {
     let f = try Fixture.engine(3, scores: [80, 20, 50])
     try f.writeManifest(clips: [("song0 x mix0", 20), ("song1 x mix1", 21), ("song2 x mix2", 22), ("unscored", 23)], longform: true,
                         sessionName: f.sessionDir.lastPathComponent)
     try f.intake()
-    let older = try f.still("older", title: "Older")
+    let older = try f.still("older", title: "Older", fit: fit)
     f.clock.advance(60)
     let photo = try f.singlePhoto("photo", title: "Photo")
     f.clock.advance(60)
-    let newer = try f.still("newer", title: "Newer")
+    let newer = try f.still("newer", title: "Newer", fit: fit)
     let queue = Queue(store: f.store), bulk = BulkActions(store: f.store)
     // Edit, never Score; the unscored clip still waits for its score.
     #expect(ClipStage.of(older) == .edit && older.score == nil)
@@ -34,7 +37,11 @@ import Testing
     let sent = try #require(try f.store.video(id: older.id))
     #expect(sent.state == .ready && sent.sentToQueue && ClipStage.of(sent) == .queue && Store.wasInQueue(sent))
     let crop = try #require(try f.store.edit(videoId: older.id).crop)
-    #expect(crop == CropRect(x: 116, y: 0, w: 168, h: 300), "9:16 of 400×300, centred: \(crop)")
+    if fit == .fill {
+      #expect(crop == CropRect(x: 116, y: 0, w: 168, h: 300), "9:16 of 400×300, centred: \(crop)")
+    } else {
+      #expect(crop == CropRect(x: 0, y: 0, w: 396, h: 704), "the whole frame, as it was made: \(crop)")
+    }
     #expect(try f.store.lastCropCentre() == nil, "a made video's crop isn't the next clip's starting point")
     // Queue order: the three without a score first, oldest first, then the clips by score.
     #expect(try queue.ordered().map(\.id) == [older.id, photo.id, newer.id, "clip-1", "clip-2", "clip-0"])
@@ -55,10 +62,10 @@ import Testing
     #expect(try f.store.video(id: older.id)?.heldInEdit == true)
   }
 
-  @Test func itStartsWithNoTextAndItsCaptionLeavesTheSetAndTheFileNameOut() throws {
+  @Test(arguments: StillSource.Fit.allCases) func itStartsWithNoTextAndItsCaptionLeavesTheSetAndTheFileNameOut(fit: StillSource.Fit) throws {
     let f = try Fixture(clips: [], longform: false)
     try f.updateSettings { $0.defaults.textSource = .rawTag; $0.defaults.textTiming = .firstSeconds }
-    let v = try f.still("IMG_0042", title: "Loft nights")
+    let v = try f.still("IMG_0042", title: "Loft nights", fit: fit)
     let s = try f.store.settings()
     // No text unless a version sets it, whatever the default text source says.
     let r = try #require(try f.store.resolvedVersion(videoId: v.id, number: 1))
@@ -96,9 +103,9 @@ import Testing
     #expect(v.photoCount == 0 && !v.isCarousel && !v.isPhoto)
   }
 
-  @Test func aYouTubePostNeedsSomethingToBeNamedAfter() throws {
+  @Test(arguments: StillSource.Fit.allCases) func aYouTubePostNeedsSomethingToBeNamedAfter(fit: StillSource.Fit) throws {
     let f = try Fixture.engine(1)
-    let v = try f.still("IMG_7", title: nil)
+    let v = try f.still("IMG_7", title: nil, fit: fit)
     func issue(_ video: Video? = nil) throws -> ValidationIssue? {
       try Validation.issues(video: try #require(try video ?? f.store.video(id: v.id)), store: f.store).first { $0.kind == .noTitle }
     }
@@ -107,7 +114,11 @@ import Testing
     #expect(i.kind.editorSection == .title && i.kind.chipLabel == "No title" && !i.kind.isBlock)
     // It keeps the item out of the Queue, and says so.
     let sent = try f.send(v.id)
-    #expect(sent.remainingIssues[v.id]?.contains { $0.kind == .noTitle } == true, "\(sent.remainingIssues)")
+    if fit == .fill {  // Send to Queue confirmed its crop, and says what is left
+      #expect(sent.remainingIssues[v.id]?.contains { $0.kind == .noTitle } == true, "\(sent.remainingIssues)")
+    } else {  // nothing for it to confirm: it says why it stays
+      #expect(sent.changed.isEmpty && sent.skipped[v.id] == "Still in Edit: Add a title: YouTube needs a name for this video", "\(sent.skipped)")
+    }
     #expect(try f.store.video(id: v.id)?.state == .needsEdit && f.store.video(id: v.id)?.sentToQueue == false)
     #expect(try AgentAPI.summary(try #require(try f.store.video(id: v.id)), store: f.store).reasons == ["No title"])
     // Any of Eric's own words fixes it: a Title, a typed YouTube title, or text on the video.
@@ -136,9 +147,9 @@ import Testing
     #expect(try issue(try f.singlePhoto("p")) == nil)
   }
 
-  @Test func theSchedulerGivesItAYouTubePostAndAPhotoPostStillGetsFive() throws {
+  @Test(arguments: StillSource.Fit.allCases) func theSchedulerGivesItAYouTubePostAndAPhotoPostStillGetsFive(fit: StillSource.Fit) throws {
     let f = try Fixture.engine(1)
-    let made = try f.still(title: "Flyer")
+    let made = try f.still(title: "Flyer", fit: fit)
     f.clock.advance(60)
     let photo = try f.singlePhoto("photo", title: "Photo")
     try f.send(made.id)
@@ -154,7 +165,7 @@ import Testing
     #expect(try f.store.posts(where: "video_id=? AND platform='youtube'", [photo.id]).isEmpty)
     #expect(try f.store.video(id: made.id)?.state == .planned && f.doublePosts().isEmpty)
     // Too long for a platform is a clip's issue, with a clip's fix (the trim).
-    let long = try f.still("long", title: "Long", seconds: 95)
+    let long = try f.still("long", title: "Long", seconds: 95, fit: fit)
     let issues = try Validation.issues(video: long, store: f.store)
     #expect(issues.contains { $0.kind == .tooLong && $0.platform == .facebook } && !issues.contains { $0.kind == .tooLong && $0.platform == .tiktok })
     var e = try f.store.edit(videoId: long.id)
@@ -163,7 +174,7 @@ import Testing
     #expect(try !Validation.issues(video: try #require(try f.store.video(id: long.id)), store: f.store).contains { $0.kind == .tooLong })
   }
 
-  @Test func theVideoRendererRendersItAndPostizGetsTheVideoPayload() throws {
+  @Test(arguments: StillSource.Fit.allCases) func theVideoRendererRendersItAndPostizGetsTheVideoPayload(fit: StillSource.Fit) throws {
     let f = try Fixture(clips: [], longform: false)
     try f.updateSettings { s in
       for p in Platform.allCases {
@@ -171,7 +182,7 @@ import Testing
         s.publishing.channels[p] = "ch-\(p.rawValue)"
       }
     }
-    let v = try f.still(title: "Saturday flyer", seconds: 4)
+    let v = try f.still(title: "Saturday flyer", seconds: 4, fit: fit)
     var e = try f.store.edit(videoId: v.id)
     e.trimIn = 0.5
     e.trimOut = 3
@@ -197,7 +208,14 @@ import Testing
     // The picture in the render is the photo's own (the left half red, the right half blue), text aside.
     let frame = try #require(Tone.frame(URL(fileURLWithPath: out), at: 2.2, in: f.dir))
     let source = try #require(PhotoImages.bitmap(f.inbox.appendingPathComponent("flyer-1.jpg")))
-    #expect(frame[300, 300].near(source[150, 40], 16) && frame[800, 1700].near(source[250, 260], 16), "\(frame[300, 300]) \(frame[800, 1700])")
+    // Fill: Eric's crop, edge to edge. Whole: the photo across the middle (and its darkened copy above and below).
+    let (left, right) = fit == .fill ? ((300, 300), (800, 1700)) : ((270, 960), (810, 960))
+    #expect(frame[left.0, left.1].near(source[150, 40], 16) && frame[right.0, right.1].near(source[250, 260], 16),
+            "\(frame[left.0, left.1]) \(frame[right.0, right.1])")
+    if fit == .whole {
+      let above = frame[270, 200], red = source[150, 40]
+      #expect(above.near(.init(r: red.r * 65 / 100, g: red.g * 65 / 100, b: red.b * 65 / 100), 20), "above the photo: its darkened copy, \(above)")
+    }
     // Postiz: the video payload on every platform, YouTube included; nothing of a photo post's.
     let s = try f.store.settings()
     for p in Platform.allCases {
@@ -219,19 +237,20 @@ import Testing
     let pinfo = try Media.probe(proxy)
     #expect(pinfo.width == 540 && pinfo.height == 960 && pinfo.hasAudio && abs(pinfo.duration - 2.5) <= 0.1, "\(pinfo)")
     let pframe = try #require(Tone.frame(proxy, at: 1.9, in: f.dir))
-    #expect(pframe[150, 150].near(source[150, 40], 20) && pframe[400, 850].near(source[250, 260], 20), "\(pframe[150, 150]) \(pframe[400, 850])")
-    #expect(Media.sourceSize(store: f.store, video: v) == CGSize(width: 400, height: 300))
+    #expect(pframe[left.0 / 2, left.1 / 2].near(source[150, 40], 20) && pframe[right.0 / 2, right.1 / 2].near(source[250, 260], 20),
+            "\(pframe[left.0 / 2, left.1 / 2]) \(pframe[right.0 / 2, right.1 / 2])")
+    #expect(Media.sourceSize(store: f.store, video: v) == (fit == .fill ? CGSize(width: 400, height: 300) : CGSize(width: 396, height: 704)))
     #expect(Media.thumbnail(store: f.store, video: try #require(try f.store.video(id: v.id))) != nil)
   }
 
-  @Test func bulkCropLeavesItAloneAndTheOtherBulkEditsReachIt() throws {
+  @Test(arguments: StillSource.Fit.allCases) func bulkCropLeavesItAloneAndTheOtherBulkEditsReachIt(fit: StillSource.Fit) throws {
     let f = try Fixture.engine(1)
-    let v = try f.still(title: nil)
+    let v = try f.still(title: nil, fit: fit)
     let bulk = BulkActions(store: f.store)
     let crop = try bulk.setCropOffset([v.id, "clip-0"], CropChange(offset: 0.1))
     #expect(crop.skipped[v.id] == "a photo with audio is cropped in the editor" && !crop.changed.contains(v.id))
     #expect(try bulk.previewCrop([v.id], CropChange(offset: 0.1)).first?.skipped == StillVideo.bulkCropReason)
-    #expect(try f.store.edit(videoId: v.id).crop == nil)
+    #expect(try f.store.edit(videoId: v.id).crop == (fit == .fill ? nil : CropRect(x: 0, y: 0, w: 396, h: 704)))
     #expect(try bulk.setTitle([v.id], "Saturday").changed == [v.id])
     #expect(try bulk.setCaptionTemplate([v.id], "short").changed == [v.id])
     // YouTube can be turned off and on again, as for a clip (a photo post can't turn it on).
@@ -246,10 +265,10 @@ import Testing
     #expect(fields["Kind"] == nil && fields["Session"] == nil && fields["File"]?.first?.hasPrefix("01-") == true)
   }
 
-  @Test func intakeLeavesItAloneAndAMissingVideoFileIsSaidAndComesBack() throws {
+  @Test(arguments: StillSource.Fit.allCases) func intakeLeavesItAloneAndAMissingVideoFileIsSaidAndComesBack(fit: StillSource.Fit) throws {
     let f = try Fixture()
     try f.intake()
-    let v = try f.still(title: "Flyer")
+    let v = try f.still(title: "Flyer", fit: fit)
     let file = try #require(try f.store.fileURL(for: v))
     let stored = try f.stored(v.id)
     // Intake: not new, not updated, not missing, not "removed from videos.json", not an untracked clip.

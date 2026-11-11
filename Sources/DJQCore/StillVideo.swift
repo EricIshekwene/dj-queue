@@ -8,8 +8,9 @@ import ImageIO
 /// Files live in the Photos folder: `Stills/<video id>/video.mp4` and DJ Queue's own copy of the audio,
 /// `Stills/<video id>/audio.m4a` (the AAC the video holds: the picked file is never copied, so the sound of a video
 /// costs no more than a song). A later Change audio writes `video-2.mp4` / `audio-2.m4a` beside them and a fit change
-/// `video-3.mp4`, so the undo of a change only has to point the row back at files that are still there. The files Eric
-/// picked are only read.
+/// `video-3.mp4`, so the undo of a change only has to point the row back at files that are still there. A fit change
+/// back goes to the video already made from this audio (`StillSource.other`): two videos per audio, however often the
+/// fit flips. The files Eric picked are only read.
 ///
 /// D12: the photo sits in the video one of two ways (`StillSource.Fit`). `whole` (the default) makes a 9:16 video with
 /// the whole photo centred over a blurred, darkened copy of itself; its crop is the whole frame. `fill` makes the video
@@ -30,6 +31,10 @@ public final class StillVideo: @unchecked Sendable {
   public static let lockedReason = "Send it back to Edit first"
   /// Why Back from Edit doesn't apply (D6).
   public static let noScoreStage = "A photo with audio has no Score stage"
+  /// What an undo says for an item it leaves alone because the restore would change what the item is under a day or
+  /// a post (`BulkActions.stillUndoLock`), and whether a skip's reason is that one.
+  public static let undoLockReason = "It's scheduled or posted now: send it back to Edit first"
+  public static func isUndoLock(_ reason: String) -> Bool { reason == undoLockReason }
   /// Why bulk crop leaves it alone: its picture is a photo of any shape, so one framing can't fit a selection.
   public static let bulkCropReason = "a photo with audio is cropped in the editor"
   /// The issue for a YouTube post with nothing to name it (D10).
@@ -74,24 +79,33 @@ public final class StillVideo: @unchecked Sendable {
     public var photo: (width: Int, height: Int)
     /// The photo covers the whole frame: no background is drawn.
     public var fills: Bool { frame.width == photo.width && frame.height == photo.height }
+    /// Where the photo's top left corner goes: centred, on an even pixel. A 4:2:0 file keeps one colour sample for
+    /// two rows, so a photo that started on an odd row would tint the background row next to it.
+    public var offset: (x: Int, y: Int) { ((frame.width - photo.width) / 4 * 2, (frame.height - photo.height) / 4 * 2) }
     public static func == (a: Layout, b: Layout) -> Bool {
       a.frame.width == b.frame.width && a.frame.height == b.frame.height && a.photo.width == b.photo.width && a.photo.height == b.photo.height
     }
   }
 
-  /// D12. `fill`: the frame is the photo's own shape (`frameSize`). `whole`: a 9:16 frame, 2160×3840 or smaller so the
-  /// photo is never enlarged, with the photo fitted inside. A photo within 1 % of 9:16 is the same either way.
+  /// D12. `fill`: the frame is the photo's own shape (`frameSize`). `whole`: a frame that is exactly 9:16 (so its
+  /// whole-frame crop always renders), 2160×3840 or smaller so the photo is never enlarged, with the photo fitted
+  /// inside. A photo that is 9:16 already, or within `nearNineSixteen` of it once fitted, covers the frame: no
+  /// background, and at most half a percent of stretch, which is less than the renderer allows a crop.
   public static func layout(width: Int, height: Int, fit: StillSource.Fit) -> Layout {
     let own = frameSize(width: width, height: height)
-    let ratio = Double(width) / Double(max(1, height)), nine = 9.0 / 16
-    guard fit == .whole, abs(ratio - nine) / nine > 0.01 else { return Layout(frame: own, photo: own) }
-    let c = min(1, max(Double(width) / Double(shortSide), Double(height) / Double(longSide)))
-    // A multiple of 18 wide is exactly 9:16 with even sides.
-    let w = max(36, Int(Double(shortSide) * c / 18) * 18), h = w / 9 * 16
+    guard fit == .whole else { return Layout(frame: own, photo: own) }
+    // The widest 9:16 frame that doesn't enlarge the photo. A multiple of 18 wide is exactly 9:16 with even sides.
+    let widest = min(Double(shortSide), max(Double(width), Double(height) * 9 / 16))
+    let w = max(36, Int(widest / 18) * 18), h = w / 9 * 16
     let k = min(Double(w) / Double(width), Double(h) / Double(height))
     func even(_ v: Double, _ most: Int) -> Int { min(most, max(2, Int((v / 2).rounded()) * 2)) }
-    return Layout(frame: (w, h), photo: (even(Double(width) * k, w), even(Double(height) * k, h)))
+    let near = Double(width) * k >= Double(w) * (1 - nearNineSixteen) && Double(height) * k >= Double(h) * (1 - nearNineSixteen)
+    return Layout(frame: (w, h), photo: near ? (w, h) : (even(Double(width) * k, w), even(Double(height) * k, h)))
   }
+
+  /// How far from the 9:16 frame a fitted photo may be and still cover it (review round 2, S2). The renderer takes a
+  /// crop within 1 % of its shape (`Media.cropProblem`); this is inside that.
+  public static let nearNineSixteen = 0.005
 
   /// The made video's pixel size for an upright photo of `width`×`height`: its own shape, fitted into the frame, even.
   public static func frameSize(width: Int, height: Int) -> (width: Int, height: Int) {
@@ -218,7 +232,7 @@ public final class StillVideo: @unchecked Sendable {
         progress(min(1, max(0, us / 1_000_000 / estimate)))
       }
       guard r.status == 0, fm.fileExists(atPath: out.path) else {
-        throw EngineError("\(audio.lastPathComponent) can't be read as audio: \(r.stderrTail)")
+        throw EngineError("\(audio.lastPathComponent) can't be read as audio: \(Self.words(r, [audio.resolvingSymlinksInPath(), audio, out]))")
       }
       let d = try encodedSeconds(out)
       try Self.checkLength(d, audio)
@@ -230,11 +244,19 @@ public final class StillVideo: @unchecked Sendable {
     }
   }
 
+  /// What a tool said when it stopped, for an error Eric reads: its last lines with the folders taken off every path
+  /// (`files` are the ones it was given; a name says which file, and where it is kept belongs in no toast or log).
+  static func words(_ r: Proc.Result, _ files: [URL] = []) -> String {
+    var text = r.stderrTail
+    for f in files.sorted(by: { $0.path.count > $1.path.count }) { text = text.replacingOccurrences(of: f.path, with: f.lastPathComponent) }
+    return text.replacingOccurrences(of: #"(?<![\w.~])~?/(?:[^/\s'":|]+/)+"#, with: "", options: .regularExpression)
+  }
+
   private func encodedSeconds(_ url: URL) throws -> Double {
     guard let ffprobe else { throw EngineError(Self.noFFmpeg) }
     let r = try Proc.run(ffprobe, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", url.path], timeout: 60)
     guard r.status == 0, let d = Double(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)), d > 0 else {
-      throw EngineError("the audio came out unreadable: \(r.stderrTail)")
+      throw EngineError("the audio came out unreadable: \(Self.words(r, [url]))")
     }
     return d
   }
@@ -288,7 +310,7 @@ public final class StillVideo: @unchecked Sendable {
       let picture = layout.fills ? "[0:v]"
         : "[0:v]format=gbrp,split[a][b];[a]scale=\(frame.width):\(frame.height):force_original_aspect_ratio=increase:flags=bicubic,"
           + "crop=\(frame.width):\(frame.height),gblur=sigma=\(sigma),colorchannelmixer=rr=0.65:gg=0.65:bb=0.65[bg];"
-          + "[bg][b]overlay=(W-w)/2:(H-h)/2:format=gbrp,"
+          + "[bg][b]overlay=\(layout.offset.x):\(layout.offset.y):format=gbrp,"
       // (A PNG says sRGB; the file says BT.709, as every clip does.)
       let graph = picture + "loop=loop=\(n - 1):size=1:start=0,scale=in_range=pc:out_color_matrix=bt709:out_range=tv,format=yuv420p,setsar=1,"
         + "setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709[v]"
@@ -304,15 +326,15 @@ public final class StillVideo: @unchecked Sendable {
       if r.status != 0 {  // an ffmpeg built without x264: the Mac's own encoder
         r = try segment(["-c:v", "h264_videotoolbox", "-profile:v", "high", "-b:v", "40000k", "-allow_sw", "1"])
       }
-      guard r.status == 0, fm.fileExists(atPath: seg.path) else { throw EngineError("couldn't make the video: \(r.stderrTail)") }
+      guard r.status == 0, fm.fileExists(atPath: seg.path) else { throw EngineError("couldn't make the video: \(Self.words(r, [png, seg]))") }
       progress?(0.6)
       // 3. That interval again and again under the audio, copied, cut at the audio's end.
       try fm.createDirectory(at: dir, withIntermediateDirectories: true)
       let m = try Proc.run(ffmpeg, ["-hide_banner", "-nostats", "-y", "-stream_loop", "-1", "-i", seg.path, "-i", prepared.encoded.path,
                                     "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-t", String(format: "%.6f", d),
                                     "-map_metadata", "-1", "-movflags", "+faststart", "-f", "mp4", tmpVideo.path], timeout: 300)
-      guard m.status == 0, fm.fileExists(atPath: tmpVideo.path) else { throw EngineError("couldn't make the video: \(m.stderrTail)") }
-      let probe = try Media.probe(tmpVideo)
+      guard m.status == 0, fm.fileExists(atPath: tmpVideo.path) else { throw EngineError("couldn't make the video: \(Self.words(m, [seg, prepared.encoded, tmpVideo]))") }
+      guard let probe = try? Media.probe(tmpVideo) else { throw EngineError("the video came out unreadable") }
       var problems: [String] = []
       if probe.videoCodec != "h264" { problems.append("codec \(probe.videoCodec)") }
       if probe.width != frame.width || probe.height != frame.height { problems.append("size \(probe.width)×\(probe.height)") }
@@ -412,13 +434,19 @@ public final class StillVideo: @unchecked Sendable {
   /// never encoded again. A copy from before the copy was the AAC (the picked file itself) is read like a picked file.
   func prepared(from still: StillSource) throws -> Prepared {
     let url = store.paths.photos.appendingPathComponent(still.audio)
-    guard fm.fileExists(atPath: url.path) else { throw EngineError("Its audio file is missing (\(still.audioName)): choose the audio again with Change audio") }
+    // Gone, damaged or unreadable: the same thing to Eric, and the same way out.
+    let unusable = EngineError(Self.audioCopyUnusable(still.audioName))
+    guard fm.fileExists(atPath: url.path) else { throw unusable }
     guard url.pathExtension.lowercased() == "m4a" else {
-      let p = try prepare(url)
+      guard let p = try? prepare(url) else { throw unusable }
       return Prepared(name: still.audioName, encoded: p.encoded, duration: p.duration, folder: nil, keeping: p)
     }
-    return Prepared(name: still.audioName, encoded: url, duration: try encodedSeconds(url), folder: nil)
+    guard let d = try? encodedSeconds(url), abs(d - still.audioDuration) <= 0.05 else { throw unusable }
+    return Prepared(name: still.audioName, encoded: url, duration: d, folder: nil)
   }
+
+  /// What a fit change says when DJ Queue's own copy of the audio is gone or can't be read.
+  static func audioCopyUnusable(_ name: String) -> String { "Its audio file is missing or can't be read (\(name)): choose the audio again with Change audio" }
 
   // MARK: Add, change, remove
 
@@ -473,7 +501,7 @@ public final class StillVideo: @unchecked Sendable {
                                                             audioName: prepared.name, audioDuration: made.duration, fit: fit))
         var e = try self.store.edit(videoId: videoId)
         e.photoCrops = [:]
-        e.aspectOverride = nil
+        e.aspectOverride = try self.aspect(for: fit)
         e.crop = Self.crop(made, fit: fit)
         e.trimIn = nil; e.trimOut = nil; e.platformTrims = [:]; e.coverTime = nil
         for p in Platform.allCases where !p.supportsPhotos { e.skippedPlatforms.remove(p) }  // the skip a photo post is given
@@ -495,6 +523,14 @@ public final class StillVideo: @unchecked Sendable {
     fit == .whole ? CropRect(x: 0, y: 0, w: Double(made.width), h: Double(made.height)) : nil
   }
 
+  /// The shape a made video's edit says for itself (review round 2, S3). A whole-photo video is 9:16 by the way it is
+  /// made, so where New clip defaults ask for another shape it says 9:16 itself, or its whole-frame crop could never
+  /// be rendered. Nothing otherwise: `fill` follows the defaults like any clip.
+  func aspect(for fit: StillSource.Fit) throws -> Aspect? {
+    guard fit == .whole else { return nil }
+    return try store.settings().defaults.aspect == .r9x16 ? nil : .r9x16
+  }
+
   /// Makes the video again with another audio file, at the same fit (or `fit`, which also resets the crop as a fit
   /// change does). The edit stays; a trim, per-platform trim, cover time or text window past the new length is cleared
   /// or cut to it. One journal entry.
@@ -512,6 +548,7 @@ public final class StillVideo: @unchecked Sendable {
         let cur = try self.item(videoId)
         guard cur.still == still else { throw EngineError("\(cur.displayName) changed while its video was being made") }
         if let why = try self.blocker(cur) { throw EngineError(why) }
+        // (No `other`: the video at the other fit holds the old audio.)
         try self.point(videoId, at: made, still: StillSource(photo: still.photo, audio: Self.relative(videoId, made.audio.lastPathComponent),
                                                             audioName: prepared.name, audioDuration: made.duration,
                                                             fit: fit ?? still.fit))
@@ -521,7 +558,13 @@ public final class StillVideo: @unchecked Sendable {
         if (e.trimIn ?? 0) >= made.duration || (e.trimOut ?? 0) > end { e.trimIn = nil; e.trimOut = nil }
         e.platformTrims = e.platformTrims.filter { $0.value.start < made.duration && $0.value.end <= end }
         if let c = e.coverTime, c > made.duration { e.coverTime = nil }
-        if newFit != still.fits { e.crop = Self.crop(made, fit: newFit) }
+        let whole = Self.crop(made, fit: .whole)
+        if newFit != still.fits {
+          e.crop = Self.crop(made, fit: newFit)
+          e.aspectOverride = try self.aspect(for: newFit)
+        } else if newFit == .whole, e.aspectOverride == nil, e.crop == nil || e.crop == whole {
+          e.aspectOverride = try self.aspect(for: .whole)  // the defaults' shape changed since it was made
+        }
         if e != o { try self.store.save(e, videoId: videoId, remembersCrop: false) }
         try self.fitTextWindows(videoId, to: made.duration)
         try self.store.refreshState(videoId: videoId)
@@ -536,17 +579,33 @@ public final class StillVideo: @unchecked Sendable {
   }
 
   /// D12: changes how the photo sits in the video. The video is made again from the item's own audio copy (a stream
-  /// copy: nothing is encoded twice) and the crop resets: the whole frame for `whole`, none to confirm for `fill`.
-  /// Trim, texts, cover time, captions and platforms stay (same audio, same length). Same rules as Change audio
-  /// (`blocker`). One journal entry. Nothing changes when the item already has this fit (`batchId` nil).
+  /// copy: nothing is encoded twice), or, when this audio was already made at this fit, the row goes back to that file
+  /// (`StillSource.other`), so flipping back and forth leaves two videos per audio and no more. The crop resets: the
+  /// whole frame for `whole`, none to confirm for `fill`. Trim, texts, cover time, captions and platforms stay (same
+  /// audio, same length). Same rules as Change audio (`blocker`). One journal entry. Nothing changes when the item
+  /// already has this fit (`batchId` nil).
   @discardableResult
   public func setFit(videoId: String, fit: StillSource.Fit, journal: Bool = true, progress: (@Sendable (Double) -> Void)? = nil) throws -> Change {
     let v = try item(videoId)
     guard let still = v.still else { throw EngineError("\(v.displayName) has no audio: add audio first") }
     guard still.fits != fit else { return Change(video: v, batchId: nil) }
     if let why = try blocker(v) { throw EngineError(why) }
-    let prepared = try prepared(from: still)
-    let made = try make(photo: try photoFile(still.photo, of: v), prepared: prepared, videoId: videoId, fit: fit, progress: progress)
+    let photo = try photoFile(still.photo, of: v)
+    let kept = madeBefore(still, photo: photo, fit: fit)
+    let made: Made
+    if let kept {
+      made = kept
+      progress?(1)
+    } else {
+      let prepared = try prepared(from: still)
+      do {
+        made = try make(photo: photo, prepared: prepared, videoId: videoId, fit: fit, progress: progress)
+      } catch {
+        // An audio copy whose header reads and whose sound doesn't: the same words as a copy that is gone.
+        if !audioPlays(prepared.encoded) { throw EngineError(Self.audioCopyUnusable(still.audioName)) }
+        throw error
+      }
+    }
     do {
       let batch = try write(Self.fitAction, videoId, journal: journal) {
         let cur = try self.item(videoId)
@@ -554,19 +613,40 @@ public final class StillVideo: @unchecked Sendable {
         if let why = try self.blocker(cur) { throw EngineError(why) }
         var next = still
         next.fit = fit
+        next.other = cur.file  // the video at the fit it had: the next change back finds it
         try self.point(videoId, at: made, still: next)
         var e = try self.store.edit(videoId: videoId)
         e.crop = Self.crop(made, fit: fit)
+        e.aspectOverride = try self.aspect(for: fit)
         try self.store.save(e, videoId: videoId, remembersCrop: false)
         try self.store.refreshState(videoId: videoId)
         try self.store.logEvent("photo", "\(cur.name): \(fit == .whole ? "shows the whole photo" : "fills the frame")", videoId: videoId)
       }
       return Change(video: try item(videoId), batchId: batch)
     } catch {
-      // Only the new video: the audio copy is the item's own.
-      try? fm.removeItem(at: made.video)
+      // Only a video this call made: the audio copy is the item's own, and a video from before stays.
+      if kept == nil { try? fm.removeItem(at: made.video) }
       throw error
     }
+  }
+
+  /// The video made before from this audio at `fit` (`StillSource.other`), when it is still there and is what a new
+  /// one would be: this frame, this length, H.264 with sound.
+  private func madeBefore(_ still: StillSource, photo: URL, fit: StillSource.Fit) -> Made? {
+    guard let other = still.other, let size = PhotoRenderer.pixelSize(of: photo) else { return nil }
+    let url = store.paths.photos.appendingPathComponent(other)
+    let frame = Self.layout(width: size.width, height: size.height, fit: fit).frame
+    guard fm.fileExists(atPath: url.path), let info = try? Media.probe(url), info.videoCodec == "h264", info.hasAudio,
+          info.width == frame.width, info.height == frame.height, abs(info.duration - still.audioDuration) <= 0.05 else { return nil }
+    return Made(video: url, audio: store.paths.photos.appendingPathComponent(still.audio), duration: info.duration, width: frame.width,
+                height: frame.height)
+  }
+
+  /// The file's sound decodes from start to end.
+  private func audioPlays(_ url: URL) -> Bool {
+    guard let ffmpeg, let r = try? Proc.run(ffmpeg, ["-hide_banner", "-nostats", "-v", "error", "-xerror", "-i", url.path, "-map", "0:a:0", "-f", "null", "-"],
+                                            timeout: 300) else { return false }
+    return r.status == 0 && r.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 
   /// Back to a photo post with its one photo (D9): the default photo shape, the centred crop, YouTube off again, and
@@ -805,10 +885,16 @@ extension BulkActions {
   /// audio, another fit) while the item has a day or a post. Decided from what the restore would do, not from the
   /// batch's name: a forced undo of an older Edits or title batch carries the old media in its snapshot too.
   func stillUndoLock(restoring b: ClipSnap, current cur: ClipSnap) throws -> String? {
-    guard b.still != cur.still || (b.photos == nil) != (cur.photos == nil) else { return nil }
+    // (`other`, the file a fit change can go back to, is no part of what the item is.)
+    func media(_ json: String?) -> StillSnap? {
+      guard let json, var s = try? JSONCoding.decoder.decode(StillSnap.self, from: Data(json.utf8)) else { return nil }
+      s.still.other = nil
+      return s
+    }
+    guard media(b.still) != media(cur.still) || (b.still == nil) != (cur.still == nil) || (b.photos == nil) != (cur.photos == nil) else { return nil }
     if try store.db.one("SELECT 1 AS x FROM plan_slots WHERE video_id=?", [b.id]) != nil
         || store.db.one("SELECT 1 AS x FROM platform_posts WHERE video_id=?", [b.id]) != nil {
-      return "It's scheduled or posted now: \(StillVideo.lockedReason.prefix(1).lowercased() + StillVideo.lockedReason.dropFirst())"
+      return StillVideo.undoLockReason
     }
     return nil
   }

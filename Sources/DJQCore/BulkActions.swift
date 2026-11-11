@@ -746,13 +746,17 @@ public final class BulkActions: @unchecked Sendable {
         // so a later undo (e.g. with force) handles only the rest.
         var restored = Set(rec.restored)
         var planTied = false
+        var locked = 0  // skipped because the item is scheduled or posted, which force doesn't lift
         for b in before.clips where !restored.contains(b.id) {
           let cur = try clipSnapshot(b.id, renders: b.renders != nil)
           // Round 23 (D9): what the item is (photo post or video, which audio, which fit) never changes under a day or a
           // post, by any undo, forced or not.
           if let why = try stillUndoLock(restoring: b, current: cur) {
             result.skipped[b.id] = why
-            planTied = planTied || cur.held != b.held || (b.sent != nil && cur.sent != b.sent)
+            // Its plan stays too, whatever else the batch did: the batch's posts were planned for what the item was
+            // (a photo post has no YouTube post, a video has one), so they can't come back under what it is now.
+            planTied = true
+            locked += 1
             continue
           }
           if let a = afterById[b.id], !Self.same(cur, a), !force {
@@ -851,8 +855,13 @@ public final class BulkActions: @unchecked Sendable {
         let complete = result.skipped.isEmpty
         try store.db.run("UPDATE batches SET restored=?, undone_at=? WHERE id=?",
                          [JSONCoding.string(restored.sorted()), complete ? store.clock.now : nil, id])
+        // What would let the rest through: force for what was changed since, Back to Edit for what has a day or a post.
+        let others = result.skipped.count - locked
+        let next = locked == 0 ? "undo again with force to restore them"
+          : others == 0 ? "send \(locked == 1 ? "it" : "them") back to Edit, then undo again"
+          : "undo again with force for what changed since; what is scheduled or posted goes back to Edit first"
         result.summary = "undid \(rec.action): \(result.changed.count) restored"
-          + (complete ? "" : ", \(result.skipped.count) skipped\(planWaits ? ", plan left as it is" : "") — batch stays open; undo again with force to restore them")
+          + (complete ? "" : ", \(result.skipped.count) skipped\(planWaits ? ", plan left as it is" : "") — batch stays open; \(next)")
         if dryRun { throw DryRun(result: result) }
       }
     } catch let d as DryRun {

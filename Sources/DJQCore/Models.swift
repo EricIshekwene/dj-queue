@@ -272,6 +272,9 @@ public struct StillSource: Codable, Sendable, Hashable {
   public var audioDuration: Double
   /// D12: how the photo sits in the 9:16 video. nil (a row made before this) reads as `fill`.
   public var fit: Fit? = nil
+  /// The video made earlier from this same audio at the other fit, when there is one ("Stills/<video id>/video-2.mp4"):
+  /// a fit change points the row back at it instead of making a third file.
+  public var other: String? = nil
 
   /// `whole`: the whole photo, centred over a blurred copy of itself, in a 9:16 video whose crop is the whole frame.
   /// `fill`: the video has the photo's own shape and Eric picks the 9:16 crop, as on any clip.
@@ -283,8 +286,9 @@ public struct StillSource: Codable, Sendable, Hashable {
   /// The fit in force.
   public var fits: Fit { fit ?? .fill }
 
-  public init(photo: PhotoItem, audio: String, audioName: String, audioDuration: Double, fit: Fit? = nil) {
+  public init(photo: PhotoItem, audio: String, audioName: String, audioDuration: Double, fit: Fit? = nil, other: String? = nil) {
     self.photo = photo; self.audio = audio; self.audioName = audioName; self.audioDuration = audioDuration; self.fit = fit
+    self.other = other
   }
 }
 

@@ -195,6 +195,82 @@ import Testing
     #expect(try bulk.undo(clipTitle).changed == ["clip-0"])
   }
 
+  /// Review round 2, S1: a batch that also holds a plan (here: taking the item out of the Queue). When the item is
+  /// skipped by the lock, nothing of its plan comes back either: the batch's posts were planned for what it was.
+  @Test func anUndoThatSkipsALockedItemLeavesItsPlanAloneToo() throws {
+    let f = try Fixture.engine(1)
+    let bulk = BulkActions(store: f.store), maker = StillVideo(store: f.store), planner = Planner(store: f.store)
+    let locked = "It's scheduled or posted now: send it back to Edit first"
+    func posts(_ id: String) throws -> [String] {
+      try f.store.posts(where: "video_id=?", [id], order: "id").map { "\($0.id) \($0.platform.rawValue) \($0.state.rawValue) v\($0.versionNo)" }
+    }
+    func slots(_ id: String) throws -> [String] {
+      try f.store.db.query("SELECT * FROM plan_slots WHERE video_id=? ORDER BY date", [id]).map { "\($0.string("id") ?? "") \($0.string("date") ?? "")" }
+    }
+    // 1. A made video with its six posts, taken out of the Queue (batch U). Then it became a photo post and got a day
+    // and five posts. Undoing U must not give the photo post a YouTube post.
+    let a = try f.still("a", title: "First")
+    try f.send(a.id)
+    try planner.autoSchedule()
+    #expect(try posts(a.id).count == 6)
+    let outA = try #require(try bulk.removeFromQueue([a.id]).batchId)
+    #expect(try posts(a.id).isEmpty)
+    _ = try maker.removeAudio(videoId: a.id)
+    try f.send(a.id)
+    try planner.autoSchedule()
+    let (rowA, postsA, slotsA) = (try f.stored(a.id), try posts(a.id), try slots(a.id))
+    #expect(postsA.count == 5 && !postsA.contains { $0.contains("youtube") } && slotsA.count == 1)
+    for force in [false, true] {
+      let r = try bulk.undo(outA, force: force)
+      #expect(r.changed.isEmpty && r.skipped == [a.id: locked], "force \(force): \(r.summary)")
+      #expect(r.summary == "undid unqueue: 0 restored, 1 skipped, plan left as it is — batch stays open; send it back to Edit, then undo again", "\(r.summary)")
+      #expect(try posts(a.id) == postsA && slots(a.id) == slotsA && f.stored(a.id) == rowA, "force \(force): a photo post with its five posts, no YouTube")
+    }
+    #expect(try bulk.batch(id: outA)?.undoneAt == nil && f.doublePosts().isEmpty)
+    // 2. The other way round: a photo post with five posts, taken out (batch U), then a video with six. Undoing U
+    // must not take its YouTube post away.
+    let b = try f.singlePhoto("b", title: "Second")
+    try f.send(b.id)
+    try planner.autoSchedule()
+    #expect(try posts(b.id).count == 5)
+    let outB = try #require(try bulk.removeFromQueue([b.id]).batchId)
+    _ = try maker.addAudio(to: b.id, audio: f.tone("b.wav", seconds: 2))
+    try f.send(b.id)
+    try planner.autoSchedule()
+    let (rowB, postsB, slotsB) = (try f.stored(b.id), try posts(b.id), try slots(b.id))
+    #expect(postsB.count == 6 && postsB.contains { $0.contains("youtube") } && slotsB.count == 1)
+    for force in [false, true] {
+      let r = try bulk.undo(outB, force: force)
+      #expect(r.changed.isEmpty && r.skipped == [b.id: locked], "force \(force): \(r.summary)")
+      #expect(try posts(b.id) == postsB && slots(b.id) == slotsB && f.stored(b.id) == rowB, "force \(force): a video with its six posts, YouTube included")
+    }
+    // The first item's plan is untouched by all of that too.
+    #expect(try posts(a.id) == postsA && slots(a.id) == slotsA)
+    // 3. One batch over a locked item and a clip: the clip is restored, the locked one says why, and the words say
+    // what would let it through (force wouldn't).
+    let c = try f.still("c", title: "Third")
+    let titles = try #require(try bulk.setTitle([c.id, "clip-0"], "Renamed").batchId)
+    _ = try maker.setFit(videoId: c.id, fit: .whole)
+    try f.send(c.id)
+    try planner.autoSchedule()
+    let mixed = try bulk.undo(titles, force: true)
+    #expect(mixed.changed == ["clip-0"] && mixed.skipped == [c.id: locked])
+    #expect(mixed.summary.hasSuffix("batch stays open; send it back to Edit, then undo again"), "\(mixed.summary)")
+    // Back in Edit, the same undo goes through.
+    _ = try bulk.back([c.id])
+    _ = try bulk.back([c.id])
+    #expect(try posts(c.id).isEmpty && slots(c.id).isEmpty)
+    let after = try bulk.undo(titles, force: true)
+    let closed = try bulk.batch(id: titles)?.undoneAt
+    #expect(after.changed == [c.id] && after.skipped.isEmpty && closed != nil, "\(after.summary)")
+    #expect(try f.store.video(id: c.id)?.title == "Third" && f.store.video(id: c.id)?.still?.fit == .fill)
+    // A skip that force does lift keeps its words.
+    let d = try f.still("d", title: "Fourth")
+    let titleD = try #require(try bulk.setTitle([d.id], "Fourth again").batchId)
+    _ = try bulk.setTitle([d.id], "Fourth once more")
+    #expect(try bulk.undo(titleD).summary.hasSuffix("batch stays open; undo again with force to restore them"))
+  }
+
   @Test func changeAudioMakesTheVideoAgainAndClearsTrimsThatNoLongerFit() throws {
     let f = try Fixture(clips: [], longform: false)
     let made = try f.still(seconds: 6)
