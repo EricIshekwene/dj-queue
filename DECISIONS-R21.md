@@ -100,3 +100,35 @@ template is empty for a photo post. *Why:* "Photos" is a storage folder, not a n
 - Filters or colour adjustment. The editor frames, crops and adds text; it doesn't retouch.
 - Real posts. Nothing was published or scheduled on Eric's accounts while building; Postiz payloads are tested
   against recorded shapes.
+
+## Decisions made while building (core photos)
+
+- **A post holds at most 35 photos** (`PhotoRules.maxPerPost`), and files past that are skipped with the reason. *Why:* 35 is the largest
+  platform cap (TikTok), so a 36th photo could never be posted anywhere.
+- **A photo post's name is made unique** ("IMG_1234", then "IMG_1234 2"). *Why:* renders are named after the post, and two imports of the
+  same file name would overwrite each other's files in Ready to Post.
+- **Removing a photo keeps DJ Queue's copy in `Originals/`.** *Why:* undo has to bring the photo back, and the copy is small.
+- **Append, remove and reorder are journal entries** (`photo-add`, `photo-remove`, `photo-reorder`), and an open editor session records them
+  with its other changes (`ClipSnap.photos`). *Why:* the journal is how every single-clip edit gets undo; no second undo system.
+- **YouTube is kept off in three places** (read, save, resolve), not one. *Why:* the planner reads raw edits, and an old journal entry or a
+  restore could write a row without the skip; reading it back with the skip makes that harmless.
+- **A stored crop that doesn't fit the post's aspect is ignored**, not cleared. *Why:* changing 4:5 to 1:1 and back keeps Eric's 4:5 crops,
+  and nothing is ever stretched.
+- **A photo with no text never raises "No text"**, also when "No text" was switched off with nothing typed. *Why:* D7 says most photos
+  want no text; a blank text draws nothing, so there is nothing to fix.
+- **`{text}` falls back to the Title only and `{tag}` is empty for a photo post.** *Why:* a photo's tag is its file name, and "IMG_1234"
+  must never reach a caption.
+- **TikTok photo posts follow Eric's posting-method setting** (Direct post by default, inbox in a test run), with `autoAddMusic: "no"`
+  always. *Why:* D10 is about the music; sending photos public while Eric set TikTok to the inbox would surprise.
+- **Clearing a photo's score doesn't take it out of the Queue.** *Why:* it never needed one.
+- **`photos.missing` is its own Doctor finding** rather than part of `files.missing`. *Why:* the fix differs (no relink by fingerprint; put
+  the copy back or remove the photo).
+- **One new issue kind, `noPhotos`**, for a post row with an empty photo list (it can't be made through the app). Two existing tests list
+  every kind on purpose and gained that case: `R7CaptionTests.everyIssueKindMapsDeliberately` and the count in `R4StageTests`.
+- **`PhotoItem.fingerprint`** was added to the foundation model (optional). *Why:* the render hash needs each photo's content identity
+  without re-reading files on every tick.
+- **Agents' `djq photo add` sets `title_source: "agent"`**, the app's import `"app"`.
+- **`renders.more_paths` is stored with plain slashes** (`JSONCoding.pathList`), and `scripts/live-checks.sh` now also rewrites and checks
+  the JSON-escaped form of the real root. *Why:* the live checks run on a copy of Eric's database with every stored path pointed at the
+  dev root by text replacement; an escaped path ("\\/Users\\/…") slipped through both the replacement and its check, and the scratch
+  engine would then have moved or deleted Eric's real rendered photos.

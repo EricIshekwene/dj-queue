@@ -30,6 +30,9 @@ import Testing
     #expect(r.allPaths == (1...3).map { dir.appendingPathComponent("set-1 – v1 – 0\($0).jpg").path })
     #expect(r.outputPath == r.allPaths[0] && r.morePaths == Array(r.allPaths.dropFirst()))
     #expect(Renderer.photoOutputName(video: v, versionNo: 1, index: 11) == "set-1 – v1 – 12.jpg")
+    // Stored as plain paths (no "\/"), so a dev copy's path rewrite reaches them like `output_path`.
+    let raw = try #require(try f.store.db.one("SELECT more_paths FROM renders WHERE id=?", [r.id])?.string("more_paths"))
+    #expect(raw.contains(r.allPaths[1]) && raw.contains(r.allPaths[2]) && !raw.contains("\\/"))
     var total: Int64 = 0
     for path in r.allPaths {
       let b = try #require(PhotoImages.bitmap(URL(fileURLWithPath: path)))
@@ -253,6 +256,8 @@ import Testing
     try f.postAll(on: f.dm.key(f.clock.now))
     #expect(engine.tick(reason: "test").steps["move"]?.hasPrefix("moved 1") == true)
     let moved = try #require(try f.store.render(id: rid))
+    let movedRaw = try #require(try f.store.db.one("SELECT more_paths FROM renders WHERE id=?", [rid])?.string("more_paths"))
+    #expect(movedRaw.contains(moved.allPaths[1]) && !movedRaw.contains("\\/"))
     #expect(moved.allPaths.count == 3 && moved.allPaths.allSatisfy { $0.contains("/Photos/Posted/Shortform/") && FileManager.default.fileExists(atPath: $0) })
     #expect(moved.allPaths.map { URL(fileURLWithPath: $0).lastPathComponent } == r.allPaths.map { URL(fileURLWithPath: $0).lastPathComponent })
     #expect(try FileManager.default.contentsOfDirectory(atPath: ready(f).path).isEmpty)

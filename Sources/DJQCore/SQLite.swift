@@ -71,6 +71,15 @@ public enum JSONCoding {
     d.dateDecodingStrategy = .secondsSince1970
     return d
   }()
+  /// A list of absolute paths as stored JSON, with its slashes as written ("/Users/…", never "\/Users\/…"). A dev copy
+  /// of the database has every stored path pointed at the dev root by plain text replacement (`scripts/live-checks.sh`),
+  /// and an escaped path would slip through it and still name the real file.
+  public static func pathList(_ paths: [String]) -> String {
+    let e = JSONEncoder()
+    e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return (try? e.encode(paths)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+  }
+
   /// Decodes `data` over the encoded `defaults`, so keys missing from older stored JSON keep their defaults
   /// instead of failing the whole decode (top-level keys; nested values are replaced whole).
   public static func decodeLenient<T: Codable>(_ data: Data, defaults: T) throws -> T {

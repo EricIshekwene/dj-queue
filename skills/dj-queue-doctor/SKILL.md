@@ -88,6 +88,7 @@ Work through errors first. Re-run `djq doctor` after each fix.
 | `manifest.duplicateIds` | Two entries share an id. Keep the id on the entry that already has posts (`djq posts`); give the other a fresh UUID in `videos.json`; `djq intake`. |
 | `files.untracked` | A clip in `Clips/` isn't in any `videos.json`. Ask Eric: export it with `export_clips.py`, or leave it (ignored). Don't move or delete it. |
 | `files.missing` | Ask Eric to put the file back or undo the rename; `djq intake` relinks by fingerprint (any session). If it's gone for good: `djq exclude <video>` and, if it was planned, `djq stage <video> back`. |
+| `photos.missing` | A photo post's file is gone from `Photos/Originals/<post id>/` (DJ Queue's own copy). Ask Eric to put it back at the path shown; `djq intake` brings the post back. If the photo is gone for good, Eric removes it from the post in the editor, or `djq exclude <video>`. Don't rename or replace files under `Photos/Originals/`. |
 | `files.relinked` | Info only. |
 | `files.duration` | File length ≠ `videos.json`. Re-export that clip with `export_clips.py --only N`, `djq intake`; the engine re-renders automatically when the edit/hash changes. |
 | `plan.notReady` | A scheduled clip lost its crop/text/caption, its file, or was excluded (it stays on its day and shows the problem). Eric finishes it in the app, or takes it off the calendar: `djq stage <video> back` holds it in Edit, and the next waiting clip fills the day. |

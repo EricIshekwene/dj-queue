@@ -16,7 +16,7 @@ extension Store {
 
   /// A photo render's files after the first (round 21), at their current location. nil = none (a video).
   public func setRenderMorePaths(id: String, _ paths: [String]?) throws {
-    try db.run("UPDATE renders SET more_paths=? WHERE id=?", [paths.map { JSONCoding.string($0) }, id])
+    try db.run("UPDATE renders SET more_paths=? WHERE id=?", [paths.map { JSONCoding.pathList($0) }, id])
   }
 
   /// Marks a render deleted (sets `deleted_at` only; files are the caller's business).

@@ -715,7 +715,7 @@ public final class Store: @unchecked Sendable {
         more_paths=excluded.more_paths
       """, [r.id, r.videoId, r.versionNo, r.editHash, r.scope, r.outputPath, r.coverPath,
             r.loudness.map { JSONCoding.string($0) }, r.duration, r.size, r.status.rawValue, r.error, r.createdAt, r.deletedAt,
-            r.morePaths.map { JSONCoding.string($0) }])
+            r.morePaths.map { JSONCoding.pathList($0) }])
   }
 
   static func render(_ r: Row) -> Render {

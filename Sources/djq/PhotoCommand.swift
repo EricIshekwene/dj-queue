@@ -33,7 +33,8 @@ enum PhotoCommand {
     case "add":
       let title = option("--title")
       let separate = flag("--separate")
-      let files = args.filter { !$0.hasPrefix("--") }.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).standardizedFileURL }
+      if let bad = args.first(where: { $0.hasPrefix("--") }) { throw CLIError("unknown option \(bad)\n\n\(usage)") }
+      let files = args.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).standardizedFileURL }
       guard !files.isEmpty else { throw CLIError("photo add needs at least one file\n\n\(usage)") }
       let r = try PhotoImport(store: store).add(files: files, mode: separate ? .separate : .carousel, title: title, titleSource: "agent")
       wrote = !r.posts.isEmpty

@@ -107,6 +107,11 @@ import UniformTypeIdentifiers
     #expect(v.photoCount == files.count)
     #expect(v.photos?[0].file.hasSuffix(".tiff") == true)
     if hasHEIC { #expect(v.photos?[1].file.hasSuffix(".heic") == true && v.photos?[1].width == 400) }
+    // Both decode and render to JPEG.
+    let r = try Renderer(store: f.store).ensureRender(videoId: v.id, versionNo: 1, platform: nil)
+    #expect(r.allPaths.count == files.count && r.allPaths.allSatisfy { $0.hasSuffix(".jpg") && PhotoImages.bitmap(URL(fileURLWithPath: $0))?.width == 1080 })
+    let first = try #require(PhotoImages.bitmap(URL(fileURLWithPath: r.allPaths[0])))
+    #expect(first[200, 700].near(.red) && first[880, 700].near(.blue))
     #expect(PhotoRules.extensions.isSuperset(of: ["jpg", "jpeg", "png", "heic", "heif", "webp", "tif", "tiff"]))
   }
 

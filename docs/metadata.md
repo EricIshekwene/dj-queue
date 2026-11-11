@@ -8,6 +8,12 @@ with `djq suggest`. This page is the contract for those tools.
 DJ Queue only reads it (intake runs every engine tick and on `djq intake`). Ids are stable forever — never change
 them.
 
+**Photo posts aren't in any `videos.json`** (round 21). They are made inside DJ Queue (the import sheet, a drop, or
+`djq photo add <file>…`), live in the one `Photos` folder next to `Sessions/` (`Photos/Originals/<post id>/` holds
+DJ Queue's own copies) and are never read from, or written to, a manifest. Export tools don't need to know about them;
+`djq videos --json` lists them with `media: "photo"` and their `photos`. Agents add text, titles and captions to one
+with the same `djq` commands as a clip, and never send it to the Queue unless Eric says so.
+
 ## Per-video fields DJ Queue reads
 
 Existing fields (unchanged): `id`, `name`, `tags`, `type` (`short-form` / `long-form`), `content-type`
