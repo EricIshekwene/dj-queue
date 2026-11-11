@@ -91,8 +91,11 @@ replaces the post instead, §5).
 
 **Photo posts (round 21, `PostizPayload.photoSpec`).** Same request, with one `image` entry per photo
 (`[{id, path}, …]`, posting order, no `thumbnailTimestamp`, no thumbnail upload). Each photo is uploaded once per
-render as `image/jpeg` and cached in `postiz_media` as `photo1`, `photo2`, …; the budget check counts every upload
-still needed before anything is sent. A carousel longer than a platform takes sends its first photos there.
+render as `image/jpeg` and cached in `postiz_media` as `photo1`, `photo2`, …. The photos go up before the post is
+claimed, as many as the hourly budget allows, and the post is created once every photo is cached: a carousel larger than
+an hour's budget (TikTok takes 35, the default budget is 25) finishes in the next hour, and the posts behind it aren't
+held up by it. A carousel longer than a platform takes sends its first photos there. Instagram takes photos from 4:5 to
+1.91:1 only, so a 9:16 photo post can't be sent to the Queue while Instagram is on for it (DECISIONS-R21 D20).
 
 | DJ Queue | Photos per post | Settings sent for a photo post |
 |---|---|---|

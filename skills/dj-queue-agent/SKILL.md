@@ -180,6 +180,9 @@ djq photo list [--json]                               # every photo post (the sa
   no title help (`needs_title_help` is false: there is no song to look up).
 - A carousel longer than a platform takes sends its first photos there: X 4, Instagram 10, Facebook 10, Threads 20,
   TikTok 35. That is a notice, not a problem.
+- Shapes: 4:5 (the default), 1:1, 16:9 and 9:16. Instagram doesn't take 9:16 photos, so a 9:16 post with Instagram on
+  has the reason "Wrong shape for Instagram" and stays in Edit until Eric picks another shape or turns Instagram off
+  for it. Don't choose for Eric.
 - Captions: `{set}` and `{tag}` are empty for a photo post, and `{text}` is the text on the picture, else the Title,
   else nothing (never the file name). Give it a title or a written caption when the template leans on those.
 

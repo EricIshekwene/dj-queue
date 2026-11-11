@@ -235,14 +235,18 @@ knows about photos yet. The UI starts from the API list at the end of this secti
 
 **Model.** A photo post is a `Video` with `photos: [PhotoItem]` (`isPhoto`): `type .short`, `duration 0`, `sessionId = Session.photosId`,
 `inManifest false`, `contentType "photo"`, `score nil`, `file` = its first photo. `name` is the first file's base name, made unique among
-photo posts ("IMG_1234", "IMG_1234 2"), because renders are named after it; `tags` = [that base name]. `PhotoItem` is `id` (stable across
+photo posts as a file name would be ("IMG_1234", "IMG_1234 2"; "Flyer" and "flyer", or "a:b" and "a-b", count as one name:
+`PhotoImport.fileNameKey`); `tags` = [that base name]. `PhotoItem` is `id` (stable across
 reorders, the key of `Edit.photoCrops`), `file` (relative to the Photos folder), upright `width`/`height`, and `fingerprint` (size + SHA-256
 of the copy). `Video.fingerprint` hashes the photos' fingerprints in order and `fileSize` is their total, so a reorder changes the preview
 stamp. `Video.photoCount`, `isCarousel`, `photoLabel` ("Photo" / "Carousel · 5") and `kindLabel` are the words for cards.
 
 **Files.** `Paths.photos` = `<DJ Video>/Photos`. Copies live in `Originals/<post id>/NN-<photo id>.<ext>` (NN counts up and is never reused
-in a post; a removed photo's copy stays so undo can bring it back). Renders go to `Ready to Post/Shortform/<name> – v1 – NN.jpg` and move
-to `Posted/Shortform/`. The file Eric picked is only read. Intake's manifest pass never sees the Photos session or its posts;
+in a post; a removed photo's copy stays so undo can bring it back). Renders go to
+`Ready to Post/Shortform/<name> – v1 – <post id, 8 characters> – NN.jpg` (the id keeps two posts from ever sharing a file) and move to
+`Posted/Shortform/`. The file Eric picked is only read, and a symlink is imported as a copy of the file it points at. Every photo path is
+resolved from `Paths.photos` (`Store.photoURL`, `fileURL(for:)`, the render folder), never from the session row's folder, and intake puts
+that row's folder back to `Paths.photos` when it differs. Intake's manifest pass never sees the Photos session or its posts;
 `PhotoImport.checkFiles` (end of `Intake.run`) marks a post `missing` while one of its photo files is gone. Doctor: `photos.missing`.
 
 **Stages (D4).** `ClipStage.of`: an unscored photo post is in Edit, never Score. `Queue.toScore` leaves photos out; `needsEdit`, `candidates`,
@@ -256,10 +260,12 @@ photo that has none into `photoCrops`. Back from Edit is blocked (`PhotoRules.no
 stores it, and the resolver adds it; `BulkActions.setPlatform` refuses to turn it on with `PhotoRules.youtubeReason`. So `Planner.createPosts`,
 `Planner.usable` and `Queue.ordered(platform:)` never give a photo a YouTube post, through code that doesn't know about photos.
 `PhotoRules.crop(for:edit:aspect:)` is a photo's crop: its own in `photoCrops` when it still fits the aspect, else centred (a crop made for
-another aspect is ignored, never stretched). `VersionResolver`: text nothing sets is "No text" on a photo post (extra texts still draw).
+another aspect is ignored, never stretched). `VersionResolver`: text nothing sets is "No text" on a photo post (extra texts still draw),
+and default text timing is no window, whatever `defaults.textTiming` says (its seconds would read as photos).
 
-**Validation.** For a photo post: `missingFile`, `heldInEdit`, `corrupt`, `noPhotos` (new kind; section `IssueSection.photos`), `noCaption`,
-`captionTooLong`. Never `noCrop`, `noText`, `tooLong` or anything about YouTube. Captions: `{set}` and `{tag}` are empty and `{text}` falls
+**Validation.** For a photo post: `missingFile`, `heldInEdit`, `corrupt`, `noPhotos` (new kind; section `IssueSection.photos`), `photoShape`
+(new kind, D20; per platform, section Frame: Instagram takes photos from 4:5 to 1.91:1, so 9:16 with Instagram on is an issue;
+`PhotoRules.shapeProblem`), `noCaption`, `captionTooLong`. Never `noCrop`, `noText`, `tooLong` or anything about YouTube. Captions: `{set}` and `{tag}` are empty and `{text}` falls
 back to the Title only (`Captions.setValue`, `tagValue`, `textValue`). Bulk crop skips photos (`PhotoRules.bulkCropReason`).
 
 **Text on photos (D7).** Same `Version` fields and `TextLayer`s. A window is in photo units: photo *i* (0-based) is [*i*, *i*+1) and a text
@@ -271,18 +277,25 @@ after a reorder or a removal the text stays on photos 2–4, whichever photos th
 `Media.pixelCrop`, scales into the size with high interpolation on an opaque sRGB canvas and draws `TextOverlay.image(for: layers, aspect:)`.
 The final files, `preview` and `Media.thumbnail` all call `compose`, so the editor is WYSIWYG. `Renderer` branches on `isPhoto` in `scope`
 (always "all"), `editHash`, `currentRender` and `ensureRender` (same row, claim and lock as a video). Output: JPEG 0.9, 1080 wide, no
-metadata. `Render.outputPath` is the first file, `morePaths` the rest (`[]` for one photo), `coverPath` nil, `duration` 0, `size` the total.
-`more_paths` is stored with plain slashes (`JSONCoding.pathList`) so a dev copy's path rewrite reaches it.
-The hash covers `PhotoRenderer.pipelineVersion` ("photo-1"), the photos' fingerprints in order, the aspect, each resolved crop and the drawn
-texts with look and window; video hashes and `Renderer.pipelineVersion` are untouched. A render that replaces another deletes the files it
-didn't overwrite. Engine: `renderAhead` works unchanged, `moveAndCleanup`, cleanup and `deleteRenders` handle every path, the proxies step
+metadata. `Render.outputPath` is the first file, `morePaths` the rest (`[]` for one photo), `coverPath` nil, `duration` 0, `size` the total,
+written in one statement (`Store.finishPhotoRender`); a row with fewer files than the post has photos is never the current render.
+`more_paths` is stored with plain slashes (`JSONCoding.pathList`) so a dev copy's path rewrite (`scripts/seed-paths.sh`) reaches it.
+The hash covers `PhotoRenderer.pipelineVersion` ("photo-1"), the photos' fingerprints in order, the aspect, each resolved crop, the drawn
+texts with look and window and, when there is text, `TextOverlay.drawingVersion` (bump it when text drawing changes pixels); video hashes
+and `Renderer.pipelineVersion` are untouched. A render that replaces another deletes the files it didn't overwrite; a failure while moving
+files into place retires the rows whose files were overwritten, so no finished row points at a mix. **Nothing outside the store's root is
+moved or deleted** (`Paths.owns`, used by `Renderer.isAppOutput`, `Engine.moveToPosted` and the cleanup): a path a copied database names
+elsewhere stays put. Engine: `renderAhead` works unchanged; `moveAndCleanup` moves every file of a render, then writes all its paths together
+(`Store.setRenderFiles`), and a file that couldn't move is tried again on the next tick; cleanup and `deleteRenders` handle every path, the proxies step
 and `ProxyService` skip photos, and nothing probes one (`Media.sourceSize` answers from the row).
 
 **Publishing (D8–D11, D19).** `PreparedPost.moreFileURLs` / `allFileURLs`; `ManualPublisher` and `PostizPublisher` fill them with the first
 `platform.maxPhotos` files. `PostizPayload.photoSpec` builds a photo post's spec (`photoPaths`, no thumbnail time, no cover) and throws for
 YouTube; `PostizPostSpec.body(date:media:cover:)` puts one `image` entry per photo. Settings per platform are in `docs/postiz.md`.
-`PostizService.submit` and `testPost` upload each photo once per render (`postiz_media` kinds `photo1`…), count every missing upload in
-the budget check, and put the first photo on the job. A video's payload and content hash are byte-identical to before.
+`PostizService.submit` and `testPost` upload each photo once per render (`postiz_media` kinds `photo1`…) and put the first photo on the
+job. A photo post's uploads happen before the job is claimed, as many as the hourly budget allows; the create waits until every photo is
+cached (`SubmitOutcome.waiting`, which doesn't stop the posts behind it), so a carousel larger than an hour's budget goes out an hour or
+two later instead of never. The pure `PostizPayload.spec(post:…)` now throws (YouTube for a photo post). A video's payload and content hash are byte-identical to before.
 
 **CLI and JSON.** `djq photo add <file>… [--separate] [--title T] [--json]`, `djq photo list [--json]` (`Sources/djq/PhotoCommand.swift`).
 `AgentAPI.VideoSummary` gains `media` ("photo" | "video") and `photos[{id, file, width, height}]`.
@@ -298,7 +311,8 @@ the budget check, and put the first photo on the job. A video's payload and cont
 - `Media.thumbnail(store:video:maxHeight:version:photo:) -> URL?`: cached JPG of photo `photo` (0 = the cover) as it posts.
 - `PhotoRules.aspect(_:defaults:)`, `aspects`, `crop(for:edit:aspect:)`, `centredCrop(_:aspect:)`, `hasOwnCrop(_:edit:aspect:)`: frame and crop per photo; write a crop to `Edit.photoCrops[photo.id]` (upright source pixels) and save the edit as for a clip.
 - `PhotoRules.layers(_:onPhoto:of:)`, `photoRange(of:in:count:)`, `rangeLabel(_:count:)`, `window(fromPhoto:toPhoto:)`: which photos a text shows on, and the stored window for a range.
-- `PhotoRules.sent(count:platform:) -> (sent, dropped)`, `notice(count:platform:)` ("X gets the first 4 of 7 photos"), `platformNote(count:platform:)` (that, or `youtubeReason` for YouTube), `maxPerPost` (35).
+- `PhotoRules.sent(count:platform:) -> (sent, dropped)`, `notice(count:platform:)` ("X gets the first 4 of 7 photos"), `platformNote(count:aspect:platform:)` (what a platform row says: `youtubeReason`, else the shape problem, else the notice), `maxPerPost` (35).
+- `PhotoRules.aspectNote(_:posting:)` ("Instagram doesn't take 9:16 photos") for the aspect picker; `takes(_:platform:)`, `refusing(_:posting:)`, `shapeProblem(_:platform:)` (the `photoShape` issue's message).
 - The YouTube row of a photo post: show it off and disabled with `PhotoRules.youtubeReason`. An edit held in memory can still be changed, but every save and every read puts the skip back.
 - `Video.isPhoto`, `photoCount`, `isCarousel`, `photoLabel`, `kindLabel`; `Settings.defaults.photoAspect`; `StageWording.backTitle/backHelp/blocker` already say "Photos have no Score stage".
 - `Render.allPaths`, `PreparedPost.allFileURLs`: every file of a photo post, for Reveal, drag-out and the Calendar's post sheet.

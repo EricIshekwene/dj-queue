@@ -93,6 +93,12 @@ template is empty for a photo post. *Why:* "Photos" is a storage folder, not a n
 
 **D19. Test mode behaves as it does for clips** (drafts where the platform has them, TikTok to the inbox).
 
+**D20. A 9:16 photo post can't go to Instagram, and DJ Queue says so before the Queue.** Instagram's publishing API takes photos only
+from 4:5 to 1.91:1, so 4:5, 1:1 and 16:9 are fine everywhere and 9:16 is refused there. A 9:16 photo post with Instagram on has the issue
+"Instagram takes photos from 4:5 to 16:9 — pick another shape or turn Instagram off for this post" (`photoShape`, fixed in Frame), the
+aspect picker and Instagram's row say it too, and Send to Queue leaves the post in Edit until one of the two is done. *Why:* otherwise it
+fails at publish time, on a day Eric isn't looking, with the other four platforms already out.
+
 ## Not in this round
 
 - Photo reposts and versions (D16).
@@ -132,3 +138,18 @@ template is empty for a photo post. *Why:* "Photos" is a storage folder, not a n
   the JSON-escaped form of the real root. *Why:* the live checks run on a copy of Eric's database with every stored path pointed at the
   dev root by text replacement; an escaped path (`\/a\/b`) slipped through both the replacement and its check, and the scratch
   engine would then have moved or deleted Eric's real rendered photos.
+
+### After the review (reviews/core-photos.md)
+
+- **A photo render's file name carries the post id** ("<name> – v1 – a1b2c3d4 – 01.jpg"), and post names are compared as file names
+  (case, ":" and "/"). *Why:* "Flyer" and "flyer" were two names and one file, so one post went out with the other's photo.
+- **A carousel's photos are uploaded ahead of the Postiz claim, as the hourly budget allows; the post is created when all are up.** The
+  earliest slot takes the budget first, and a post that waits doesn't stop the ones behind it. *Why:* 30 photos never fitted the default
+  25 calls an hour, so nothing was uploaded, ever, and every later create waited behind it.
+- **Nothing outside the store's root is moved or deleted, and photo paths come from `Paths.photos`**, not the session row. *Why:* path
+  safety rested on a text rewrite of the database copy; now a dev process can't reach a real file whatever the copy says.
+- **With YouTube on its own sort order, YouTube takes its own next clip on a photo's slot** (the existing override behaviour, never the
+  photo); without an override that day's YouTube position stays empty.
+- **Clips keep their old order on a tie in Edit**; only photos tie-break by import time.
+- **`scripts/seed-paths.sh`** holds the path rewrite `live-checks.sh` used to do inline, so a test can run it on a made-up database.
+- **Two tests that list every issue kind gained `photoShape`** (`R7CaptionTests.everyIssueKindMapsDeliberately`, the count in `R4StageTests`).

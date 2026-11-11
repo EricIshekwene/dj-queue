@@ -312,7 +312,8 @@ import UniformTypeIdentifiers
     }
     try setAspect(.r9x16)
     let found = try issues()
-    #expect(found.map(\.kind) == [.photoShape] && found[0].platform == .instagram)
+    let shape = try #require(found.first, "9:16 with Instagram on is an issue")
+    #expect(found.map(\.kind) == [.photoShape] && shape.platform == .instagram)
     #expect(found[0].message == "Instagram takes photos from 4:5 to 16:9 — pick another shape or turn Instagram off for this post")
     #expect(found[0].chipText == "Wrong shape for Instagram" && found[0].kind.isBlock && found[0].kind.editorSection == .frame)
     // Send to Queue says so and leaves it in Edit.
