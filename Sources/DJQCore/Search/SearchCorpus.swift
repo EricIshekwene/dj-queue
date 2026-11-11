@@ -130,7 +130,7 @@ public enum SearchCorpus {
       for p in photos { add("File", URL(fileURLWithPath: p.file).lastPathComponent) }
     } else if let still = v.still {
       // Round 23: a video made from a photo says "Photo + audio" and is found by its audio's name and its photo's.
-      add("Type", v.photoLabel)
+      add("Type", v.markLabel)
       add("Audio", still.audioName)
       add("File", URL(fileURLWithPath: still.photo.file).lastPathComponent)
     } else {

@@ -156,14 +156,17 @@ extension Video {
   /// A photo post with more than one photo.
   public var isCarousel: Bool { photoCount > 1 }
 
-  /// "Photo" · "Carousel · 5" where a clip says "DJ vid" or "Talking" (D18), and "Photo + audio" for a video made from a
-  /// photo (round 23, D8). nil for any other video. It is only the mark: `isPhoto` says whether the item is a photo post.
+  /// "Photo" · "Carousel · 5" where a clip says "DJ vid" or "Talking" (D18). nil for a video, a made one included: the
+  /// screens read this as "it is a photo post".
   public var photoLabel: String? {
-    if isStill { return StillVideo.label }
     guard let photos else { return nil }
     return photos.count > 1 ? "Carousel · \(photos.count)" : "Photo"
   }
 
-  /// What a card's kind mark says: the photo label, else the clip's kind.
-  public var kindLabel: String { photoLabel ?? kind.displayName }
+  /// The mark of an item that isn't an ordinary clip: the photo label, or "Photo + audio" for a video made from a photo
+  /// (round 23, D8). nil for a clip.
+  public var markLabel: String? { photoLabel ?? (isStill ? StillVideo.label : nil) }
+
+  /// What a card's kind mark says: the mark, else the clip's kind.
+  public var kindLabel: String { markLabel ?? kind.displayName }
 }

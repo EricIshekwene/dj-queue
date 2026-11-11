@@ -10,6 +10,8 @@ struct PhotoImportRequest: Identifiable, Equatable {
   let id = UUID()
   /// The picked or dropped files, in order.
   var files: [URL]
+  /// Round 23: the audio chosen in the sheet (nil = none: photo posts). With it, each photo becomes a video.
+  var audio: URL? = nil
 }
 
 /// The import's state outside `AppModel` (extensions can't hold it): the sheet's button reads `importing`, and the
@@ -30,6 +32,8 @@ final class PhotoImportUI {
   var waiting: [URL] = []
   /// Imports asked for while one was copying, run one after the other.
   @ObservationIgnored var queued: [Job] = []
+  /// Round 23: the next pick opens the sheet even for one photo ("Add photo with audio…": the audio is chosen there).
+  @ObservationIgnored var sheetForNextPick = false
 
   struct Job {
     var urls: [URL]
@@ -44,12 +48,14 @@ extension AppModel {
 
   /// "Add photos": the system file picker, several at once. One photo imports straight away; several open the sheet.
   /// A real panel lands on a display, so a snapshot or scripted run never opens it (they call `takePhotos`).
-  func askAddPhotos() {
+  /// `withAudio` (⌘K "Add photo with audio…"): the sheet opens for one photo too, since the audio is chosen there.
+  func askAddPhotos(withAudio: Bool = false) {
     guard !Self.isSnapshotRun else { return }
     let panel = NSOpenPanel()
-    panel.title = "Add photos"
-    panel.prompt = "Add"
-    panel.message = "Pick one photo, or several for a carousel."
+    panel.title = withAudio ? "Add photo with audio" : "Add photos"
+    panel.prompt = withAudio ? "Next" : "Add"
+    panel.message = withAudio ? "Pick the photo (or several: each becomes its own video). You choose the audio next."
+      : "Pick one photo, or several for a carousel."
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
     panel.canChooseFiles = true
@@ -57,7 +63,10 @@ extension AppModel {
     panel.begin { [weak self] response in
       guard response == .OK else { return }
       let urls = panel.urls
-      Task { @MainActor in self?.takePhotos(urls) }
+      Task { @MainActor in
+        if withAudio { PhotoImportUI.shared.sheetForNextPick = true }
+        self?.takePhotos(urls)
+      }
     }
   }
 
@@ -100,8 +109,10 @@ extension AppModel {
       return
     }
     PhotoImportUI.shared.lastSkipped = refused
+    let wantsSheet = PhotoImportUI.shared.sheetForNextPick
+    PhotoImportUI.shared.sheetForNextPick = false
     // One good photo goes straight in, and its "Added" toast carries the refusals; otherwise they get their own.
-    let straightIn = photoImportRequest == nil && good.count == 1
+    let straightIn = photoImportRequest == nil && good.count == 1 && !wantsSheet
     if !refused.isEmpty, !straightIn {
       show(DSToastModel(message: refused.count == 1 ? "1 file can't be added" : "\(refused.count) files can't be added",
                         detail: Self.skippedText(refused), tone: .danger, duration: 8))
@@ -109,7 +120,7 @@ extension AppModel {
     guard !good.isEmpty else { return }
     if photoImportRequest != nil {
       photoImportRequest?.files += good  // the same request, so the sheet keeps what was typed
-    } else if good.count == 1 {
+    } else if straightIn {
       importPhotos(urls: good, mode: .carousel, title: nil, refused: refused)
     } else {
       askImportPhotos(good)

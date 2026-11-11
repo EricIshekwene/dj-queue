@@ -46,8 +46,8 @@ struct EditView: View {
         // The page's own order is by score, and a photo needs none: say where those go. Only under that order (the
         // others put them elsewhere) and only while there is such a photo.
         if !all.isEmpty {
-          let own = prefs.sort(.edit) == .natural && all.contains { $0.isPhoto && $0.score == nil }
-          ListSortMenu(page: .edit, notes: own ? ["Photos with no score come first, oldest first"] : [])
+          let own = prefs.sort(.edit) == .natural && all.contains { $0.needsNoScore && $0.score == nil }
+          ListSortMenu(page: .edit, notes: own ? ["Photos, with audio or not, need no score and come first, oldest first"] : [])
         }
       } trailing: {
         // Round 21: photos come in here (also ⌘K "Add photos…" and a drop on this page). Outline: the page's one

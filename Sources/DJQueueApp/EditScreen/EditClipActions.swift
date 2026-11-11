@@ -17,7 +17,7 @@ extension AppModel {
   func editFixes(_ v: Video, ids: [String]) -> [EditFix] {
     var out: [EditFix] = []
     // A scored clip whose file went missing sits in Edit (round 4 S1): the one fix is to find the file again.
-    if v.missing, v.isPhoto {
+    if v.missing, v.isPhoto || v.isStill {
       // A photo post's copy isn't found again by fingerprint (Core: `photos.missing`); Doctor says which file is gone.
       out.append(EditFix(id: "photo-missing", title: "See what's missing", icon: "stethoscope",
                          tooltip: "Open Health › Doctor, which names the missing photo", disabledReason: nil) { [self] in
@@ -100,7 +100,7 @@ extension AppModel {
   /// Titles help: no Title yet. `addTitle` = no suggestions either (show the inline field).
   /// A photo post has no song to look up, so it never asks for an agent; its title is optional and the field stays.
   func editTitleNeeds(_ v: Video) -> (addTitle: Bool, askAgent: Bool) {
-    let ask = needsTitleHelp.contains(v.id) && !v.isPhoto
+    let ask = needsTitleHelp.contains(v.id) && !v.needsNoScore
     guard v.titleText == nil else { return (false, ask) }
     return ((suggestionsByVideo[v.id] ?? []).isEmpty, ask)
   }
@@ -286,8 +286,15 @@ struct EditClipMenu: View {
       }
     }
     Divider()
+    // Round 23: audio on a photo post, or another audio (or none) on a video made from one.
+    if targets.count == 1, video.isPhoto || video.isStill {
+      AudioMenuItems(model: model, video: video)
+      Divider()
+    }
     // Round 21: a photo post has no kind and no song to ask an agent about, and bulk crop leaves it alone (D17).
-    let photosOnly = !targets.contains { model.video($0)?.isPhoto != true }
+    // Round 23: the same three for a video made from a photo.
+    let photosOnly = !targets.contains { model.video($0)?.needsNoScore != true }
+    let cropWhy = targets.contains { model.video($0)?.isPhoto == true } ? PhotoRules.bulkCropReason : StillVideo.bulkCropReason
     if !photosOnly {
       Menu("Kind") {
         ForEach(Kind.allCases, id: \.self) { k in
@@ -301,7 +308,7 @@ struct EditClipMenu: View {
       }
     }
     Button("Caption…", systemImage: "text.alignleft") { model.captionDialogIds = targets }
-    Button(photosOnly ? "Crop — \(PhotoRules.bulkCropReason)" : "Crop…", systemImage: "crop") { model.cropDialogIds = targets }
+    Button(photosOnly ? "Crop — \(cropWhy)" : "Crop…", systemImage: "crop") { model.cropDialogIds = targets }
       .disabled(photosOnly)
     if !photosOnly {
       Button(targets.count == 1 ? "Copy agent prompt" : "Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") {

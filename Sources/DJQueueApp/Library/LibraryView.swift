@@ -371,7 +371,8 @@ extension AppModel {
   func libraryIsMissing(_ v: Video) -> Bool { v.missing || v.state == .missingFile }
   /// Gone from videos.json and not kept by Eric (L.S5: Keep / Exclude).
   /// Never a photo post: photos are added in the app and were never in a videos.json (round 21).
-  func libraryIsRemoved(_ v: Video) -> Bool { !v.inManifest && !v.isPhoto && !keptRemoved.contains(v.id) }
+  /// (A photo post and a video made from a photo were never in a videos.json.)
+  func libraryIsRemoved(_ v: Video) -> Bool { !v.inManifest && !v.isPhoto && !v.isStill && !keptRemoved.contains(v.id) }
 
   func libraryState(_ v: Video) -> LibraryClipState {
     if libraryIsMissing(v) { return .missing }

@@ -20,7 +20,11 @@ struct MainWindowView: View {
                      afterGroupEdit: { model.groupEdited($0, message: $1) },
                      isCovered: { model.overlayCoversEditor },
                      arrowStep: { model.playback.arrowStep },
-                     setArrowStep: { s in model.setPlayback { $0.arrowStep = s } }),
+                     setArrowStep: { s in model.setPlayback { $0.arrowStep = s } },
+                     addAudio: { model.askAddAudio(to: $0) },
+                     changeAudio: { model.askChangeAudio($0) },
+                     removeAudio: { model.removeAudio(videoId: $0) },
+                     audioBlocker: { model.audioBlocker($0) }),
                    headerAccessory: { id in AnyView(EditorStageControl(model: model, videoId: id)) })
           .transition(.opacity)
       } else {

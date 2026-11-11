@@ -93,6 +93,12 @@ struct EditorAppHooks {
   /// How far ← / → jump (Settings → Playback, or the step chip beside Play). Nil = the editor keeps its own (harness).
   var arrowStep: (() -> ArrowStep)?
   var setArrowStep: ((ArrowStep) -> Void)?
+  /// Round 23: the Audio row asks the app to pick a file and make the video (or take the audio off); the app reloads
+  /// this editor when it lands. `audioBlocker` is why that can't be done now (nil = it can).
+  var addAudio: ((String) -> Void)?
+  var changeAudio: ((String) -> Void)?
+  var removeAudio: ((String) -> Void)?
+  var audioBlocker: ((Video) -> String?)?
 }
 
 /// A caption length problem for one platform (live, from the in-memory version).
@@ -527,6 +533,9 @@ final class EditorModel: ObservableObject {
 
   var title: String? { video?.titleText }
   var rawTag: String { video?.tag ?? "" }
+  /// Round 23: the item's tag is a photo's file name (a photo post, or a video made from a photo), which is never a
+  /// title and has no song behind it: no "Use raw tag", no "Ask an agent".
+  var namedByFile: Bool { video.map { $0.isPhoto || $0.isStill } ?? false }
   var needsTitleHelp: Bool { video.map { AgentPrompts.needsTitleHelp($0, suggestions: suggestions) } ?? false }
 
   // MARK: Live validation

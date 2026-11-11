@@ -16,6 +16,8 @@ enum ListFilterKey {
   static let repost = "repost"
   /// Round 21: the Kind section's option for photo posts (beside `Kind`'s raw values).
   static let photoKind = "photo"
+  /// Round 23: videos made from a photo and an audio file ("Photo + audio"), their own kind in the filter.
+  static let stillKind = "photo-audio"
 }
 
 /// Round 20: the Filters popover's Reposts section. Only filters: it never moves or schedules a clip.
@@ -114,7 +116,8 @@ extension AppModel {
   func listFilterMatches(_ v: Video, _ key: String, _ value: String) -> Bool {
     switch key {
     case ListFilterKey.session: v.sessionId == value
-    case ListFilterKey.kind: value == ListFilterKey.photoKind ? v.isPhoto : !v.isPhoto && v.kind.rawValue == value
+    case ListFilterKey.kind:
+      value == ListFilterKey.photoKind ? v.isPhoto : value == ListFilterKey.stillKind ? v.isStill : !v.isPhoto && !v.isStill && v.kind.rawValue == value
     case ListFilterKey.score: v.type == .short && (LibraryScoreFilter(rawValue: value)?.matches(v.score) ?? true)
     case ListFilterKey.stage: ClipStage.of(v)?.rawValue == value
     case ListFilterKey.repost: v.type == .short && (repostReady[v.id] != nil) == (value == RepostFilter.ready.rawValue)
@@ -150,11 +153,16 @@ extension AppModel {
           .map { s in DSFilterOption(id: s.id, title: Captions.setName(s.name), count: n { $0.sessionId == s.id }) }
       case ListFilterKey.kind:
         title = "Kind"
-        options = Kind.allCases.map { k in DSFilterOption(id: k.rawValue, title: k.displayName, count: n { !$0.isPhoto && $0.kind == k }) }
+        options = Kind.allCases.map { k in DSFilterOption(id: k.rawValue, title: k.displayName, count: n { !$0.isPhoto && !$0.isStill && $0.kind == k }) }
         // Round 21: photo posts are their own kind here, offered once the list has one.
         if vs.contains(where: \.isPhoto) {
           options.append(DSFilterOption(id: ListFilterKey.photoKind, title: "Photo", count: n { $0.isPhoto },
                                         tooltip: "Photo posts: one photo or a carousel"))
+        }
+        // Round 23: and videos made from a photo, which are clips but neither DJ vid nor Talking.
+        if vs.contains(where: \.isStill) {
+          options.append(DSFilterOption(id: ListFilterKey.stillKind, title: StillVideo.label, count: n { $0.isStill },
+                                        tooltip: "Videos made from one photo and an audio file"))
         }
       case ListFilterKey.score:
         title = "Score"

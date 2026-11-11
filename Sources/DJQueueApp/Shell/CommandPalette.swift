@@ -79,6 +79,9 @@ extension AppModel {
     // Round 21: the same picker as Edit's "Add photos" button.
     c.append(.init(id: "photos.add", title: "Add photos…", symbol: "photo.badge.plus",
                    subtitle: "Pick one photo or several for a carousel. They land in Edit") { [weak self] in self?.askAddPhotos() })
+    // Round 23: the same picker, then the import sheet, where the audio is chosen.
+    c.append(.init(id: "photos.addWithAudio", title: "Add photo with audio…", symbol: "music.note",
+                   subtitle: "A photo and an audio file become a video. It lands in Edit") { [weak self] in self?.askAddPhotos(withAudio: true) })
     c.append(.init(id: "calendar.open", title: "Open Calendar", symbol: "calendar", subtitle: "See today, the week or the month going out") { [weak self] in
       self?.editor = nil
       self?.screen = .calendar
@@ -172,7 +175,7 @@ extension AppModel {
     c.append(.init(id: "clip.\(v.id).preview", title: "Quick look", symbol: "eye",
                    disabled: missing ? "File missing" : nil) { [weak self] in self?.previewVideo = v })
     c.append(.init(id: "clip.\(v.id).score", title: v.score == nil ? "Set score…" : "Change score (\(v.score!))…", symbol: "number",
-                   subtitle: v.isPhoto && v.score == nil ? "Optional for a photo: without one it takes the next open day" : nil,
+                   subtitle: v.needsNoScore && v.score == nil ? "Optional for a photo, with audio or not: without one it takes the next open day" : nil,
                    disabled: longWhy) { [weak self] in self?.scorePrompt = v })
     c.append(.init(id: "clip.\(v.id).pinDate", title: "Pin to date…", symbol: "calendar", disabled: longWhy ?? (v.excluded ? "Excluded" : nil)) {
       [weak self] in self?.pinPrompt = v
@@ -214,10 +217,24 @@ extension AppModel {
                    subtitle: v.excluded ? "Let this clip be scheduled again" : "Never post this clip") {
       [weak self] in self?.setExcluded([v.id], !v.excluded)
     })
+    if short, v.isPhoto || v.isStill {
+      // Round 23: audio on a photo post; another audio, or none, on a video made from one.
+      let why = audioBlocker(v)
+      if v.isPhoto {
+        c.append(.init(id: "clip.\(v.id).addAudio", title: "Add audio…", symbol: "music.note",
+                       subtitle: StillVideo.addHint, disabled: why) { [weak self] in self?.askAddAudio(to: v.id) })
+      } else {
+        c.append(.init(id: "clip.\(v.id).changeAudio", title: "Change audio…", symbol: "music.note",
+                       subtitle: "Make the video again with another audio file", disabled: why) { [weak self] in self?.askChangeAudio(v.id) })
+        c.append(.init(id: "clip.\(v.id).removeAudio", title: "Remove audio", symbol: "speaker.slash",
+                       subtitle: "Back to a photo post with its photo", disabled: why) { [weak self] in self?.removeAudio(videoId: v.id) })
+      }
+    }
     if short {
       // Round 21: a photo post has no song to look up, no kind, and one version this round (D16): no repost.
       let photo = v.isPhoto
-      if !photo {
+      // Round 23: a video made from a photo has no song and no kind either (its versions and reposts are a clip's).
+      if !v.needsNoScore {
         c.append(.init(id: "clip.\(v.id).agentPrompt", title: "Copy agent prompt", symbol: "text.bubble",
                        subtitle: "Ask your agent for a title") { [weak self] in self?.copyAgentPrompt([v.id]) })
         for k in Kind.allCases where k != v.kind {
@@ -298,7 +315,7 @@ extension AppModel {
     pipelineBulk(score.map { "Score \(n) \($0)?" } ?? "Clear the score of \(n)?", verb: score == nil ? "Clear score" : "Set score", ids: ids,
                  // A photo keeps its place without a score (round 21, D4); a clip goes back to Score.
                  changes: [.init(field: "Score", value: score.map(String.init)
-                                   ?? (ids.contains { video($0)?.isPhoto != true } ? "None · back to Score" : "None"))],
+                                   ?? (ids.contains { video($0)?.needsNoScore != true } ? "None · back to Score" : "None"))],
                  done: score.map { "Score \($0)" } ?? "Score cleared") { b, dry in try b.setScore(ids, score, dryRun: dry) }
   }
 
@@ -644,8 +661,13 @@ struct VideoContextMenu: View {
     } else {
       StageMenuItems(model: model, video: video, targets: targets)
     }
-    // A photo post has no kind (DJ vid or Talking is about a clip).
-    if targets.contains(where: { model.video($0)?.isPhoto != true }) {
+    // Round 23: audio on a photo post, or another audio (or none) on a video made from one.
+    if !many, video.isPhoto || video.isStill {
+      Divider()
+      AudioMenuItems(model: model, video: video)
+    }
+    // A photo post has no kind (DJ vid or Talking is about a clip), nor has a video made from a photo.
+    if targets.contains(where: { model.video($0)?.needsNoScore != true }) {
       Menu(many ? "Kind (\(targets.count))" : "Kind") {
         ForEach(Kind.allCases, id: \.self) { k in Button(k.displayName) { model.menuSetKind(targets, k) } }
       }

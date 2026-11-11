@@ -66,6 +66,8 @@ struct DSClip: Identifiable {
   var reloadOverlay: (() -> Void)? = nil
   /// "0:42".
   var durationText: String? = nil
+  /// Why the score reads "—" on purpose (a photo post, a photo with audio): the dash's tooltip. nil = just not scored.
+  var noScoreHelp: String? = nil
   /// "DJ vid" / "Talking".
   var kind: String? = nil
   var score: Int? = nil
@@ -227,10 +229,11 @@ struct DSClipCard<Actions: View>: View {
     Group {
       if let s = clip.score {
         Text("\(s)").font(DS.type.score).foregroundStyle(DS.color.text).dsTooltip("Score \(s) — it sets the posting order")
-      } else if clip.photos != nil {
-        // A photo needs no score: say so quietly instead of a dash that reads as something missing.
+      } else if clip.photos != nil || clip.noScoreHelp != nil {
+        // A photo needs no score (nor a photo with audio): say so quietly instead of a dash that reads as something missing.
         Text("No score").font(DS.type.caption).foregroundStyle(DS.color.textTertiary).lineLimit(1).fixedSize()
-          .dsTooltip("Photos need no score. Without one it takes the next open day")
+          .dsTooltip(clip.photos != nil ? "Photos need no score. Without one it takes the next open day"
+                       : "A photo with audio needs no score. Without one it takes the next open day")
       } else {
         Text("—").font(DS.type.score).foregroundStyle(DS.color.textTertiary).dsTooltip("Not scored yet — score it in Score")
       }
@@ -407,9 +410,9 @@ struct DSClipCard<Actions: View>: View {
           }
         }
         // Score and next date (Queue §6.3) — the same facts the wide card shows on its right edge.
-        if clip.score != nil || clip.dateText != nil || clip.photos != nil {
+        if clip.score != nil || clip.dateText != nil || clip.photos != nil || clip.noScoreHelp != nil {
           HStack(spacing: DS.space.sm) {
-            if clip.score != nil || clip.photos != nil {
+            if clip.score != nil || clip.photos != nil || clip.noScoreHelp != nil {
               HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("Score").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
                 scoreText
@@ -470,7 +473,7 @@ struct DSClipCard<Actions: View>: View {
         if let s = clip.score {
           Text("\(s)").foregroundStyle(DS.color.text)
         } else {
-          Text("—").foregroundStyle(DS.color.textTertiary).dsTooltip(clip.photos == nil ? nil : "No score. Photos need none")
+          Text("—").foregroundStyle(DS.color.textTertiary).dsTooltip(clip.noScoreHelp)
         }
       }
       .font(DS.type.calloutSemibold.monospacedDigit()).frame(width: 40, alignment: .trailing)

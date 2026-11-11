@@ -72,6 +72,8 @@ struct EditorView: View {
           .padding(DS.space.sm)
       }
       .background(DS.color.canvas)
+      // Round 23: while this item's video is being made nothing here may write to it; it says how far along it is.
+      .overlay { if PhotoAudioUI.shared.busy == model.videoId { EditorMakingVideo() } }
     }
     .background(DS.color.background)
     .overlay(alignment: .bottom) {
@@ -207,7 +209,7 @@ struct EditorHeader: View {
             Text(model.video?.displayName ?? "Clip").font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(1)
               .frame(maxWidth: 320, alignment: .leading).fixedSize(horizontal: true, vertical: false)
             if model.title == nil && model.video != nil {
-              if model.isPhoto {
+              if model.namedByFile {
                 DSBadge("No title", style: .outline, size: .sm, help: "No Title yet; screens show the photo's file name")
               } else {
                 DSBadge("Raw tag", style: .outline, size: .sm, help: "No Title yet; screens show the marker tag")
@@ -215,7 +217,7 @@ struct EditorHeader: View {
             }
           }
           // Round 21 (D18): a photo post says what it is where a clip names its set.
-          Text(model.video?.photoLabel ?? Captions.setName(model.sessionName)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+          Text(model.video?.markLabel ?? Captions.setName(model.sessionName)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
         }
         .contentShape(Rectangle())
       }

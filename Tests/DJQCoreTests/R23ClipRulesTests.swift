@@ -91,7 +91,8 @@ import Testing
     #expect(Captions.textValue(blank, video: untitled) == "")
     #expect(!AgentPrompts.needsTitleHelp(untitled, suggestions: []) && !AgentPrompts.needsTitleHelp(v, suggestions: []))
     // Its mark, where a clip says its kind.
-    #expect(v.photoLabel == "Photo + audio" && v.kindLabel == "Photo + audio" && StillVideo.label == "Photo + audio")
+    #expect(v.markLabel == "Photo + audio" && v.kindLabel == "Photo + audio" && StillVideo.label == "Photo + audio")
+    #expect(v.photoLabel == nil, "the photo label stays a photo post's: screens read it as \"this is a photo post\"")
     #expect(v.photoCount == 0 && !v.isCarousel && !v.isPhoto)
   }
 

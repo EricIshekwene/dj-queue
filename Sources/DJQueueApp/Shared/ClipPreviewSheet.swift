@@ -108,7 +108,7 @@ struct ClipPreviewSheet: View {
     let edited = EditedClipPlayer.hasToggle(video) && source == .edited
     let v = model.video(video.id) ?? video
     // A photo post says "Photo" / "Carousel · 5" where a clip names its night and length (D18).
-    let about = v.photoLabel ?? [model.sessionName(video), Fmt.duration(model.clipDuration(video))].filter { !$0.isEmpty }.joined(separator: " · ")
+    let about = v.photoLabel ?? [model.clipContext(v), Fmt.duration(model.clipDuration(v))].filter { !$0.isEmpty }.joined(separator: " · ")
     DSDialog(model.displayName(video), description: about, width: v.isPhoto ? 480 : edited ? 420 : 760, onClose: close) {
       EditedClipPlayer(model: model, video: video, source: $source)
     } footer: {

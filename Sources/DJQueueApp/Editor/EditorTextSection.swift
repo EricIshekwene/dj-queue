@@ -36,7 +36,8 @@ struct EditorTextSection: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
               EditorHint(first ? textHint(r) : windowHint(l))
               Spacer(minLength: 0)
-              if !photo && first && !r.isDefault("text") && model.ownsField(["text"]) && model.defaults.textSource == .title && !r.noText {
+              // (A video made from a photo doesn't follow the Title: with nothing typed it has no text.)
+              if !photo && !model.namedByFile && first && !r.isDefault("text") && model.ownsField(["text"]) && model.defaults.textSource == .title && !r.noText {
                 DSButton("Follow the Title", variant: .ghost, size: .sm,
                          tooltip: "Drop the typed text and use the Title again") { model.resetVersion(["text"]) }
               }
@@ -154,8 +155,8 @@ struct EditorTextSection: View {
   /// Agent suggestions for the text on the video (`text_suggestions`): a tap puts one on the selected text.
   @ViewBuilder private var textSuggestions: some View {
     if model.textSuggestions.isEmpty {
-      // Round 21: the agent prompt asks for song names, which a photo doesn't have.
-      if !model.isPhoto { HStack(spacing: 6) {
+      // Round 21: the agent prompt asks for song names, which a photo doesn't have (nor a video made from one, round 23).
+      if !model.namedByFile { HStack(spacing: 6) {
         EditorHint("No text suggestions yet", icon: "text.badge.plus")
         Spacer(minLength: 0)
         DSButton("Ask an agent", icon: "doc.on.clipboard", variant: .ghost, size: .sm,
@@ -197,7 +198,7 @@ struct EditorTextSection: View {
   }
 
   private var textResetHelp: String {
-    if model.isPhoto { return "Take this text off (back to no text)" }
+    if model.namedByFile { return "Take this text off (back to no text)" }
     switch model.defaults.textSource {
     case .title: return "Back to the Title"
     case .rawTag: return "Back to the raw tag"
@@ -208,7 +209,7 @@ struct EditorTextSection: View {
   private func textHint(_ r: ResolvedVersion) -> String {
     if model.isPhoto { return r.noText ? "No text on this post." : model.isCarousel ? "Shows on \(model.textRangeLabel(TextLayer.firstId).lowercased())." : "Typed for this post." }
     if !r.isDefault("text") { return r.noText ? "No text on this clip." : "Typed for this clip." }
-    if r.noText { return "Talking clips have no text by default." }
+    if r.noText { return model.video?.isStill == true ? "A photo with audio starts with no text." : "Talking clips have no text by default." }
     switch model.defaults.textSource {
     case .title: return model.title == nil ? "Follows the Title — no Title yet. Set one above, or type text here." : "Follows the Title."
     case .rawTag: return "Follows the raw tag (Settings → New clip defaults)."

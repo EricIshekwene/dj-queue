@@ -18,11 +18,13 @@ extension AppModel {
   /// - dateText: Queue only ("Today" / "Thu 5 Nov" / "Not scheduled").
   func dsClip(_ v: Video, for screen: Screen) -> DSClip {
     var c = DSClip(id: v.id, title: displayName(v))
-    let session = sessionName(v)
+    // Round 23 (D8): a video made from a photo says "Photo + audio" where a clip names its night ("Photos" is a folder).
+    let session = v.isStill ? StillVideo.label : sessionName(v)
     c.subtitle = session.isEmpty ? nil : session
     applyPreview(clipPreview(v), to: &c)
     c.durationText = Fmt.duration(clipDuration(v))
-    c.kind = v.kind == .talking ? "Talking" : nil
+    c.kind = v.kind == .talking && !v.isStill ? "Talking" : nil
+    c.noScoreHelp = v.isPhoto ? "No score. Photos need none" : v.isStill ? "No score. A photo with audio needs none" : nil
     if let label = v.photoLabel {
       // Round 21 (D18): a photo post says "Photo" / "Carousel · 5" where a clip names its night, length and kind.
       c.subtitle = nil
@@ -73,7 +75,7 @@ extension AppModel {
 
   /// What sits under a clip's name in rows that have one line for it: the session, or "Photo" / "Carousel · 5" for a
   /// photo post ("Photos" is a folder, not a night: D18).
-  func clipContext(_ v: Video) -> String { v.photoLabel ?? sessionName(v) }
+  func clipContext(_ v: Video) -> String { v.markLabel ?? sessionName(v) }
 
   /// Length shown on cards: Eric's markers when set (the default trim), else the clip file.
   func clipDuration(_ v: Video) -> Double {

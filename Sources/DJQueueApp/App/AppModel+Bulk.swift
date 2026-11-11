@@ -187,6 +187,8 @@ extension AppModel {
           // An undo from a toast while the editor is open: the session restarts after it (its edits so far were
           // journaled by the split above), so closing the editor never re-applies what was just undone.
           if let s = self.editorSession { self.editorSession = (try? self.bulk.begin(s.action, ids: s.ids)) ?? s }
+          // Round 23: an undone audio change turns the item into something else: its previews and an open editor follow.
+          self.audioUndone(r)
           let left = r.summary.contains("plan left as it is") ? "plan left as it is"
             : r.skipped.values.allSatisfy { $0.hasSuffix("so its crop stays") } ? "their crops are locked" : "changed since"
           self.show(DSToastModel(message: r.changed.isEmpty && !r.skipped.isEmpty ? "Nothing undone" : label.map { "Undone: \($0)" } ?? "Undone",

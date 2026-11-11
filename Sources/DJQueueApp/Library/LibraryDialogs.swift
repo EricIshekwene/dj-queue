@@ -80,7 +80,7 @@ struct LibraryQuickLook: View {
 
   private func description(_ v: Video) -> String {
     if let label = v.photoLabel { return label }
-    return [model.sessionName(v), v.part.map { "Part \($0)" }, Fmt.duration(v.type == .short ? model.clipDuration(v) : v.duration)]
+    return [model.clipContext(v), v.part.map { "Part \($0)" }, Fmt.duration(v.type == .short ? model.clipDuration(v) : v.duration)]
       .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
   }
 
