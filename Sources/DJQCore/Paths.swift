@@ -40,6 +40,9 @@ public struct Paths: Sendable {
   }
 
   public var sessions: URL { root.appendingPathComponent("Sessions") }
+  /// Round 21: the Photos session folder. The app's copies of imported photos live in `Originals/<post id>/`, and photo
+  /// renders in `Ready to Post/Shortform/` and `Posted/Shortform/` below it, like any session.
+  public var photos: URL { root.appendingPathComponent("Photos") }
   public var appFolder: URL { root.appendingPathComponent("_app") }
   public var backups: URL { appFolder.appendingPathComponent("backups") }
   public var database: URL { appSupport.appendingPathComponent("queue.sqlite") }

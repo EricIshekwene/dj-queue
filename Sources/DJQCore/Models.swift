@@ -66,6 +66,20 @@ public enum Platform: String, CaseIterable, Codable, Sendable, Identifiable, Com
 
   /// Order by default slot time, so lists read in posting order.
   public static func < (a: Platform, b: Platform) -> Bool { a.defaultSlotMinutes < b.defaultSlotMinutes }
+
+  /// Round 21: the most photos one post carries here through Postiz (docs/postiz.md, checked 2026-11-10). 0 = the platform
+  /// takes no photo posts (YouTube Shorts is video only). A carousel with more goes out with its first `maxPhotos`.
+  public var maxPhotos: Int {
+    switch self {
+    case .youtube: 0
+    case .x: 4
+    case .instagram, .facebook: 10
+    case .threads: 20
+    case .tiktok: 35
+    }
+  }
+
+  public var supportsPhotos: Bool { maxPhotos > 0 }
 }
 
 /// Decision Q9: only two kinds.
@@ -217,6 +231,28 @@ public struct Session: Codable, Sendable, Identifiable, Hashable {
   public var date: String?  // YYYY-MM-DD from the folder name
   public var discoveredAt: Date
   public var missing: Bool
+
+  /// Round 21: the one session every photo post belongs to. Its folder is `Paths.photos`; intake never scans it or marks
+  /// it missing.
+  public static let photosId = "photos"
+  public var isPhotos: Bool { id == Session.photosId }
+}
+
+/// One photo of a photo post (round 21). The file is the app's own copy under `Paths.photos`; the original is never touched.
+public struct PhotoItem: Codable, Sendable, Hashable, Identifiable {
+  /// Stable across reorders; `Edit.photoCrops` is keyed by it.
+  public var id: String
+  /// Relative to the Photos session folder (`Paths.photos`), e.g. "Originals/<post id>/01-a1b2c3d4.jpg".
+  public var file: String
+  /// Upright pixel size (EXIF orientation applied).
+  public var width: Int
+  public var height: Int
+
+  public init(id: String = PhotoItem.newId(), file: String, width: Int, height: Int) {
+    self.id = id; self.file = file; self.width = width; self.height = height
+  }
+
+  public static func newId() -> String { String(UUID().uuidString.prefix(8)).lowercased() }
 }
 
 public struct Video: Codable, Sendable, Identifiable, Hashable {
@@ -266,6 +302,13 @@ public struct Video: Codable, Sendable, Identifiable, Hashable {
   /// `needs_edit` even with nothing to fix. It goes back to false when the clip leaves the Queue for Edit, its score is
   /// cleared or it's excluded.
   public var sentToQueue: Bool = false
+  /// Round 21: the photos of a photo post, in posting order (one = a single photo, more = a carousel). nil = a video.
+  /// A photo post is a short-form item with `duration` 0 and `file` = its first photo; it lives in the Photos session
+  /// (`Session.photosId`), never comes from videos.json (`inManifest` false) and needs no score.
+  public var photos: [PhotoItem]? = nil
+
+  /// A photo post (single photo or carousel), not a video.
+  public var isPhoto: Bool { photos != nil }
 
   /// The marker tag (the part of the name after the session), e.g. "yayo x johnny".
   public var tag: String { tags.first ?? name }
@@ -327,12 +370,15 @@ public struct Edit: Codable, Sendable, Hashable {
   public var skippedPlatforms: Set<Platform> = []
   /// Platforms Eric turned ON for this clip although `defaults.platforms` leaves them out.
   public var includedPlatforms: Set<Platform> = []
+  /// Round 21: a photo post's confirmed crop per photo (`PhotoItem.id` → crop in that photo's upright pixels). A photo
+  /// without one uses the centred crop for the post's aspect. Empty for videos, and then absent from the stored JSON.
+  public var photoCrops: [String: CropRect] = [:]
 
   public init() {}
 
   enum CodingKeys: String, CodingKey {
     case aspectOverride = "aspect", crop, trimIn, trimOut, coverTime
-    case coverIncludesTextOverride = "coverIncludesText", platformTrims, skippedPlatforms, includedPlatforms
+    case coverIncludesTextOverride = "coverIncludesText", platformTrims, skippedPlatforms, includedPlatforms, photoCrops
   }
 
   public init(from d: Decoder) throws {
@@ -346,6 +392,7 @@ public struct Edit: Codable, Sendable, Hashable {
     platformTrims = try c.decodeIfPresent([Platform: TrimRange].self, forKey: .platformTrims) ?? [:]
     skippedPlatforms = try c.decodeIfPresent(Set<Platform>.self, forKey: .skippedPlatforms) ?? []
     includedPlatforms = try c.decodeIfPresent(Set<Platform>.self, forKey: .includedPlatforms) ?? []
+    photoCrops = ((try? c.decodeIfPresent([String: CropRect].self, forKey: .photoCrops)) ?? nil) ?? [:]
   }
 
   /// Deterministic JSON (sets sorted), so stored rows and hashes don't change when nothing changed.
@@ -360,6 +407,7 @@ public struct Edit: Codable, Sendable, Hashable {
     try c.encode(platformTrims, forKey: .platformTrims)
     try c.encode(skippedPlatforms.sorted { $0.rawValue < $1.rawValue }, forKey: .skippedPlatforms)
     try c.encode(includedPlatforms.sorted { $0.rawValue < $1.rawValue }, forKey: .includedPlatforms)
+    if !photoCrops.isEmpty { try c.encode(photoCrops, forKey: .photoCrops) }
   }
 
   /// True when the clip doesn't post on `p` (skipped, or left out by the default platforms and not turned on).
@@ -549,14 +597,23 @@ public struct PlanSlot: Codable, Sendable, Identifiable, Hashable {
   public var videoId: String
   public var pinned: Bool
   public var weekStart: String
+  /// Round 21: "Post at a set time". When set, every platform posts at exactly this moment instead of its slot time, the
+  /// slot is always pinned, and it sits outside the posts-per-day cadence: `position` is `exactBase` or above, so it
+  /// never takes one of the day's regular positions and the scheduler never fills, moves or re-lays it.
+  public var exactAt: Date? = nil
 
-  public init(id: String, date: String, position: Int, videoId: String, pinned: Bool, weekStart: String) {
+  /// Positions from here up belong to set-time slots (the regular positions are 0..<postsPerDay).
+  public static let exactBase = 100
+  public var isExact: Bool { exactAt != nil }
+
+  public init(id: String, date: String, position: Int, videoId: String, pinned: Bool, weekStart: String, exactAt: Date? = nil) {
     self.id = id
     self.date = date
     self.position = position
     self.videoId = videoId
     self.pinned = pinned
     self.weekStart = weekStart
+    self.exactAt = exactAt
   }
 }
 
@@ -664,6 +721,12 @@ public struct Render: Codable, Sendable, Identifiable, Hashable {
   public var error: String?
   public var createdAt: Date
   public var deletedAt: Date?
+  /// Round 21: a photo post's render is one JPEG per photo. `outputPath` is the first; these are the rest, in order.
+  /// nil for a video.
+  public var morePaths: [String]? = nil
+
+  /// Every output file, in posting order (one for a video).
+  public var allPaths: [String] { (outputPath.map { [$0] } ?? []) + (morePaths ?? []) }
 
   public init(id: String, videoId: String, versionNo: Int, editHash: String, scope: String, outputPath: String?, coverPath: String?, loudness: LoudnessInfo?, duration: Double?, size: Int64?, status: RenderStatus, error: String?, createdAt: Date, deletedAt: Date?) {
     self.id = id

@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 8
+  public static let schemaVersion = 9
   /// Schema step that adds `videos.sent_to_queue` (`migrateSentToQueue`). `schemaVersion` stays a literal: build-app.sh
   /// reads the number from that line into the bundle, and `djq autoupdate rollback` relies on it.
   static let sentToQueueVersion = 8
@@ -94,6 +94,7 @@ public final class Store: @unchecked Sendable {
     if v < 6 { try migrateToV6(from: v) }
     if v < 7 { try migrateToV7(from: v) }
     if v < Self.sentToQueueVersion { try db.exec("PRAGMA user_version = \(Self.sentToQueueVersion)") }
+    if v < 9 { try migrateToV9(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -263,6 +264,28 @@ public final class Store: @unchecked Sendable {
     Log.shared.info("schema 7: caption rules — \(held.count) clip(s) with posts kept their captions")
   }
 
+  /// Round 21, photo posts and set-time posts: `videos.photos` (a photo post's photos, NULL for every video),
+  /// `plan_slots.exact_at` (a set-time slot's moment, NULL for every regular slot) and `renders.more_paths` (a photo
+  /// render's files after the first). Additive and lossless: three nullable columns, no existing row changes. A file
+  /// database with data is copied to `<app support>/backups/` first.
+  private func migrateToV9(from v: Int) throws {
+    if v >= 1, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-schema9-\(f.string(from: Date())).sqlite").path)
+    }
+    try db.transaction {
+      for (table, column, type) in [("videos", "photos", "TEXT"), ("plan_slots", "exact_at", "REAL"), ("renders", "more_paths", "TEXT")] {
+        let cols = Set(try db.query("PRAGMA table_info(\(table))").compactMap { $0.string("name") })
+        if !cols.contains(column) { try db.exec("ALTER TABLE \(table) ADD COLUMN \(column) \(type)") }
+      }
+      try db.exec("PRAGMA user_version = 9")
+    }
+  }
+
   private func seedDefaults() throws {
     if try hashtagSets().isEmpty {
       for s in Defaults.hashtagSets { try save(s) }
@@ -379,8 +402,8 @@ public final class Store: @unchecked Sendable {
       INSERT INTO videos(id,session_id,name,tags,type,content_type,kind,file,fingerprint,file_size,duration,
         marked_start,marked_end,start,"end",grace,audio,part,score,state,excluded,missing,in_manifest,notes,
         already_posted_on,longform_url,created_at,updated_at,title,title_tracks,title_source,source_width,source_height,
-        held_in_edit,sent_to_queue)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        held_in_edit,sent_to_queue,photos)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, name=excluded.name, tags=excluded.tags,
         type=excluded.type, content_type=excluded.content_type, kind=excluded.kind, file=excluded.file,
         fingerprint=excluded.fingerprint, file_size=excluded.file_size, duration=excluded.duration,
@@ -390,13 +413,13 @@ public final class Store: @unchecked Sendable {
         already_posted_on=excluded.already_posted_on, longform_url=excluded.longform_url, updated_at=excluded.updated_at,
         title=excluded.title, title_tracks=excluded.title_tracks, title_source=excluded.title_source,
         source_width=excluded.source_width, source_height=excluded.source_height, held_in_edit=excluded.held_in_edit,
-        sent_to_queue=excluded.sent_to_queue
+        sent_to_queue=excluded.sent_to_queue, photos=excluded.photos
       """, [v.id, v.sessionId, v.name, JSONCoding.string(v.tags), v.type.rawValue, v.contentType, v.kind.rawValue,
             v.file, v.fingerprint, v.fileSize, v.duration, v.markedStart, v.markedEnd, v.start, v.end, v.grace,
             v.audio, v.part, v.score, v.state.rawValue, v.excluded, v.missing, v.inManifest, v.notes,
             JSONCoding.string(v.alreadyPostedOn), v.longformURL, v.createdAt, v.updatedAt, v.title,
             v.titleTracks.map { JSONCoding.string($0) }, v.titleSource, v.sourceWidth, v.sourceHeight, v.heldInEdit,
-            v.sentToQueue])
+            v.sentToQueue, v.photos.map { JSONCoding.string($0) }])
   }
 
   /// Updates only the fields that come from videos.json / the file (spec §4: never overwrite app-owned fields).
@@ -472,7 +495,7 @@ public final class Store: @unchecked Sendable {
           longformURL: r.string("longform_url"), createdAt: r.date("created_at")!, updatedAt: r.date("updated_at")!,
           title: r.string("title"), titleTracks: r.json("title_tracks"), titleSource: r.string("title_source"),
           sourceWidth: r.int("source_width"), sourceHeight: r.int("source_height"), heldInEdit: r.bool("held_in_edit"),
-          sentToQueue: r.bool("sent_to_queue"))
+          sentToQueue: r.bool("sent_to_queue"), photos: r.json("photos"))
   }
 
   public func fileURL(for v: Video) throws -> URL? {
@@ -582,13 +605,14 @@ public final class Store: @unchecked Sendable {
   public func planSlots(where clause: String = "1", _ binds: [SQLBindable?] = []) throws -> [PlanSlot] {
     try db.query("SELECT * FROM plan_slots WHERE \(clause) ORDER BY date, position", binds).map {
       PlanSlot(id: $0.string("id")!, date: $0.string("date")!, position: $0.int("position")!,
-               videoId: $0.string("video_id")!, pinned: $0.bool("pinned"), weekStart: $0.string("week_start")!)
+               videoId: $0.string("video_id")!, pinned: $0.bool("pinned"), weekStart: $0.string("week_start")!,
+               exactAt: $0.date("exact_at"))
     }
   }
 
   public func save(_ s: PlanSlot) throws {
-    try db.run("INSERT INTO plan_slots(id,date,position,video_id,pinned,week_start) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET date=excluded.date, position=excluded.position, video_id=excluded.video_id, pinned=excluded.pinned, week_start=excluded.week_start",
-               [s.id, s.date, s.position, s.videoId, s.pinned, s.weekStart])
+    try db.run("INSERT INTO plan_slots(id,date,position,video_id,pinned,week_start,exact_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET date=excluded.date, position=excluded.position, video_id=excluded.video_id, pinned=excluded.pinned, week_start=excluded.week_start, exact_at=excluded.exact_at",
+               [s.id, s.date, s.position, s.videoId, s.pinned, s.weekStart, s.exactAt])
   }
 
   public func deletePlanSlot(_ id: String) throws { try db.run("DELETE FROM plan_slots WHERE id=?", [id]) }
@@ -664,20 +688,24 @@ public final class Store: @unchecked Sendable {
 
   public func save(_ r: Render) throws {
     try db.run("""
-      INSERT INTO renders(id,video_id,version_no,edit_hash,scope,output_path,cover_path,loudness,duration,size,status,error,created_at,deleted_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      INSERT INTO renders(id,video_id,version_no,edit_hash,scope,output_path,cover_path,loudness,duration,size,status,error,created_at,deleted_at,more_paths)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET output_path=excluded.output_path, cover_path=excluded.cover_path, loudness=excluded.loudness,
-        duration=excluded.duration, size=excluded.size, status=excluded.status, error=excluded.error, deleted_at=excluded.deleted_at
+        duration=excluded.duration, size=excluded.size, status=excluded.status, error=excluded.error, deleted_at=excluded.deleted_at,
+        more_paths=excluded.more_paths
       """, [r.id, r.videoId, r.versionNo, r.editHash, r.scope, r.outputPath, r.coverPath,
-            r.loudness.map { JSONCoding.string($0) }, r.duration, r.size, r.status.rawValue, r.error, r.createdAt, r.deletedAt])
+            r.loudness.map { JSONCoding.string($0) }, r.duration, r.size, r.status.rawValue, r.error, r.createdAt, r.deletedAt,
+            r.morePaths.map { JSONCoding.string($0) }])
   }
 
   static func render(_ r: Row) -> Render {
-    Render(id: r.string("id")!, videoId: r.string("video_id")!, versionNo: r.int("version_no")!,
+    var out = Render(id: r.string("id")!, videoId: r.string("video_id")!, versionNo: r.int("version_no")!,
            editHash: r.string("edit_hash")!, scope: r.string("scope")!, outputPath: r.string("output_path"),
            coverPath: r.string("cover_path"), loudness: r.json("loudness"), duration: r.double("duration"),
            size: r.int64("size"), status: RenderStatus(rawValue: r.string("status")!) ?? .pending, error: r.string("error"),
            createdAt: r.date("created_at")!, deletedAt: r.date("deleted_at"))
+    out.morePaths = r.json("more_paths")
+    return out
   }
 
   // MARK: Events, heartbeats, notification dedupe
