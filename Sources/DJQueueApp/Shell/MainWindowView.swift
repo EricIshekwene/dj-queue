@@ -105,7 +105,7 @@ struct MainWindowView: View {
       ModalHost(onDismiss: { model.postAtRequest = nil }) { PostAtDialog(model: model, request: r).id(r.id) }
     }
     if let r = model.photoImportRequest {
-      ModalHost(onDismiss: { model.photoImportRequest = nil }) { PhotoImportSheet(model: model, request: r).id(r.id) }
+      ModalHost(onDismiss: { if !PhotoImportUI.shared.importing { model.photoImportRequest = nil } }) { PhotoImportSheet(model: model, request: r).id(r.id) }
     }
     // ⌘K works from anywhere, so it sits above every modal. A confirmation it asks for still goes on top.
     if model.showPalette {

@@ -201,6 +201,14 @@ extension AppModel {
                      subtitle: back == nil ? stageBackHelp(v) : nil, disabled: back) { [weak self] in self?.stageBack([v.id]) })
       c.append(.init(id: "clip.\(v.id).stageForward", title: "\(stageForwardTitle(v)) (forward a stage)", symbol: "chevron.right",
                      subtitle: fwd == nil ? stageForwardHelp(v) : nil, disabled: fwd) { [weak self] in self?.stageForward([v.id]) })
+      // Round 21: an exact day and minute, outside the regular schedule.
+      let timeWhy = postAtBlocker(v)
+      c.append(.init(id: "clip.\(v.id).postAt", title: postAtMenuTitle([v.id]), symbol: "clock",
+                     subtitle: timeWhy == nil ? postAtHelp(v) : nil, disabled: timeWhy) { [weak self] in self?.askPostAt([v.id]) })
+      if setTime(v.id) != nil {
+        c.append(.init(id: "clip.\(v.id).regularSchedule", title: StageWording.useRegularSchedule, symbol: "arrow.uturn.backward",
+                       subtitle: "Take the set time off") { [weak self] in self?.clearSetTimeAsking([v.id]) })
+      }
     }
     c.append(.init(id: "clip.\(v.id).exclude", title: v.excluded ? "Include" : "Exclude", symbol: v.excluded ? "plus.circle" : "minus.circle",
                    subtitle: v.excluded ? "Let this clip be scheduled again" : "Never post this clip") {

@@ -140,6 +140,7 @@ private struct QueueBulkBar: View {
         model.removeFromQueue(ids)
       }
       .disabled(removeWhy != nil)
+      Button(model.postAtMenuTitle(ids), systemImage: "clock") { model.askPostAt(ids) }
       Divider()
       Button("Caption…", systemImage: "text.alignleft") { model.captionDialogIds = ids }
       Button("Crop…", systemImage: "crop") { model.cropDialogIds = ids }

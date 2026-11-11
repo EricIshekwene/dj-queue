@@ -203,6 +203,7 @@ private struct EditBulkBar: View {
         }
         Button("Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") { model.copyAgentPrompt(ids) }
       }
+      Button(model.postAtMenuTitle(ids), systemImage: "clock") { model.askPostAt(ids) }
       EditApplyDefaultsMenu(model: model, ids: ids)
       Menu("Skip platform") {
         ForEach(model.settings.activePlatforms) { p in

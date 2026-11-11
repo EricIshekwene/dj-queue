@@ -11,7 +11,7 @@ struct BulkConfirmSheet: View {
 
   var body: some View {
     let r = pending.request
-    DSDialog(r.title, description: r.ids.count == 1 ? (model.video(r.ids[0]).map(model.displayName) ?? "1 clip") : "\(r.ids.count) clips selected", icon: "square.stack.3d.up",
+    DSDialog(r.title, description: r.ids.count == 1 ? (model.video(r.ids[0]).map(model.displayName) ?? "1 selected") : "\(r.ids.count) selected", icon: "square.stack.3d.up",
              width: pending.preview?.outlook?.needTitle.isEmpty == false ? 560 : 480,
              onClose: { model.cancelPendingBulk() }) {
       VStack(alignment: .leading, spacing: DS.space.sm) {

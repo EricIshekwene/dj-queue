@@ -249,7 +249,11 @@ struct DSXThumb: View {
     let h = width * 16 / 9
     let postCover = post.flatMap { model.clipPreview(post: $0)?.cover }
     Group {
-      if let img = postCover {
+      if let v = video, v.isPhoto {
+        // Round 21: a photo keeps its own shape, whole, inside the slot (a 4:5 photo is never cut to 9:16).
+        DSPhotoPreview(count: v.photoCount, aspectRatio: model.settings.defaults.photoAspect.ratio, poster: postCover ?? model.poster(v),
+                       cornerRadius: DS.radius.xs, mat: true)
+      } else if let img = postCover {
         Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
       } else if let v = video, let img = model.poster(v) {
         Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)

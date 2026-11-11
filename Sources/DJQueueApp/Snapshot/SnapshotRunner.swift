@@ -179,6 +179,7 @@ struct SnapshotContext {
     m.previewVideo = nil
     m.postAtRequest = nil
     m.photoImportRequest = nil
+    PhotoImportUI.shared.dropTargeted = false
     m.toast = nil
     m.selection = [:]
     m.selectionAnchor = [:]
