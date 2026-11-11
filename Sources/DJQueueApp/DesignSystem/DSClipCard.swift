@@ -193,7 +193,7 @@ struct DSClipCard<Actions: View>: View {
                                   photoMat: Bool = false, photoSteps: Bool = false) -> some View {
     if let ph = clip.photos {
       DSPhotoPreview(count: ph.count, aspectRatio: ph.aspectRatio, poster: clip.poster, image: ph.image, load: ph.load,
-                     steps: photoSteps, cornerRadius: radius, mat: photoMat, alignment: photoSteps ? .top : .center,
+                     stamp: clip.previewStamp, steps: photoSteps, cornerRadius: radius, mat: photoMat, alignment: photoSteps ? .top : .center,
                      anchor: "Photo \(clip.id)")
     } else {
       DSVideoPreview(url: clip.isMissing ? nil : clip.proxyURL, poster: clip.poster, isActive: active, isPriority: isFocused,
@@ -203,6 +203,12 @@ struct DSClipCard<Actions: View>: View {
                      updatingStyle: updating, needsOverlay: clip.overlayMissing, onNeedsOverlay: clip.reloadOverlay)
         .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.color.border) }
     }
+  }
+
+  /// A clip's file is found again by fingerprint; a photo post's copy has to be put back (Doctor names it).
+  private var missingHelp: String {
+    clip.photos == nil ? "The source file moved or was deleted — Health › Doctor relinks it"
+      : "A photo of this post is gone from DJ Queue's Photos folder — Health › Doctor names it"
   }
 
   /// "Photo" / "Carousel · 5", where a clip says its session, length and kind.
@@ -279,8 +285,7 @@ struct DSClipCard<Actions: View>: View {
   private var chipItems: [AnyView] {
     var out: [AnyView] = []
     if clip.isMissing {
-      out.append(AnyView(DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark",
-                                 help: "The source file moved or was deleted — Health › Doctor relinks it")))
+      out.append(AnyView(DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark", help: missingHelp)))
     }
     out += clip.blocks.map { AnyView(DSBadge($0, style: .soft(.danger), help: "Blocks posting until fixed in the editor")) }
     out += clip.issues.map { AnyView(DSBadge($0, style: .soft(.warning), help: "Still needed before it can go to the Queue — open the editor")) }
@@ -453,7 +458,7 @@ struct DSClipCard<Actions: View>: View {
       }
       .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
       if clip.isMissing {
-        DSBadge("File missing", style: .soft(.danger), size: .sm, help: "The source file moved or was deleted — Health › Doctor relinks it")
+        DSBadge("File missing", style: .soft(.danger), size: .sm, help: missingHelp)
       } else if let ph = clip.photos {
         // `kind` carries the mark plus whatever the screen added to it (Library: the stage).
         DSBadge(clip.kind ?? ph.label, style: .outline, icon: ph.symbol, size: .sm, help: ph.help)

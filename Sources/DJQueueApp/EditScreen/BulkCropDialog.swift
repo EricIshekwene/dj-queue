@@ -43,7 +43,7 @@ struct BulkCropDialog: View {
 
   private var current: CropPreview? { previews.indices.contains(index) ? previews[index] : previews.first }
   private var changing: Int { previews.filter(\.changes).count }
-  private var verb: String { "Apply to \(AppModel.pipelineClips(max(changing, 1)))" }
+  private var verb: String { changing == 0 ? "Nothing to apply" : "Apply to \(AppModel.pipelineClips(changing))" }
   private var disabledReason: String? {
     if !loaded { return "Checking these clips…" }
     return changing == 0 ? "Nothing would change" : nil

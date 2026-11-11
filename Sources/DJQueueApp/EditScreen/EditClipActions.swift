@@ -17,7 +17,14 @@ extension AppModel {
   func editFixes(_ v: Video, ids: [String]) -> [EditFix] {
     var out: [EditFix] = []
     // A scored clip whose file went missing sits in Edit (round 4 S1): the one fix is to find the file again.
-    if v.missing {
+    if v.missing, v.isPhoto {
+      // A photo post's copy isn't found again by fingerprint (Core: `photos.missing`); Doctor says which file is gone.
+      out.append(EditFix(id: "photo-missing", title: "See what's missing", icon: "stethoscope",
+                         tooltip: "Open Health › Doctor, which names the missing photo", disabledReason: nil) { [self] in
+        screen = .health
+        runDoctor()
+      })
+    } else if v.missing {
       out.append(EditFix(id: "relink", title: "Relink", icon: "magnifyingglass",
                          tooltip: "Look for the moved file now (intake finds it by fingerprint); Health › Doctor shows more",
                          disabledReason: nil) { [self] in

@@ -499,6 +499,9 @@ struct DSPhotoPreview: View {
   var image: (Int) -> NSImage? = { _ in nil }
   /// Asks for photo `i` at preview size.
   var load: (Int) -> Void = { _ in }
+  /// The post's preview stamp. A large preview loads its photo again whenever this moves (a title, a crop, a skipped
+  /// platform: any change drops the loaded photos), not only when ‹ › is clicked.
+  var stamp = ""
   var steps = false
   var cornerRadius: CGFloat = 0
   /// Fill the box with a quiet mat and fit the photo inside it (grid tiles keep one shape). Off: only the photo is
@@ -529,6 +532,8 @@ struct DSPhotoPreview: View {
       }
       .aspectRatio(ratio, contentMode: .fit)
       .clipShape(RoundedRectangle(cornerRadius: inner, style: .continuous))
+      // Scripted runs: what a large preview is drawing now (the photo at preview size, the small cover, or nothing).
+      .background { if steps { ScriptAnchor("\(anchor ?? "Photo") picture \(image(i) != nil ? "large" : picture != nil ? "cover" : "none")") } }
       .overlay { if !mat { RoundedRectangle(cornerRadius: inner, style: .continuous).strokeBorder(DS.color.border) } }
       .overlay { if canStep { stepper(i) } }
       .padding(mat ? 6 : 0)
@@ -536,10 +541,10 @@ struct DSPhotoPreview: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
     .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     .overlay { if mat { RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(DS.color.border) } }
-    .onChange(of: i, initial: true) { _, now in
+    .task(id: "\(stamp)|\(i)|\(steps)") {
       guard steps else { return }
-      load(now)
-      if now + 1 < count { load(now + 1) }
+      load(i)
+      if i + 1 < count { load(i + 1) }
     }
     .accessibilityElement(children: .contain)
     .accessibilityLabel(count > 1 ? "Photo \(i + 1) of \(count)" : "Photo")

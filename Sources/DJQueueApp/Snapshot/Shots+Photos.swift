@@ -15,6 +15,18 @@ extension SnapshotShots {
       PhotoImportUI.shared.dropTargeted = false
       SettingsUIState.shared.reset()
     }
+    /// Takes the shape-issue shot's 9:16 off again.
+    func unshape(_ m: AppModel) {
+      var changed = false
+      for v in m.videos where v.isPhoto {
+        if var e = try? m.store.edit(videoId: v.id), e.aspectOverride != nil {
+          e.aspectOverride = nil
+          try? m.store.save(e, videoId: v.id)
+          changed = true
+        }
+      }
+      if changed { m.refreshNow() }
+    }
     func post(_ m: AppModel, carousel: Bool, where ok: (Video) -> Bool = { _ in true }) -> Video? {
       m.videos.first { $0.isPhoto && $0.isCarousel == carousel && ok($0) }
     }
@@ -108,12 +120,6 @@ extension SnapshotShots {
         d.photoAspect = .r9x16
         SettingsUIState.shared.draft = d
       },
-      // The narrowest window: the header still holds search, the view toggle, Add photos and the primary.
-      c.main("r21-photos-narrow", size: Shot.narrow) { m in
-        prep(m)
-        m.setViewMode(.wide, for: .edit)
-        m.screen = .edit
-      },
       // D20: a 9:16 photo post with Instagram on waits in Edit and says how to fix it.
       c.main("r21-photos-shape-issue") { m in
         prep(m)
@@ -126,17 +132,32 @@ extension SnapshotShots {
           ListPrefs.shared.setSearch(.edit, m.displayName(v))
         }
       },
-      c.view("r21-photos-revert", width: 10, height: 10) {
-        for v in c.model.videos where v.isPhoto {
-          if var e = try? c.store.edit(videoId: v.id), e.aspectOverride != nil {
-            e.aspectOverride = nil
-            try? c.store.save(e, videoId: v.id)
-          }
-        }
-        c.model.refreshNow()
-        prep(c.model)
-        for s in [Screen.edit, .queue, .library] { c.model.viewModes[s] = nil }
-        return AnyView(Color.clear)
+      // The narrowest window, where a row has least room: a photo's thumbnail stays inside the slot a clip's cover
+      // has, clear of the row number and the title, in Cards and List, on Edit and the Queue.
+      c.main("r21-photos-narrow-queue-cards", size: Shot.narrow) { m in
+        unshape(m)
+        prep(m)
+        m.setViewMode(.wide, for: .queue)
+        m.screen = .queue
+      },
+      c.main("r21-photos-narrow-queue-list", size: Shot.narrow) { m in
+        prep(m)
+        m.setViewMode(.list, for: .queue)
+        m.screen = .queue
+      },
+      c.main("r21-photos-narrow-edit-list", size: Shot.narrow) { m in
+        prep(m)
+        m.setViewMode(.list, for: .edit)
+        m.screen = .edit
+      },
+      // Last: it puts back what the shots above changed (the shape, the view modes), so the lists after this one
+      // start from the sample as it was. It shows Edit in its own layout, with search, the view toggle, Add photos and
+      // the primary all in the header.
+      c.main("r21-photos-narrow-edit-cards", size: Shot.narrow) { m in
+        unshape(m)
+        prep(m)
+        for s in [Screen.edit, .queue, .library] { m.viewModes[s] = nil }
+        m.screen = .edit
       },
     ]
   }

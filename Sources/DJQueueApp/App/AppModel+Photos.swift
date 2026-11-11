@@ -26,6 +26,17 @@ final class PhotoImportUI {
   var lastSkipped: [PhotoImport.Skipped] = []
   /// A file drag is over the Edit page.
   var dropTargeted = false
+  /// Files picked or dropped while an import was copying. They are taken as soon as it finishes, never lost.
+  var waiting: [URL] = []
+  /// Imports asked for while one was copying, run one after the other.
+  @ObservationIgnored var queued: [Job] = []
+
+  struct Job {
+    var urls: [URL]
+    var mode: PhotoImport.Mode
+    var title: String?
+    var refused: [PhotoImport.Skipped]
+  }
 }
 
 extension AppModel {
@@ -58,10 +69,18 @@ extension AppModel {
 
   /// Picked or dropped files. The ones that can't be photos are refused in a toast, in `PhotoImport.refusal`'s words;
   /// of the rest, one imports straight away and several open the import sheet (or join the one that is open).
+  /// While an import is copying they wait their turn (with a toast saying so) and are taken when it finishes.
   func takePhotos(_ urls: [URL]) {
     guard !urls.isEmpty else { return }
-    let known = Set(photoImportRequest?.files ?? [])
-    let list = urls.filter { !known.contains($0) }
+    let ui = PhotoImportUI.shared
+    if ui.importing {
+      ui.waiting += urls
+      show(DSToastModel(message: "Still adding the last photos", detail: "These are added next", duration: 4))
+      return
+    }
+    // The same file once, in the order picked.
+    var seen = Set<String>()
+    let list = urls.filter { seen.insert($0.standardizedFileURL.path).inserted }
     Task.detached(priority: .userInitiated) {
       let refused = list.compactMap { u in PhotoImport.refusal(u).map { PhotoImport.Skipped(file: u.path, reason: $0) } }
       let bad = Set(refused.map(\.file))
@@ -70,7 +89,16 @@ extension AppModel {
     }
   }
 
-  private func tookPhotos(_ good: [URL], refused: [PhotoImport.Skipped]) {
+  private func tookPhotos(_ picked: [URL], refused: [PhotoImport.Skipped]) {
+    // Against the sheet as it is now, not as it was when the files were handed over: two quick drops of the same
+    // files must not put a photo into the carousel twice.
+    var have = Set((photoImportRequest?.files ?? []).map { $0.standardizedFileURL.path })
+    let good = picked.filter { have.insert($0.standardizedFileURL.path).inserted }
+    if PhotoImportUI.shared.importing {
+      // An import started while these were being looked at: they wait for it, like files dropped during one.
+      PhotoImportUI.shared.waiting += good
+      return
+    }
     PhotoImportUI.shared.lastSkipped = refused
     // One good photo goes straight in, and its "Added" toast carries the refusals; otherwise they get their own.
     let straightIn = photoImportRequest == nil && good.count == 1
@@ -94,9 +122,15 @@ extension AppModel {
   /// one carousel or a post per file, in Edit. Then it signals, reloads and says what was added, with Open for the
   /// editor and every skipped file with its reason. The originals are only read. Nothing goes to the Queue.
   /// `refused`: files already turned away before this call, listed with the ones the import skips.
+  /// One import copies at a time; a call during another is queued and runs when that one finishes.
   func importPhotos(urls: [URL], mode: PhotoImport.Mode, title: String?, refused: [PhotoImport.Skipped] = []) {
     let ui = PhotoImportUI.shared
-    guard !urls.isEmpty, !ui.importing else { return }
+    guard !urls.isEmpty else { return }
+    if ui.importing {
+      ui.queued.append(.init(urls: urls, mode: mode, title: title, refused: refused))
+      show(DSToastModel(message: "Still adding the last photos", detail: "These are added next", duration: 4))
+      return
+    }
     ui.importing = true
     let s = store
     let name = title?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -114,13 +148,15 @@ extension AppModel {
   private func importedPhotos(_ out: Result<PhotoImport.Result, Error>) {
     let ui = PhotoImportUI.shared
     ui.importing = false
-    photoImportRequest = nil
+    defer { importNext() }
     switch out {
     case .failure(let e):
+      // The sheet stays open with its photos and title, so Eric can try again or cancel.
       ui.lastPosts = []
       refresh()
-      show(e.localizedDescription, error: true)
+      show(DSToastModel(message: "The photos weren't added", detail: e.localizedDescription, tone: .danger, duration: 8))
     case .success(let r):
+      photoImportRequest = nil
       ui.lastPosts = r.posts.map(\.id)
       ui.lastSkipped = r.skipped
       ChangeSignal.post()
@@ -135,6 +171,20 @@ extension AppModel {
       show(DSToastModel(message: Self.importedText(r.posts), detail: detail.isEmpty ? nil : detail.joined(separator: "\n"),
                         tone: .success, actionTitle: "Open", action: { [weak self] in self?.openEditor(first.id, in: ids) },
                         duration: r.skipped.isEmpty ? 6 : 10))
+    }
+  }
+
+  /// What came in while that import was copying: a queued import first, then files that were picked or dropped.
+  private func importNext() {
+    let ui = PhotoImportUI.shared
+    guard !ui.importing else { return }
+    if !ui.queued.isEmpty {
+      let j = ui.queued.removeFirst()
+      importPhotos(urls: j.urls, mode: j.mode, title: j.title, refused: j.refused)
+    } else if !ui.waiting.isEmpty {
+      let files = ui.waiting
+      ui.waiting = []
+      takePhotos(files)
     }
   }
 
@@ -240,6 +290,12 @@ extension AppModel {
 
   /// `ids` without the photo posts: a photo has nothing to play, so no proxy is ever asked for it.
   func playableIds(_ ids: [String]) -> [String] { ids.filter { videoById[$0]?.isPhoto != true } }
+
+  /// "2 photo posts" when every one of `ids` is a photo post, else "2 clips" (`pipelineClips`).
+  func pipelineItems(_ ids: [String]) -> String {
+    guard !ids.isEmpty, !ids.contains(where: { videoById[$0]?.isPhoto != true }) else { return Self.pipelineClips(ids.count) }
+    return ids.count == 1 ? "1 photo post" : "\(ids.count) photo posts"
+  }
 
   // MARK: Files
 

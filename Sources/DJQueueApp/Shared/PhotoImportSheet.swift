@@ -12,23 +12,33 @@ struct PhotoImportSheet: View {
   @State private var thumbs: [URL: NSImage] = [:]
 
   private var ui: PhotoImportUI { .shared }
-  private var mode: PhotoImport.Mode { separate ? .separate : .carousel }
+  private var mode: PhotoImport.Mode { separate && request.files.count > 1 ? .separate : .carousel }
 
   var body: some View {
     let n = request.files.count
+    // While the files are copying nothing here can stop it, so ✕ goes and Cancel says why it is off.
     DSDialog(n == 1 ? "Add 1 photo" : "Add \(n) photos", description: "DJ Queue keeps its own copy. The files you picked stay where they are.",
-             icon: "photo.stack", width: 520, onClose: close) {
+             icon: "photo.stack", width: 520, onClose: ui.importing ? nil : close) {
       VStack(alignment: .leading, spacing: DS.space.md) {
-        strip
+        VStack(alignment: .leading, spacing: DS.space.xs) {
+          HStack(spacing: DS.space.xs) {
+            Text(n == 1 ? "1 photo" : "\(n) photos, in posting order. The first is the cover.")
+              .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+            Spacer(minLength: 0)
+            DSButton("Add more", icon: "plus", variant: .ghost, size: .sm, disabledReason: ui.importing ? "Adding the photos…" : nil,
+                     tooltip: "Pick more photos for this post") { model.askAddPhotos() }
+          }
+          strip
+        }
         DSTextField("Title", placeholder: "Optional", text: $title,
                     hint: separate ? "Every post gets this title. You can change each one in the editor."
                       : "Names the post in every list. You can change it in the editor.",
                     onSubmit: add)
           .background(ScriptAnchor("Import title"))
         // The whole row is one button (label, description and switch), like a settings row.
-        Button { dsWithAnimation { separate.toggle() } } label: {
+        Button { if n > 1 { dsWithAnimation { separate.toggle() } } } label: {
           DSToggle("A post per photo", description: separate ? "On: \(n) posts, each with one photo." : "Off: all \(n) go out together as one carousel.",
-                   isOn: .constant(separate))
+                   isOn: .constant(separate && n > 1), disabledReason: n > 1 ? nil : "One photo makes one post either way")
             .allowsHitTesting(false)
             .contentShape(Rectangle())
         }
@@ -39,9 +49,11 @@ struct PhotoImportSheet: View {
         plan(n)
       }
     } footer: {
-      DSButton("Cancel", variant: .ghost, shortcut: "esc", action: close).keyboardShortcut(.cancelAction)
+      DSButton("Cancel", variant: .ghost, disabledReason: ui.importing ? "Adding the photos… they can't be stopped halfway" : nil,
+               shortcut: "esc", action: close)
+        .keyboardShortcut(.cancelAction)
       DSButton("Add to Edit", variant: .primary, isLoading: ui.importing,
-               tooltip: "Add \(separate ? "\(n) posts" : "the carousel") to Edit. Nothing is sent to the Queue", shortcut: "↩", action: add)
+               tooltip: "Add \(n == 1 ? "the photo" : separate ? "\(n) posts" : "the carousel") to Edit. Nothing is sent to the Queue", shortcut: "↩", action: add)
         .keyboardShortcut(.defaultAction)
         .background(ScriptAnchor("Add to Edit"))
     }
@@ -51,15 +63,14 @@ struct PhotoImportSheet: View {
 
   // MARK: Pieces
 
-  /// The picked photos in posting order, six to a row, ending in an "add" tile. A long set scrolls inside three rows.
+  /// The picked photos in posting order, six to a row. A long set scrolls inside three rows. ("Add more" sits above
+  /// the row, not as a last tile: with six, twelve or eighteen photos a tile would sit alone on a row of its own.)
   @ViewBuilder private var strip: some View {
     let tiles = DSFlowLayout(spacing: DS.space.xs, lineSpacing: DS.space.xs) {
       ForEach(Array(request.files.enumerated()), id: \.element) { i, url in thumb(i, url) }
-      DSIconButton("plus", tooltip: "Pick more photos", variant: .outline, size: .lg) { model.askAddPhotos() }
-        .frame(width: Self.tile, height: Self.tile)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    if request.files.count + 1 > 18 {
+    if request.files.count > 18 {
       ScrollView { tiles }.frame(height: Self.tile * 3 + DS.space.xs * 2)
     } else {
       tiles
@@ -85,6 +96,15 @@ struct PhotoImportSheet: View {
         .padding(.horizontal, 6).frame(height: 18)
         .background(Color.black.opacity(0.63), in: Capsule())
         .padding(5)
+    }
+    .overlay(alignment: .topTrailing) {
+      // Take a wrong pick out without starting over.
+      if !ui.importing {
+        DSMediaActionButton("Leave out", systemImage: "xmark", tooltip: "Leave this photo out") { remove(url) }
+          .scaleEffect(0.72, anchor: .topTrailing)
+          .padding(4)
+          .background(ScriptAnchor("Leave out photo \(i + 1)"))
+      }
     }
     .background(ScriptAnchor("Import photo \(i + 1)"))
     .dsTooltip(i == 0 && !separate ? "\(url.lastPathComponent) · the first photo is the cover" : url.lastPathComponent)
@@ -119,6 +139,13 @@ struct PhotoImportSheet: View {
   private func close() {
     guard !ui.importing else { return }
     model.photoImportRequest = nil
+  }
+
+  /// Takes one photo out of the pick. The last one out closes the sheet: there is nothing left to add.
+  private func remove(_ url: URL) {
+    guard !ui.importing, var r = model.photoImportRequest else { return }
+    r.files.removeAll { $0 == url }
+    if r.files.isEmpty { model.photoImportRequest = nil } else { model.photoImportRequest?.files = r.files }
   }
 
   private func loadThumbs() async {

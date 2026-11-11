@@ -87,7 +87,7 @@ struct PhotoPostPreview: View {
     let p = model.clipPreview(video)
     DSPhotoPreview(count: video.photoCount, aspectRatio: p.aspectRatio, poster: p.cover,
                    image: { model.photoImage(video, index: $0) }, load: { model.requestPhoto(video, index: $0) },
-                   steps: true, cornerRadius: DS.radius.md, anchor: "Quick look photo")
+                   stamp: p.stamp, steps: true, cornerRadius: DS.radius.md, anchor: "Quick look photo")
       .aspectRatio(p.aspectRatio, contentMode: .fit)
       .frame(maxHeight: maxHeight)
       .frame(maxWidth: .infinity)
