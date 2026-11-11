@@ -62,7 +62,7 @@ extension AppModel {
   /// `previewChanged`) don't demote the screen's other visible clips.
   func requestProxies(_ visibleIds: [String], prefetch: [String] = [], keepOthersVisible: Bool = false) {
     let range = playback.loop
-    func eligible(_ ids: [String]) -> [String] { ids.filter { id in videoById[id].map { $0.type == .short && !$0.missing } ?? false } }
+    func eligible(_ ids: [String]) -> [String] { ids.filter { id in videoById[id].map { $0.type == .short && !$0.missing && !$0.isPhoto } ?? false } }
     let now = eligible(visibleIds), later = eligible(prefetch).filter { !now.contains($0) }
     for id in now {
       if let i = recentProxyIds.firstIndex(of: id) { recentProxyIds.remove(at: i) }

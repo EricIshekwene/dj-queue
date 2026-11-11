@@ -16,7 +16,7 @@ extension SampleData {
       if !clips.isEmpty {
         let v = clips[(offset + i * 3) % clips.count]
         if let file = try store.fileURL(for: v) {
-          image = Media.frame(file, at: max(0.5, v.duration * 0.5), maxSize: CGSize(width: 1920, height: 1920))
+          image = Media.frame(file, at: max(0.5, v.duration * 0.5), maxSize: CGSize(width: 3840, height: 3840))  // big enough that a 4:5 crop isn't upscaled
         }
       }
       try Media.writeJPEG(image ?? placeholder(i + offset), to: url)

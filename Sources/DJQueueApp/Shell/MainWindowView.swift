@@ -204,7 +204,7 @@ struct ShortcutButtons: View {
 
   private var anyOverlay: Bool {
     model.showPalette || model.showSettings || model.pendingBulk != nil || model.captionDialogIds != nil || model.cropDialogIds != nil || model.previewVideo != nil
-      || model.showShortcuts || model.editor != nil
+      || model.showShortcuts || model.editor != nil || model.postAtRequest != nil || model.photoImportRequest != nil
   }
 
   private func go(_ s: Screen) {
@@ -235,7 +235,7 @@ struct ShortcutSheet: View {
     ("Calendar", [("D · 3 · W · M", "Day, 3 Day, Week, Month"), ("T", "Today"), ("← / →", "Previous / next day, week or month"),
                   ("Drag", "Move a clip to another day")]),
     ("Editor", [("⌘Z / ⇧⌘Z", "Undo / redo the last change to this clip"), ("↑ / ↓ or ⌘[ / ⌘]", "Previous / next clip"), ("⌘↩", "Done"),
-                ("Space", "Play / pause"), ("← / →", "Jump back / forward by your arrow step (set beside Play or in Settings → Playback)"),
+                ("Space", "Play / pause (clips)"), ("← / →", "Jump back / forward by your arrow step (set beside Play or in Settings → Playback). Photo post: previous / next photo"),
                 ("⇧← / ⇧→", "One frame back / forward"), ("Esc", "Leave a text field so Space plays"),
                 ("I / O", "Set the trim start / end at the playhead")]),
   ]

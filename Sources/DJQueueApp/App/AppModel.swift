@@ -704,7 +704,8 @@ final class AppModel {
 
   /// An in-window overlay is over the editor: ⌘Z is the app's, not the hidden clip's.
   var overlayCoversEditor: Bool {
-    editor != nil && (showSettings || showPalette || showShortcuts || pendingConfirm != nil || pendingBulk != nil || captionDialogIds != nil || cropDialogIds != nil || previewVideo != nil)
+    editor != nil && (showSettings || showPalette || showShortcuts || pendingConfirm != nil || pendingBulk != nil || captionDialogIds != nil || cropDialogIds != nil || previewVideo != nil
+                      || postAtRequest != nil || photoImportRequest != nil)
   }
 
   /// Deletes a hashtag group after asking (Settings and the editor), through the core path: clips with scheduled or posted
@@ -1075,15 +1076,15 @@ final class AppModel {
   func openUploadPage(_ post: PlatformPost) { NSWorkspace.shared.open(post.platform.uploadURL) }
 
   func revealFile(_ post: PlatformPost) {
-    Task { if let p = await prepare(post) { NSWorkspace.shared.activateFileViewerSelecting([p.fileURL]) } }
+    Task { if let p = await prepare(post) { NSWorkspace.shared.activateFileViewerSelecting(p.allFileURLs) } }
   }
 
   func copyFile(_ post: PlatformPost) {
     Task {
       if let p = await prepare(post) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([p.fileURL as NSURL])
-        show("File copied")
+        NSPasteboard.general.writeObjects(p.allFileURLs.map { $0 as NSURL })  // a photo post: every photo
+        show(p.allFileURLs.count > 1 ? "\(p.allFileURLs.count) files copied" : "File copied")
       }
     }
   }
