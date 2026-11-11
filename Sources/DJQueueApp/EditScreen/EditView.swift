@@ -43,8 +43,16 @@ struct EditView: View {
           selection: prefs.statusBinding(.edit), allCount: scope.count, allTooltip: "Show every clip in Edit")
         }
       } sort: {
-        if !all.isEmpty { ListSortMenu(page: .edit) }
+        // The page's own order is by score, and a photo needs none: say where those go, only when there are some.
+        if !all.isEmpty {
+          ListSortMenu(page: .edit, notes: all.contains { $0.isPhoto && $0.score == nil } ? ["Photos with no score come first, oldest first"] : [])
+        }
       } trailing: {
+        // Round 21: photos come in here (also ⌘K "Add photos…" and a drop on this page). Outline: the page's one
+        // primary stays Send to Queue.
+        DSButton("Add photos", icon: "photo.badge.plus", variant: .outline,
+                 tooltip: "Pick photos for a photo post or a carousel. They land here in Edit") { model.askAddPhotos() }
+          .background(ScriptAnchor("Add photos"))
         DSButton("Send to Queue with defaults", variant: sel.isEmpty ? .primary : .outline,
                  disabledReason: list.isEmpty ? "Nothing to edit" : nil,
                  tooltip: sel.isEmpty ? "Send \(AppModel.pipelineClips(ids.count)) shown to the Queue"
@@ -57,8 +65,11 @@ struct EditView: View {
         Color.clear
       } else if all.isEmpty {
         DSEmptyState(icon: "pencil", title: "Nothing to edit",
-                     message: "Scored clips that still need a crop, text or caption show up here.",
-                     actionTitle: "Open Queue") { model.screen = .queue }
+                     message: "Scored clips that still need a crop, text or caption show up here. So do photos you add.",
+                     actionTitle: "Open Queue",
+                     secondary: .init(title: "Add photos", icon: "photo.badge.plus", tooltip: "Pick photos for a photo post or a carousel") {
+                       model.askAddPhotos()
+                     }) { model.screen = .queue }
       } else if list.isEmpty {
         ListNoMatches(model: model, page: .edit, title: "No clips match", message: "Nothing in Edit fits this search or these filters.") {
           model.clearListFilters(.edit)
@@ -76,6 +87,7 @@ struct EditView: View {
     .dsBulkBar(isPresented: !sel.isEmpty) {
       EditBulkBar(model: model, ids: sel) { makeReady(sel) }
     }
+    .photoDrop(model)
   }
 
   static let nothingToFixId = "nothing-to-fix"
@@ -151,9 +163,16 @@ private struct EditBulkBar: View {
       Button("Caption", systemImage: "text.alignleft") { model.captionDialogIds = ids }
         .dsTooltip("Set a template and hashtag groups for the selected clips")
         .background(ScriptAnchor("Caption"))
-      Button("Crop", systemImage: "crop") { model.cropDialogIds = ids }
-        .dsTooltip("Move the crop for the selected clips and check each one")
-        .background(ScriptAnchor("Crop"))
+      // Round 21 (D17): bulk crop leaves photos alone. With clips in the selection it opens and skips the photos; with
+      // only photos it says why instead.
+      let photosOnly = !ids.contains { model.video($0)?.isPhoto != true }
+      let photosWhy = "Photos are cropped in the editor, one by one"
+      Button("Crop", systemImage: "crop") {
+        if photosOnly { model.show(photosWhy, error: true) } else { model.cropDialogIds = ids }
+      }
+      .opacity(photosOnly ? 0.45 : 1)
+      .dsTooltip("Move the crop for the selected clips and check each one", disabledReason: photosOnly ? photosWhy : nil)
+      .background(ScriptAnchor("Crop"))
     } more: {
       // Native items show no tooltip: titles carry the consequence.
       Button("Back to Score (clears their scores)", systemImage: "chevron.left") { model.stageBack(ids) }

@@ -20,7 +20,17 @@ struct LibraryQuickLook: View {
     let chip = model.libraryStateChip(v)
     DSDialog(model.displayName(v), description: description(v), width: 640, onClose: close) {
       VStack(alignment: .leading, spacing: DS.space.md) {
-        if EditedClipPlayer.hasToggle(v) && !missing {
+        if v.isPhoto && !missing {
+          PhotoPostPreview(model: model, video: v, maxHeight: 460)
+        } else if v.isPhoto {
+          // A missing photo post: no player is ever made for a photo, so only say it's gone.
+          ZStack {
+            DSPosterPlaceholder(symbol: "photo")
+            Image(systemName: "questionmark.folder").font(.system(size: 26, weight: .light)).foregroundStyle(DS.color.textTertiary)
+          }
+          .aspectRatio(16 / 9, contentMode: .fit)
+          .clipShape(RoundedRectangle(cornerRadius: DS.radius.md, style: .continuous))
+        } else if EditedClipPlayer.hasToggle(v) && !missing {
           EditedClipPlayer(model: model, video: v, source: $source, maxHeight: 460)
             .frame(maxWidth: .infinity)
         } else {
@@ -46,8 +56,13 @@ struct LibraryQuickLook: View {
           Spacer(minLength: 0)
         }
         if missing {
-          note(.danger, "The file isn't where videos.json says.",
-               "Looking again runs intake, which finds renamed or moved files by fingerprint anywhere in the session folders. Missing since: \(v.file)")
+          if v.isPhoto {
+            note(.danger, "A photo of this post is gone from DJ Queue's Photos folder.",
+                 "Put the file back, or open Health › Doctor to see which one. Missing since: \(v.file)")
+          } else {
+            note(.danger, "The file isn't where videos.json says.",
+                 "Looking again runs intake, which finds renamed or moved files by fingerprint anywhere in the session folders. Missing since: \(v.file)")
+          }
         } else if removed {
           note(.warning, "Removed from videos.json.", "Its record and history are kept. Keep posting it, or exclude it?")
         } else if v.type == .long {
@@ -64,7 +79,8 @@ struct LibraryQuickLook: View {
   }
 
   private func description(_ v: Video) -> String {
-    [model.sessionName(v), v.part.map { "Part \($0)" }, Fmt.duration(v.type == .short ? model.clipDuration(v) : v.duration)]
+    if let label = v.photoLabel { return label }
+    return [model.sessionName(v), v.part.map { "Part \($0)" }, Fmt.duration(v.type == .short ? model.clipDuration(v) : v.duration)]
       .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
   }
 

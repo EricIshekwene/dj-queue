@@ -81,7 +81,7 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
       guard !Task.isCancelled, model.playback.autoplay else { return }
       let t = PreviewPlayback.proxyTargets(model.playback, layout: mode.playbackLayout, visible: proxyOrder,
                                            hovered: mode == .single ? nil : hovered)
-      model.requestProxies(t.now, prefetch: t.prefetch)
+      model.requestProxies(model.playableIds(t.now), prefetch: model.playableIds(t.prefetch))
     }
   }
 
@@ -176,7 +176,7 @@ struct ClipCollection<Actions: View, Menu: View, Header: View>: View {
     let c = clip?(v) ?? model.dsClip(v, for: screen)
     var cfg = DSClipCardConfig()
     let p = model.playback
-    cfg.autoplay = PreviewPlayback.plays(p, layout: mode.playbackLayout, hovered: hovered == v.id, focused: focused)
+    cfg.autoplay = !v.isPhoto && PreviewPlayback.plays(p, layout: mode.playbackLayout, hovered: hovered == v.id, focused: focused)
     cfg.unmuteOnHover = p.hoverSound
     cfg.selectionMode = !sel.isEmpty && mode != .single
     cfg.showsDragHandle = showsDragHandle && mode == .wide

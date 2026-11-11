@@ -99,6 +99,7 @@ public enum SettingsSearchRegistry {
     .group(.newClipDefaults, "Frame", description: "Default framing for clips you haven't cropped. Each crop is still confirmed per clip."),
     .row(.newClipDefaults, "Aspect", group: "Frame", description: "Shape of the posted video."),
     .row(.newClipDefaults, "Crop position", group: "Frame", description: "Where the default crop sits on a wide picture."),
+    .row(.newClipDefaults, "Photo shape", group: "Frame", description: "Shape of a new photo post. Every photo of a carousel uses it."),
     .group(.newClipDefaults, "Trim", description: "Default start and end of a clip."),
     .row(.newClipDefaults, "Start and end", group: "Trim", description: "Clips without markers always use the whole file."),
     .row(.newClipDefaults, "Extra seconds before", group: "Trim", description: "Starts this much before the in-marker."),

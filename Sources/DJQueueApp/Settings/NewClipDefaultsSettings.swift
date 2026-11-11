@@ -65,6 +65,16 @@ struct NewClipDefaultsSettings: View {
       SettingsSelect(label: "Default crop position", selection: b(\.cropAnchor),
                      options: NewClipDefaults.CropAnchor.allCases.map { DSSelectOption(value: $0, title: $0.displayName) })
     }
+    // Round 21 (D5, D20): the shape a new photo post is cut to. Each choice says which platform refuses it.
+    SettingsRow("Photo shape", description: "Shape of a new photo post. Every photo of a carousel uses it.") {
+      SettingsSelect(label: "Default photo shape", selection: b(\.photoAspect),
+                     options: PhotoRules.aspects.map { DSSelectOption(value: $0, title: aspectTitle($0), detail: PhotoRules.aspectNote($0)) })
+    }
+    if let note = PhotoRules.aspectNote(d.photoAspect) {
+      EditorHint("\(note), so a new photo post waits in Edit until you pick another shape or turn that platform off for it.",
+                 icon: "exclamationmark.triangle", tone: .warning)
+        .padding(.bottom, DS.space.xs)
+    }
   }
 
   @ViewBuilder private var trimGroup: some View {

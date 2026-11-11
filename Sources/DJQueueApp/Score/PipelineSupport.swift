@@ -119,7 +119,7 @@ struct PipelineClipFeed: ViewModifier {
         try? await Task.sleep(for: .milliseconds(model.frozen ? 0 : 250))
         guard !Task.isCancelled, model.playback.autoplay else { return }
         let t = PreviewPlayback.proxyTargets(model.playback, layout: layout, visible: playIds, hovered: hovered)
-        model.requestProxies(t.now, prefetch: t.prefetch)
+        model.requestProxies(model.playableIds(t.now), prefetch: model.playableIds(t.prefetch))
       }
   }
 

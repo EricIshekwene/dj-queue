@@ -78,9 +78,11 @@ extension AppModel {
   static func article(_ p: Platform) -> String { [.x, .instagram].contains(p) ? "an" : "a" }
 
   /// Titles help: no Title yet. `addTitle` = no suggestions either (show the inline field).
+  /// A photo post has no song to look up, so it never asks for an agent; its title is optional and the field stays.
   func editTitleNeeds(_ v: Video) -> (addTitle: Bool, askAgent: Bool) {
-    guard v.titleText == nil else { return (false, needsTitleHelp.contains(v.id)) }
-    return ((suggestionsByVideo[v.id] ?? []).isEmpty, needsTitleHelp.contains(v.id))
+    let ask = needsTitleHelp.contains(v.id) && !v.isPhoto
+    guard v.titleText == nil else { return (false, ask) }
+    return ((suggestionsByVideo[v.id] ?? []).isEmpty, ask)
   }
 }
 
@@ -264,20 +266,27 @@ struct EditClipMenu: View {
       }
     }
     Divider()
-    Menu("Kind") {
-      ForEach(Kind.allCases, id: \.self) { k in
-        Button {
-          model.pipelineBulk("Set \(n) to \(k.displayName)?", verb: "Set kind", ids: targets,
-                             changes: [.init(field: "Kind", value: k.displayName)]) { b, dry in try b.setKind(targets, k, dryRun: dry) }
-        } label: {
-          if targets.count == 1 && video.kind == k { Label(k.displayName, systemImage: "checkmark") } else { Text(k.displayName) }
+    // Round 21: a photo post has no kind and no song to ask an agent about, and bulk crop leaves it alone (D17).
+    let photosOnly = !targets.contains { model.video($0)?.isPhoto != true }
+    if !photosOnly {
+      Menu("Kind") {
+        ForEach(Kind.allCases, id: \.self) { k in
+          Button {
+            model.pipelineBulk("Set \(n) to \(k.displayName)?", verb: "Set kind", ids: targets,
+                               changes: [.init(field: "Kind", value: k.displayName)]) { b, dry in try b.setKind(targets, k, dryRun: dry) }
+          } label: {
+            if targets.count == 1 && video.kind == k { Label(k.displayName, systemImage: "checkmark") } else { Text(k.displayName) }
+          }
         }
       }
     }
     Button("Caption…", systemImage: "text.alignleft") { model.captionDialogIds = targets }
-    Button("Crop…", systemImage: "crop") { model.cropDialogIds = targets }
-    Button(targets.count == 1 ? "Copy agent prompt" : "Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") {
-      model.copyAgentPrompt(targets)
+    Button(photosOnly ? "Crop — \(PhotoRules.bulkCropReason)" : "Crop…", systemImage: "crop") { model.cropDialogIds = targets }
+      .disabled(photosOnly)
+    if !photosOnly {
+      Button(targets.count == 1 ? "Copy agent prompt" : "Copy agent prompt for \(n)", systemImage: "doc.on.clipboard") {
+        model.copyAgentPrompt(targets)
+      }
     }
     EditApplyDefaultsMenu(model: model, ids: targets)
     Divider()

@@ -81,8 +81,8 @@ struct PostGroupCard: View {
       BrowsePoster(model: model, video: video, width: 36, height: 64, post: group.posts.first)
       VStack(alignment: .leading, spacing: 2) {
         Text(title).font(DS.type.calloutMedium).foregroundStyle(DS.color.text).lineLimit(1)
-        if let v = video, !model.sessionName(v).isEmpty {
-          Text(model.sessionName(v)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+        if let v = video, !model.clipContext(v).isEmpty {
+          Text(model.clipContext(v)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)

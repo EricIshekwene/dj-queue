@@ -14,6 +14,8 @@ enum ListFilterKey {
   static let platform = "platform"
   /// Round 20: has a version marked ready to repost (`RepostFilter`).
   static let repost = "repost"
+  /// Round 21: the Kind section's option for photo posts (beside `Kind`'s raw values).
+  static let photoKind = "photo"
 }
 
 /// Round 20: the Filters popover's Reposts section. Only filters: it never moves or schedules a clip.
@@ -112,7 +114,7 @@ extension AppModel {
   func listFilterMatches(_ v: Video, _ key: String, _ value: String) -> Bool {
     switch key {
     case ListFilterKey.session: v.sessionId == value
-    case ListFilterKey.kind: v.kind.rawValue == value
+    case ListFilterKey.kind: value == ListFilterKey.photoKind ? v.isPhoto : !v.isPhoto && v.kind.rawValue == value
     case ListFilterKey.score: v.type == .short && (LibraryScoreFilter(rawValue: value)?.matches(v.score) ?? true)
     case ListFilterKey.stage: ClipStage.of(v)?.rawValue == value
     case ListFilterKey.repost: v.type == .short && (repostReady[v.id] != nil) == (value == RepostFilter.ready.rawValue)
@@ -148,7 +150,12 @@ extension AppModel {
           .map { s in DSFilterOption(id: s.id, title: Captions.setName(s.name), count: n { $0.sessionId == s.id }) }
       case ListFilterKey.kind:
         title = "Kind"
-        options = Kind.allCases.map { k in DSFilterOption(id: k.rawValue, title: k.displayName, count: n { $0.kind == k }) }
+        options = Kind.allCases.map { k in DSFilterOption(id: k.rawValue, title: k.displayName, count: n { !$0.isPhoto && $0.kind == k }) }
+        // Round 21: photo posts are their own kind here, offered once the list has one.
+        if vs.contains(where: \.isPhoto) {
+          options.append(DSFilterOption(id: ListFilterKey.photoKind, title: "Photo", count: n { $0.isPhoto },
+                                        tooltip: "Photo posts: one photo or a carousel"))
+        }
       case ListFilterKey.score:
         title = "Score"
         options = LibraryScoreFilter.allCases.filter { $0 != .any }.map { f in
@@ -176,7 +183,8 @@ extension AppModel {
       }
       // A remembered choice that's no longer listed (a session left the list) still shows, so it can be removed.
       if let sel = state.filters[key], !options.contains(where: { $0.id == sel }) {
-        let title = key == ListFilterKey.session ? (sessionById[sel].map { Captions.setName($0.name) } ?? "Removed session") : sel
+        let title = key == ListFilterKey.session ? (sessionById[sel].map { Captions.setName($0.name) } ?? "Removed session")
+          : sel == ListFilterKey.photoKind ? "Photo" : sel
         options.append(DSFilterOption(id: sel, title: title, count: 0, tooltip: "No longer in this list — remove this filter"))
       }
       guard !options.isEmpty else { return nil }
@@ -253,10 +261,12 @@ struct ListNoMatches: View {
 struct ListSortMenu: View {
   let page: ListPage
   var size: DSButtonSize = .md
+  /// Lines under the choices, for what an order's name doesn't say (Edit: photos with no score come first).
+  var notes: [String] = []
 
   var body: some View {
     DSSortMenu(options: page.sorts.map { DSSortOption(id: $0.rawValue, title: page.title($0)) },
-               selection: ListPrefs.shared.sortBinding(page), tooltip: "Change the order of the clips", size: size)
+               selection: ListPrefs.shared.sortBinding(page), tooltip: "Change the order of the clips", notes: notes, size: size)
   }
 }
 
