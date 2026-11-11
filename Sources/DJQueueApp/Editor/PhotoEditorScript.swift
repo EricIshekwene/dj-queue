@@ -272,6 +272,7 @@ enum PhotoEditorScript {
       await export(e)
       let now = video()
       check("nothing was sent to the Queue: the post is still in Edit, not sent", now?.sentToQueue == false && now.map { ClipStage.of($0) } == .edit)
+      await missingFile(e)
       await singlePhoto(e, single)
       await brokenPost(e, single)
     }
@@ -342,6 +343,13 @@ enum PhotoEditorScript {
       check("the other photos keep the centred crop", original.filter { $0.id != photo.id }.allSatisfy { PhotoRules.crop(for: $0, edit: savedEdit(), aspect: .r4x5) == PhotoRules.centredCrop($0, aspect: .r4x5) })
       await shot("frame-crop-zoom")
       let kept = crops[photo.id]
+      check("the same framing can go on every photo", await click("Framing for every photo"))
+      crops = savedEdit().photoCrops
+      check("every photo has that zoom now (\(crops.count) crops)", crops.count == 4 && original.allSatisfy { p in
+        crops[p.id].map { abs($0.w - (kept?.w ?? 0)) <= 2 && Media.cropProblem($0, aspect: .r4x5, sourceWidth: p.width, sourceHeight: p.height) == nil } == true
+      })
+      await commandZ()
+      check("⌘Z takes it back in one step", savedEdit().photoCrops == [photo.id: kept ?? CropRect(x: 0, y: 0, w: 0, h: 0)])
       await click("Reset crop")
       check("Reset crop goes back to the centred crop", savedEdit().photoCrops.isEmpty)
       await commandZ()
@@ -479,6 +487,12 @@ enum PhotoEditorScript {
       check("the first added photo is on the canvas", e.photoIndex == 4 && e.photoImages.thumbs.count == 6)
       await wait(500)
       await shot("photos-added")
+      // D9: six photos are more than X sends; its row says so, and it isn't an issue.
+      check("X's row says it gets the first 4 of 6", PhotoRules.platformNote(count: e.photoCount, aspect: e.aspect, platform: .x) == "X gets the first 4 of 6 photos"
+            && e.posting(.x) && e.liveIssues.isEmpty)
+      await click("Index Platforms")
+      await shot("platform-note-first-4-of-6")
+      await click("Index Text")
       await commandZ()
       check("⌘Z takes the added photos out again", photos().map(\.id) == before && e.photoCount == 4)
     }
@@ -588,6 +602,33 @@ enum PhotoEditorScript {
       }
       Self.sideBySide(canvas: canvas, export: exported, w: w, h: h, to: out.appendingPathComponent("compare-canvas-export-\(appearance).png"))
       note("compare-canvas-export-\(appearance).png: canvas left, posted JPEG right")
+    }
+
+    /// A photo file that's gone: the post is missing (as a clip would be), the strip still works, and taking that photo
+    /// out makes the post whole again.
+    func missingFile(_ e: EditorModel) async {
+      e.flushAndWait()
+      let list = photos()
+      guard list.count == 4 else { check("four photos before the missing-file step", false); return }
+      let gone = list[3]
+      let file = store.paths.photos.appendingPathComponent(gone.file)
+      let parked = file.deletingLastPathComponent().appendingPathComponent("parked.jpg")
+      note("stand-in: a photo file moved away in the scratch Photos folder, then Core's own file check")
+      try? FileManager.default.moveItem(at: file, to: parked)
+      _ = try? PhotoImport(store: store).checkFiles()
+      e.load(post)
+      await wait(2000)
+      check("the post opens as missing a file, on the photo that's gone", e.fileMissing && video()?.missing == true && e.photoCount == 4
+            && e.missingPhotos == [gone.id] && e.photoIndex == 3 && e.currentPhotoMissing)
+      await shot("photo-file-missing")
+      await left()
+      check("the photos that are there still show (←)", e.photoIndex == 2 && !e.currentPhotoMissing && e.playback.ready)
+      await right()
+      check("the strip still works: the missing photo can be removed", await click("Remove photo 4"))
+      await wait(900)
+      check("without it the post is whole again", !e.fileMissing && e.missingPhotos.isEmpty && e.photoCount == 3 && video()?.missing == false && e.playback.ready)
+      await shot("missing-photo-removed")
+      try? FileManager.default.moveItem(at: parked, to: file)
     }
 
     func singlePhoto(_ e: EditorModel, _ single: Video) async {

@@ -95,24 +95,27 @@ struct EditorPhotoFrameFields: View {
             DSBadge(String(format: "Upscaled %.1f×", model.upscale), style: .soft(.warning), icon: "exclamationmark.triangle.fill")
               .dsTooltip("The crop is under 1080 px wide, so it looks softer")
           }
-          Text("\(Int(model.crop.w)) × \(Int(model.crop.h)) px").font(DS.type.mono).foregroundStyle(DS.color.textTertiary)
+          Text(verbatim: "\(Int(model.crop.w)) × \(Int(model.crop.h)) px").font(DS.type.mono).foregroundStyle(DS.color.textTertiary)
+            .lineLimit(1).fixedSize()
           Spacer(minLength: 0)
+        }
+        DSFlowLayout(spacing: 2) {
           if model.canvasMode != .frame {
             DSButton("Edit on canvas", variant: .ghost, size: .sm, tooltip: "Show the whole photo to drag the crop") {
               model.canvasMode = .frame
             }
             .background(ScriptAnchor("Edit on canvas"))
           }
-        }
-        if n > 1 {
-          DSButton("Use this framing for every photo", variant: .ghost, size: .sm,
-                   tooltip: "Give every photo this zoom and position. A photo of another size gets the nearest framing that fits it.") {
-            model.useFramingForEveryPhoto()
+          if n > 1 {
+            DSButton("Use this framing for every photo", variant: .ghost, size: .sm,
+                     tooltip: "Give every photo this zoom and position. A photo of another size gets the nearest framing that fits it.") {
+              model.useFramingForEveryPhoto()
+            }
+            .background(ScriptAnchor("Framing for every photo"))
           }
-          .padding(.leading, -8)
-          .background(ScriptAnchor("Framing for every photo"))
-          EditorHint("Each photo has its own crop. ← → step through the photos.")
         }
+        .padding(.leading, -8)
+        if n > 1 { EditorHint("Each photo has its own crop. ← → step through the photos.") }
       }
     }
   }

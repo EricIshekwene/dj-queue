@@ -60,7 +60,8 @@ struct EditorView: View {
             .overlay { if model.readOnly { Color.clear.contentShape(Rectangle()).dsTooltip(nil, disabledReason: Self.readOnlyReason) } }
           EditorTimeline(model: model, playback: model.playback)
             .background(EditorClickAway(isCovered: { model.isCovered?() == true }))
-            .disabled(model.fileMissing || model.video == nil || model.readOnly)
+            // A photo post's strip stays usable while a photo file is missing: taking that photo out is the fix.
+            .disabled((model.fileMissing && !model.isPhoto) || model.video == nil || model.readOnly)
             .dsTooltip(nil, disabledReason: timelineOff)
             .background(DS.color.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous))
             .dsBorder(radius: DS.radius.lg)
@@ -100,7 +101,7 @@ struct EditorView: View {
   private var timelineOff: String? {
     if model.readOnly { return Self.readOnlyReason }
     if model.video == nil { return model.loading ? nil : "This clip wasn't found" }
-    return model.fileMissing ? "The clip file is missing; relink it in Health" : nil
+    return model.fileMissing && !model.isPhoto ? "The clip file is missing; relink it in Health" : nil
   }
 
   private func done() {
@@ -118,7 +119,7 @@ struct EditorView: View {
     guard let action = EditorKeys.action(
       keyCode: e.keyCode, characters: e.charactersIgnoringModifiers, shift: mods.contains(.shift),
       commandLike: !mods.intersection([.command, .option, .control]).isEmpty, focus: EditorFocus.of(e.window),
-      covered: model.isCovered?() == true, hasClip: !model.fileMissing && model.video != nil)
+      covered: model.isCovered?() == true, hasClip: (!model.fileMissing || model.isPhoto) && model.video != nil)
     else { return false }
     let pb = model.playback
     if model.isPhoto {
@@ -327,7 +328,8 @@ struct EditorHeader: View {
       EmptyView()
     } else if model.video?.missing == true || model.fileMissing {
       DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark.triangle.fill")
-        .dsTooltip("The clip file is gone; relink it in Health")
+        .dsTooltip(model.isPhoto ? "A photo file is gone. Put it back, or remove that photo from the strip."
+                                 : "The clip file is gone; relink it in Health")
     } else if issues.isEmpty {
       // No "Ready" label: only Send to Queue, in the stage control beside it, moves the clip on (round 13).
       DSBadge("Nothing to fix", style: .soft(.success), icon: "checkmark")

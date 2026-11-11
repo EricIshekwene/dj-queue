@@ -23,7 +23,8 @@ struct EditorTextSection: View {
         } else {
         if model.texts.count > 1 { switcher.disabled(model.fieldsOff) }
         EditorField(label: "Text on \(what)", isCustom: first && !r.isDefault("text"), inheritedFrom: first ? model.source(of: "text") : nil,
-                    resetHelp: textResetHelp, onReset: resetter(["text"])) {
+                    resetHelp: textResetHelp, customHelp: photo ? "Typed for this post" : "Changed from your New clip defaults",
+                    onReset: resetter(["text"])) {
           VStack(alignment: .leading, spacing: DS.space.xs) {
             DSTextArea(placeholder: r.noText ? "No text on this \(photo ? "post" : "clip")" : first ? "Text on \(what)" : "Type the new text",
                        text: Binding(get: { r.noText ? "" : l.text }, set: { t in model.setSelectedWords(t) }),

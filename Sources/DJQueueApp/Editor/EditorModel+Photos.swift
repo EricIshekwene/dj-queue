@@ -67,6 +67,15 @@ extension EditorModel {
     }
   }
 
+  /// The photo on the canvas is one whose file is gone.
+  var currentPhotoMissing: Bool { currentPhoto.map { missingPhotos.contains($0.id) } ?? false }
+
+  /// Where the current photo's file should be (the missing state names it).
+  var currentPhotoURL: URL? {
+    guard let v = video, let p = currentPhoto else { return fileURL }
+    return (try? store.photoURL(p, of: v)) ?? fileURL
+  }
+
   /// ← / →: the photo before or after. Nothing past either end.
   func stepPhoto(_ d: Int) {
     let i = photoIndex + d
@@ -240,7 +249,7 @@ extension EditorModel {
     let order = ids
     guard let fresh = photoChange({ try $0.reorder(videoId: $1, ids: order, journal: false) }) else { return }
     photosChanged(fresh, select: to)
-    if to == 0 || from == 0 { show("Photo \(to + 1) of \(ids.count) · the cover is now the first photo") }
+    if to == 0 { show("This photo is now the cover") } else if from == 0 { show("The cover is now the photo in first place") }
   }
 
   /// One photo-list change in the store, after pending saves, as its own undo step. nil = it failed (and said why).

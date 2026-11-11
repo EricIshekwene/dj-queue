@@ -120,7 +120,8 @@ struct EditorCanvas: View {
       Group {
         if model.loading {
           DSSpinner(size: 18)
-        } else if model.fileMissing || model.video == nil {
+        } else if model.video == nil || (model.isPhoto ? model.currentPhotoMissing : model.fileMissing) {
+          // A photo post says which photo is gone, and still shows the ones that are there.
           missingState
         } else if model.isPhoto && model.photos.isEmpty {
           noPhotosState
@@ -140,7 +141,7 @@ struct EditorCanvas: View {
   }
 
   @ViewBuilder private var bottomBar: some View {
-    if model.loading || model.fileMissing || model.video == nil || (model.isPhoto && model.photos.isEmpty) {
+    if model.loading || model.video == nil || (model.isPhoto ? model.currentPhotoMissing || model.photos.isEmpty : model.fileMissing) {
       Color.clear
     } else {
       switch model.canvasMode {
@@ -182,8 +183,12 @@ struct EditorCanvas: View {
     VStack(spacing: DS.space.sm) {
       Image(systemName: "exclamationmark.triangle").font(.system(size: 20, weight: .medium)).foregroundStyle(DS.color.danger)
         .frame(width: 40, height: 40).background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm))
-      Text(model.video == nil ? "Clip not found" : model.isPhoto ? "Photo file missing" : "File missing").font(DS.type.headline).foregroundStyle(DS.color.text)
-      if let u = model.fileURL {
+      Text(model.video == nil ? "Clip not found" : model.isPhoto ? "Photo \(model.photoIndex + 1)'s file is missing" : "File missing")
+        .font(DS.type.headline).foregroundStyle(DS.color.text)
+      if model.isPhoto && model.video != nil {
+        Text("Put the file back, or remove this photo from the strip below.").font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+      }
+      if let u = model.isPhoto ? model.currentPhotoURL : model.fileURL {
         Text(u.path).font(DS.type.mono).foregroundStyle(DS.color.textSecondary)
           .lineLimit(2).multilineTextAlignment(.center).frame(maxWidth: 420)
         DSButton("Show folder in Finder", variant: .outline, size: .sm, tooltip: "Open the folder where the file should be") {

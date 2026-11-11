@@ -162,6 +162,8 @@ final class EditorModel: ObservableObject {
   let photoImages = EditorPhotoImages()
   /// True while added photos are being copied in.
   @Published var photoBusy = false
+  /// The photos of a photo post whose file isn't on disk (by id). The post is missing while there is one.
+  @Published private(set) var missingPhotos: Set<String> = []
   /// Platform whose own caption field should open (Write an X caption).
   @Published var openPlatformCaption: Platform?
   /// The hashtag group form, when it's open.
@@ -307,6 +309,7 @@ final class EditorModel: ObservableObject {
     playback.unload()
     photoImages.reset()
     photoBusy = false
+    missingPhotos = []
     let store = store
     if snapshotMode {
       apply(Self.saveQueue.sync { Self.read(store, id) }, token: token)
@@ -330,8 +333,10 @@ final class EditorModel: ObservableObject {
     if !posting(previewPlatform) { previewPlatform = postingPlatforms.first ?? .tiktok }
     refreshOverlay()
     if l.video?.isPhoto == true {
-      // Round 21: a photo post has no player, no proxy and nothing to probe. The canvas shows its photos.
-      selectPhoto(0)
+      // Round 21: a photo post has no player, no proxy and nothing to probe. The canvas shows its photos, starting
+      // at one whose file is gone when there is one (the post is missing until that photo is back or taken out).
+      checkPhotoFiles(wasMissing: l.video?.missing == true)
+      selectPhoto(photos.firstIndex { missingPhotos.contains($0.id) } ?? 0)
     } else if let url = fileURL, !fileMissing {
       if snapshotMode {
         if let p = try? Media.probe(url) { apply(p) }
@@ -1507,6 +1512,7 @@ final class EditorModel: ObservableObject {
 
   func undo() {
     commitCaptionDraft()
+    guard !photoBusy else { show("Photos are being added. Undo works again in a moment."); return }
     guard !readOnly, let s = undoStack.popLast() else { show("Nothing to undo in this clip"); return }
     dropTimeDraft()
     redoStack.append(undoState)
@@ -1516,6 +1522,7 @@ final class EditorModel: ObservableObject {
 
   func redo() {
     commitCaptionDraft()
+    guard !photoBusy else { show("Photos are being added. Redo works again in a moment."); return }
     guard !readOnly, let s = redoStack.popLast() else { show("Nothing to redo"); return }
     dropTimeDraft()
     undoStack.append(undoState)
@@ -1598,12 +1605,29 @@ final class EditorModel: ObservableObject {
     v.fileSize = fresh.fileSize
     v.sourceWidth = fresh.sourceWidth
     v.sourceHeight = fresh.sourceHeight
-    v.missing = fresh.missing
     video = v
     fileURL = try? store.fileURL(for: v)
+    checkPhotoFiles(wasMissing: fresh.missing)
     // The store dropped the crops of photos that left; the editor's copy follows without a save of its own.
     let keep = Set((v.photos ?? []).map(\.id))
     for k in edit.photoCrops.keys where !keep.contains(k) { edit.photoCrops.removeValue(forKey: k) }
+  }
+
+  /// Which photo files are on disk. A post is missing while one is gone; once none is (that photo was removed here,
+  /// or its file came back), Core's own check (`PhotoImport.checkFiles`, the one Intake runs) clears the row's mark.
+  func checkPhotoFiles(wasMissing: Bool) {
+    guard var v = video, v.isPhoto else { return }
+    let gone = (v.photos ?? []).filter { p in (try? store.photoURL(p, of: v)).map { !FileManager.default.fileExists(atPath: $0.path) } ?? true }
+    missingPhotos = Set(gone.map(\.id))
+    fileMissing = !gone.isEmpty
+    if v.missing != fileMissing { v.missing = fileMissing; video = v }
+    if wasMissing != fileMissing, !snapshotMode, !readOnly {
+      let store = store
+      Self.saveQueue.async {
+        _ = try? PhotoImport(store: store).checkFiles()
+        ChangeSignal.post()
+      }
+    }
   }
 
   /// The picture size crop math works in: the clip's, or the current photo's.

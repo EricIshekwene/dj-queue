@@ -30,7 +30,7 @@ struct EditorPhotoTimeline: View {
           ScrollView(.horizontal) {
             VStack(alignment: .leading, spacing: EditorTimeline.gap) {
               tiles(m)
-              textTrack(bars, m)
+              if model.photoCount > 0 { textTrack(bars, m) }
             }
             .frame(width: m.contentWidth, alignment: .leading)
             .padding(.trailing, DS.space.sm)
@@ -97,7 +97,8 @@ struct EditorPhotoTimeline: View {
 
   private func tiles(_ m: PhotoStripMetrics) -> some View {
     let list = model.photos
-    return ZStack(alignment: .topLeading) {
+    // A row, so each tile has its real place for the strip to scroll to; only the dragged tile is moved by an offset.
+    return HStack(alignment: .top, spacing: Self.tileGap) {
       ForEach(Array(list.enumerated()), id: \.element.id) { i, p in
         let moving = drag?.id == p.id
         PhotoTile(model: model, photo: p, index: i, count: list.count, selected: i == model.photoIndex, thumb: images.thumbs[p.id]?.image,
@@ -109,17 +110,19 @@ struct EditorPhotoTimeline: View {
                     drag = nil
                     if moved, let to { model.movePhoto(p.id, to: to) }
                   })
-          .offset(x: m.x(i) + (moving ? drag?.dx ?? 0 : 0))
+          .offset(x: moving ? drag?.dx ?? 0 : 0)
           .zIndex(moving ? 2 : 0)
           .id(p.id)
       }
+      addTile(m)
+    }
+    .overlay(alignment: .topLeading) {
       if let d = drag, let from = list.firstIndex(where: { $0.id == d.id }), d.to != from {
         // Where the dragged photo lands: a line in the gap before or after that place.
         Capsule().fill(DS.color.text).frame(width: 2, height: Self.tileH)
           .offset(x: m.x(d.to > from ? d.to + 1 : d.to) - Self.tileGap / 2 - 1)
-          .zIndex(1).allowsHitTesting(false)
+          .allowsHitTesting(false)
       }
-      addTile(m).offset(x: m.x(list.count))
     }
     .frame(width: m.contentWidth, height: Self.tileH + Self.labelH, alignment: .topLeading)
   }
@@ -238,7 +241,7 @@ private struct PhotoTile: View {
   private var h: CGFloat { EditorPhotoTimeline.tileH }
 
   var body: some View {
-    let notice = model.photoNotice(photo)
+    let notice = model.missingPhotos.contains(photo.id) ? nil : model.photoNotice(photo)
     VStack(spacing: 2) {
       ZStack(alignment: .topTrailing) {
         picture
@@ -252,14 +255,15 @@ private struct PhotoTile: View {
             EditorDragSurface(cursor: count > 1 ? .openHand : .arrow, slop: 4, onPress: onPress,
                               onDrag: { d in if count > 1 { onDrag(d.width) } }, onRelease: { moved in onRelease(moved && count > 1) })
           }
-          .dsTooltip(count > 1 ? "Photo \(index + 1): click to show it, drag to reorder" : "The photo of this post")
+          .dsTooltip(model.missingPhotos.contains(photo.id) ? "This photo's file is missing. Put it back, or remove the photo."
+                     : count > 1 ? "Photo \(index + 1): click to show it, drag to reorder" : "The photo of this post")
           .probeFrame("photo-tile-\(index + 1)")
         if let notice {
-          Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9, weight: .semibold)).foregroundStyle(DS.color.warning)
-            .frame(width: 18, height: 18).background(DS.color.surfaceRaised, in: Circle())
+          Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 7.5, weight: .semibold)).foregroundStyle(DS.color.warning)
+            .frame(width: 14, height: 14).background(DS.color.surfaceRaised, in: Circle())
             .contentShape(Circle())
             .dsTooltip(notice)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             .padding(3)
         }
         if selected || hovering {
@@ -280,7 +284,10 @@ private struct PhotoTile: View {
   }
 
   @ViewBuilder private var picture: some View {
-    if let thumb {
+    if model.missingPhotos.contains(photo.id) {
+      // Its file is gone (a picture read earlier may still be in memory; it isn't what would post).
+      Image(systemName: "questionmark").font(.system(size: 14, weight: .semibold)).foregroundStyle(DS.color.danger)
+    } else if let thumb {
       Image(decorative: thumb, scale: 1).resizable().aspectRatio(contentMode: .fit)
     } else {
       DSSpinner(size: 12)

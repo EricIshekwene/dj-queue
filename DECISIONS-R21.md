@@ -193,3 +193,31 @@ fails at publish time, on a day Eric isn't looking, with the other four platform
   JSON-escaped and `%20` forms.
 - **Not changed:** photo renders made under the first file naming of this branch (dev and test data only; the day-old sweep removes them),
   and the "budget used up" wording after a 429 (the same sentence clips get; changing it changes clips).
+
+## Decisions made while building (B2, the photo editor)
+
+- **The editor's ⌘Z brings a removed photo back as a new copy of DJ Queue's own file,** so it has a new id; its crop and its
+  place follow it through the editor's history. *Why:* Core's public calls add, remove and reorder, and a removed photo's
+  copy stays in Originals for exactly this. The app's ⌘Z after the editor closes still restores the old list as it was
+  (`ClipSnap.photos`). A public "set this photo list" in Core would make the copy unnecessary (follow-up).
+- **A text whose range covers the whole post is stored with no window ("Every photo"),** whether Eric pressed Every photo
+  or dragged its bar over all of them. *Why:* what reads "Every photo" should also be on a photo added later.
+- **A photo post with no text shows one line and "Add text" in the Text section,** not the empty field with "No text" on.
+  *Why:* D7 says most photos want none; a disabled field with a switch to turn off first reads as something to fix.
+- **"Shows on" sits in the Text section itself for a carousel,** above Style, with Every photo, This photo and a first
+  and last photo to step. The seconds fields under Advanced are gone for photos. *Why:* which photos a text is on is the
+  first thing to decide about it; for a clip the timing is a refinement.
+- **A tile gets a mark when the post's shape cuts more than 30 % off a photo Eric hasn't cropped himself, or its crop is
+  under 1080 px wide.** The first goes away once he sets that photo's crop. *Why:* those are the two cases where the
+  centred crop can post something he didn't expect; a mark on every photo would say nothing.
+- **Zoom out, a slider, zoom in and Reset crop sit under the Frame canvas for a photo** (the Meetup pattern), and the
+  crop is dragged on the canvas. Left, Centre and Right are not offered. *Why:* photos come in every shape, so a third
+  of the width is often no move at all.
+- **"Use this framing for every photo" is in:** the same zoom and the same place as fractions of the picture, one undo
+  step; a photo of another size gets the nearest crop that fits it.
+- **"Use raw tag" and "Ask an agent" are hidden for a photo post.** *Why:* a photo's tag is its file name and the agent
+  prompt asks for song names.
+- **The canvas reads a photo at 2,560 px on its longer side,** enough for the 1080-wide output at twice zoom. The posted
+  file is always made from the full photo. Zoomed in further on a very large photo, the canvas is softer than the file.
+- **An empty photo list (a broken row) opens in the editor** with "No photos in this post", and the to-fix chip flashes
+  the strip, where the Add tile is.
