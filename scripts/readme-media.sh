@@ -135,3 +135,11 @@ H=screens
 gif self-healing        $H/r9-posts-scheduled-light $H/r22-inspector-retrying-light $H/r22-posts-signin-light
 still self-healing-retrying $H/r22-inspector-retrying-light
 still self-healing-signin   $H/r22-posts-signin-light
+
+U=photo-audio
+# Round 23: photo with audio. The Audio row as a photo post gets its audio and the editor carries on as the clip
+# editor: the top of the inspector only (the Audio row is the point, and a capture taken while the Mac is locked draws
+# the player black). Then the import sheet with an audio file chosen.
+CROP=iw*0.25:ih*0.5:iw*0.75:0 gif photo-audio $U/audio-03-photo-editor-audio-none-light $U/audio-05-making-the-video-overlay-light \
+                 $U/audio-04-clip-editor-with-audio-light $U/audio-11-audio-changed-light $U/audio-12-audio-removed-photo-editor-light
+still photo-audio-import $U/audio-14-import-sheet-with-audio-light

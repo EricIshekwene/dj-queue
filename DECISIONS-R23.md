@@ -76,3 +76,29 @@ audio needs the original photo back.
 - Choosing the part of the audio before the video is made, a waveform on the timeline, volume or fades.
 - TikTok's or Instagram's own music libraries (the audio is always Eric's file).
 - Any real post. Nothing is published or scheduled on Eric's accounts while building.
+
+## Decisions made while building
+
+- **One keyframe interval is encoded and repeated, not the whole length.** A still encoded frame by frame took 15 s for 3 minutes on every core; one 5-second interval repeated under the audio with a stream copy takes 3 s (20 minutes: 13 s, most of it reading the audio). *Why:* Eric is at the Mac while it runs, and the result is the same picture.
+- **The keyframe is coded at quantiser 18 and the frames after it code nothing.** x264's own rate control spent as much on the repeats as on the picture (1.65 MB per 5 s for a 4K frame); fixed quantisers give 0.52 MB at 48 dB. A 3-minute 4K video is about 25 MB with its audio (20 minutes: about 170 MB). *Why:* the file is only a source; the post is rendered from it at 12 Mb/s.
+- **A keyframe every 5 seconds.** *Why:* an exact frame anywhere decodes in under half a second, and the size above stays small.
+- **A photo is never enlarged.** A photo smaller than the 4K frame keeps its pixels (even dimensions). *Why:* enlarging adds bytes and time and no detail; the renderer scales the crop either way.
+- **Colours: the photo's sRGB values through the BT.709 matrix, tagged BT.709 limited range.** Measured within 1 of 255 against the photo (test tolerance 6). *Why:* that is how the renderer already treats text overlays, and every render carries the same tags as a clip's.
+- **The audio is encoded once, first, and its measured length is the video's length.** *Why:* an MP3 header's length can be an estimate; the video must end with the sound. In the import sheet the same encoded audio goes under every photo.
+- **Files are never written over: Change audio writes `video-2.mp4` beside `video.mp4`.** *Why:* the undo of Add, Change and Remove then only points the row back, with nothing to re-make inside a database transaction. Old files stay on disk (a 3-minute one is about 25 MB); cleaning them up is a follow-up.
+- **The proxy of a made video is one frame and the audio copied.** The clip's way decoded all of it: 104 s on every core for 20 minutes, close to the 120 s limit. *Why:* previews in the lists should not cost more than making the video did. It falls back to the clip's way if it fails.
+- **`photoLabel` still means "a photo post"; `markLabel` and `kindLabel` say "Photo + audio".** *Why:* eleven places in the screens read `photoLabel` as "this is a photo post" (a photo card, the Calendar's photo mark), and a made video must not be one of them.
+- **The YouTube title issue is raised only when YouTube would have nothing of Eric's to use:** no Title, no text on the video and no typed YouTube title. *Why:* with a typed YouTube title or text on it, "YouTube would name it after the file" would be false.
+- **The default crop of a made video is centred, whatever the anchor in Settings, and it never becomes "last crop".** *Why:* the anchor says where the DJ stands in the camera's frame; a flyer has no such place.
+- **A text added to a made video shows for the whole clip by default,** even when New clip defaults say "First seconds". *Why:* D2 says each text shows for the whole clip until Eric times it.
+- **Remove audio keeps the made files and clears the video-only edit** (crop, trim, per-platform trims, cover time, text windows). *Why:* those are in seconds and source pixels of the video; undo brings them back with it.
+- **The undo of an audio change is refused once the item has a day or a post, force or not.** *Why:* D9 holds for an undo too.
+- **Two made videos never count as overlapping cuts** (Avoid overlap). *Why:* each is its own file from 0 to its length, not a cut of one recording.
+- **The Audio row sits under Kind in the Title section,** in both editors. *Why:* that is where the item says what it is (Photo, Photo + audio); the references show the sound as one row with its name and length and one action under it.
+- **While a video is made, the open editor is covered and says how far along it is.** *Why:* an edit typed meanwhile would be written to an item that is about to be something else.
+- **The import sheet opens for one photo when asked through ⌘K "Add photo with audio…";** one photo from Add photos still goes straight in. *Why:* the audio is chosen in the sheet.
+- **Doctor lists a missing made video under `photos.missing`.** *Why:* the fix is the same (put the file back under Photos), and the clips' finding talks about videos.json.
+- **Baseline (round 21 and 22 leftovers), fixed in their own commit:** `post-at` step 10 expected the old UTC YouTube window; Settings → Publishing had no badge for an expired sign-in; `photo-editor` compared text pixels at a locked Mac's tolerance. *Why:* the brief's checks must pass before this round's.
+- **One existing test line changed:** `R21FoundationTests.schema8DatabaseGainsTheColumnsAndKeepsEveryRow` asserted `Store.schemaVersion == 9`; it now asserts `>= 9`. *Why:* this round moves the schema to 10.
+
+- **The README GIF shows the top of the inspector, not the whole editor.** *Why:* the Mac locked itself during the build, and a capture taken then draws the player black; the Audio row is what changed. A full-window GIF is one `scripts/readme-media.sh` line away once the checks run on an unlocked Mac.

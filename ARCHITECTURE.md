@@ -375,3 +375,60 @@ render that was replaced while its photos went up. The pure `PostizPayload.spec(
 - **Post at a set time** (`App/AppModel+PostAt.swift`, `Shared/PostAtDialog.swift`): `askPostAt` from the stage control's clock, the ⋯ menus, the bulk bars, ⌘K and the Calendar. The dialog previews through `BulkActions.postAtPreview` and keeps its button off until the preview for the current day and time has landed.
 - **Calendar**: set-time slots show their own time with a clock mark, sort by time, never count as one of the day's regular places, and keep their clock time when dragged to another day.
 - **Live checks**: `photo-import`, `photo-editor`, `post-at` (each with `-dark`), on sample photo posts cut from the dev clips (`SampleData.addPhotoPosts`).
+
+## Round 23 additions: photo with audio
+Decisions: `DECISIONS-R23.md` (D1–D11 and "Decisions made while building"). Code: `DJQCore/StillVideo.swift`, `djq/PhotoCommand.swift`,
+`App/AppModel+PhotoAudio.swift`, `Editor/EditorAudioRow.swift`; tests `R23*.swift`; live check `photo-audio` (`Snapshot/PhotoAudioScript.swift`).
+
+**Model (schema 10).** One nullable column, `videos.still` (JSON `StillSource {photo, audio, audioName, audioDuration}`). A made video is a
+`Video` with `still` set (`isStill`) and `photos` nil: `file` = `Stills/<id>/video.mp4`, `duration` = the audio's length, `start` 0, `end` =
+duration, fingerprint and size from the made file, source size = the video's pixels. It stays in the Photos session (`Session.photosId`,
+`inManifest` false), so `Store.fileURL(for:)`, renders and `Paths.owns` resolve under `Paths.photos`. `migrateToV10` follows `migrateToV9`.
+
+**Files.** `Photos/Stills/<video id>/video.mp4` and DJ Queue's copy of the audio, `audio.<ext>`. A later Change audio writes `video-2.mp4` /
+`audio-2.<ext>` beside them and nothing is ever written over or deleted, so the undo of any audio change only points the row back at files
+that are still there (the same idea as a removed photo's copy staying in Originals). The picked files are only read.
+
+**Making it (`StillVideo.make`).** Three ffmpeg steps, each with a timeout: the audio's first stream to AAC 256 kbps 48 kHz stereo in the work
+folder (its measured length is the video's length, since a header's can be an estimate); the photo, upright through ImageIO, at its own
+shape inside 3840×2160 (2160×3840 for a tall or square photo, never enlarged, even pixels), as ONE keyframe interval of 30 fps H.264
+(5 s: a keyframe at quantiser 18 and 149 frames that code nothing), sRGB values through the BT.709 matrix, limited range, tagged BT.709;
+then that interval repeated under the audio with `-stream_loop` and `-c copy`, cut at the audio's end. Nothing is encoded twice, so 3
+minutes take about 3 s and 20 minutes 13 s (most of it reading the audio); a 3-minute 4K video is about 25 MB with its audio (20 minutes: about 170 MB). It is probed (codec, size,
+30 fps, audio, length within 0.05 s) before both files move into place; a failure leaves nothing. Refusals read as sentences: not there,
+a folder, not a format taken, unreadable, no sound, over 20 minutes, under a second, no ffmpeg.
+
+**The predicate.** `Video.needsNoScore` (`isPhoto || isStill`, SQL `Store.noScoreSQL`) is the one test for "skips Score". It replaced
+`isPhoto` in `ClipStage.of`, `Queue.toScore/needsEdit/candidates/sort`, `Store.wasInQueue`, `Store.setScore`, `BulkActions.send`,
+`removeFromQueue`, `sendToQueue`, `ids(filter:)`, the outlook's `hasScore`, and `StageWording.backTitle/backHelp/blocker`. Three more
+places ask `isPhoto || isStill` because they are about a file name, not a score: `VersionResolver` (no text unless a version sets it; no
+default text window), `Captions.tagValue/setValue`, `AgentPrompts.needsTitleHelp`. Every other `isPhoto` is untouched, so a made video
+renders through the video `Renderer`, gets proxies, thumbnails and probes, has length checks and per-platform trims, takes the video
+Postiz payload and posts to YouTube. `photoLabel` still means "a photo post"; `markLabel` / `kindLabel` say "Photo + audio".
+
+**The other differences.** `Validation`: a made video posting to YouTube with no Title, no text on it and no typed YouTube title has the
+existing `noTitle` issue (platform YouTube, section Title). The default crop is centred whatever the anchor (`NewClipDefaults.defaultCrop(for:)`,
+used by the resolver, Send to Queue, Apply defaults and thumbnails) and never becomes "last crop". Bulk crop skips it. `Queue.overlaps`
+never pairs two made videos. `Media.ensureProxy` makes its proxy from one frame and the audio copied (`StillVideo.proxy`: under a second
+for any length, where decoding 20 minutes of 4K took 104 s), and falls back to the clip's path if that fails. `PhotoImport.checkFiles`
+(end of intake) calls `StillVideo.checkFiles`: missing while its video file is gone. Doctor lists it under `photos.missing`.
+
+**Add, change, remove.** Each makes its file outside any transaction, then writes the row, edit and versions in one journal entry
+(`photo-audio-add`, `-change`, `-remove`), re-checking the row first. `ClipSnap.still` (a `StillSnap`: the source and the row's media
+fields) is set only for a made video, so every other journal compares and restores as before; `restoreStill` turns the row back either
+way. `StillVideo.blocker` is D3 and D9 in one place (one photo; in Edit, no plan slot, no post); the undo of an audio batch is refused
+under a day or a post, force or not.
+
+**API the UI calls.**
+- `StillVideo(store:).addAudio(to:audio:journal:progress:) -> Change{video, batchId}`: a one-photo post becomes a video in place (D2).
+- `changeAudio(videoId:audio:journal:progress:)`, `removeAudio(videoId:journal:)`: D5/D9. `blocker(_ v:) -> String?`: why not, for a control's off state.
+- `add(photos:audio:title:titleSource:progress:) -> AddResult{videos, skipped}`: the import sheet and `djq photo add --audio`; the audio is read once.
+- `StillVideo.audioSeconds(_:)` (throws the refusal), `refusal(audio:)`, `audioExtensions`, `label`, `addHint`, `carouselReason`, `lockedReason`.
+- `Video.isStill`, `still`, `needsNoScore`, `markLabel`; `AgentAPI.VideoSummary.still {audio_name, audio_seconds, photo}` (`media` stays "video").
+
+**Screens.** `AppModel+PhotoAudio.swift`: `askAddAudio` / `askChangeAudio` / `askImportAudio` open the system picker and end in `addAudio(to:audio:)`,
+`changeAudio(videoId:audio:)`, `removeAudio(videoId:)` or `importPhotos(urls:audio:title:)`, which run Core off the main thread, count up in a
+toast (`PhotoAudioUI`), journal into the app's undo history and reload an editor open on the item (`reloadOpenEditor`: it carries on as
+the clip editor, or the photo editor after Remove). `EditorAudioRow` sits under Kind in the Title section of both editors; `EditorMakingVideo`
+covers the editor while its item's video is made. Cards say "Photo + audio · 0:12" where a clip names its night. Menus: `AudioMenuItems`.
+
