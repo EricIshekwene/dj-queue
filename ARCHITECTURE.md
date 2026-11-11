@@ -380,21 +380,32 @@ render that was replaced while its photos went up. The pure `PostizPayload.spec(
 Decisions: `DECISIONS-R23.md` (D1–D11 and "Decisions made while building"). Code: `DJQCore/StillVideo.swift`, `djq/PhotoCommand.swift`,
 `App/AppModel+PhotoAudio.swift`, `Editor/EditorAudioRow.swift`; tests `R23*.swift`; live check `photo-audio` (`Snapshot/PhotoAudioScript.swift`).
 
-**Model (schema 10).** One nullable column, `videos.still` (JSON `StillSource {photo, audio, audioName, audioDuration}`). A made video is a
+**Model (schema 10).** One nullable column, `videos.still` (JSON `StillSource {photo, audio, audioName, audioDuration, fit?}`; `fit` is
+`whole` or `fill`, and a row without it reads as `fill`). A made video is a
 `Video` with `still` set (`isStill`) and `photos` nil: `file` = `Stills/<id>/video.mp4`, `duration` = the audio's length, `start` 0, `end` =
 duration, fingerprint and size from the made file, source size = the video's pixels. It stays in the Photos session (`Session.photosId`,
 `inManifest` false), so `Store.fileURL(for:)`, renders and `Paths.owns` resolve under `Paths.photos`. `migrateToV10` follows `migrateToV9`.
 
-**Files.** `Photos/Stills/<video id>/video.mp4` and DJ Queue's copy of the audio, `audio.<ext>`. A later Change audio writes `video-2.mp4` /
-`audio-2.<ext>` beside them and nothing is ever written over or deleted, so the undo of any audio change only points the row back at files
-that are still there (the same idea as a removed photo's copy staying in Originals). The picked files are only read.
+**Files.** `Photos/Stills/<video id>/video.mp4` and DJ Queue's copy of the audio, `audio.m4a`: the AAC the video holds, never the picked file
+(the sound of an MP4 costs no more than a song). A later Change audio writes `video-2.mp4` / `audio-2.m4a` beside them, a fit change
+`video-3.mp4` only, and nothing is ever written over or deleted, so the undo of any audio change only points the row back at files that
+are still there (the same idea as a removed photo's copy staying in Originals). The picked files are only read. Leftovers of a make that
+was cut short (`work/still-*`, dot-files in `Stills/<id>/`) are swept by `checkFiles` once a day old.
+
+**Fit (D12).** `StillVideo.layout(width:height:fit:)`: `fill` is the photo's own shape (`frameSize`); `whole` is a 9:16 frame, 2160×3840 or
+smaller so the photo isn't enlarged (a multiple of 18 wide), with the photo fitted inside. The background is drawn once in the same ffmpeg
+graph, before the frame is repeated: the photo scaled to cover, cropped, `gblur` (sigma 40 at 2160 wide), darkened to 65 %, the photo
+overlaid centred. A photo within 1 % of 9:16 is made the same way for both. A `whole` video's crop is the whole frame: stored at make
+time, and `EditResolver` gives the same (confirmed) when the override is cleared, so `noCrop` is never raised and the renderer always has a
+crop. `setFit` makes the video again from the item's audio copy (`prepared(from:)`, a stream copy) and resets the crop; journal action
+`photo-audio-fit`.
 
 **Making it (`StillVideo.make`).** Three ffmpeg steps, each with a timeout: the audio's first stream to AAC 256 kbps 48 kHz stereo in the work
 folder (its measured length is the video's length, since a header's can be an estimate); the photo, upright through ImageIO, at its own
 shape inside 3840×2160 (2160×3840 for a tall or square photo, never enlarged, even pixels), as ONE keyframe interval of 30 fps H.264
 (5 s: a keyframe at quantiser 18 and 149 frames that code nothing), sRGB values through the BT.709 matrix, limited range, tagged BT.709;
 then that interval repeated under the audio with `-stream_loop` and `-c copy`, cut at the audio's end. Nothing is encoded twice, so 3
-minutes take about 3 s and 20 minutes 13 s (most of it reading the audio); a 3-minute 4K video is about 25 MB with its audio (20 minutes: about 170 MB). It is probed (codec, size,
+minutes take about 3 s and 20 minutes 13 to 40 s depending on the audio file (reading it is most of the time); a 3-minute 4K video is about 25 MB with its audio (20 minutes: about 170 MB). It is probed (codec, size,
 30 fps, audio, length within 0.05 s) before both files move into place; a failure leaves nothing. Refusals read as sentences: not there,
 a folder, not a format taken, unreadable, no sound, over 20 minutes, under a second, no ffmpeg.
 
@@ -416,19 +427,26 @@ for any length, where decoding 20 minutes of 4K took 104 s), and falls back to t
 **Add, change, remove.** Each makes its file outside any transaction, then writes the row, edit and versions in one journal entry
 (`photo-audio-add`, `-change`, `-remove`), re-checking the row first. `ClipSnap.still` (a `StillSnap`: the source and the row's media
 fields) is set only for a made video, so every other journal compares and restores as before; `restoreStill` turns the row back either
-way. `StillVideo.blocker` is D3 and D9 in one place (one photo; in Edit, no plan slot, no post); the undo of an audio batch is refused
-under a day or a post, force or not.
+way. `StillVideo.blocker` is D3 and D9 in one place (one photo; in Edit, no plan slot, no post). `stillUndoLock(restoring:current:)` refuses
+any restore that would change what the item is (photo post or video, another audio, another fit) under a day or a post, force or not,
+whatever batch it comes from.
 
 **API the UI calls.**
 - `StillVideo(store:).addAudio(to:audio:journal:progress:) -> Change{video, batchId}`: a one-photo post becomes a video in place (D2).
-- `changeAudio(videoId:audio:journal:progress:)`, `removeAudio(videoId:journal:)`: D5/D9. `blocker(_ v:) -> String?`: why not, for a control's off state.
-- `add(photos:audio:title:titleSource:progress:) -> AddResult{videos, skipped}`: the import sheet and `djq photo add --audio`; the audio is read once.
+- `changeAudio(videoId:audio:fit:journal:progress:)`, `setFit(videoId:fit:journal:progress:)`, `removeAudio(videoId:journal:)`: D9, D12.
+  `blocker(_ v:) -> String?`: why not, for a control's off state. `addAudio(…fit:)` defaults to `whole`.
+- `add(photos:audio:title:titleSource:fit:progress:) -> AddResult{videos, skipped, failed}`: the import sheet and `djq photo add --audio`; the
+  audio is read once, and it never throws once that is done (`failed`: photos worth trying again).
 - `StillVideo.audioSeconds(_:)` (throws the refusal), `refusal(audio:)`, `audioExtensions`, `label`, `addHint`, `carouselReason`, `lockedReason`.
-- `Video.isStill`, `still`, `needsNoScore`, `markLabel`; `AgentAPI.VideoSummary.still {audio_name, audio_seconds, photo}` (`media` stays "video").
+- `Video.isStill`, `still`, `needsNoScore`, `markLabel`; `AgentAPI.VideoSummary.still {audio_name, audio_seconds, photo, fit}` (`media` stays "video").
+- `StillVideo.layout`, `fitHint`, `sizeRefusal` (a photo under 200 px on its short side), `isAudioAction`.
 
 **Screens.** `AppModel+PhotoAudio.swift`: `askAddAudio` / `askChangeAudio` / `askImportAudio` open the system picker and end in `addAudio(to:audio:)`,
 `changeAudio(videoId:audio:)`, `removeAudio(videoId:)` or `importPhotos(urls:audio:title:)`, which run Core off the main thread, count up in a
 toast (`PhotoAudioUI`), journal into the app's undo history and reload an editor open on the item (`reloadOpenEditor`: it carries on as
-the clip editor, or the photo editor after Remove). `EditorAudioRow` sits under Kind in the Title section of both editors; `EditorMakingVideo`
-covers the editor while its item's video is made. Cards say "Photo + audio · 0:12" where a clip names its night. Menus: `AudioMenuItems`.
+the clip editor, or the photo editor after Remove; what it holds is dropped, not written, when the item landed as something else).
+`setAudioFit(videoId:fit:)` is the same path for the fit. `EditorAudioRow` sits under Kind in the Title section of both editors, with
+Whole photo | Fill the frame under the audio's name; `EditorMakingVideo` covers the editor while its item's video is made, the editor counts
+as covered for keys, and the item's stage controls are off (`stageBlocker`). The row's off state comes from `EditorModel.audioBlocker`,
+read with the item off the main thread; menus use `AppModel.audioBlocker`, which reads only loaded data. Cards say "Photo + audio · 0:12" where a clip names its night. Menus: `AudioMenuItems`.
 

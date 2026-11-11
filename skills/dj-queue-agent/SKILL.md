@@ -58,8 +58,8 @@ Queue" until it's sent to the Queue again.
 Round 21: every item also has `media` (`"video"` or `"photo"`) and `photos[{id, file, width, height}]` (empty for a
 video; posting order, the first is the cover). See "Photo posts" below.
 
-Round 23: a video DJ Queue made from one photo and an audio file has `still {audio_name, audio_seconds, photo{id, file,
-width, height}}` and `media: "video"`; the key is absent on everything else. See "Photo with audio" below.
+Round 23: a video DJ Queue made from one photo and an audio file has `still {audio_name, audio_seconds, fit, photo{id,
+file, width, height}}` and `media: "video"`; the key is absent on everything else. See "Photo with audio" below.
 
 `video` adds: `title_tracks, title_suggestions[{id,text,tracks,confidence,source,origin}]`, `text_suggestions` (same
 shape, for the text on the video), `edit` (stored overrides
@@ -198,18 +198,23 @@ One photo plus an audio file becomes a video (the photo held for the length of t
 clip: `media: "video"`, a `duration`, `still{…}`, the clip editor, per-platform trims, YouTube Shorts included.
 
 ```bash
-djq photo add <photo>… --audio <file> [--title "<title>"] [--json]   # a video per photo, each with this audio
-djq photo audio <id> <file> [--json]    # add audio to a photo post with ONE photo (same id), or change a made video's audio
-djq photo audio <id> --remove [--json]  # take the audio off: a photo post again
+djq photo add <photo>… --audio <file> [--fit whole|fill] [--title "<title>"] [--json]   # a video per photo, each with this audio
+djq photo audio <id> <file> [--fit whole|fill] [--json]   # add audio to a photo post with ONE photo (same id), or change a made video's audio
+djq photo audio <id> --fit whole|fill [--json]            # only how the photo sits in the video (made again from its own audio)
+djq photo audio <id> --remove [--json]                    # take the audio off: a photo post again
 ```
 
 - Audio: MP3, M4A/AAC, WAV, AIFF, FLAC, CAF, or the sound of an MP4/MOV; 1 second to 20 minutes. Both files are only
-  read; DJ Queue keeps its own copies in `Photos/Stills/<id>/`. Making a video takes a few seconds.
+  read; DJ Queue keeps its own copies in `Photos/Stills/<id>/` (the audio as AAC). Making a video takes a few seconds.
+  A photo under 200 px on its short side is refused.
+- `fit` (`still.fit`): `whole` (the default) shows the whole photo in a 9:16 video over a blurred copy of itself; its
+  crop is the whole frame, so there is no "No crop". `fill` makes the video at the photo's shape and Eric picks the
+  9:16 crop in the editor ("No crop" until then). Don't change the fit unless Eric asks; a change resets the crop.
 - Adding audio keeps the id, title, caption, hashtag groups and texts. The photo's crop, its shape and "shows on photos"
-  ranges go (it is 9:16 with no confirmed crop, and each text shows for the whole clip until timed), and YouTube is no
-  longer forced off. A carousel is refused ("Audio goes on a post with one photo").
+  ranges go (it is 9:16, and each text shows for the whole clip until timed), and YouTube is no longer forced off. A carousel is refused ("Audio goes on a post with one photo").
 - `photo audio` works only while the item is in Edit with no day and no post ("Send it back to Edit first"). Each
-  change is one batch: `djq bulk undo <batch>`.
+  change is one batch: `djq bulk undo <batch>`. No undo, forced or not, changes what a scheduled or posted item is
+  (photo post or video, which audio, which fit).
 - It needs no score, starts with no text, `{set}` and `{tag}` are empty, and `needs_title_help` is false: don't look up
   a song for it. With YouTube on and nothing to name it (no Title, no text on it, no typed YouTube title) it has the
   reason "No title" and stays in Edit: ask Eric for the title.

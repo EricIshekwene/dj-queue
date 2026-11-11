@@ -70,6 +70,16 @@ that reads as a name; a camera file name doesn't.
 name and length). Schema 10, additive and lossless. *Why:* the database stays the one source of truth, and Remove
 audio needs the original photo back.
 
+**D12. A made video shows the whole photo by default; "Fill the frame" crops instead.** (Added after the first
+build: a clip is always cropped to 9:16, so a flyer or a 4:5 or square photo lost up to half its width.) Stored as
+`still.fit`, `whole` or `fill`; a video made before this reads as `fill`. *Whole photo:* a 9:16 video (2160×3840, or
+smaller so the photo is never enlarged) with the photo fitted inside, centred, over a blurred, darkened copy of itself;
+its crop is the whole frame and needs no confirming. *Fill the frame:* the video has the photo's own shape and Eric
+picks the 9:16 crop. The choice is one control under the audio's name in the editor, in the import sheet once audio is
+picked, and `--fit` in `djq`. Changing it makes the video again from DJ Queue's own audio copy (same rules as Change
+audio, with Undo) and resets the crop; trim, texts, cover and captions stay. *Why:* Eric said "just the image is like
+the video".
+
 ## Not in this round
 
 - Slideshows (several photos in one video) and transitions.
@@ -84,7 +94,7 @@ audio needs the original photo back.
 - **A keyframe every 5 seconds.** *Why:* an exact frame anywhere decodes in under half a second, and the size above stays small.
 - **A photo is never enlarged.** A photo smaller than the 4K frame keeps its pixels (even dimensions). *Why:* enlarging adds bytes and time and no detail; the renderer scales the crop either way.
 - **Colours: the photo's sRGB values through the BT.709 matrix, tagged BT.709 limited range.** Measured within 1 of 255 against the photo (test tolerance 6). *Why:* that is how the renderer already treats text overlays, and every render carries the same tags as a clip's.
-- **The audio is encoded once, first, and its measured length is the video's length.** *Why:* an MP3 header's length can be an estimate; the video must end with the sound. In the import sheet the same encoded audio goes under every photo.
+- **The audio is encoded once, first, and its measured length is the video's length.** *Why:* an MP3 header's length can be an estimate; the video must end with the sound. In the import sheet the same encoded audio goes under every photo. How long that takes depends on the file: a 20-minute tone took 13 s here and the reviewer's 20-minute MP3 39 s, both far inside the 4-minute budget.
 - **Files are never written over: Change audio writes `video-2.mp4` beside `video.mp4`.** *Why:* the undo of Add, Change and Remove then only points the row back, with nothing to re-make inside a database transaction. Old files stay on disk (a 3-minute one is about 25 MB); cleaning them up is a follow-up.
 - **The proxy of a made video is one frame and the audio copied.** The clip's way decoded all of it: 104 s on every core for 20 minutes, close to the 120 s limit. *Why:* previews in the lists should not cost more than making the video did. It falls back to the clip's way if it fails.
 - **`photoLabel` still means "a photo post"; `markLabel` and `kindLabel` say "Photo + audio".** *Why:* eleven places in the screens read `photoLabel` as "this is a photo post" (a photo card, the Calendar's photo mark), and a made video must not be one of them.
@@ -102,3 +112,16 @@ audio needs the original photo back.
 - **One existing test line changed:** `R21FoundationTests.schema8DatabaseGainsTheColumnsAndKeepsEveryRow` asserted `Store.schemaVersion == 9`; it now asserts `>= 9`. *Why:* this round moves the schema to 10.
 
 - **The README GIF shows the top of the inspector, not the whole editor.** *Why:* the Mac locked itself during the build, and a capture taken then draws the player black; the Audio row is what changed. A full-window GIF is one `scripts/readme-media.sh` line away once the checks run on an unlocked Mac.
+
+### After the independent review (round 2)
+
+- **B1. The lock is about what a restore would do, not what the batch is called.** A forced undo of any older batch (a title change, an Edits entry) carries the item's old media in its snapshot; it is now refused, force or not, when it would change what a scheduled or posted item is (photo post or video, which audio, which fit). *Why:* a photo would have gone out where a video was scheduled.
+- **S2. DJ Queue's audio copy is the AAC the video holds (`audio.m4a`), never the picked file.** *Why:* "the sound of an MP4" copied the whole video, once per photo. The copy is now read: a fit change makes the video again from it with a stream copy.
+- **S3. While its video is made, an item's editor is covered for keys too, its stage controls and clock are off, and what the editor holds is written before the make and dropped (not flushed) when the item lands as something else.** *Why:* a change typed in the last moments was written onto the converted item.
+- **S4. After the undo of an audio batch the open editor reloads from the batch and from what it holds.** *Why:* it used to compare with the model's list, which had already caught up in some runs and not in others.
+- **S1. Photos picked while videos are being made are added when they are done.** *Why:* the toast promised it.
+- **N1** a failed make removes only a folder it made and left empty. **N2** Remove audio checks again inside its transaction. **N3** Edit's bulk bar treats videos made from photos as the ⋯ menu does. **N4** the D10 sentence is now "Add a title: YouTube needs a name for this video" (it would not have been named after the file: the title would have been empty). **N5** the Audio row reads a blocker cached with the item. **N6** leftovers of a make that was cut short are swept once a day old (`work/still-*`, dot-files in `Photos/Stills/<id>/`). **N8** a photo under 200 px on its short side is refused, in words. **N9** Change audio fits text windows to the new length: one that starts past it shows for the whole clip, one that ends past it runs to the end. **N10** a photo whose import fails stays in the sheet to try again; the ones that were made don't. **N11** README order.
+- **`whole` is decided by the resolver as well as stored.** A whole-photo video whose crop override is cleared (Reset to defaults) still resolves to the whole frame, confirmed. *Why:* "Confirm the crop" must never come back for it.
+- **A photo within 1 % of 9:16 is made the same way for both fits** (its own shape, no background). *Why:* there is nothing to show behind it, and the whole frame is a valid 9:16 crop.
+- **The whole-photo frame is a multiple of 18 pixels wide.** *Why:* that is exactly 9:16 with even sides, at any size down from 2160×3840.
+
