@@ -493,7 +493,7 @@ enum EditorSnapshot {
       print("editor-live: window \(window.windowNumber)")
       try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
       try? await Task.sleep(for: .seconds(6))
-      for s in EditorSection.allCases {
+      for s in EditorSection.inspector(photo: false) {
         model.scrollTarget = s
         try? await Task.sleep(for: .seconds(1.5))
         let file = (dir as NSString).appendingPathComponent("live-\(s.rawValue.lowercased()).png")

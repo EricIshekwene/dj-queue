@@ -8,7 +8,14 @@ import SwiftUI
 /// Inspector sections, in scroll order (the sticky mini-index jumps to them).
 enum EditorSection: String, CaseIterable, Identifiable {
   case title = "Title", frame = "Frame", text = "Text", caption = "Caption", cover = "Cover", platforms = "Platforms"
+  /// Round 21: not an inspector section. The photos strip under the canvas, where a photo post's pictures are fixed.
+  case photos = "Photos"
   var id: String { rawValue }
+
+  /// The inspector's sections, in scroll order. A photo post has no Cover: its first photo is the cover (D15).
+  static func inspector(photo: Bool) -> [EditorSection] {
+    photo ? [.title, .frame, .text, .caption, .platforms] : [.title, .frame, .text, .caption, .cover, .platforms]
+  }
 }
 
 /// The inspector's collapsible rows. All closed at launch; what Eric opens stays open while the app runs, across clips, so
@@ -143,8 +150,22 @@ final class EditorModel: ObservableObject {
   @Published var compare = false
   /// Section the inspector should scroll to (set, then cleared by the inspector). A closed section opens first.
   @Published var scrollTarget: EditorSection? {
-    didSet { if let s = scrollTarget { EditorDisclosures.shared.reveal(s) } }
+    didSet {
+      guard let s = scrollTarget else { return }
+      EditorDisclosures.shared.reveal(s)
+      if s == .photos { flashPhotos &+= 1 }
+    }
   }
+  /// Bumped when the photos strip should flash: an issue that is fixed there, not in the inspector (round 21).
+  @Published private(set) var flashPhotos = 0
+  /// Decoded photos, the strip's thumbnails and the composed canvas picture of a photo post (round 21).
+  let photoImages = EditorPhotoImages()
+  /// True while added photos are being copied in.
+  @Published var photoBusy = false
+  /// Photos whose file is there but can't be read as a picture (by id): the canvas says so instead of waiting.
+  @Published var unreadablePhotos: Set<String> = []
+  /// The photos of a photo post whose file isn't on disk (by id). The post is missing while there is one.
+  @Published private(set) var missingPhotos: Set<String> = []
   /// Platform whose own caption field should open (Write an X caption).
   @Published var openPlatformCaption: Platform?
   /// The hashtag group form, when it's open.
@@ -164,6 +185,9 @@ final class EditorModel: ObservableObject {
   @Published var toast: String?
   /// Evidence runs: the Zones canvas shows just the output (no dimmed text, no handles), to set beside an exported frame.
   @Published var plainCanvasForScript = false
+  /// Evidence runs only: brings back the faded copy of a text on a photo it isn't on, so the photo check can show that
+  /// it fails on one (`DJQ_PHOTO_EDITOR_SABOTAGE=ghost`). Never set in the app.
+  @Published var ghostTextForScript = false
   /// Bumped when Title should take keyboard focus (header title click).
   @Published var focusTitle = 0
   /// True while a clip's data is being read (the canvas shows a spinner, not "not found").
@@ -186,7 +210,7 @@ final class EditorModel: ObservableObject {
   private var overlaySignature: [String]?
   private var toastTask: Task<Void, Never>?
   nonisolated(unsafe) private var groupObserver: (center: NotificationCenter, token: NSObjectProtocol)?
-  private static let saveQueue = DispatchQueue(label: "com.djlovd.queue.editor.save", qos: .userInitiated)
+  static let saveQueue = DispatchQueue(label: "com.djlovd.queue.editor.save", qos: .userInitiated)
 
   /// Blocks until every queued editor write has landed (the app journals the session after it).
   static func waitForSaves() { saveQueue.sync {} }
@@ -254,7 +278,7 @@ final class EditorModel: ObservableObject {
       l.posts = try store.posts(where: "video_id=?", [id])
       l.issues = try Validation.issues(video: v, store: store)
     } catch {
-      l.error = l.readOnly ? "This clip's saved edit can't be read, so editing is off to protect it. Run Doctor."
+      l.error = l.readOnly ? "This \(l.video?.isPhoto == true ? "post" : "clip")'s saved edit can't be read, so editing is off to protect it. Run Doctor."
         : "Couldn't load: \(error)"
     }
     return l
@@ -288,6 +312,10 @@ final class EditorModel: ObservableObject {
     loading = true
     clearUndo()
     playback.unload()
+    photoImages.reset()
+    photoBusy = false
+    missingPhotos = []
+    unreadablePhotos = []
     let store = store
     if snapshotMode {
       apply(Self.saveQueue.sync { Self.read(store, id) }, token: token)
@@ -310,7 +338,12 @@ final class EditorModel: ObservableObject {
     if let v = l.video, let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
     if !posting(previewPlatform) { previewPlatform = postingPlatforms.first ?? .tiktok }
     refreshOverlay()
-    if let url = fileURL, !fileMissing {
+    if l.video?.isPhoto == true {
+      // Round 21: a photo post has no player, no proxy and nothing to probe. The canvas shows its photos, starting
+      // at one whose file is gone when there is one (the post is missing until that photo is back or taken out).
+      checkPhotoFiles(wasMissing: l.video?.missing == true)
+      selectPhoto(photos.firstIndex { missingPhotos.contains($0.id) } ?? 0)
+    } else if let url = fileURL, !fileMissing {
       if snapshotMode {
         if let p = try? Media.probe(url) { apply(p) }
         playback.loadStill(url: url, at: trim.start, maxSize: CGSize(width: 1920, height: 1080))
@@ -363,9 +396,13 @@ final class EditorModel: ObservableObject {
   var trim: TrimRange { resolvedEdit.trim() }
   /// The default trim (markers ± extra seconds, or the whole file).
   var defaultTrim: TrimRange { video.map { defaults.trim(for: $0) } ?? TrimRange(start: 0, end: 0) }
-  var cropIsSet: Bool { edit.crop != nil }
-  /// The crop exactly as the export uses it (even pixels, `Media.pixelCrop`).
+  var cropIsSet: Bool {
+    if isPhoto { return currentPhoto.map { PhotoRules.hasOwnCrop($0, edit: edit, aspect: aspect) } ?? false }
+    return edit.crop != nil
+  }
+  /// The crop exactly as the export uses it (even pixels, `Media.pixelCrop`). For a photo post: the current photo's.
   var crop: CropRect {
+    if isPhoto, let p = currentPhoto { return PhotoRules.crop(for: p, edit: edit, aspect: aspect) }
     if let c = edit.crop { return EditorGeometry.even(c, source: sourceSize) }
     if let c = resolvedEdit.crop { return EditorGeometry.even(c, source: sourceSize) }
     return EditorGeometry.defaultCrop(source: sourceSize, aspect: aspect)
@@ -497,9 +534,20 @@ final class EditorModel: ObservableObject {
   /// Store issues, with crop/text/length checks recomputed live from the in-memory edit and version.
   var liveIssues: [ValidationIssue] {
     guard let v = video else { return issues }
-    let live: Set<ValidationIssue.Kind> = [.noCrop, .noText, .tooLong, .captionTooLong, .titleTooLong]
+    let live: Set<ValidationIssue.Kind> = [.noCrop, .noText, .tooLong, .captionTooLong, .titleTooLong, .photoShape, .noPhotos]
     var out = issues.filter { !live.contains($0.kind) }
-    if v.type == .short {
+    if v.isPhoto {
+      // Round 21: no crop, text, length or YouTube rule. The shape (D20) and the caption are checked as they change.
+      if photos.isEmpty { out.append(.init(kind: .noPhotos, platform: nil, message: "Add a photo")) }
+      for p in postingPlatforms {
+        if let why = PhotoRules.shapeProblem(aspect, platform: p) { out.append(.init(kind: .photoShape, platform: p, message: why)) }
+      }
+      for w in captionWarnings where w.over {
+        out.append(.init(kind: .captionTooLong, platform: w.platform,
+                         message: "Caption too long for \(w.platform.displayName) (\(w.count)/\(w.limit))",
+                         count: Double(w.count), limit: Double(w.limit), countWithoutHashtags: w.countWithoutHashtags))
+      }
+    } else if v.type == .short {
       if edit.crop == nil { out.append(.init(kind: .noCrop, platform: nil, message: "Confirm the crop")) }
       let r = resolved
       if !r.hasDrawnText && !r.noText {
@@ -533,7 +581,7 @@ final class EditorModel: ObservableObject {
     case .caption: .caption
     case .cover: .cover
     case .platforms: .platforms
-    case .photos: .frame  // round 21: the photos strip isn't built yet; Frame is where a photo post's pictures are
+    case .photos: .photos  // round 21: the photos strip under the canvas (it flashes; the inspector has no such section)
     case nil: nil
     }
   }
@@ -567,12 +615,16 @@ final class EditorModel: ObservableObject {
     let sound = tracks.isEmpty ? "Original audio"
       : tracks.map { t in t.artist.map { "\(t.title) · \($0)" } ?? t.title }.joined(separator: " x ")
     return PhoneMockContent(platform: p, caption: caption(for: p), youtubeTitle: youtubeTitle, handle: PlatformUI.handle(p),
-                            displayName: "DJ Lovd", soundLine: sound, durationText: EditorGeometry.time(trim.duration),
-                            aspect: aspect)
+                            displayName: "DJ Lovd", soundLine: isPhoto ? "" : sound, durationText: isPhoto ? "" : EditorGeometry.time(trim.duration),
+                            aspect: aspect, isPhoto: isPhoto)
   }
 
+  /// The platforms the phone preview and the safe-zone chips offer: every one for a clip, those that take photos for a
+  /// photo post (D8).
+  var previewOrder: [Platform] { isPhoto ? EditorPlatforms.order.filter(\.supportsPhotos) : EditorPlatforms.order }
+
   func stepPreview(_ d: Int) {
-    let list = EditorPlatforms.order
+    let list = previewOrder
     guard let i = list.firstIndex(of: previewPlatform) else { return }
     previewPlatform = list[(i + d + list.count) % list.count]
   }
@@ -609,6 +661,7 @@ final class EditorModel: ObservableObject {
   }
 
   private func keepInsideTrim() {
+    guard !isPhoto else { return }  // a window names photo positions; the photo count clamps it when it's read
     let t = trim
     if let c = edit.coverTime, c < t.start || c > t.end {
       edit.coverTime = min(max(c, t.start), max(t.start, t.end - 0.05))
@@ -647,7 +700,10 @@ final class EditorModel: ObservableObject {
     updateEdit(live: live) { $0.trimOut = EditorGeometry.override(min(duration, t), default: d) }
   }
 
-  func setCrop(_ c: CropRect) { updateEdit { $0.crop = EditorGeometry.clamp(c, source: sourceSize) } }
+  func setCrop(_ c: CropRect) {
+    if isPhoto { setPhotoCrop(c); return }
+    updateEdit { $0.crop = EditorGeometry.clamp(c, source: sourceSize) }
+  }
   func confirmCrop() { setCrop(crop) }
 
   /// Moves the crop to the left third / centre / right third of the source (keeps zoom).
@@ -657,6 +713,9 @@ final class EditorModel: ObservableObject {
   }
 
   func setAspect(_ a: Aspect) {
+    // A photo post keeps each photo's crop as it is: one that no longer fits the shape is ignored, and comes back
+    // with the shape it was made for (`PhotoRules.ownCrop`).
+    if isPhoto { updateEdit { $0.aspectOverride = a == defaults.photoAspect ? nil : a }; return }
     let old = aspect
     updateEdit {
       $0.aspectOverride = a == defaults.aspect ? nil : a
@@ -684,6 +743,7 @@ final class EditorModel: ObservableObject {
 
   /// "Trim for X": opens the per-platform trim lane, starting from the main trim cut to the platform limit.
   func addPlatformTrim(_ p: Platform) {
+    guard !isPhoto else { return }
     let t = trim
     let lim = settings.limits[p]?.maxDuration ?? t.duration
     updateEdit { $0.platformTrims[p] = TrimRange(start: t.start, end: min(t.end, t.start + lim)) }
@@ -873,7 +933,7 @@ final class EditorModel: ObservableObject {
     guard writeGroup({ try HashtagGroups.create(group, store: $0, bulk: $1) }) != nil else { return false }
     groupForm = nil
     setGroup(group.id, on: true)
-    show("“\(group.name)” saved and on for this clip")
+    show("“\(group.name)” saved and on for this \(noun)")
     return true
   }
 
@@ -895,7 +955,7 @@ final class EditorModel: ObservableObject {
     }
     let after = hashtags
     let swap = !change.kept.contains(videoId) && !written.isEmpty && !written.contains("{hashtags}") && before != after
-    let message = change.kept.contains(videoId) ? "“\(group.name)” saved. This clip keeps its tags: it has scheduled or posted posts"
+    let message = change.kept.contains(videoId) ? "“\(group.name)” saved. This \(noun) keeps its tags: it has scheduled or posted posts"
       : swap ? "“\(group.name)” saved. ⌘Z restores only this caption" : "“\(group.name)” saved"
     // Before this clip's own change below: the session moves past the group batch, then owns that change.
     if let journal = appHooks.afterGroupEdit { journal(change.result, message) } else { show(message) }
@@ -1017,10 +1077,10 @@ final class EditorModel: ObservableObject {
       guard writeGroup(failure: failure, { try CaptionTemplates.create(t, store: $0, bulk: $1) }) != nil else { return false }
       templateForm = nil
       if clipHasPosts {
-        show("“\(t.name)” saved. This clip keeps its caption: it has scheduled or posted posts")
+        show("“\(t.name)” saved. This \(noun) keeps its caption: it has scheduled or posted posts")
       } else {
         setCaptionTemplate(t.id)
-        show("“\(t.name)” saved and on for this clip")
+        show("“\(t.name)” saved and on for this \(noun)")
       }
       return true
     }
@@ -1035,7 +1095,7 @@ final class EditorModel: ObservableObject {
     guard let change = writeGroup(failure: failure, { try CaptionTemplates.update(saved, store: $0, bulk: $1) }) else { return false }
     templateForm = nil
     let kept = change.kept.contains(videoId)
-    let message = kept ? "“\(t.name)” saved. This clip keeps its caption: it has scheduled or posted posts" : "“\(t.name)” saved"
+    let message = kept ? "“\(t.name)” saved. This \(noun) keeps its caption: it has scheduled or posted posts" : "“\(t.name)” saved"
     if let journal = appHooks.afterGroupEdit { journal(change.result, message) } else { show(message) }
     if kept { replaceVersions((try? store.versions(videoId: videoId)) ?? versions) } else { fieldRevision &+= 1 }
     return true
@@ -1416,6 +1476,8 @@ final class EditorModel: ObservableObject {
     var titleTracks: [Track]?
     var titleSource: String?
     var kind: Kind?
+    /// Round 21: a photo post's photos in order (nil for a clip).
+    var photos: [PhotoItem]? = nil
   }
 
   private var undoStack: [UndoState] = []
@@ -1427,11 +1489,11 @@ final class EditorModel: ObservableObject {
 
   private var undoState: UndoState {
     UndoState(edit: edit, versions: versions, versionNo: versionNo, title: video?.title, titleTracks: video?.titleTracks,
-              titleSource: video?.titleSource, kind: video?.kind)
+              titleSource: video?.titleSource, kind: video?.kind, photos: video?.photos)
   }
 
   /// Called just BEFORE a change. Changes less than 0.8 s apart (a drag, a typed word, a slider) form one step.
-  private func markUndo(coalesce: Bool = true) {
+  func markUndo(coalesce: Bool = true) {
     guard !restoringUndo, !readOnly, video != nil else { return }
     let now = Date()
     defer { lastUndoMark = coalesce ? now : .distantPast }
@@ -1444,7 +1506,7 @@ final class EditorModel: ObservableObject {
   }
 
   /// The next change gets its own undo step, even right after this one.
-  private func lastUndoBreak() { lastUndoMark = .distantPast }
+  func lastUndoBreak() { lastUndoMark = .distantPast }
 
   private func clearUndo() {
     undoStack = []
@@ -1456,7 +1518,8 @@ final class EditorModel: ObservableObject {
 
   func undo() {
     commitCaptionDraft()
-    guard !readOnly, let s = undoStack.popLast() else { show("Nothing to undo in this clip"); return }
+    guard !photoBusy else { show("Photos are being added. Undo works again in a moment."); return }
+    guard !readOnly, let s = undoStack.popLast() else { show("Nothing to undo in this \(noun)"); return }
     dropTimeDraft()
     redoStack.append(undoState)
     restoreUndo(s)
@@ -1465,6 +1528,7 @@ final class EditorModel: ObservableObject {
 
   func redo() {
     commitCaptionDraft()
+    guard !photoBusy else { show("Photos are being added. Redo works again in a moment."); return }
     guard !readOnly, let s = redoStack.popLast() else { show("Nothing to redo"); return }
     dropTimeDraft()
     undoStack.append(undoState)
@@ -1485,6 +1549,10 @@ final class EditorModel: ObservableObject {
     func unready(_ vs: [Version]) -> [Version] {
       (vs.contains { $0.number == 1 } ? vs : [Version(number: 1)] + vs).map { var v = $0; v.repostReady = nil; return v }
     }
+    // Round 21: the photos first, as they were: same ids and files, so each photo's own crop in `s.edit` is still its.
+    // Then, whatever the state says, no text is left on a photo that isn't there (`PhotoTextRanges`).
+    if let target = s.photos, target != video?.photos { restorePhotos(target) }
+    defer { if isPhoto { clampTextRanges() } }
     if s.edit == edit, unready(s.versions) == unready(versions), s.title == video?.title, s.titleTracks == video?.titleTracks,
        s.kind == nil || s.kind == video?.kind {
       // Both sides' numbers: a v1 that only existed for its mark is in `versions` but not in the earlier state.
@@ -1517,6 +1585,79 @@ final class EditorModel: ObservableObject {
     fieldRevision &+= 1
     scheduleSave()
     refreshOverlay()
+  }
+
+  /// Changes the versions as part of the undo step that is already marked (a photo removal that moves a text's range
+  /// with it): no step of its own. True when anything changed.
+  @discardableResult
+  func amendVersions(_ change: (Version) -> Version) -> Bool {
+    var changed = false
+    for i in versions.indices {
+      let v = change(versions[i])
+      guard v != versions[i] else { continue }
+      versions[i] = v
+      pendingVersions.insert(v.number)
+      changed = true
+    }
+    if changed {
+      fieldRevision &+= 1
+      scheduleSave()
+      refreshOverlay()
+    }
+    return changed
+  }
+
+  // MARK: Photos (round 21): the few writes `EditorModel+Photos.swift` needs here
+
+  /// The post after a photo change in the store: only what follows from its photos is taken, so a Title or kind changed
+  /// meanwhile stays as the editor has it.
+  func adoptPhotos(from fresh: Video) {
+    guard var v = video else { return }
+    v.photos = fresh.photos
+    v.file = fresh.file
+    v.fingerprint = fresh.fingerprint
+    v.fileSize = fresh.fileSize
+    v.sourceWidth = fresh.sourceWidth
+    v.sourceHeight = fresh.sourceHeight
+    video = v
+    fileURL = try? store.fileURL(for: v)
+    checkPhotoFiles(wasMissing: fresh.missing)
+    // The store dropped the crops of photos that left; the editor's copy follows without a save of its own.
+    let keep = Set((v.photos ?? []).map(\.id))
+    for k in edit.photoCrops.keys where !keep.contains(k) { edit.photoCrops.removeValue(forKey: k) }
+    unreadablePhotos.formIntersection(keep)
+  }
+
+  /// Which photo files are on disk. A post is missing while one is gone; once none is (that photo was removed here,
+  /// or its file came back), Core's own check (`PhotoImport.checkFiles`, the one Intake runs) clears the row's mark.
+  func checkPhotoFiles(wasMissing: Bool) {
+    guard var v = video, v.isPhoto else { return }
+    let gone = (v.photos ?? []).filter { p in (try? store.photoURL(p, of: v)).map { !FileManager.default.fileExists(atPath: $0.path) } ?? true }
+    missingPhotos = Set(gone.map(\.id))
+    fileMissing = !gone.isEmpty
+    if v.missing != fileMissing { v.missing = fileMissing; video = v }
+    if wasMissing != fileMissing, !snapshotMode, !readOnly {
+      let store = store
+      Self.saveQueue.async {
+        _ = try? PhotoImport(store: store).checkFiles()
+        ChangeSignal.post()
+      }
+    }
+  }
+
+  /// The picture size crop math works in: the clip's, or the current photo's.
+  func setSourceSize(_ size: CGSize) { if size != sourceSize, size.width > 0, size.height > 0 { sourceSize = size } }
+
+  /// Reads the post's issues again after a change that wasn't a save (photos added, removed or reordered).
+  func revalidate() {
+    let store = store, id = videoId
+    Self.saveQueue.async { [weak self] in
+      guard let v = try? store.video(id: id), let issues = try? Validation.issues(video: v, store: store) else { return }
+      DispatchQueue.main.async {
+        guard let self, self.videoId == id else { return }
+        self.issues = issues
+      }
+    }
   }
 
   // MARK: Saving
@@ -1611,10 +1752,15 @@ final class EditorModel: ObservableObject {
   /// Brings `textImages` up to date. An edited text keeps its old image until the new one lands, so nothing flickers.
   func refreshOverlay() {
     let r = resolved, a = aspect, tr = trim
+    let photo = isPhoto, count = photoCount
+    if photo { refreshPhotoImages() }
     let windows = Dictionary(PreviewKeys.layerWindows(r, trimDuration: tr.duration).map { ($0.layer.id, $0.window) }) { x, _ in x }
     let wanted = r.layers.map { l in
+      // A photo post's window is the photos a text shows on, as indexes (first…last), by the renderer's own rule
+      // (`PhotoRules.photoRange`): the canvas asks `shows(at:)` with the current photo's index.
       (layer: l, key: PreviewKeys.layerKey(l, aspect: a),
-       window: windows[l.id].map { ($0.lowerBound + tr.start)...($0.upperBound + tr.start) })
+       window: photo ? windows[l.id].flatMap { PhotoRules.photoRange($0, count: count) }.map { Double($0.lowerBound - 1)...Double($0.upperBound - 1) }
+                     : windows[l.id].map { ($0.lowerBound + tr.start)...($0.upperBound + tr.start) })
     }
     let signature = wanted.map { "\($0.layer.id)|\($0.key)|\($0.window.map { "\($0.lowerBound)-\($0.upperBound)" } ?? "off")" }
     guard signature != overlaySignature else { return }
@@ -1703,8 +1849,9 @@ final class EditorModel: ObservableObject {
 
   /// Why a new text can't be added right now (nil = it can).
   var addTextOffReason: String? {
+    if photoHasNoTextYet { return nil }  // round 21: Add text writes a photo post's first text
     if resolved.noText { return "No text is on; turn off No text to add a text" }
-    return TextLayers.canAdd(resolved) ? nil : "A clip holds \(TextLayers.maxCount) texts at most"
+    return TextLayers.canAdd(resolved) ? nil : "A \(isPhoto ? "post" : "clip") holds \(TextLayers.maxCount) texts at most"
   }
 
   /// Why the selected text can't be deleted (nil = it can).
@@ -1716,7 +1863,7 @@ final class EditorModel: ObservableObject {
   }
 
   /// Appends `l` and selects it. A text sharing the time of the one it copies goes just below it, or neither could be read.
-  private func add(_ new: TextLayer, overlapping: Bool) {
+  func add(_ new: TextLayer, overlapping: Bool) {
     let r = resolved
     var l = new
     if overlapping { l.posY = TextTimeline.clearY(l.posY) }
@@ -1727,6 +1874,7 @@ final class EditorModel: ObservableObject {
 
   /// A new, empty text at the playhead: 3 seconds or to the clip end, looking like the selected text.
   func addText() {
+    if isPhoto { addPhotoText(); return }
     guard addTextOffReason == nil else { return }
     let like = selectedLayer, d = trim.duration
     let w = TextTimeline.newWindow(playhead: playback.time - trim.start, trimDuration: d)
@@ -1738,6 +1886,9 @@ final class EditorModel: ObservableObject {
   func duplicateText() {
     guard addTextOffReason == nil else { return }
     let like = selectedLayer
+    // A text on every photo has no window to move: its copy shows on every photo too, just below it.
+    if isPhoto, like.start == nil, like.end == nil { add(TextLayers.new(text: like.text, like: like), overlapping: true); return }
+    defer { if isPhoto { showSelectedTextPhoto() } }  // the copy may sit on the next photo: the canvas goes there
     let (w, overlaps) = TextTimeline.duplicateWindow(TextTimeline.span(like, trimDuration: trim.duration), trimDuration: trim.duration)
     add(TextLayers.new(text: like.text, like: like, start: w.start, end: w.end), overlapping: overlaps)
   }
@@ -1845,6 +1996,7 @@ struct EditorDrawnText {
 }
 
 /// A drawn text on this clip: `window` is when it shows, in seconds of the clip file (nil = the trim leaves it out).
+/// On a photo post it is the photos it shows on, as indexes from the first to the last (nil = none).
 struct EditorTextImage: Identifiable {
   var id: String
   var key: String
@@ -1891,6 +2043,16 @@ final class EditorPlayback: ObservableObject {
     time = t
     still = Media.frame(url, at: t, maxSize: maxSize)
     ready = still != nil
+  }
+
+  /// Round 21: a photo post has no player. `image` is the photo on the canvas (nil while it loads) and the playhead
+  /// is its place in the post: photo i is the interval [i, i + 1), so the time is the photo's index.
+  func showPhoto(_ image: CGImage?, index: Int) {
+    if player != nil { unload() }
+    url = nil
+    if time != Double(index) { time = Double(index) }
+    still = image
+    ready = image != nil
   }
 
   func unload() {

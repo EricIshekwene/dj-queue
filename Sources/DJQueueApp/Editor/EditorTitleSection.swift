@@ -16,7 +16,8 @@ struct EditorTitleSection: View {
         if model.needsTitleHelp { agentCallout }
         suggestionsBlock
         field
-        HStack(spacing: DS.space.xs) {
+        // Round 21: a photo's tag is its file name, which is never a title, and there is no song for an agent to find.
+        if !model.isPhoto { HStack(spacing: DS.space.xs) {
           DSButton("Use raw tag", icon: "tag", variant: .outline, size: .sm,
                    disabledReason: model.title == model.rawTag ? "The Title already is the raw tag" : nil,
                    tooltip: "Set the Title to “\(model.rawTag)” as typed") {
@@ -29,7 +30,7 @@ struct EditorTitleSection: View {
             }
           }
           Spacer(minLength: 0)
-        }
+        } }
         kindRow
       }
     }
@@ -43,18 +44,21 @@ struct EditorTitleSection: View {
       HStack(spacing: 6) {
         if let t = model.title {
           Text(t).font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(2)
+        } else if model.isPhoto {
+          Text(model.video?.name ?? "").font(DS.type.headline).foregroundStyle(DS.color.textSecondary).lineLimit(2)
+          DSBadge("No title", style: .outline, size: .sm).dsTooltip("No Title yet; screens show the photo's file name")
         } else {
           Text(model.rawTag).font(DS.type.headline).foregroundStyle(DS.color.textSecondary).lineLimit(2)
           DSBadge("Raw tag", style: .outline, size: .sm).dsTooltip("No Title yet; screens show the marker tag")
         }
         Spacer(minLength: 0)
-        EditorCustomTag(isCustom: model.title != nil, resetHelp: "Clear the Title (screens show the raw tag)",
+        EditorCustomTag(isCustom: model.title != nil, resetHelp: model.isPhoto ? "Clear the Title (screens show the file name)" : "Clear the Title (screens show the raw tag)",
                         customHelp: "Typed or chosen by you (not the raw tag)") {
           model.titleDraft = nil
           model.setTitle(nil)
         }
       }
-      if let t = model.title, t != model.rawTag {
+      if let t = model.title, t != model.rawTag, !model.isPhoto {
         Text("Raw tag: \(model.rawTag)").font(DS.type.caption).foregroundStyle(DS.color.textTertiary).lineLimit(1)
       }
     }
@@ -129,7 +133,7 @@ struct EditorTitleSection: View {
         .onSubmit(commit)
         .padding(.horizontal, 12).frame(height: DS.size.controlMd)
         .modifier(DSFieldBox(focused: focused, hovering: false, error: false, disabled: false))
-        .dsTooltip("Rename: text, caption and YouTube title follow", shortcut: "↩")
+        .dsTooltip(model.isPhoto ? "Rename: a caption that uses the Title follows" : "Rename: text, caption and YouTube title follow", shortcut: "↩")
       if draftDiffers {
         DSButton("Set", variant: .outline, size: .md, tooltip: "Save this Title", shortcut: "↩", action: commit)
       }
@@ -155,9 +159,17 @@ struct EditorTitleSection: View {
     HStack {
       Text("Kind").font(DS.type.calloutMedium).foregroundStyle(DS.color.textSecondary)
       Spacer()
-      DSSegmented(selection: Binding(get: { model.video?.kind ?? .djVid }, set: { model.setKind($0) }),
-                  segments: Kind.allCases.map { DSSegment(value: $0, title: $0.displayName) }, size: .sm)
-        .dsTooltip("Set the kind; Talking clips start with no text")
+      if let label = model.video?.photoLabel {
+        // Round 21 (D18): a photo post says "Photo" or "Carousel · 4" where a clip picks DJ vid or Talking.
+        DSBadge(label, style: .soft(.neutral), icon: model.isCarousel ? "square.stack" : "photo", size: .sm,
+                help: model.isCarousel ? "A carousel: its photos post together, in the strip's order" : "A photo post: one photo")
+          .background(ScriptAnchor("Kind \(label)"))
+      } else {
+        DSSegmented(selection: Binding(get: { model.video?.kind ?? .djVid }, set: { model.setKind($0) }),
+                    segments: Kind.allCases.map { DSSegment(value: $0, title: $0.displayName) }, size: .sm)
+          .dsTooltip("Set the kind; Talking clips start with no text")
+          .background(ScriptAnchor("Kind switch"))
+      }
     }
     .padding(.top, DS.space.xxs)
   }

@@ -7,6 +7,8 @@ import SwiftUI
 struct EditorSafeZones: View {
   var platforms: Set<Platform>
   var aspect: Aspect
+  /// Round 21: the notes say "photo" where they'd say "video" or "clips".
+  var photo = false
 
   private var ordered: [Platform] { EditorPlatforms.order.filter { platforms.contains($0) } }
 
@@ -73,8 +75,8 @@ struct EditorSafeZones: View {
       } else {
         let text: String
         switch p {
-        case .x: text = xCrop == nil ? "X shows the whole video" : "X crops tall clips to 4:5"
-        case .threads: text = "Threads shows the whole video"
+        case .x: text = xCrop == nil ? "X shows the whole \(photo ? "photo" : "video")" : "X crops tall \(photo ? "photos" : "clips") to 4:5"
+        case .threads: text = "Threads shows the whole \(photo ? "photo" : "video")"
         default: text = aspect == .r16x9 ? "\(p.editorShortName): 16:9 isn't a feed format" : "\(p.editorShortName): nothing over the picture"
         }
         let y = p == .x && xCrop != nil ? (xCrop!.minY * H + 6) : topY
@@ -104,10 +106,10 @@ struct EditorZoneChips: View {
   var body: some View {
     HStack(spacing: 6) {
       Text("Safe zones").font(DS.type.captionMedium).foregroundStyle(DS.color.textSecondary)
-        .dsTooltip("Where each app's buttons cover the video (per \(model.aspect.rawValue))")
+        .dsTooltip("Where each app's buttons cover the \(model.isPhoto ? "photo" : "video") (per \(model.aspect.rawValue))")
       chip(title: "None", tint: nil, selected: model.zonePlatforms.isEmpty) { model.zonePlatforms = [] }
         .dsTooltip(model.zonePlatforms.isEmpty ? nil : "Hide all safe-zone overlays")
-      ForEach(EditorPlatforms.order) { p in
+      ForEach(model.previewOrder) { p in
         chip(title: p.editorShortName, tint: p.editorZoneTint, selected: model.zonePlatforms.contains(p)) {
           var s = model.zonePlatforms
           if s.contains(p) { s.remove(p) } else { s.insert(p) }

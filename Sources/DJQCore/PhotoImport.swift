@@ -131,9 +131,37 @@ public final class PhotoImport: @unchecked Sendable {
     let v = try post(videoId)
     guard (v.photos ?? []).contains(where: { $0.id == photoId }) else { throw EngineError("\(v.name) has no photo \(photoId)") }
     guard v.photoCount > 1 else { throw EngineError("A post needs at least one photo, so the last one stays") }
-    let out = try change("photo-remove", v.id, journal: journal) { cur in cur.filter { $0.id != photoId } }
+    let index = (v.photos ?? []).firstIndex { $0.id == photoId } ?? 0
+    let count = v.photoCount
+    // A journaled removal (djq, a list) also keeps each text with its photos (`PhotoTextRanges`), in the same entry. An
+    // open editor passes `journal: false` and applies the same rule to the versions it holds.
+    let out = try change("photo-remove", v.id, journal: journal, also: journal ? {
+      for ver in try self.store.versions(videoId: v.id) {
+        let r = PhotoTextRanges.removing(index: index, from: ver, count: count)
+        if r.version != ver { try self.store.save(r.version, videoId: v.id) }
+      }
+    } : nil) { cur in cur.filter { $0.id != photoId } }
     try store.logEvent("photo", "Removed a photo from \(v.name)", videoId: v.id)
     return out
+  }
+
+  /// Makes a post's photo list `photos` again: the undo and redo of a list change in an open editor, with the same
+  /// photo ids and files (a removed photo's copy stays in Originals), so nothing is copied and each crop still belongs
+  /// to its photo. Every file must be on disk and the list can't be empty. No journal: the editor's own entry covers it.
+  @discardableResult
+  public func setPhotos(_ photos: [PhotoItem], videoId: String) throws -> Video {
+    let v = try post(videoId)
+    guard !photos.isEmpty else { throw EngineError("A post needs at least one photo") }
+    var probe = v
+    probe.photos = photos
+    for p in photos where !fm.fileExists(atPath: try store.photoURL(p, of: probe).path) {
+      throw EngineError("\(URL(fileURLWithPath: p.file).lastPathComponent) isn't on disk any more")
+    }
+    try store.db.transaction {
+      try store.writePhotos(photos, videoId: videoId)
+      try store.refreshState(videoId: videoId)
+    }
+    return try post(videoId)
   }
 
   /// Puts a post's photos in the order of `ids` (every photo id, once). The first photo is the cover (D15).
@@ -151,7 +179,8 @@ public final class PhotoImport: @unchecked Sendable {
 
   /// One photo-list change: the new list, the edit without crops of photos that left, the state, and (when asked) one
   /// journal entry, the way every other single-clip action gets its undo (`BulkActions.record`).
-  private func change(_ action: String, _ videoId: String, journal: Bool, _ next: ([PhotoItem]) -> [PhotoItem]) throws -> Change {
+  private func change(_ action: String, _ videoId: String, journal: Bool, also: (() throws -> Void)? = nil,
+                      _ next: ([PhotoItem]) -> [PhotoItem]) throws -> Change {
     var batch: String?
     func apply() throws {
       let cur = try post(videoId).photos ?? []
@@ -164,6 +193,7 @@ public final class PhotoImport: @unchecked Sendable {
         for k in stale { e.photoCrops.removeValue(forKey: k) }
         try store.save(e, videoId: videoId, remembersCrop: false)
       }
+      try also?()
       try store.refreshState(videoId: videoId)
     }
     if journal {
@@ -184,7 +214,12 @@ public final class PhotoImport: @unchecked Sendable {
     // The Photos session follows `Paths.photos` (a moved or copied root), and is never missing.
     if try store.session(id: Session.photosId) != nil { try ensureSession() }
     for v in try store.videos(where: "photos IS NOT NULL") {
-      let missing = try (v.photos ?? []).contains { !fm.fileExists(atPath: try store.photoURL($0, of: v).path) }
+      // A file that is there but can't be read as a picture (cut short, overwritten) can't post either: it counts as gone,
+      // so the post waits in Edit with "File missing" instead of failing at render time.
+      let missing = try (v.photos ?? []).contains { p in
+        let url = try store.photoURL(p, of: v)
+        return !fm.fileExists(atPath: url.path) || PhotoRenderer.pixelSize(of: url) == nil
+      }
       guard missing != v.missing else { continue }
       try store.db.run("UPDATE videos SET missing=?, updated_at=? WHERE id=?", [missing, store.clock.now, v.id])
       try store.refreshState(videoId: v.id)
@@ -200,7 +235,10 @@ public final class PhotoImport: @unchecked Sendable {
 
   /// The files of `v` that aren't on disk (relative to the Photos folder).
   public func missingFiles(_ v: Video) throws -> [String] {
-    try (v.photos ?? []).filter { !fm.fileExists(atPath: try store.photoURL($0, of: v).path) }.map(\.file)
+    try (v.photos ?? []).filter { p in
+      let url = try store.photoURL(p, of: v)
+      return !fm.fileExists(atPath: url.path) || PhotoRenderer.pixelSize(of: url) == nil
+    }.map(\.file)
   }
 
   /// Why a file can't be a photo (nil = it can): gone, a folder, a format DJ Queue doesn't take, or unreadable.

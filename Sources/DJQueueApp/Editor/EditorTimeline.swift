@@ -21,6 +21,15 @@ struct EditorTimeline: View {
   }
 
   var body: some View {
+    // Round 21: a photo post has photos where a clip has film, and nothing to play.
+    if model.isPhoto {
+      EditorPhotoTimeline(model: model, playback: playback, images: model.photoImages)
+    } else {
+      clipTimeline
+    }
+  }
+
+  private var clipTimeline: some View {
     VStack(spacing: DS.space.xs) {
       EditorTransport(model: model, playback: playback)
       GeometryReader { g in
@@ -52,6 +61,7 @@ struct EditorTimeline: View {
   }
 
   private func reloadStrip() {
+    guard !model.isPhoto else { return }
     strip.load(url: model.fileMissing ? nil : model.fileURL, from: 0, to: model.duration, count: 18, sync: model.snapshotMode)
   }
 

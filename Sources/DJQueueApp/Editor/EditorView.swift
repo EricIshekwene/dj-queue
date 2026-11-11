@@ -60,7 +60,8 @@ struct EditorView: View {
             .overlay { if model.readOnly { Color.clear.contentShape(Rectangle()).dsTooltip(nil, disabledReason: Self.readOnlyReason) } }
           EditorTimeline(model: model, playback: model.playback)
             .background(EditorClickAway(isCovered: { model.isCovered?() == true }))
-            .disabled(model.fileMissing || model.video == nil || model.readOnly)
+            // A photo post's strip stays usable while a photo file is missing: taking that photo out is the fix.
+            .disabled((model.fileMissing && !model.isPhoto) || model.video == nil || model.readOnly)
             .dsTooltip(nil, disabledReason: timelineOff)
             .background(DS.color.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.radius.lg, style: .continuous))
             .dsBorder(radius: DS.radius.lg)
@@ -75,7 +76,11 @@ struct EditorView: View {
     .background(DS.color.background)
     .overlay(alignment: .bottom) {
       if let t = model.toast {
-        DSToast(toast: DSToastModel(message: t)).padding(.bottom, 180).transition(.dsPop)
+        // A photo post's timeline card is taller than a clip's and grows with its text lanes, and the bar above it
+        // holds the zoom and Reset crop: the toast floats over the bottom of the picture, clear of both.
+        DSToast(toast: DSToastModel(message: t))
+          .padding(.bottom, model.isPhoto ? EditorPhotoTimeline.cardHeight(lanes: model.photoTextBars.laneCount) + DS.space.sm + 34 + DS.space.xs + DS.space.sm + 6 : 180)
+          .transition(.dsPop)
       }
     }
     .dsAnimation(DS.motion.popover, value: model.toast)
@@ -86,7 +91,7 @@ struct EditorView: View {
     // Don't start with the cursor in the Title field (Space should play, not type).
     .onAppear {
       DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
-      if let p = trimPlatform, model.posting(p), model.edit.platformTrims[p] == nil, !model.readOnly {
+      if let p = trimPlatform, !model.isPhoto, model.posting(p), model.edit.platformTrims[p] == nil, !model.readOnly {
         model.addPlatformTrim(p)
         model.scrollTarget = .platforms
       }
@@ -100,7 +105,7 @@ struct EditorView: View {
   private var timelineOff: String? {
     if model.readOnly { return Self.readOnlyReason }
     if model.video == nil { return model.loading ? nil : "This clip wasn't found" }
-    return model.fileMissing ? "The clip file is missing; relink it in Health" : nil
+    return model.fileMissing && !model.isPhoto ? "The clip file is missing; relink it in Health" : nil
   }
 
   private func done() {
@@ -118,9 +123,21 @@ struct EditorView: View {
     guard let action = EditorKeys.action(
       keyCode: e.keyCode, characters: e.charactersIgnoringModifiers, shift: mods.contains(.shift),
       commandLike: !mods.intersection([.command, .option, .control]).isEmpty, focus: EditorFocus.of(e.window),
-      covered: model.isCovered?() == true, hasClip: !model.fileMissing && model.video != nil)
+      covered: model.isCovered?() == true, hasClip: (!model.fileMissing || model.isPhoto) && model.video != nil)
     else { return false }
     let pb = model.playback
+    if model.isPhoto {
+      // Round 21: ← / → step photos, ↑ / ↓ still change posts, and there is nothing to play or trim.
+      switch action {
+      case .seek(let d, _): model.stepPhoto(d)
+      case .clip(let d): Self.open(d, model: model, in: videoIds)
+      case .leaveTextField:
+        if e.window?.performKeyEquivalent(with: e) == true { return true }
+        EditorFocus.leaveText(in: e.window)
+      case .togglePlay, .trimIn, .trimOut: break
+      }
+      return true
+    }
     switch action {
     case .togglePlay: pb.toggle()
     case .seek(let d, let fine): pb.jump(d, step: model.arrowStep, fine: fine, fps: model.fps, duration: model.duration)
@@ -190,21 +207,27 @@ struct EditorHeader: View {
             Text(model.video?.displayName ?? "Clip").font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(1)
               .frame(maxWidth: 320, alignment: .leading).fixedSize(horizontal: true, vertical: false)
             if model.title == nil && model.video != nil {
-              DSBadge("Raw tag", style: .outline, size: .sm, help: "No Title yet; screens show the marker tag")
+              if model.isPhoto {
+                DSBadge("No title", style: .outline, size: .sm, help: "No Title yet; screens show the photo's file name")
+              } else {
+                DSBadge("Raw tag", style: .outline, size: .sm, help: "No Title yet; screens show the marker tag")
+              }
             }
           }
-          Text(Captions.setName(model.sessionName)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+          // Round 21 (D18): a photo post says what it is where a clip names its set.
+          Text(model.video?.photoLabel ?? Captions.setName(model.sessionName)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
         }
         .contentShape(Rectangle())
       }
       .buttonStyle(EditorPressStyle())
       .dsTooltip("Jump to the Title field to rename", side: .bottom)
       HStack(spacing: 2) {
-        DSIconButton("chevron.left", tooltip: "Save and open the previous clip", size: .sm, shortcut: "↑ or ⌘[",
-                     disabledReason: (index ?? 0) <= 0 ? "This is the first clip in the list" : nil) { go(-1) }
+        // Round 21: from a photo post the neighbour may be a clip or a photo post, so it isn't named.
+        DSIconButton("chevron.left", tooltip: model.isPhoto ? "Save and open the one before" : "Save and open the previous clip", size: .sm, shortcut: "↑ or ⌘[",
+                     disabledReason: (index ?? 0) <= 0 ? (model.isPhoto ? "This is the first in the list" : "This is the first clip in the list") : nil) { go(-1) }
           .keyboardShortcut("[", modifiers: .command)
-        DSIconButton("chevron.right", tooltip: "Save and open the next clip", size: .sm, shortcut: "↓ or ⌘]",
-                     disabledReason: (index ?? videoIds.count) >= videoIds.count - 1 ? "This is the last clip in the list" : nil) { go(1) }
+        DSIconButton("chevron.right", tooltip: model.isPhoto ? "Save and open the next one" : "Save and open the next clip", size: .sm, shortcut: "↓ or ⌘]",
+                     disabledReason: (index ?? videoIds.count) >= videoIds.count - 1 ? (model.isPhoto ? "This is the last in the list" : "This is the last clip in the list") : nil) { go(1) }
           .keyboardShortcut("]", modifiers: .command)
           .background(ScriptAnchor("Next clip"))
         if let i = index, videoIds.count > 1 {
@@ -217,7 +240,7 @@ struct EditorHeader: View {
       Spacer()
       saveIndicator
       undoButtons
-      versionPicker
+      if !model.isPhoto { versionPicker }  // round 21 (D16): one version per photo post
       DSButton("Done", variant: .primary, size: .md, tooltip: "Save and close", shortcut: "⌘↩") { done() }
         .keyboardShortcut(.return, modifiers: .command)
     }
@@ -238,7 +261,7 @@ struct EditorHeader: View {
 
   /// The editor's own change history (EditorModel.undo/redo, also ⌘Z / ⇧⌘Z).
   private var undoButtons: some View {
-    let off = model.readOnly ? "Editing is off for this clip" : nil
+    let off = model.readOnly ? "Editing is off for this \(model.noun)" : nil
     return HStack(spacing: 0) {
       DSIconButton("arrow.uturn.backward", tooltip: "Undo the last change", size: .sm, shortcut: "⌘Z",
                    disabledReason: off ?? (model.canUndo ? nil : "Nothing to undo yet")) { model.undo() }
@@ -310,7 +333,8 @@ struct EditorHeader: View {
       EmptyView()
     } else if model.video?.missing == true || model.fileMissing {
       DSBadge("File missing", style: .soft(.danger), icon: "exclamationmark.triangle.fill")
-        .dsTooltip("The clip file is gone; relink it in Health")
+        .dsTooltip(model.isPhoto ? "A photo file is gone. Put it back, or remove that photo from the strip."
+                                 : "The clip file is gone; relink it in Health")
     } else if issues.isEmpty {
       // No "Ready" label: only Send to Queue, in the stage control beside it, moves the clip on (round 13).
       DSBadge("Nothing to fix", style: .soft(.success), icon: "checkmark")
