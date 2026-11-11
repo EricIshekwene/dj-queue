@@ -219,8 +219,10 @@ import UniformTypeIdentifiers
     try FileManager.default.createDirectory(at: posted, withIntermediateDirectories: true)
     try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: posted.path)
     defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: posted.path) }
+    // A tick error, as a clip's failed move always was, and the render is left exactly as it is.
     let stuck = engine.tick(reason: "t")
-    #expect(stuck.errors.isEmpty && stuck.steps["move"]?.contains("3 files still to move") == true, "\(stuck.steps["move"] ?? "")")
+    #expect(stuck.errors.count == 1 && stuck.errors[0].hasPrefix("move: "), "\(stuck.errors)")
+    #expect(stuck.steps["move"]?.hasPrefix("error: ") == true && stuck.steps["move"]?.contains("3 files still to move to Posted") == true, "\(stuck.steps["move"] ?? "")")
     #expect(try f.store.render(id: r.id)?.allPaths == r.allPaths && r.allPaths.allSatisfy { FileManager.default.fileExists(atPath: $0) })
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: posted.path)
     #expect(engine.tick(reason: "t").steps["move"]?.hasPrefix("moved 1") == true)
@@ -429,6 +431,160 @@ import UniformTypeIdentifiers
     // Running it again finds nothing to do and still passes.
     #expect(try run([dbURL.path, old, new]) == 0)
     #expect(try run([dbURL.path]) != 0, "it needs both roots")
+    // Second review (R2-m4): columns that aren't declared TEXT, and a file URL, are rewritten and checked too.
+    let typed = f.dir.appendingPathComponent("typed.sqlite")
+    do {
+      let db = try SQLite(path: typed.path)
+      try db.exec("CREATE TABLE t(untyped, chars VARCHAR, bytes BLOB, n INTEGER, url TEXT);")
+      try db.run("INSERT INTO t VALUES(?, ?, CAST(? AS BLOB), 7, ?)",
+                 ["\(old)/a.jpg", "\(old)/b.jpg", "\(old)/c.jpg", "file://" + "\(old)/d.jpg".replacingOccurrences(of: " ", with: "%20")])
+    }
+    #expect(try run([typed.path, old, new]) == 0)
+    let row = try #require(try SQLite(path: typed.path).one("SELECT untyped, chars, CAST(bytes AS TEXT) AS bytes, n, url FROM t"))
+    #expect(row.string("untyped") == "\(new)/a.jpg" && row.string("chars") == "\(new)/b.jpg" && row.string("bytes") == "\(new)/c.jpg")
+    #expect(row.int("n") == 7 && row.string("url") == "file://" + "\(new)/d.jpg".replacingOccurrences(of: " ", with: "%20"))
+    // It fails closed: a file that isn't a database, an empty one, or none at all is an error, never "nothing to do".
+    let junk = f.dir.appendingPathComponent("junk.sqlite"), empty = f.dir.appendingPathComponent("empty.sqlite")
+    try Data("this is not a database".utf8).write(to: junk)
+    try Data().write(to: empty)
+    #expect(try run([junk.path, old, new]) != 0)
+    #expect(try run([empty.path, old, new]) != 0)
+    #expect(try run([f.dir.appendingPathComponent("none.sqlite").path, old, new]) != 0)
+    #expect(!FileManager.default.fileExists(atPath: f.dir.appendingPathComponent("none.sqlite").path))
+  }
+
+  // MARK: Second review (reviews/core-photos-2.md)
+
+  /// R2-M1: a clip whose Ready to Post folder is a link to another place (renders kept on another drive) is still moved
+  /// to Posted and cleaned up, as before this round.
+  @Test func aClipRenderUnderALinkedReadyToPostFolderIsStillMovedAndDeleted() throws {
+    let f = try Fixture.engine(1)
+    let fm = FileManager.default
+    let rtp = f.sessionDir.appendingPathComponent("Ready to Post"), drive = f.dir.appendingPathComponent("other drive/Ready to Post")
+    try fm.createDirectory(at: drive.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try fm.moveItem(at: rtp, to: drive)
+    try fm.createSymbolicLink(at: rtp, withDestinationURL: drive)
+    let renderer = FakeRenderer(store: f.store)
+    let engine = Engine(store: f.store, renderer: renderer, publisher: nil, notifier: LogNotifier())
+    #expect(engine.tick(reason: "t").errors.isEmpty)
+    let r = try #require(try f.store.renders().first)
+    let out = try #require(r.outputPath)
+    #expect(out.contains("/Ready to Post/Shortform/") && !out.contains("other drive") && fm.fileExists(atPath: out))
+    #expect(fm.fileExists(atPath: drive.appendingPathComponent("Shortform").appendingPathComponent(URL(fileURLWithPath: out).lastPathComponent).path),
+            "the file is really on the other drive")
+    #expect(f.paths.owns(URL(fileURLWithPath: out)) && Renderer(store: f.store).isAppOutput(URL(fileURLWithPath: out)))
+    try f.postAll(on: f.dm.key(f.clock.now))
+    let tick = engine.tick(reason: "t")
+    #expect(tick.steps["move"]?.hasPrefix("moved 1") == true && tick.errors.isEmpty, "\(tick.steps["move"] ?? "")")
+    let moved = try #require(try f.store.render(id: r.id))
+    #expect(moved.outputPath?.contains("/Posted/Shortform/") == true && moved.coverPath?.contains("/Posted/Shortform/") == true)
+    #expect(fm.fileExists(atPath: try #require(moved.outputPath)) && !fm.fileExists(atPath: out))
+    // The real renderer still deletes an unneeded render there.
+    let stray = rtp.appendingPathComponent("Shortform/stray – v1.mp4")
+    try Data("render".utf8).write(to: stray)
+    try f.store.save(Render(id: "stray", videoId: "clip-0", versionNo: 1, editHash: "h", scope: "all", outputPath: stray.path, coverPath: nil,
+                            loudness: nil, duration: 20, size: 6, status: .done, error: nil, createdAt: f.clock.now, deletedAt: nil))
+    try Renderer(store: f.store).deleteRenders(except: [r.id])
+    #expect(!fm.fileExists(atPath: stray.path))
+  }
+
+  /// R2-m1: a clip's file that can't move to Posted is a tick error again (and is moved on a later tick).
+  @Test func aClipThatCantMoveToPostedIsATickError() throws {
+    let f = try Fixture.engine(1)
+    let engine = Engine(store: f.store, renderer: FakeRenderer(store: f.store), publisher: nil, notifier: LogNotifier())
+    _ = engine.tick(reason: "t")
+    try f.postAll(on: f.dm.key(f.clock.now))
+    let posted = f.sessionDir.appendingPathComponent("Posted/Shortform")
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: posted.path)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: posted.path) }
+    let stuck = engine.tick(reason: "t")
+    #expect(stuck.errors.count == 1 && stuck.errors[0].hasPrefix("move: ") && stuck.errors[0].contains("2 files still to move"), "\(stuck.errors)")
+    #expect(stuck.steps["heartbeat"] != nil, "the rest of the tick ran")
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: posted.path)
+    let ok = engine.tick(reason: "t")
+    #expect(ok.errors.isEmpty && ok.steps["move"]?.hasPrefix("moved 1") == true)
+  }
+
+  /// Runs a closure the first time a photo is uploaded, as another process acting in the middle of an upload would.
+  final class HookTransport: PostizTransport, @unchecked Sendable {
+    let inner: FakePostiz
+    var onFirstUpload: (() -> Void)?
+    init(_ inner: FakePostiz) { self.inner = inner }
+    func send(_ r: PostizHTTPRequest) throws -> PostizHTTPResponse {
+      if r.method == "POST", r.url.path.hasSuffix("/upload"), let hook = onFirstUpload {
+        onFirstUpload = nil
+        hook()
+      }
+      return try inner.send(r)
+    }
+  }
+
+  /// A 6-photo post on TikTok through Postiz, rendered, with an engine whose Postiz calls pass through a hook.
+  func tiktokRig() throws -> (f: Fixture, fake: FakePostiz, hook: HookTransport, engine: Engine, other: PostizService, video: Video, render: Render) {
+    let f = try fixture()
+    let fake = FakePostiz(), keys = MemoryPostizKeyStore(key: "test-key-123")
+    let hook = HookTransport(fake)
+    let renderer = Renderer(store: f.store)
+    let engine = Engine(store: f.store, renderer: renderer, publisher: nil, notifier: LogNotifier(),
+                        postiz: PostizService(store: f.store, transport: hook, keyStore: keys))
+    try f.updateSettings { s in
+      s.publishing.publishers[.tiktok] = .postiz
+      s.publishing.channels[.tiktok] = "ch-tiktok"
+      s.publishing.hourlyBudget = 1000
+    }
+    let v = try f.photoPost("two", count: 6, width: 80, height: 60)
+    try f.send(v.id)
+    try Planner(store: f.store).autoSchedule()
+    let r = try renderer.ensureRender(videoId: v.id, versionNo: 1, platform: nil)
+    return (f, fake, hook, engine, PostizService(store: f.store, transport: fake, keyStore: keys), v, r)
+  }
+
+  /// R2-m2: the app's engine and a `djq tick` publishing at once upload each photo once.
+  @Test func twoProcessesPublishingAtOnceUploadEachPhotoOnce() throws {
+    let rig = try tiktokRig()
+    var second = ""
+    rig.hook.onFirstUpload = { second = (try? rig.other.publish()) ?? "threw" }
+    #expect(rig.engine.tick(reason: "t").errors.isEmpty)
+    #expect(second.contains("waiting 1"), "the second process waits for the first: \(second)")
+    #expect(rig.fake.uploadCount == 6 && rig.fake.createCount == 1 && rig.fake.violations.isEmpty)
+    #expect(try rig.other.publish().hasPrefix("up to date"), "and has nothing left to do afterwards")
+    #expect(rig.fake.uploadCount == 6 && rig.fake.createCount == 1)
+  }
+
+  /// Nit: a render replaced while its photos were going up is never posted from; the new render goes instead.
+  @Test func aRenderReplacedDuringTheUploadsIsNotPostedFrom() throws {
+    let rig = try tiktokRig()
+    rig.hook.onFirstUpload = { try? rig.f.store.markRenderDeleted(id: rig.render.id) }
+    _ = rig.engine.tick(reason: "t")
+    #expect(rig.fake.createCount == 0 && rig.fake.uploadCount == 6)
+    let post = try #require(try rig.f.store.posts(where: "video_id=? AND platform='tiktok'", [rig.video.id]).first)
+    #expect(try rig.f.store.postizJobs(where: "post_id=?", [post.id]).map(\.closeReason) == [.interrupted])
+    _ = rig.engine.tick(reason: "t")
+    #expect(rig.fake.createCount == 1 && rig.fake.uploadCount == 12 && rig.fake.violations.isEmpty)
+    let now = try #require(try rig.f.store.livePostizJob(postId: post.id))
+    #expect(now.renderId != rig.render.id)
+  }
+
+  /// R2-m3: a photo upload that keeps failing is on record (a closed job with the error and one line in the post's
+  /// history), costs one call a tick, and the post goes out once the upload works.
+  @Test func aFailingPhotoUploadLeavesATraceAndIsTriedOncePerTick() throws {
+    let rig = try R21PhotoPostizTests.Rig(photos: 3)
+    _ = try rig.scheduleAndRender()
+    rig.fake.failNext["POST upload"] = [500, 500]
+    let first = rig.engine.tick(reason: "t")
+    #expect(first.steps["publish"]?.contains("failed 1") == true && first.steps["publish"]?.contains("waiting 4") == true, "\(first.steps["publish"] ?? "")")
+    #expect(rig.fake.calls("POST upload").count == 1 && rig.fake.createCount == 0, "the other platforms don't repeat the same failure")
+    let fb = try #require(try rig.post(.facebook))
+    func traces() throws -> [EventRecord] { try rig.store.events(limit: 500, videoId: rig.video.id).filter { $0.message.contains("couldn't upload photo 1") } }
+    #expect(try traces().count == 1 && traces().first?.postId == fb.id)
+    let jobs = try rig.store.postizJobs(where: "post_id=?", [fb.id])
+    #expect(jobs.count == 1 && jobs[0].closeReason == .interrupted && jobs[0].lastError?.isEmpty == false && !jobs[0].isOpen)
+    _ = rig.engine.tick(reason: "t")
+    #expect(rig.fake.calls("POST upload").count == 2 && rig.fake.createCount == 0)
+    #expect(try traces().count == 1, "said once, not every tick")
+    // Postiz answers again: the photos go up and every platform's post is created.
+    _ = rig.engine.tick(reason: "t")
+    #expect(rig.fake.uploadCount == 5 && rig.fake.createCount == 5 && rig.fake.violations.isEmpty)
   }
 
   // MARK: The other builder's call: `send` takes an unscored photo post

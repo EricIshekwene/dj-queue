@@ -311,6 +311,7 @@ public final class PostizService: @unchecked Sendable {
   /// The engine's `publish` step: reconcile every open job (deletes first), then submit every Postiz-routed post that
   /// is due for submission (render attached, slot within the render horizon, its clip + platform not blocked).
   public func publish() throws -> String {
+    uploadFailed = []
     let settings = try store.settings()
     let open = try store.openPostizJobs()
     try sweepSettling()  // also while Postiz is off, so no pending-change row outlives its job
@@ -466,6 +467,21 @@ public final class PostizService: @unchecked Sendable {
     try store.logEvent("postiz", "Removed from Postiz (\(why))", videoId: j.videoId, postId: j.postId)
   }
 
+  /// Renders whose photo upload failed in this publish pass: their other platform posts wait for the next one rather
+  /// than spend a call each on the same failure.
+  var uploadFailed: Set<String> = []
+
+  /// The lock a process holds while it uploads a render's photos ahead of the claim (`flock`, released by the kernel if
+  /// the process dies), so the app's engine and a `djq tick` never upload the same photos at once.
+  func uploadLock(_ renderId: String) throws -> Int32? {
+    try FileManager.default.createDirectory(at: store.paths.work, withIntermediateDirectories: true)
+    let fd = open(store.paths.work.appendingPathComponent("postiz-upload-\(renderId).lock").path, O_CREAT | O_RDWR, 0o644)
+    guard fd >= 0 else { throw EngineError("Can't open the upload lock for render \(renderId) (errno \(errno))") }
+    if flock(fd, LOCK_EX | LOCK_NB) == 0 { return fd }
+    close(fd)
+    return nil
+  }
+
   /// `waiting`: a photo post whose photos don't all fit this hour's budget yet. What fitted is uploaded and cached;
   /// the next tick carries on, and the posts behind it are still tried.
   enum SubmitOutcome { case created, rejected, skipped, waiting }
@@ -518,8 +534,14 @@ public final class PostizService: @unchecked Sendable {
     if spec.isPhotoPost {
       // A carousel can need more uploads than an hour allows (TikTok takes 35, the default budget is 25), so its photos
       // go up ahead of the claim, as many as fit: an upload is cached per render and never repeated, and without a
-      // claim nothing can be half sent. The create waits until every photo is up.
+      // claim nothing can be half sent. The create waits until every photo is up. One process at a time uploads a
+      // render's photos (another waits for its next tick), and each photo is looked up again right before it goes.
+      if uploadFailed.contains(spec.renderId) { return .waiting }
+      guard let lock = try uploadLock(spec.renderId) else { return .waiting }
+      defer { flock(lock, LOCK_UN); close(lock) }
       for (i, k) in kinds.enumerated() where cachedMedia[i] == nil {
+        cachedMedia[i] = try store.postizMedia(renderId: spec.renderId, kind: k.kind)
+        if cachedMedia[i] != nil { continue }
         guard try room() >= 1 else { return .waiting }
         do {
           _ = try upload(k.path, k.kind, spec.renderId, c, settings)
@@ -531,7 +553,16 @@ public final class PostizService: @unchecked Sendable {
             guard try store.claimPostizJob(job) else { return .skipped }
             if case .validation(let m) = e { try reject(job, p, m, settings) } else { try reject(job, p, "a photo is too large for Postiz", settings) }
             return .rejected
-          default: throw e
+          default:
+            // Reported the way a video's failed upload is: a closed job row that carries the error, and the publish
+            // step counts it failed. Plus one line in the post's history per kind of failure, so the reason is on record.
+            uploadFailed.insert(spec.renderId)
+            if try store.claimPostizJob(job) { try store.closePostizJob(id: job.id, reason: .interrupted, note: "\(e)") }
+            if try store.markNotified("postiz.uploadRetry:\(p.id):\(spec.renderId):\(Self.failureKind(e))") {
+              try store.logEvent("postiz", "\(p.platform.displayName): couldn't upload photo \(i + 1) to Postiz (\(e)) — trying again on the next tick",
+                                 videoId: p.videoId, postId: p.id)
+            }
+            throw e
           }
         }
       }
@@ -563,6 +594,12 @@ public final class PostizService: @unchecked Sendable {
     } catch {
       try store.closePostizJob(id: job.id, reason: .interrupted, note: "\(error)")
       throw error
+    }
+    // A photo render's files are replaced in place: if another process re-rendered while these went up, the media may
+    // be a mix of the two. Nothing is created from a render that is no longer the live one.
+    if spec.isPhotoPost, try store.render(id: spec.renderId).map({ $0.deletedAt != nil || $0.status != .done }) ?? true {
+      try store.closePostizJob(id: job.id, reason: .interrupted, note: "the render was replaced while its photos uploaded")
+      return .skipped
     }
     let created: [PostizCreated]
     do {

@@ -285,8 +285,10 @@ texts with look and window and, when there is text, `TextOverlay.drawingVersion`
 and `Renderer.pipelineVersion` are untouched. A render that replaces another deletes the files it didn't overwrite; a failure while moving
 files into place retires the rows whose files were overwritten, so no finished row points at a mix. **Nothing outside the store's root is
 moved or deleted** (`Paths.owns`, used by `Renderer.isAppOutput`, `Engine.moveToPosted` and the cleanup): a path a copied database names
-elsewhere stays put. Engine: `renderAhead` works unchanged; `moveAndCleanup` moves every file of a render, then writes all its paths together
-(`Store.setRenderFiles`), and a file that couldn't move is tried again on the next tick; cleanup and `deleteRenders` handle every path, the proxies step
+elsewhere stays put. A path counts as inside the root as it is written or after resolving symlinks, so a `Ready to Post` folder that is a
+link to another drive is managed as before. Engine: `renderAhead` works unchanged; `moveAndCleanup` moves every file of a render, then writes all its paths together
+(`Store.setRenderFiles`); a file that couldn't move is a tick error (as it was for clips) after the rest of the step has run, and is
+tried again on the next tick; cleanup and `deleteRenders` handle every path, the proxies step
 and `ProxyService` skip photos, and nothing probes one (`Media.sourceSize` answers from the row).
 
 **Publishing (D8–D11, D19).** `PreparedPost.moreFileURLs` / `allFileURLs`; `ManualPublisher` and `PostizPublisher` fill them with the first
@@ -295,7 +297,10 @@ YouTube; `PostizPostSpec.body(date:media:cover:)` puts one `image` entry per pho
 `PostizService.submit` and `testPost` upload each photo once per render (`postiz_media` kinds `photo1`…) and put the first photo on the
 job. A photo post's uploads happen before the job is claimed, as many as the hourly budget allows; the create waits until every photo is
 cached (`SubmitOutcome.waiting`, which doesn't stop the posts behind it), so a carousel larger than an hour's budget goes out an hour or
-two later instead of never. The pure `PostizPayload.spec(post:…)` now throws (YouTube for a photo post). A video's payload and content hash are byte-identical to before.
+two later instead of never. One process at a time uploads a render's photos (`flock` on `work/postiz-upload-<render>.lock`; another
+waits for its next tick). An upload that fails is reported as a video's is (a closed `interrupted` job with the error, "failed" in the
+publish step) plus one event per kind of failure, and the render's other platform posts wait for the next tick. Nothing is created from a
+render that was replaced while its photos went up. The pure `PostizPayload.spec(post:…)` now throws (YouTube for a photo post). A video's payload and content hash are byte-identical to before.
 
 **CLI and JSON.** `djq photo add <file>… [--separate] [--title T] [--json]`, `djq photo list [--json]` (`Sources/djq/PhotoCommand.swift`).
 `AgentAPI.VideoSummary` gains `media` ("photo" | "video") and `photos[{id, file, width, height}]`.

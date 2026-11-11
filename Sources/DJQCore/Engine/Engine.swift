@@ -470,6 +470,7 @@ public final class Engine: @unchecked Sendable {
     let settings = try store.settings()
     let fm = FileManager.default
     var moved = 0, deleted = 0, unneeded = 0, stuck = 0
+    var stuckWhy: String?
     let waiting = "/Ready to Post/Shortform/"
     for r in try store.renders(where: "deleted_at IS NULL AND status='done' AND output_path IS NOT NULL") {
       // Any file still in Ready to Post (round 21: a photo post has several, and a move that failed part-way is
@@ -502,6 +503,7 @@ public final class Engine: @unchecked Sendable {
       }
       if !failures.isEmpty {
         stuck += failures.count
+        stuckWhy = stuckWhy ?? failures[0]
         Log.shared.warn("move to Posted: \(failures.joined(separator: " | "))")
       }
     }
@@ -525,8 +527,13 @@ public final class Engine: @unchecked Sendable {
       try renderer.deleteRenders(except: keep)
       unneeded = before - (try store.renders().count)
     }
-    return "moved \(moved)\(deleted > 0 ? " · deleted \(deleted)" : "")\(unneeded > 0 ? " · unneeded \(unneeded)" : "")"
-      + (stuck > 0 ? " · \(stuck) file\(stuck == 1 ? "" : "s") still to move" : "")
+    let summary = "moved \(moved)\(deleted > 0 ? " · deleted \(deleted)" : "")\(unneeded > 0 ? " · unneeded \(unneeded)" : "")"
+    // A file that couldn't move is a tick error, as it always was (`djq tick` exits 1); the other renders, the cleanup
+    // and the sweep above still ran, and the file is tried again on the next tick.
+    if stuck > 0 {
+      throw EngineError("\(summary) · \(stuck) file\(stuck == 1 ? "" : "s") still to move to Posted (\(stuckWhy ?? "unknown"))")
+    }
+    return summary
   }
 
   /// Renders referenced by any live or posted post, current renders for scheduled posts within the horizon, renders

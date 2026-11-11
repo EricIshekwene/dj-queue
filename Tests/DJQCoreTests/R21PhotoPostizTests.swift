@@ -157,9 +157,10 @@ import Testing
 
   @Test func uploadsAreCachedPerPhotoAndAnEditUploadsTheNewRender() throws {
     let rig = try Rig(photos: 3)
-    _ = try rig.scheduleAndRender()
+    let r1 = try rig.scheduleAndRender()
     _ = rig.engine.tick(reason: "t")
     #expect(rig.fake.uploadCount == 3 && rig.fake.createCount == 5)
+    #expect(try rig.store.postizMedia(renderId: r1.id, kind: "photo1") != nil)
     // Reordering makes a new render: its photos go up, the old posts are replaced once the edit settles.
     let ids = try #require(rig.video.photos).map(\.id)
     _ = try PhotoImport(store: rig.store).reorder(videoId: rig.video.id, ids: ids.reversed())
@@ -169,6 +170,7 @@ import Testing
     }
     #expect(rig.fake.uploadCount == 6 && rig.fake.livePosts.count == 5 && rig.fake.violations.isEmpty)
     let r2 = try #require(try rig.renderer.currentRender(videoId: rig.video.id, versionNo: 1, platform: nil))
+    #expect(try rig.store.postizMedia(renderId: r1.id, kind: "photo1") == nil, "the retired render's uploads are forgotten")
     let first = try #require(try rig.store.postizMedia(renderId: r2.id, kind: "photo1")).mediaId
     #expect(try rig.images(.instagram).first?["id"] as? String == first)
   }

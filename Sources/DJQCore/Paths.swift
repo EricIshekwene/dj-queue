@@ -53,12 +53,15 @@ public struct Paths: Sendable {
   public var engineLog: URL { logs.appendingPathComponent("engine.log") }
   public var agentPlist: URL { launchAgents.appendingPathComponent("com.djlovd.queue.engine.plist") }
 
-  /// `url` is inside the DJ Video root (symlinks resolved, so a link out of the root doesn't count). Nothing is moved or
-  /// deleted outside it: a dev process with a copied database can't reach a real file, whatever the database says.
+  /// `url` is inside the DJ Video root: as its path is written, or once symlinks are resolved (a root that is itself a
+  /// link). Nothing is moved or deleted outside it: a database copied from another root names paths under that root
+  /// either way, so a dev process can't reach a real file whatever the copy says. A folder inside the root that is a
+  /// link to somewhere else (Ready to Post kept on another drive) still counts, as it always has.
   public func owns(_ url: URL) -> Bool {
-    let base = root.resolvingSymlinksInPath().standardizedFileURL.path
-    let dir = url.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
-    return dir == base || dir.hasPrefix(base.hasSuffix("/") ? base : base + "/")
+    func inside(_ dir: String, _ base: String) -> Bool { dir == base || dir.hasPrefix(base.hasSuffix("/") ? base : base + "/") }
+    let dir = url.deletingLastPathComponent()
+    return inside(dir.standardizedFileURL.path, root.standardizedFileURL.path)
+      || inside(dir.resolvingSymlinksInPath().standardizedFileURL.path, root.resolvingSymlinksInPath().standardizedFileURL.path)
   }
 
   public func ensure() throws {

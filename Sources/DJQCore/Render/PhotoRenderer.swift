@@ -205,6 +205,7 @@ extension Renderer {
           try? FileManager.default.removeItem(atPath: path)
         }
         try store.markRenderDeleted(id: old.id)
+        try store.deletePostizMedia(renderId: old.id)  // its uploads are of files that are gone
       }
       let secs = String(format: "%.1f", Date().timeIntervalSince(started))
       try? store.logEvent("render", "Rendered \(files.count) photo\(files.count == 1 ? "" : "s") of \(p.video.name) in \(secs) s",

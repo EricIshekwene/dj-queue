@@ -153,3 +153,15 @@ fails at publish time, on a day Eric isn't looking, with the other four platform
 - **Clips keep their old order on a tie in Edit**; only photos tie-break by import time.
 - **`scripts/seed-paths.sh`** holds the path rewrite `live-checks.sh` used to do inline, so a test can run it on a made-up database.
 - **Two tests that list every issue kind gained `photoShape`** (`R7CaptionTests.everyIssueKindMapsDeliberately`, the count in `R4StageTests`).
+
+### After the second review (reviews/core-photos-2.md)
+
+- **A path is inside the root as written or after resolving symlinks.** *Why:* resolving only stopped a clip's render from being moved or
+  cleaned when its Ready to Post folder is a link to another drive, which worked before. Given up: a dev root holding a folder link into
+  the real root would be managed (`make-devroot.sh` makes only real folders and file links).
+- **A file that can't move to Posted is a tick error again**, raised after the other renders, the cleanup and the sweep have run.
+- **Photo uploads take a per-render lock**, and a failing upload leaves a closed job with the error and one event, like a clip's.
+- **`seed-paths.sh` fails closed**: an unreadable or empty database is an error, and every column is rewritten and checked, in plain,
+  JSON-escaped and `%20` forms.
+- **Not changed:** photo renders made under the first file naming of this branch (dev and test data only; the day-old sweep removes them),
+  and the "budget used up" wording after a 429 (the same sentence clips get; changing it changes clips).
