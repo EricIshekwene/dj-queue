@@ -154,6 +154,7 @@ public final class PostActions: @unchecked Sendable {
       guard p.state == .failed else { throw EngineError("Only a failed post can be marked fixed (this one is \(p.state.displayName))") }
       guard p.resolution == nil else { throw EngineError("Already handled (\(p.resolution!))") }
       let n = try newAttempt(from: p, kind: .retry, versionNo: p.versionNo, note: "\(who): \(p.errorType?.rawValue ?? "failed")", at: at)
+      if who != "auto-retry" { try store.clearFailingRun(p) }  // Eric's own Fixed: a new run of errors starts
       p.resolution = "retried"
       try store.save(p, note: "\(who) → attempt \(n.attemptNo)")
       try store.refreshState(videoId: p.videoId)
@@ -175,6 +176,7 @@ public final class PostActions: @unchecked Sendable {
     try store.save(p, note: "reset")
     try store.releasePostizJobs(postId: p.id)  // a reset post may go through Postiz again (never a published one)
     try store.clearRetryPromise(p)
+    try store.clearFailingRun(p)
     try store.clearNotified(Self.problemKey(p.id))  // a later failure of this post gets its own alert
     try store.refreshState(videoId: p.videoId)
   }

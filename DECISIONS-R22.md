@@ -153,6 +153,11 @@ counts sign-in and keeps-failing items only when they fit the search and the Pla
 07:30 UTC move to 00:30 Pacific (after the reset) rather than to the Settings slot: they're already after the reset, so
 it's left as is.
 
+**D36 (re-review N1, N2). A sign-in error never makes a Keeps failing card** (the platform's one sign-in item covers a
+long outage). **The same error is compared with ids, numbers, links and DJ Queue's note taken out** (`errorShape`), and
+**Eric's reset or Fixed starts the run over.** *Why:* one item per thing Eric can act on, and the week counts one real
+error, not one id.
+
 ## Mobbin references and what they shaped
 
 - Buffer, failed queue (red bar + "Retry now" on every card): the anti-pattern. No per-post retry button or red bar.
@@ -163,7 +168,7 @@ it's left as is.
 
 ## Checks
 
-- `swift build`: 0 warnings. `swift test`: 1081 tests green (icon-tooltip lint included).
+- `swift build`: 0 warnings. `swift test`: 1084 tests green (icon-tooltip lint included).
 - `djq posts --problems`, `djq status`, `djq doctor --json` on a scratch copy of the newest backup (no schema change;
   counts identical). Doctor's only error there is `postiz.stuck`, from the copy's jobs never syncing (unchanged check).
 - `scripts/live-checks.sh … screens`: the r9 and r22 shots (retrying chip, inspector Details, sign-in card, menu bar) in

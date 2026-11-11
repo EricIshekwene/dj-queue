@@ -129,6 +129,15 @@ extension Store {
     return PostizService.retriesByItself(job.lastError ?? "", on: p.platform)
   }
 
+  /// Eric reset the post or marked it Fixed: the run of the same error starts over (`keepsFailing`).
+  func clearFailingRun(_ p: PlatformPost) throws {
+    var r = try autoRetries(p)
+    guard r.failingSince != nil || r.failingWith != nil else { return }
+    r.failingSince = nil
+    r.failingWith = nil
+    try setKV(PostizService.autoRetryKey(p), r)
+  }
+
   /// `p`'s failure no longer has a retry coming.
   func clearRetryPromise(_ p: PlatformPost) throws {
     var r = try autoRetries(p)
@@ -259,6 +268,17 @@ extension PostizService {
   /// On YouTube these may come after the video exists (the thumbnail step, "we uploaded your video but …").
   static let youTubeMayExist = #"\b(thumbnails?|uploaded (your |the )?video|video (was |has been )?uploaded)\b"#
 
+  /// The same error whatever ids, numbers or links it carries, and without the note DJ Queue added: "Request 81f3 failed
+  /// at https://…" and "Request 9a2c failed at https://…" are one error (`keepsFailing`).
+  static func errorShape(_ message: String) -> String {
+    let base = message.components(separatedBy: " — ").first ?? message
+    return normalized(base)
+      .replacingOccurrences(of: #"https?://\S+"#, with: "<url>", options: .regularExpression)
+      .replacingOccurrences(of: #"\b[0-9a-f]*[0-9][0-9a-f]*\b"#, with: "#", options: .regularExpression)
+      .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+      .trimmingCharacters(in: .whitespaces)
+  }
+
   /// Platforms write codes too ("duration_check_failed", "file-too-large", "FileSizeExceeded"), so those read as words.
   static func normalized(_ message: String) -> String {
     message.replacingOccurrences(of: "([a-z0-9])([A-Z])", with: "$1 $2", options: .regularExpression)
@@ -360,7 +380,7 @@ extension PostizService {
     r.unsentTicks = nil
     r.nextRetryAt = PostizRetrySchedule.next(after: failedAt, retry: r.count + 1, platform: p.platform, settings: try store.settings(),
                                              quota: Self.isYouTubeQuota(message))
-    if r.failingWith.map(Self.normalized) != Self.normalized(message) || r.failingSince == nil {
+    if r.failingWith.map(Self.errorShape) != Self.errorShape(message) || r.failingSince == nil {
       r.failingWith = message
       r.failingSince = failedAt
     }
@@ -545,7 +565,9 @@ extension PostizService {
       let p = retry.post
       guard seen.insert(Self.autoRetryKey(p)).inserted else { continue }
       let r = try autoRetries(p)
+      // A sign-in error is the platform's one sign-in item, however long it lasts (never a card per post).
       guard let why = r.failingWith, let since = r.failingSince, !Self.isYouTubeQuota(why),
+            Self.classify(why, on: p.platform) != .signIn,
             now.timeIntervalSince(since) >= Self.keepsFailingAfter else { continue }
       out.append(PostizKeepsFailing(platform: p.platform, postId: p.id, videoId: p.videoId, since: since,
                                     reason: why.components(separatedBy: " — ").first ?? why))

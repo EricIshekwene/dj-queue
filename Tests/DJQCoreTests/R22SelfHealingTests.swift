@@ -510,6 +510,51 @@ import Testing
     #expect(try rig.service.keepsFailing().isEmpty)
   }
 
+  /// Re-review N1: a long sign-in outage stays one item per platform, never a Keeps failing card per post.
+  @Test func aLongSignInOutageIsNoKeepsFailingCard() throws {
+    let rig = try settled(1, [.tiktok])
+    let tt = try post(rig, .tiktok)
+    flagTikTok(rig, true)
+    try fail(rig, tt, Self.signIn)
+    var r = try rig.service.autoRetries(tt)
+    r.failingSince = rig.f.clock.now.addingTimeInterval(-10 * 86400)
+    try rig.store.setKV(PostizService.autoRetryKey(tt), r)
+    rig.tick(2)
+    #expect(try rig.service.keepsFailing().isEmpty && notes(rig, "postiz.keepsFailing:").isEmpty)
+    #expect(try rig.service.signInProblems().count == 1)
+  }
+
+  /// Re-review N2: the same error with other ids, numbers or links is one run; Eric's reset or Fixed starts it over.
+  @Test func theSameErrorWithOtherIdsIsOneRunAndAResetStartsItOver() {
+    #expect(PostizService.errorShape("Request 81f3c2 failed (code 5003) at https://api.example/v1/a?id=1")
+            == PostizService.errorShape("Request 9a2c77 failed (code 5011) at https://api.example/v1/b?id=2 — retrying automatically"))
+    #expect(PostizService.errorShape("Request failed") != PostizService.errorShape("Upload timed out"))
+  }
+
+  @Test func aResetOrFixedClearsTheRun() throws {
+    let rig = try settled(1, [.x])
+    let x = try post(rig, .x)
+    try fail(rig, x, "Something went wrong at the platform")
+    let a = try #require(try r8.attempts(rig, x).last)
+    var r = try rig.service.autoRetries(x)
+    r.failingSince = rig.f.clock.now.addingTimeInterval(-8 * 86400)
+    try rig.store.setKV(PostizService.autoRetryKey(x), r)
+    #expect(try !rig.service.keepsFailing().isEmpty)
+    try PostActions(store: rig.store).reset(postId: a.id)
+    #expect(try rig.service.autoRetries(x).failingSince == nil && rig.service.keepsFailing().isEmpty)
+    // The same for Eric's own Fixed on a failure.
+    rig.tick(2)
+    let b = try #require(try r8.attempts(rig, x).last)
+    #expect(try rig.job(b) != nil)
+    var rr = try rig.service.autoRetries(x)
+    rr.failingWith = "Something went wrong at the platform"
+    rr.failingSince = rig.f.clock.now.addingTimeInterval(-8 * 86400)
+    try rig.store.setKV(PostizService.autoRetryKey(x), rr)
+    try PostActions(store: rig.store).reportProblem(postId: b.id, type: .uploadFailed, message: "by hand")
+    _ = try PostActions(store: rig.store).fixed(postId: b.id)
+    #expect(try rig.service.autoRetries(x).failingSince == nil)
+  }
+
   /// Review F6: posts whose time passed while the channel waited go out the stagger gap apart, not within minutes.
   @Test func afterAnOutageThePostsThatWaitedKeepTheStaggerGap() throws {
     let rig = try Rig(3, platforms: [.tiktok])
