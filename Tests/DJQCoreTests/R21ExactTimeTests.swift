@@ -141,17 +141,17 @@ enum ExactRig {
     #expect(try f.store.posts().count == 6)
   }
 
-  @Test func youTubeInsideTheQuietWindowGoesAt0730UTCAndThePreviewSaysSo() throws {
+  @Test func youTubeInsideTheQuietWindowGoesAt0030PacificAndThePreviewSaysSo() throws {
     let f = try Fixture.engine(2)
     let planner = Planner(store: f.store)
-    let at = f.at("2026-11-14", "22:00")  // 03:00 UTC on the 15th
+    let at = f.at("2026-11-14", "22:00")  // 7 pm Pacific
     let events = try f.store.events().count
     let preview = try planner.postAtPreview(videoId: "clip-0", at: at)
     #expect(preview.blocker == nil && !preview.unchanged && preview.summary == "Set for Sat 14 Nov 10:00 PM" && preview.at == at)
     #expect(preview.platforms.map(\.platform) == Platform.allCases.sorted())
-    #expect(preview.platforms.first { $0.platform == .youtube } == .init(platform: .youtube, at: R.utc("2026-11-15", 7, 30), moved: true))
+    #expect(preview.platforms.first { $0.platform == .youtube } == .init(platform: .youtube, at: R.utc("2026-11-15", 8, 30), moved: true))
     #expect(preview.platforms.filter { $0.platform != .youtube }.allSatisfy { $0.at == at && !$0.moved })
-    #expect(preview.notes == ["YouTube moves to Sun 15 Nov 2:30 AM (07:30 UTC)"])
+    #expect(preview.notes == ["YouTube moves to Sun 15 Nov 3:30 AM (00:30 Pacific)"])
     #expect(try f.store.planSlots().isEmpty && f.store.posts().isEmpty && f.store.events().count == events)  // read-only
     #expect(try f.store.week("2026-11-09") == nil)
     try planner.postAt(videoId: "clip-0", at: at)
@@ -335,7 +335,7 @@ enum ExactRig {
     try bulk.undo(try #require(clear.batchId))
     #expect(try f.store.planSlots() == [slot] && slot.exactAt == at)
     #expect(try R.plan(f) == withTime)
-    #expect(try f.store.posts(where: "platform='youtube'").first?.scheduledAt == R.utc("2026-11-15", 7, 30))
+    #expect(try f.store.posts(where: "platform='youtube'").first?.scheduledAt == R.utc("2026-11-15", 8, 30))
     // Changing the time, then undoing: the first time is back. Undoing the first batch: no plan at all.
     let change = try bulk.postAt(["clip-0"], at: f.at("2026-11-21", "12:00"))
     #expect(change.moves?["clip-0"]?.note == "Set for Sat 21 Nov 12:00 PM")
@@ -441,8 +441,8 @@ enum ExactRig {
     #expect(StageWording.setFor(at, settings: s) == "Set for Sat 14 Nov 3:15 PM")
     #expect(StageWording.setTimeMark(at, settings: s) == "set time 3:15 PM")
     // The same local day reads as a clock time; another day names it.
-    #expect(StageWording.youtubeMoves(to: ExactRig.utc("2026-11-15", 7, 30), setFor: ExactRig.utc("2026-11-15", 5, 30), settings: s) == "YouTube moves to 2:30 AM (07:30 UTC)")
-    #expect(StageWording.youtubeMoves(to: ExactRig.utc("2026-11-15", 7, 30), setFor: ExactRig.utc("2026-11-15", 3), settings: s) == "YouTube moves to Sun 15 Nov 2:30 AM (07:30 UTC)")
+    #expect(StageWording.youtubeMoves(to: ExactRig.utc("2026-11-15", 8, 30), setFor: ExactRig.utc("2026-11-15", 5, 30), settings: s) == "YouTube moves to 3:30 AM (00:30 Pacific)")
+    #expect(StageWording.youtubeMoves(to: ExactRig.utc("2026-11-15", 8, 30), setFor: ExactRig.utc("2026-11-15", 2), settings: s) == "YouTube moves to Sun 15 Nov 3:30 AM (00:30 Pacific)")
   }
 }
 

@@ -307,7 +307,7 @@ import Testing
     try f.store.db.transaction { try planner.regenerateMany([(s, true)], settings: f.store.settings(), dm: f.dm) }
     var posts = try f.store.posts()
     #expect(posts.count == 5 && Set(posts.map(\.id)).isDisjoint(with: old))
-    #expect(posts.allSatisfy { $0.videoId == "clip-0" && $0.planSlotId == s.id && $0.scheduledAt == ($0.platform == .youtube ? R.utc("2026-11-05", 7, 30) : at) })
+    #expect(posts.allSatisfy { $0.videoId == "clip-0" && $0.planSlotId == s.id && $0.scheduledAt == ($0.platform == .youtube ? R.utc("2026-11-05", 8, 30) : at) })
     // A platform turned on later is topped up by the approval seam at the set time, never at a slot time.
     try f.updateSettings { $0.enabledPlatforms = Set(Platform.allCases) }
     try planner.approveWeek(f.week)
@@ -419,7 +419,7 @@ import Testing
     #expect(try bulk.postAt(["clip-2"], at: at).changed == ["clip-2"])
     rig.settle()
     var d = try dates(rig, "clip-2")
-    #expect(d.count == 6 && d["ch-youtube"] == R.utc("2026-11-05", 7, 30))
+    #expect(d.count == 6 && d["ch-youtube"] == R.utc("2026-11-05", 8, 30))
     #expect(d.filter { $0.key != "ch-youtube" }.values.allSatisfy { $0 == at })
     #expect(try rig.invariants().isEmpty)
     // The regular clips went out on their own days beside it.

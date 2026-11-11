@@ -47,6 +47,10 @@ final class FakePostiz: PostizTransport, @unchecked Sendable {
   /// One-shot create outcomes, used in order: "500" (refused, nothing made), "garbage" (made, then an unreadable
   /// 2xx), "timeout" (made, then the connection drops).
   var createOutcomes: [String] = []
+  /// Round 22: one-shot 400 refusals of a create, each with its message (Postiz's validation errors).
+  var createRefusals: [String] = []
+  /// Round 22: Postiz forgets every uploaded file (its links expired): a create naming one is refused.
+  func expireMedia() { withLock { media = [:] } }
   /// Posts GET /posts leaves out (a list that lags), though they exist.
   var hiddenFromList: Set<String> = []
   /// Every post ever created (also deleted ones), for the global never-double-post checks.
@@ -112,7 +116,9 @@ final class FakePostiz: PostizTransport, @unchecked Sendable {
       case ("GET", "is-connected"): return json(200, ["connected": true])
       case ("GET", "integrations"):
         return json(200, integrations.map {
-          ["id": $0.id, "name": $0.name, "identifier": $0.identifier, "disabled": $0.disabled, "picture": ""] as [String: Any]
+          var o: [String: Any] = ["id": $0.id, "name": $0.name, "identifier": $0.identifier, "disabled": $0.disabled, "picture": ""]
+          if let r = $0.refreshNeeded { o["refreshNeeded"] = r }
+          return o
         })
       case ("GET", "integration-settings"): return json(200, ["output": ["maxLength": 2200, "settings": [:], "rules": ""]])
       case ("POST", "upload"):
@@ -126,6 +132,7 @@ final class FakePostiz: PostizTransport, @unchecked Sendable {
         return json(200, ["id": id, "name": file.lastPathComponent, "path": media[id]!.path, "status": "ready"])
       case ("GET", "media"): return json(200, ["status": "ready"])
       case ("POST", "posts"):
+        if !createRefusals.isEmpty { return json(400, ["message": createRefusals.removeFirst()]) }
         let outcome = createOutcomes.isEmpty ? "" : createOutcomes.removeFirst()
         if outcome == "500" { return json(500, ["message": "injected 500"]) }
         if createFailRate > 0, Double.random(in: 0..<1, using: &rng) < createFailRate { return json(500, ["message": "flaky"]) }

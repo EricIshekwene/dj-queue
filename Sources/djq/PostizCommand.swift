@@ -175,7 +175,7 @@ enum PostizCommand {
                         remoteStates: states))
       if r.channelId == nil { problems.append("\(r.platform.displayName): no channel mapped") }
       else if cache != nil && c == nil { problems.append("\(r.platform.displayName): the mapped channel isn't in Postiz any more") }
-      else if c?.disabled == true { problems.append("\(r.platform.displayName): channel \(c!.name) is disabled or expired") }
+      else if c?.needsSignIn == true { problems.append("\(r.platform.displayName): reconnect channel \(c!.name) in Postiz (its posts wait for it)") }
     }
     if !st.stuck.isEmpty { problems.append("\(st.stuck.count) post(s) still QUEUE in Postiz an hour after the slot") }
     // Ready: connected (checked now) and all six channels mapped and usable. With --offline nothing was checked, so

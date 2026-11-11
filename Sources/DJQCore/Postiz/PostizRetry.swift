@@ -1,9 +1,11 @@
 import Foundation
 
 /// What the automatic retries did so far for one clip + platform + version (kv `postiz.autoRetry.<clip>#<platform>#v<N>`;
-/// no schema change). It outlives the posts, so the cap holds across attempts. Fields added after v0.8 are optional, so
-/// a row written by an older build still decodes.
+/// no schema change). It outlives the posts, so the count and the backoff carry across attempts. There is no cap any
+/// more (round 22): a retryable failure re-queues until the post goes out. Fields added after v0.8 are optional, so a
+/// row written by an older build still decodes.
 public struct PostizAutoRetries: Codable, Sendable, Hashable {
+  /// Automatic attempts made so far (it picks the backoff step; nothing stops at any number).
   public var count = 0
   /// The newest attempt an automatic retry made.
   public var lastPostId: String?
@@ -26,7 +28,7 @@ public struct PostizAutoRetries: Codable, Sendable, Hashable {
 /// An automatic retry still to come, for every screen, Doctor and `djq postiz status`.
 public struct PostizPendingRetry: Sendable, Hashable {
   public var post: PlatformPost
-  /// 1…`maxAutoRetries`.
+  /// Which automatic retry this is (1 is the first after the failure). Status and Doctor only: the screens never show it.
   public var number: Int
   /// False: `post` is the failure itself, its attempt still to be made.
   public var queued: Bool
@@ -36,9 +38,12 @@ public struct PostizPendingRetry: Sendable, Hashable {
   public var waiting: String?
   /// It waits for a setting Eric may not change back soon (the platform is on Manual or off, no usable channel or key).
   public var offPostiz = false
-  /// "Retrying Thu 8:00 am (try 2 of 5)", or "Retrying when posting resumes (try 2 of 5)".
+  /// It waits for its channel to be signed in again in Postiz (one item per platform says so, not this post).
+  public var signIn = false
+  /// "Retrying Thu 8:00 am", or "Retrying when posting resumes".
   public var text: String
-  /// What the badge says: the same with a time, "Retry waits (try 2 of 5)" when it waits (`text` is then the line under it).
+  /// What the chip says: the same with a time, "Retry waits" or "Waits for sign-in" when it waits (`text` is then the
+  /// line under it). Never a try count or the error: the chip is a calm status, the error is behind Details.
   public var badge: String
 }
 
@@ -46,35 +51,46 @@ extension PostizPendingRetry {
   var display: PostizDisplayState { .retrying(badge, line: waiting == nil ? nil : text) }
 }
 
-/// When a failed post goes out again (DECISIONS-R9.md). Pure, so every time can be tested with a clock.
+/// When a failed post goes out again (DECISIONS-R9.md, DECISIONS-R22.md). Pure, so every time can be tested with a clock.
 public enum PostizRetrySchedule {
-  /// "Morning" in Settings' time zone.
-  public static let morningHour = 8
-  /// "Next morning" is never sooner than this after the failure.
-  public static let morningGap: TimeInterval = 3600
+  /// A retry on a slot is never sooner than this after the failure.
+  public static let slotGap: TimeInterval = 3600
+  /// A YouTube quota retry is never sooner than this after the quota's reset (the quiet window's moved time).
+  public static let resetGap: TimeInterval = 30 * 60
 
-  /// Retry `number` (1…5) of a failure at `failedAt`: +1 h, +6 h, next morning, +1 day, +1 day (a calendar day, the same
-  /// clock time across a DST change). YouTube only retries its upload quota, so it always skips to the next reset.
-  public static func next(after failedAt: Date, retry number: Int, platform: Platform, settings: Settings) -> Date {
-    if platform == .youtube { return youTubeQuota(after: failedAt).retry }
-    let dm = DayMath(settings: settings)
+  /// Retry `number` (1, 2, 3, … with no end) of a failure at `failedAt`: +1 h, +6 h, then the platform's next Settings slot
+  /// time at least an hour after the failure, every day until it goes. A YouTube upload-quota failure always waits for
+  /// the quota (`youTubeQuota`); a YouTube failure that retries for another reason (its media) backs off like the rest.
+  public static func next(after failedAt: Date, retry number: Int, platform: Platform, settings: Settings,
+                          quota: Bool = true) -> Date {
+    if platform == .youtube && quota { return youTubeQuota(after: failedAt, settings: settings).retry }
     switch number {
     case 1: return failedAt.addingTimeInterval(3600)
     case 2: return failedAt.addingTimeInterval(6 * 3600)
-    case 3:
-      let soonest = failedAt.addingTimeInterval(morningGap)
-      let day = dm.key(soonest)
-      let morning = dm.at(day, minutes: morningHour * 60)
-      return morning >= soonest ? morning : dm.at(dm.addDays(day, 1), minutes: morningHour * 60)
-    default: return Sched.shift(failedAt, days: 1, dm)
+    default: return slot(platform, notBefore: failedAt.addingTimeInterval(slotGap), settings: settings)
     }
   }
 
-  /// Postiz's YouTube quota resets at 07:00 UTC (`YouTubeWindow`). The retry goes at the next 07:30 UTC after the failure,
-  /// whatever Settings' time zone says, and `reset` is the 07:00 before it.
-  public static func youTubeQuota(after failedAt: Date) -> (reset: Date, retry: Date) {
-    let retry = YouTubeWindow.nextSafe(after: failedAt)
-    return (retry.addingTimeInterval(YouTubeWindow.reset - YouTubeWindow.safe), retry)
+  /// The platform's first regular slot time (position 0, out of YouTube's quiet window) at or after `t`. The day before
+  /// counts too: a late slot with an offset can land after midnight.
+  public static func slot(_ p: Platform, notBefore t: Date, settings: Settings) -> Date {
+    let dm = DayMath(settings: settings)
+    var day = dm.addDays(dm.key(t), -1)
+    for _ in 0..<5 {
+      let at = settings.slotTime(p, date: day, position: 0, dm)
+      if at >= t { return at }
+      day = dm.addDays(day, 1)
+    }
+    return t
+  }
+
+  /// Postiz's YouTube quota resets at midnight Pacific (`YouTubeWindow`). The retry goes at the next YouTube slot time
+  /// from Settings that is at least 30 minutes after the first reset following the failure and an hour after the
+  /// failure. `reset` is that Pacific midnight.
+  public static func youTubeQuota(after failedAt: Date, settings: Settings) -> (reset: Date, retry: Date) {
+    let reset = YouTubeWindow.nextReset(after: failedAt)
+    let soonest = max(reset.addingTimeInterval(resetGap), failedAt.addingTimeInterval(slotGap))
+    return (reset, slot(.youtube, notBefore: soonest, settings: settings))
   }
 }
 
@@ -85,10 +101,13 @@ extension Store {
 
   /// A failure with a retry coming is no Problem: no alert, no badge, nothing for Eric to do. The kv row alone isn't
   /// enough: after a reset the same post can fail for another reason, and that one must be loud. So the failure itself
-  /// has to be the kind that retries.
+  /// has to be the kind that retries. A failure an older build gave up on after five tries (its message ends in that
+  /// build's "used up" note) has a retry coming too: there is no cap any more, so the retry step picks it up.
   func retryIsComing(_ p: PlatformPost) throws -> Bool {
-    guard p.state == .failed, p.resolution == nil, p.errorType == .uploadFailed, try autoRetries(p).failedPostId == p.id,
+    guard p.state == .failed, p.resolution == nil, p.errorType == .uploadFailed,
           let job = try finalPostizJob(postId: p.id), job.closeReason == .error else { return false }
+    let r = try autoRetries(p)
+    guard r.failedPostId == p.id || (r.failedPostId == nil && PostizService.endsInLegacyCapNote(p.errorMessage)) else { return false }
     return PostizService.retriesByItself(job.lastError ?? "", on: p.platform)
   }
 
@@ -137,19 +156,37 @@ extension Store {
   }
 }
 
-/// Failed posts retry by themselves (DECISIONS-R9.md): a Postiz ERROR retries unless something says a retry can't help,
-/// so Eric never audits it. Every retryable failure gets a stored next-retry time from when it happened, and the new
-/// attempt goes to Postiz ahead of that time, so it goes out with the Mac off. If the Mac slept through the time, the
-/// publish step's past-slot rule sends it right away. Copyright, vetoed failures and used-up retries stay loud, and
-/// nothing in here ever overrides copyright, a held clip, a pause or the never-double-post rules.
+/// What a Postiz ERROR means for the post (round 22). One reading for the engine, every screen, Doctor and `djq`.
+public enum PostizFailureKind: String, Sendable, Hashable {
+  /// Temporary: it retries by itself on the backoff.
+  case retries
+  /// Postiz couldn't fetch the post's media (expired, not found): it retries with the media uploaded again.
+  case media
+  /// The channel's sign-in (token, session, reconnect): its posts wait for the channel and go out once it works.
+  case signIn
+  /// Loud, never retried by itself.
+  case copyright
+  /// A retry can't help (policy, size, format, too long), or YouTube may already have the video: it's Eric's.
+  case stays
+}
+
+/// Failed posts retry by themselves (DECISIONS-R9.md, DECISIONS-R22.md): a Postiz ERROR retries unless something says a
+/// retry can't help, so Eric never audits it, and there is no cap: it re-queues until it goes out. Every retryable failure
+/// gets a stored next-retry time from when it happened, and the new attempt goes to Postiz ahead of that time, so it goes
+/// out with the Mac off. If the Mac slept through the time, the publish step's past-slot rule sends it right away.
+/// Copyright and vetoed failures stay loud; a channel whose sign-in broke is one item per platform, and its posts wait.
+/// Nothing in here ever overrides copyright, a held clip, a pause or the never-double-post rules.
 extension PostizService {
-  public static let maxAutoRetries = 5
-  /// Added to a failure's message (the inspector and the alert show `errorMessage`).
+  /// Added to a failure's message (the inspector shows `errorMessage` behind Details).
   public static let retryingNote = "retrying automatically"
-  public static let retriesUsedUpNote = "automatic retries used up, mark Fixed when it's ready"
+  public static let signInNote = "waits for the channel to be reconnected in Postiz"
   public static let noRetryNote = "no automatic retry for this one, mark Fixed when it's ready"
-  /// Any YouTube error but the upload quota may come after the video exists, and a retry would double-post.
+  /// Any YouTube error but the upload quota (or its media) may come after the video exists, and a retry would double-post.
   public static let youTubeStaysNote = "no automatic retry: YouTube may already have the video, so check the channel, then mark Fixed"
+  /// What builds before round 22 added when five tries were used up. Only read: such a failure re-queues by itself now.
+  static let legacyCapNote = " — automatic retries used up, mark Fixed when it's ready"
+
+  static func endsInLegacyCapNote(_ message: String?) -> Bool { message?.hasSuffix(legacyCapNote) == true }
 
   /// Words that mean more than "not now": a policy or rights problem, an account problem or a paid limit.
   static let notTemporary = #"\b(violat\w*|infring\w*|intellectual property|dmca|content[- ]?id|copy[- ]right|trademark\w*|"#
@@ -172,26 +209,80 @@ extension PostizService {
   static let alreadyThere = #"\b(already|duplicate\w*|identical|repeat\w*|published|posted|live|permalink\w*|"#
     + #"(been|was|were) (uploaded|shared)|(uploaded|shared) (before|earlier|previously)|(created|uploaded),? but|"#
     + #"same (post|content|video|media|status|tweet))\b"#
+  /// A policy, rights or paid-plan word: then neither a media nor a sign-in reading may turn the failure into a wait.
+  static let policyWords = #"\b(violat\w*|infring\w*|intellectual property|dmca|content[- ]?id|trademark\w*|abus\w*|disallow\w*|"#
+    + #"prohibit\w*|not permitted|nud\w*|sexual\w*|adult|hate|harass\w*|violen\w*|sensitive|inappropriate|harmful|unsafe|"#
+    + #"(un)?licen[sc]\w*|songs?|sounds?|soundtracks?|lyrics|strikes?|takedowns?|taken? down|third[- ]party|polic(y|ies)|"#
+    + #"guidelines?|community|terms|spam\w*|flagged|bans?|banned|suspen\w*|restrict\w*|locked|deactivat\w*|terminated|"#
+    + #"insufficient|credits?|upgrade\w*|subscri\w*|in your (country|region))\b"#
+  /// Round 22: Postiz couldn't get the media (its link expired, the file is gone). Both a media word and a "gone" word.
+  static let mediaWords = #"\b(media|file|files|url|urls|uploads?|uploaded|uploading|downloads?|downloaded|downloading|fetch\w*|attachments?)\b"#
+  static let mediaGone = #"\b(expired|not found|404|invalid|unavailable|no longer (exists|available)|"#
+    + #"could ?n[o']?t be (retrieved|fetched|found|downloaded|accessed)|"#
+    + #"(could ?n[o']?t|can ?n[o']?t|unable to|failed to) (retrieve|fetch|download|access|pull|get))\b"#
+  /// Round 22: the channel's sign-in. A token or session that expired is this, never a media problem.
+  static let signInWords = #"\b((re|un)?-?auth(enticat|oriz|oris)\w*|oauth\w*|access ?tokens?|refresh ?tokens?|tokens?|credentials?|"#
+    + #"permissions?|scopes?|log[- ]?in|logged out|sign[- ]?in|signed out|refresh\w*|re ?connect\w*|re ?link\w*|"#
+    + #"disconnected|not connected|sessions?|401|unauthori[sz]ed|disabled)\b"#
+  /// On YouTube these may come after the video exists (the thumbnail step, "we uploaded your video but …").
+  static let youTubeMayExist = #"\b(thumbnails?|uploaded (your |the )?video|video (was |has been )?uploaded)\b"#
 
-  /// Copyright, or a veto word anywhere in the message. Platforms write codes too ("duration_check_failed",
-  /// "file-too-large", "FileSizeExceeded"), so those read as words.
-  static func isVetoed(_ message: String) -> Bool {
-    let m = message.replacingOccurrences(of: "([a-z0-9])([A-Z])", with: "$1 $2", options: .regularExpression)
+  /// Platforms write codes too ("duration_check_failed", "file-too-large", "FileSizeExceeded"), so those read as words.
+  static func normalized(_ message: String) -> String {
+    message.replacingOccurrences(of: "([a-z0-9])([A-Z])", with: "$1 $2", options: .regularExpression)
       .lowercased().replacingOccurrences(of: "[_-]", with: " ", options: .regularExpression)
+  }
+
+  /// Copyright, or a veto word anywhere in the message.
+  static func isVetoed(_ message: String) -> Bool {
+    let m = normalized(message)
     return isCopyright(message) || [notTemporary, cantBeFixedByARetry, alreadyThere].contains {
       m.range(of: $0, options: .regularExpression) != nil
     }
   }
 
-  /// This failure may retry by itself on `platform`: anything not vetoed, an unknown or empty error too. On YouTube only
-  /// the upload quota, where no video was created: any other error may come after the video exists (a rate limit on the
-  /// thumbnail step), and a retry would double-post.
-  public static func retriesByItself(_ message: String, on platform: Platform) -> Bool {
-    guard !isVetoed(message) else { return false }
-    guard platform == .youtube else { return true }
+  /// Postiz couldn't fetch the post's media: expired, not found, a 404. A sign-in word ("token expired") rules it out.
+  public static func isMediaProblem(_ message: String) -> Bool {
+    let m = normalized(message)
+    func has(_ re: String) -> Bool { m.range(of: re, options: .regularExpression) != nil }
+    return has(mediaWords) && has(mediaGone) && !has(signInWords)
+  }
+
+  /// The channel's sign-in broke: auth, a token, a session, reconnect, an expired login.
+  public static func isSignInProblem(_ message: String) -> Bool {
+    let m = normalized(message)
+    return m.range(of: signInWords, options: .regularExpression) != nil && !isMediaProblem(message)
+  }
+
+  /// YouTube's daily upload quota, where no video was created.
+  static func isYouTubeQuota(_ message: String) -> Bool {
     let m = message.lowercased()
-    guard !m.contains("thumbnail"), !m.contains("uploaded") else { return false }  // the video may exist
     return m.contains("daily upload quota") || m.contains("defaultvideoinsertperdayperproject")
+  }
+
+  /// The one reading of a Postiz ERROR (round 22). The order matters: copyright first, then anything that says the
+  /// platform may have it, then media and sign-in (unless a policy word is there too), then the old veto, then YouTube's
+  /// rule (only the upload quota retries; any other error may come after the video exists).
+  public static func classify(_ message: String, on platform: Platform) -> PostizFailureKind {
+    if isCopyright(message) { return .copyright }
+    let m = normalized(message)
+    func has(_ re: String) -> Bool { m.range(of: re, options: .regularExpression) != nil }
+    if has(alreadyThere) { return .stays }
+    let policy = has(policyWords)
+    let mayExist = platform == .youtube && has(youTubeMayExist)
+    if !policy, !mayExist, isMediaProblem(message) { return .media }
+    if !policy, !mayExist, isSignInProblem(message) { return .signIn }
+    if isVetoed(message) { return .stays }
+    guard platform == .youtube else { return .retries }
+    let low = message.lowercased()
+    guard !low.contains("thumbnail"), !low.contains("uploaded") else { return .stays }  // the video may exist
+    return isYouTubeQuota(message) ? .retries : .stays
+  }
+
+  /// This failure may retry by itself on `platform`: anything not vetoed, an unknown or empty error too, a media
+  /// problem anywhere, and a sign-in problem once the channel works again. On YouTube otherwise only the upload quota.
+  public static func retriesByItself(_ message: String, on platform: Platform) -> Bool {
+    [.retries, .media, .signIn].contains(classify(message, on: platform))
   }
 
   static let autoRetryPrefix = "postiz.autoRetry."
@@ -203,32 +294,31 @@ extension PostizService {
 
   func autoRetries(_ p: PlatformPost) throws -> PostizAutoRetries { try store.autoRetries(p) }
 
-  /// Tries used up. `tryUnused`: the last attempt went back with its clip, so that one can still go.
-  static func usedUp(_ r: PostizAutoRetries) -> Bool { r.count >= maxAutoRetries && r.tryUnused != true }
-
-  /// The failure's retry can come: not vetoed, tries left, nothing permanent rules it out. Reasons to wait keep it.
+  /// The failure's retry can come: it retries by itself and nothing permanent rules it out. Reasons to wait keep it.
   func retryPromised(_ message: String, _ p: PlatformPost) throws -> Bool {
     guard Self.retriesByItself(message, on: p.platform) else { return false }
-    return try !Self.usedUp(autoRetries(p)) && !retryRuledOut(p)
+    return try !retryRuledOut(p)
   }
 
   /// The sentence a Postiz ERROR adds to the post's message.
   func retryNote(_ message: String, _ p: PlatformPost) throws -> String {
-    guard Self.retriesByItself(message, on: p.platform) else {
-      return p.platform == .youtube && !Self.isVetoed(message) ? " — \(Self.youTubeStaysNote)" : ""
+    switch Self.classify(message, on: p.platform) {
+    case .copyright: return ""
+    case .stays: return p.platform == .youtube && !Self.isVetoed(message) ? " — \(Self.youTubeStaysNote)" : ""
+    case .signIn: return " — " + (try retryRuledOut(p) ? Self.noRetryNote : Self.signInNote)
+    case .retries, .media: return " — " + (try retryRuledOut(p) ? Self.noRetryNote : Self.retryingNote)
     }
-    if try Self.usedUp(autoRetries(p)) { return " — \(Self.retriesUsedUpNote)" }
-    return " — " + (try retryRuledOut(p) ? Self.noRetryNote : Self.retryingNote)
   }
 
   /// Stores the next-retry time, from when the failure happened.
-  func recordFailure(_ p: PlatformPost, at failedAt: Date) throws {
+  func recordFailure(_ p: PlatformPost, at failedAt: Date, message: String) throws {
     var r = try autoRetries(p)
     r.failedPostId = p.id
     r.failedAt = failedAt
     r.tryUnused = nil
     r.unsentTicks = nil
-    r.nextRetryAt = PostizRetrySchedule.next(after: failedAt, retry: r.count + 1, platform: p.platform, settings: try store.settings())
+    r.nextRetryAt = PostizRetrySchedule.next(after: failedAt, retry: r.count + 1, platform: p.platform, settings: try store.settings(),
+                                             quota: Self.isYouTubeQuota(message))
     try store.setKV(Self.autoRetryKey(p), r)
   }
 
@@ -238,17 +328,22 @@ extension PostizService {
     return try autoRetries(p).testRunPosts.contains(p.id)
   }
 
+  /// `p` is the newest automatic attempt of its clip + platform + version (sent or not).
+  func isAutoAttempt(_ p: PlatformPost) throws -> Bool {
+    try p.kind != .regular && autoRetries(p).lastPostId == p.id
+  }
+
   /// `p` is an automatic retry still on its way to Postiz or waiting there: it never goes overdue and never lands on
   /// Today by itself. A 400 on create, or a copy deleted in Postiz, hands it to Today as usual.
   public func isRetryAttempt(_ p: PlatformPost) throws -> Bool {
-    guard p.kind != .regular, !p.state.isTerminal, try autoRetries(p).lastPostId == p.id else { return false }
+    guard !p.state.isTerminal, try isAutoAttempt(p) else { return false }
     return try store.finalPostizJob(postId: p.id) == nil && !handedToToday(p)
   }
 
   /// The attempt can't go to Postiz now, so it isn't due for Eric either: it waits for the platform to come back.
   func retryAttemptWaits(_ p: PlatformPost, router: PostizRouter) throws -> Bool {
     guard try isRetryAttempt(p) else { return false }
-    return !Self.settingsAllow(p.platform, router.settings) || !router.route(p.platform).isPostiz
+    return try !Self.settingsAllow(p.platform, router.settings) || !router.route(p.platform).isPostiz || signInDown(p.platform, router: router)
   }
 
   /// This failure can never retry by itself: skipped in the editor, or a job of the clip + platform was published or
@@ -271,15 +366,25 @@ extension PostizService {
       .contains { $0.id != p.id && !$0.state.isTerminal }
   }
 
-  /// What `p`'s retry waits for, in words, and whether that's a setting rather than a pause. nil: nothing does.
-  func retryWaitReason(_ p: PlatformPost, settings: Settings, router: PostizRouter) throws -> (text: String, offPostiz: Bool)? {
+  /// What a retry waits for: a sentence ("when posting resumes"), whether it's a setting rather than a pause, and
+  /// whether it's the channel's sign-in.
+  struct RetryWait: Equatable {
+    var text: String
+    var offPostiz = false
+    var signIn = false
+  }
+
+  /// What `p`'s retry waits for. nil: nothing does.
+  func retryWaitReason(_ p: PlatformPost, settings: Settings, router: PostizRouter) throws -> RetryWait? {
     let name = p.platform.displayName
-    if settings.paused { return ("when posting resumes", false) }
-    if settings.pausedPlatforms.contains(p.platform) { return ("when \(name) resumes", false) }
-    if try store.video(id: p.videoId)?.heldInEdit == true { return ("when it's back in the Queue", false) }
-    if !settings.enabledPlatforms.contains(p.platform) { return ("when \(name) is back on", true) }
-    if settings.publishing.publisher(for: p.platform) != .postiz { return ("when \(name) is back on Postiz", true) }
-    return router.route(p.platform).isPostiz ? nil : ("when \(name) is back on Postiz", true)
+    if settings.paused { return .init(text: "when posting resumes") }
+    if settings.pausedPlatforms.contains(p.platform) { return .init(text: "when \(name) resumes") }
+    if try store.video(id: p.videoId)?.heldInEdit == true { return .init(text: "when it's back in the Queue") }
+    if !settings.enabledPlatforms.contains(p.platform) { return .init(text: "when \(name) is back on", offPostiz: true) }
+    if settings.publishing.publisher(for: p.platform) != .postiz { return .init(text: "when \(name) is back on Postiz", offPostiz: true) }
+    if !router.route(p.platform).isPostiz { return .init(text: "when \(name) is back on Postiz", offPostiz: true) }
+    if try signInDown(p.platform, router: router) { return .init(text: "once \(name) is reconnected in Postiz", signIn: true) }
+    return nil
   }
 
   enum RetryDecision: Equatable {
@@ -292,14 +397,13 @@ extension PostizService {
     case giveUp(String)
   }
 
-  /// Read-only, every tick. Reasons to wait (paused, platform off Postiz, clip held, another job open) are re-read each
-  /// time, so a retry runs once when they clear.
+  /// Read-only, every tick. Reasons to wait (paused, platform off Postiz, clip held, another job open, the channel's
+  /// sign-in) are re-read each time, so a retry runs once when they clear. No number of tries ever stops it.
   func retryDecision(_ p: PlatformPost, settings: Settings, router: PostizRouter) throws -> RetryDecision {
     guard p.state == .failed, p.resolution == nil, p.errorType == .uploadFailed,
           let job = try store.finalPostizJob(postId: p.id), job.closeReason == .error,
           Self.retriesByItself(job.lastError ?? "", on: p.platform) else { return .nothing }
     let promised = try store.retryIsComing(p)
-    if try Self.usedUp(autoRetries(p)) { return promised ? .giveUp(Self.retriesUsedUpNote) : .nothing }
     if try retryRuledOut(p) { return promised ? .giveUp(Self.noRetryNote) : .nothing }
     if try retryWaitReason(p, settings: settings, router: router) != nil || retryMustWait(p) { return .wait }
     return .go
@@ -313,14 +417,18 @@ extension PostizService {
   }
 
   /// When a retry due at `due` goes out: not in the past, and never within the stagger gap of another post on the
-  /// platform. A YouTube quota retry moves earlier rather than later, down to the reset, because the day's quota goes.
-  func retryTime(due: Date, failedAt: Date?, _ p: PlatformPost, settings: Settings) throws -> Date {
+  /// platform. A YouTube quota retry moves earlier rather than later, down to 30 minutes after the reset, because the
+  /// day's quota goes fast.
+  func retryTime(due: Date, failedAt: Date?, _ p: PlatformPost, settings: Settings, quota: Bool) throws -> Date {
     let soonest = soonestRetry
     guard due > soonest else {
       return try Sched.retrySlot(store: store, platform: p.platform, target: soonest, settings: settings, excluding: [p.id])
     }
-    let reset = p.platform == .youtube ? failedAt.map { PostizRetrySchedule.youTubeQuota(after: $0).reset } : nil
-    return try Sched.retrySlot(store: store, platform: p.platform, target: due, earliest: reset.map { max($0, soonest) },
+    let earliest: Date? = p.platform == .youtube && quota ? failedAt.map {
+      max(PostizRetrySchedule.youTubeQuota(after: $0, settings: settings).reset.addingTimeInterval(PostizRetrySchedule.resetGap),
+          $0.addingTimeInterval(PostizRetrySchedule.slotGap))
+    } : nil
+    return try Sched.retrySlot(store: store, platform: p.platform, target: due, earliest: earliest.map { max($0, soonest) },
                                settings: settings, excluding: [p.id])
   }
 
@@ -340,12 +448,17 @@ extension PostizService {
       return false
     }
     guard decision == .go || decision == .wait, let job = try store.finalPostizJob(postId: p.id) else { return false }
-    if try !store.retryIsComing(p) {  // failed before this build, or under an older one
-      try recordFailure(p, at: min(job.remoteDate, job.closedAt ?? now))
+    let message = job.lastError ?? ""
+    if try autoRetries(p).failedPostId != p.id {  // failed before this build, under an older one, or one that gave up at five
+      try recordFailure(p, at: min(job.remoteDate, job.closedAt ?? now), message: message)
     }
     guard decision == .go else { return false }
+    if Self.endsInLegacyCapNote(p.errorMessage), let m = p.errorMessage {
+      p.errorMessage = String(m.dropLast(Self.legacyCapNote.count)) + " — \(Self.retryingNote)"
+      try store.save(p, note: "retrying again: there is no limit on automatic retries any more")
+    }
     var r = try autoRetries(p)
-    let at = try retryTime(due: r.nextRetryAt ?? now, failedAt: r.failedAt, p, settings: settings)
+    let at = try retryTime(due: r.nextRetryAt ?? now, failedAt: r.failedAt, p, settings: settings, quota: Self.isYouTubeQuota(message))
     let n = try PostActions(store: store).fixed(postId: p.id, by: "auto-retry", at: at)
     if r.tryUnused != true { r.count += 1 }
     r.tryUnused = nil
@@ -354,7 +467,7 @@ extension PostizService {
     r.lastPostId = n.id
     if job.testMode { r.testRunPosts.append(n.id) }
     try store.setKV(Self.autoRetryKey(p), r)
-    try store.logEvent("postiz", "\(p.platform.displayName): failed, automatic retry \(r.count) of \(Self.maxAutoRetries) on \(Sched.shortTime(n.scheduledAt, settings))\(job.testMode ? " (stays a test run)" : "")",
+    try store.logEvent("postiz", "\(p.platform.displayName): failed, automatic retry \(r.count) on \(Sched.shortTime(n.scheduledAt, settings))\(job.testMode ? " (stays a test run)" : "")",
                        videoId: p.videoId, postId: n.id)
     return true
   }
@@ -376,18 +489,20 @@ extension PostizService {
     }
   }
 
-  /// Nothing sits silently. A retry that has waited a day on a pause or a setting says so once, and it keeps waiting. An
-  /// attempt nothing stops, still unsent (the clip went invalid, Postiz won't take it), goes back to Eric as a normal
-  /// post: it stops being a retry, so it can go overdue.
+  /// Nothing sits silently, and nothing shouts. A retry that has waited a day on a pause or a setting says so once,
+  /// calmly, and keeps waiting; one waiting for its channel's sign-in says nothing here (the platform's one sign-in item
+  /// does). An attempt nothing stops that still can't reach Postiz after a day (the clip went invalid, Postiz won't take
+  /// it) goes to the Calendar as a normal post: it stops being a retry, so it can go overdue.
   func watchStuckRetries(settings: Settings, router: PostizRouter) throws {
     for retry in try pendingAutoRetries(settings: settings, router: router) {
       let p = retry.post
       let due = try autoRetries(p).nextRetryAt ?? p.scheduledAt
       guard now.timeIntervalSince(due) >= Self.stuckAfter else { continue }
       if retry.waiting != nil {
+        if retry.signIn { continue }
         let tag = try store.video(id: p.videoId)?.tag ?? p.videoId
-        _ = notify(AppNotification(key: "postiz.retryWaits:\(p.id)", title: "\(p.platform.displayName) · \(tag) · retry still waiting",
-                                   body: "\(retry.text). It has waited a day and won't go out until then.", critical: false,
+        _ = notify(AppNotification(key: "postiz.retryWaits:\(p.id)", title: "\(p.platform.displayName) · \(tag) · waiting to post",
+                                   body: "\(retry.text). Nothing is lost: it goes out by itself then.", critical: false,
                                    actions: [.open], postId: p.id, videoId: p.videoId))
       } else if retry.queued, try store.livePostizJob(postId: p.id) == nil {
         try store.db.transaction {
@@ -397,8 +512,8 @@ extension PostizService {
           if r.unsentTicks! >= Self.maxUnsentTicks {
             r.lastPostId = nil
             r.unsentTicks = nil
-            a.errorMessage = "The automatic retry couldn't be sent for a day, so it's yours now"
-            try store.save(a, note: "automatic retry gave up: unsent a day after its time")
+            a.errorMessage = "This retry couldn't reach Postiz for a day, so it's on the Calendar to post by hand"
+            try store.save(a, note: "automatic retry handed over: unsent a day after its time")
             try store.logEvent("postiz", "\(p.platform.displayName): \(a.errorMessage!)", videoId: p.videoId, postId: p.id)
           }
           try store.setKV(Self.autoRetryKey(p), r)
@@ -415,6 +530,7 @@ extension PostizService {
     guard try !failed.isEmpty || !openRetryRecords().isEmpty else { return "none" }
     let settings = try store.settings()
     let router = try router(settings)
+    try reconcileSignIn(router)
     var queued = 0
     for c in failed {
       let d = try retryDecision(c, settings: settings, router: router)
@@ -452,21 +568,24 @@ extension PostizService {
     }
     guard try store.retryIsComing(p) else { return nil }
     let wait = try retryWaitReason(p, settings: settings, router: router)
-      ?? (retryMustWait(p) ? ("when its other post is done", false) : nil)
+      ?? (retryMustWait(p) ? RetryWait(text: "when its other post is done") : nil)
     return Self.pending(p, number: r.count + (r.tryUnused == true ? 0 : 1), queued: false, at: r.nextRetryAt, wait: wait,
                         settings: settings, now: now)
   }
 
-  static func pending(_ p: PlatformPost, number: Int, queued: Bool, at: Date?, wait: (text: String, offPostiz: Bool)?,
+  static func pending(_ p: PlatformPost, number: Int, queued: Bool, at: Date?, wait: RetryWait?,
                       settings: Settings, now: Date) -> PostizPendingRetry {
-    let tries = "(try \(number) of \(maxAutoRetries))"
     let text: String
-    if let wait { text = "Retrying \(wait.text) \(tries)" }
-    else if let at, at > now { text = "Retrying \(Sched.retryDay(at, settings)) \(tries)" }
-    else { text = "Retrying now \(tries)" }
+    if let wait { text = "Retrying \(wait.text)" }
+    else if let at, at > now { text = "Retrying \(Sched.retryDay(at, settings))" }
+    else { text = "Retrying now" }
+    let badge = wait.map { $0.signIn ? signInBadge : "Retry waits" } ?? text
     return PostizPendingRetry(post: p, number: number, queued: queued, at: wait == nil ? at : nil, waiting: wait?.text,
-                              offPostiz: wait?.offPostiz ?? false, text: text, badge: wait == nil ? text : "Retry waits \(tries)")
+                              offPostiz: wait?.offPostiz ?? false, signIn: wait?.signIn ?? false, text: text, badge: badge)
   }
+
+  /// The chip on a post that waits for its channel's sign-in (a failure, its attempt, or a post not sent yet).
+  public static let signInBadge = "Waits for sign-in"
 
   /// `.retrying` when a retry is coming for `p`. `base` is what Postiz is doing with it otherwise: a retry Postiz is
   /// sending, posted or holds as a draft says so itself.

@@ -68,10 +68,7 @@ import Testing
     (.tiktok, "file_format_check_failed"), (.instagram, "Unsupported video format"), (.instagram, "The aspect ratio is not supported"),
     (.instagram, "Too many hashtags"), (.facebook, "(#100) Invalid parameter"), (.x, "Bad request"), (.threads, "Missing required field: media"),
     (.tiktok, "frame_rate_check_failed"), (.instagram, "Video codec H265 isn't supported: not supported"),
-    // auth
-    (.facebook, "Error validating access token: Session has expired"), (.tiktok, "access_token_invalid"), (.tiktok, "scope_not_authorized"),
-    (.x, "Please re-authenticate your account"), (.instagram, "Refresh token expired, reconnect the channel"),
-    (.threads, "You need to log in"), (.x, "You don't have permission to do this"),
+    // auth: round 22 made these sign-in waits (R22SelfHealingTests), not failures that stay
     // the platform has it, in any wording
     (.instagram, "This media has already been posted"), (.threads, "This post has already been published"),
     (.tiktok, "This video has been posted before"), (.x, "Whoops! You already said that."),
@@ -87,9 +84,8 @@ import Testing
     (.x, "File exceeded the limit"), (.x, "Video exceeded the allowed limit"), (.tiktok, "file-too-large"),
     (.x, "Tweet needs to be a bit shorter."), (.facebook, "Content not eligible"), (.x, "Insufficient credits"),
     (.threads, "Verify your account"), (.instagram, "Not available in your country"),
-    // sign-in
-    (.x, "Please reauthenticate your account"), (.facebook, "Please reauthorize the app"), (.threads, "Unauthenticated"),
-    (.instagram, "Refresh your connection"), (.x, "Request failed with status code 401"), (.x, "Request failed with status code 403"),
+    // a 403 alone isn't a sign-in (round 22 waits on the rest of the old sign-in list)
+    (.x, "Request failed with status code 403"),
     // size
     (.facebook, "Video exceeds the maximum allowed"), (.x, "Video exceeds 5 minutes"), (.x, "Your video is over the limit of 512MB"),
     (.threads, "The video is 200 seconds; maximum is 180"), (.facebook, "HTTP 413"), (.tiktok, "FileSizeExceeded"), (.tiktok, "UnsupportedMedia"),
@@ -128,20 +124,23 @@ import Testing
 
   // MARK: R2 times
 
+  /// X's slot is 8:00 here, so "the next slot" reads like the old "next morning".
   func next(_ failedAt: Date, _ n: Int, _ platform: Platform = .x, _ zone: String = "America/New_York") -> Date {
     var s = Settings()
     s.timeZone = zone
+    s.slotMinutes[.x] = 8 * 60
     return PostizRetrySchedule.next(after: failedAt, retry: n, platform: platform, settings: s)
   }
 
+  /// Round 22: +1 h, +6 h, then the platform's next slot at least an hour after the failure, with no end.
   @Test func theBackoff() {
     let t = ny("2026-11-04", 15, 30)
     #expect(next(t, 1) == t.addingTimeInterval(3600))
     #expect(next(t, 2) == t.addingTimeInterval(6 * 3600))
     #expect(next(t, 3) == ny("2026-11-05", 8))
-    #expect(next(t, 4) == t.addingTimeInterval(86400))
-    #expect(next(t, 5) == t.addingTimeInterval(86400))
-    // Before 8 am the morning is that same day, but never a moment after the failure.
+    #expect(next(t, 4) == ny("2026-11-05", 8))
+    #expect(next(t, 20) == ny("2026-11-05", 8))
+    // Before 7 am the slot is that same day, but never less than an hour after the failure.
     #expect(next(ny("2026-11-04", 2), 3) == ny("2026-11-04", 8))
     #expect(next(ny("2026-11-04", 7, 30), 3) == ny("2026-11-05", 8))
   }
@@ -149,30 +148,30 @@ import Testing
   /// US clocks go back on 1 Nov 2026 and forward on 14 Mar 2027.
   @Test func theBackoffOnADSTDay() {
     let before = ny("2026-10-31", 18)
-    #expect(next(before, 4) == ny("2026-11-01", 18))  // a calendar day: 25 hours here
-    #expect(next(before, 4).timeIntervalSince(before) == 25 * 3600)
+    #expect(next(before, 4) == ny("2026-11-01", 8))  // the slot's clock time on the day the clocks went back
+    #expect(next(before, 4).timeIntervalSince(before) == 15 * 3600)
     #expect(next(ny("2026-11-01", 0, 30), 1) == ny("2026-11-01", 0).addingTimeInterval(1.5 * 3600))  // hours stay hours
     #expect(next(ny("2026-11-01", 0, 30), 2).timeIntervalSince(ny("2026-11-01", 0, 30)) == 6 * 3600)
     #expect(next(ny("2026-10-31", 22), 3) == ny("2026-11-01", 8))
     let spring = ny("2027-03-13", 18)
-    #expect(next(spring, 4) == ny("2027-03-14", 18))
-    #expect(next(spring, 4).timeIntervalSince(spring) == 23 * 3600)
+    #expect(next(spring, 4) == ny("2027-03-14", 8))
+    #expect(next(spring, 4).timeIntervalSince(spring) == 13 * 3600)
     #expect(next(ny("2027-03-13", 22), 3) == ny("2027-03-14", 8))
   }
 
-  @Test func theYouTubeQuotaGoesToTheNext0730UTC() {
-    // 07:30 UTC is 2:30 am New York in winter.
-    #expect(next(ny("2026-11-04", 15), 1, .youtube) == ny("2026-11-05", 2, 30))
-    #expect(next(ny("2026-11-04", 23, 30), 1, .youtube) == ny("2026-11-05", 2, 30))
-    #expect(next(ny("2026-11-05", 2, 29), 1, .youtube) == ny("2026-11-05", 2, 30))
-    #expect(next(ny("2026-11-05", 2, 30), 1, .youtube) == ny("2026-11-06", 2, 30))
-    // Every try skips to it, never +1 h.
-    #expect(next(ny("2026-11-04", 15), 3, .youtube) == ny("2026-11-05", 2, 30))
-    // UTC, whatever Settings says.
-    #expect(next(ny("2026-11-04", 15), 1, .youtube, "Europe/London") == ny("2026-11-05", 2, 30))
-    // Both DST nights: an hour later by New York's clock in summer.
-    #expect(next(ny("2026-10-31", 20), 1, .youtube) == ny("2026-11-01", 2, 30))  // 2:30 am EST, after the clocks went back
-    #expect(next(ny("2027-03-13", 20), 1, .youtube) == ny("2027-03-14", 3, 30))
+  /// Round 22: YouTube's slot (15:00 by default) on the first day after the Pacific reset, every try.
+  @Test func theYouTubeQuotaGoesToTheNextSlotAfterMidnightPacific() {
+    #expect(next(ny("2026-11-04", 15), 1, .youtube) == ny("2026-11-05", 15))
+    #expect(next(ny("2026-11-04", 23, 30), 1, .youtube) == ny("2026-11-05", 15))
+    #expect(next(ny("2026-11-05", 2, 59), 1, .youtube) == ny("2026-11-05", 15))  // 11:59 pm Pacific: the reset is a minute away
+    #expect(next(ny("2026-11-05", 3), 1, .youtube) == ny("2026-11-06", 15))  // midnight Pacific: that day's quota is the one that ran out
+    // Every try waits for it, never +1 h.
+    #expect(next(ny("2026-11-04", 15), 3, .youtube) == ny("2026-11-05", 15))
+    // The slot is in Settings' time zone; the reset is always Pacific.
+    #expect(next(ny("2026-11-04", 15), 1, .youtube, "Europe/London") == ny("2026-11-05", 10))
+    // Both DST nights.
+    #expect(next(ny("2026-10-31", 20), 1, .youtube) == ny("2026-11-01", 15))
+    #expect(next(ny("2027-03-13", 20), 1, .youtube) == ny("2027-03-14", 15))
   }
 
   @Test func theTimeIsStoredAndCountsFromTheFailureNotFromWhenTheMacSawIt() throws {
@@ -184,13 +183,13 @@ import Testing
     #expect(a.scheduledAt == j.remoteDate.addingTimeInterval(3600))
   }
 
-  @Test func quotaGoesAfterTheResetNotInALateSlot() throws {
+  @Test func quotaGoesToTheNextSlotAfterTheReset() throws {
     let (rig, yt) = try xRig([.youtube])
     try fail(rig, yt, Self.quota)
     let a = try #require(try attempts(rig, yt).last)
-    #expect(a.scheduledAt == ny("2026-11-03", 2, 30))
+    #expect(a.scheduledAt == ny("2026-11-03", 15))
     rig.tick(2)
-    #expect(try rig.job(a)?.remoteDate == ny("2026-11-03", 2, 30))
+    #expect(try rig.job(a)?.remoteDate == ny("2026-11-03", 15))
   }
 
   // MARK: R2 stagger
@@ -314,7 +313,7 @@ import Testing
     let failed = try #require(try rig.store.post(id: x.id))
     let a = try #require(try attempts(rig, x).last)
     let when = Sched.retryDay(j.remoteDate.addingTimeInterval(3600), try rig.store.settings())
-    let line = PostizDisplayState.retrying("Retrying \(when) (try 1 of 5)")
+    let line = PostizDisplayState.retrying("Retrying \(when)")
     #expect(try rig.service.displayState(for: a) == line)
     #expect(try rig.service.displayState(for: failed) == line)  // Today's row is still the failed one
     rig.tick(2)
@@ -322,37 +321,34 @@ import Testing
     #expect(line.isHeld)
   }
 
-  @Test func theLineSaysAmAndTheWeekday() throws {
+  /// The chip is the time alone: no try count, no error text (round 22).
+  @Test func theLineSaysTheWeekdayAndTimeAndNothingElse() throws {
     let (rig, yt) = try xRig([.youtube])
     try fail(rig, yt, Self.quota)
     let a = try #require(try attempts(rig, yt).last)
-    #expect(try rig.service.displayState(for: a) == .retrying("Retrying Tue 2:30 am (try 1 of 5)"))
+    #expect(try rig.service.displayState(for: a) == .retrying("Retrying Tue 3:00 pm"))
   }
 
-  @Test func fiveRetriesThenLoud() throws {
+  /// Round 22: no cap. Every failure re-queues, the 6th and the 20th too, quietly: no Problem, no alert.
+  @Test func noCapRetriesKeepGoing() throws {
     let (rig, x) = try xRig()
     var post = x
-    for n in 1...5 {
+    for n in 1...20 {
       rig.tick(2)
       try fail(rig, post)
       let list = try attempts(rig, x)
-      #expect(list.count == n + 1)
+      #expect(list.count == n + 1, "retry \(n)")
       post = list[n]
+      #expect(post.kind == .retry && !post.state.isTerminal, "retry \(n)")
       #expect(try rig.service.autoRetries(x).count == n)
-      #expect(try r8.events(rig, "automatic retry \(n) of 5") == 1)
-      #expect(try r8.problems(rig).isEmpty)
+      #expect(try r8.events(rig, "automatic retry \(n) on") == 1, "retry \(n)")
+      if n == 6 || n == 20 {
+        #expect(try r8.problems(rig).isEmpty)
+        #expect(!rig.notifier.delivered.contains { $0.key.hasPrefix("problem:") })
+        #expect(try rig.service.pendingAutoRetries().map(\.post.id) == [post.id])
+        #expect(try rig.service.displayState(for: post).map { if case .retrying(let s, _) = $0 { !s.contains(" of ") && !s.contains("(") } else { false } } == true)
+      }
     }
-    rig.tick(2)
-    try fail(rig, post)
-    rig.tick(2)
-    #expect(try attempts(rig, x).count == 6)
-    let last = try #require(try rig.store.post(id: post.id))
-    #expect(last.state == .failed && last.resolution == nil)
-    #expect(last.errorMessage == "Something went wrong — automatic retries used up, mark Fixed when it's ready")
-    #expect(try r8.problems(rig) == [last.id])
-    #expect(rig.notifier.delivered.contains { $0.key == "problem:\(last.id)" })
-    #expect(try rig.service.pendingAutoRetries().isEmpty)
-    #expect(try PostActions(store: rig.store).fixed(postId: last.id).attemptNo == 7)
     #expect(try rig.invariants().isEmpty)
   }
 
@@ -372,7 +368,7 @@ import Testing
     #expect(times[1] == failedAt[1].addingTimeInterval(6 * 3600))
     let dm = rig.f.dm
     #expect(dm.key(times[2]) > dm.key(failedAt[2]) || times[2] > failedAt[2])
-    #expect(Sched.clock(times[2], try rig.store.settings()) == "08:00")
+    #expect(Sched.clock(times[2], try rig.store.settings()) == "17:00")  // X's slot
   }
 
   // MARK: R5 pause, held, Fixed
@@ -402,7 +398,7 @@ import Testing
     var cur = try #require(try rig.store.post(id: a.id))
     #expect(cur.state != .overdue && cur.state != .due)
     if case .retrying(let s, let line?)? = try rig.service.displayState(for: cur) {
-      #expect(s == "Retry waits (try 1 of 5)" && line.hasPrefix("Retrying when"))
+      #expect(s == "Retry waits" && line.hasPrefix("Retrying when"))
     } else { Issue.record("not retrying") }
     #expect(!rig.notifier.delivered.contains { $0.postId == a.id && !$0.key.hasPrefix("postiz.retryWaits:") })
     try rig.f.updateSettings { $0 = before }
@@ -460,7 +456,7 @@ import Testing
     rig.tick(3)
     #expect(try attempts(rig, x).count == 1 && r8.problems(rig).isEmpty)
     let f = try #require(try rig.store.post(id: x.id))
-    #expect(try rig.service.displayState(for: f) == .retrying("Retry waits (try 1 of 5)", line: "Retrying when posting resumes (try 1 of 5)"))
+    #expect(try rig.service.displayState(for: f) == .retrying("Retry waits", line: "Retrying when posting resumes"))
     rig.f.clock.advance(86400)
     rig.tick()
     try rig.f.updateSettings { $0.paused = false }
@@ -487,7 +483,7 @@ import Testing
     #expect(try r8.problems(rig).isEmpty)
     let f = try #require(try rig.store.post(id: x.id))
     #expect(f.resolution == nil)
-    #expect(try rig.service.displayState(for: f) == .retrying("Retry waits (try 1 of 5)", line: "Retrying when it's back in the Queue (try 1 of 5)"))
+    #expect(try rig.service.displayState(for: f) == .retrying("Retry waits", line: "Retrying when it's back in the Queue"))
 
     rig.f.clock.advance(2 * 86400)
     rig.tick()
@@ -757,7 +753,7 @@ import Testing
     rig.tick(2)
     let cur = try #require(try rig.store.post(id: a.id))
     #expect(try !rig.service.isRetryAttempt(cur))
-    #expect(cur.state == .overdue && cur.errorMessage?.contains("couldn't be sent") == true)
+    #expect(cur.state == .overdue && cur.errorMessage?.contains("couldn't reach Postiz for a day") == true)
     #expect(try PostActions(store: rig.store).problems().contains { $0.id == a.id })
     if case .retrying? = try rig.service.displayState(for: cur) { Issue.record("still says retrying") }
   }
@@ -884,7 +880,7 @@ import Testing
     try rig.store.save(other, note: "test")
     try fail(rig, x)
     let f = try #require(try rig.store.post(id: x.id))
-    #expect(try rig.service.displayState(for: f) == .retrying("Retry waits (try 1 of 5)", line: "Retrying when its other post is done (try 1 of 5)"))
+    #expect(try rig.service.displayState(for: f) == .retrying("Retry waits", line: "Retrying when its other post is done"))
   }
 
   @Test func aSecondFailureWhileWaitingIsListedOnce() throws {
@@ -941,7 +937,8 @@ import Testing
     try fail(rig, x)
     let a = try #require(try attempts(rig, x).last)
     var st = try rig.service.status()
-    #expect(st.retries.first?.post == a.id && st.retries.first?.at == a.scheduledAt && st.retries.first?.text.contains("(try 1 of 5)") == true)
+    #expect(st.retries.first?.post == a.id && st.retries.first?.at == a.scheduledAt && st.retries.first?.text.hasPrefix("Retrying ") == true
+            && st.retries.first?.text.contains(" of ") == false)
     try rig.f.updateSettings { $0.publishing.publishers[.x] = .manual }
     rig.tick()
     st = try rig.service.status()
@@ -1002,7 +999,7 @@ import Testing
         #expect(live.count <= 1, "seed \(seed) step \(step): live \(live.map(\.id))")
         let open = try rig.store.postizJobs(where: "video_id=? AND platform='x' AND closed_at IS NULL AND kind='post'", [x.videoId])
         #expect(open.filter { $0.phase != .deleting }.count <= 1, "seed \(seed) step \(step): open \(open.map(\.id))")
-        #expect(try rig.service.autoRetries(x).count <= PostizService.maxAutoRetries)
+        #expect(try rig.service.autoRetries(x).count >= 0)
       }
       retries += try rig.service.autoRetries(x).count
       if !rig.fake.everPublished.isEmpty { published += 1 }

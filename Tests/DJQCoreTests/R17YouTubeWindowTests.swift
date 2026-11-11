@@ -2,8 +2,10 @@ import Foundation
 import Testing
 @testable import DJQCore
 
-/// Round 17: Postiz's YouTube quota resets at 07:00 UTC and is often gone hours before, so nothing on YouTube is scheduled
-/// from 02:00 to 07:00 UTC, quota retries go at 07:30 UTC, and `djq slot` moves a platform's posts to a new time.
+/// Round 17, rule changed in round 22: Postiz's YouTube quota resets at midnight Pacific (07:00 UTC in summer, 08:00 UTC
+/// in winter) and is often gone hours before, so nothing on YouTube is scheduled from 19:00 to midnight Pacific, it goes
+/// at 00:30 Pacific instead, quota retries go to the next YouTube slot after the reset, and `djq slot` moves a platform's
+/// posts to a new time.
 @Suite struct R17YouTubeWindowTests {
   typealias Rig = R6PostizLifecycleTests.Rig
 
@@ -22,38 +24,129 @@ import Testing
     DayMath(tz: TimeZone(identifier: "America/New_York")!).at(day, minutes: hour * 60 + minute)
   }
 
+  /// A Los Angeles wall clock time.
+  func pt(_ day: String, _ hour: Int, _ minute: Int = 0, _ second: Int = 0) -> Date {
+    DayMath(tz: TimeZone(identifier: "America/Los_Angeles")!).at(day, minutes: hour * 60 + minute).addingTimeInterval(Double(second))
+  }
+
   // MARK: The helper
 
-  @Test(arguments: [(1, 59, 59, false), (2, 0, 0, true), (2, 0, 1, true), (4, 30, 0, true), (6, 59, 59, true), (7, 0, 0, false),
-                    (7, 30, 0, false), (15, 0, 0, false), (23, 59, 59, false), (0, 0, 0, false)])
+  @Test(arguments: [(18, 59, 59, false), (19, 0, 0, true), (19, 0, 1, true), (21, 30, 0, true), (23, 59, 59, true), (0, 0, 0, false),
+                    (0, 30, 0, false), (7, 0, 0, false), (15, 0, 0, false)])
   func theWindowsEdges(_ h: Int, _ m: Int, _ s: Int, _ quiet: Bool) {
-    let d = utc("2026-11-04", h, m, s)
-    #expect(YouTubeWindow.clear(d, .youtube) == (quiet ? utc("2026-11-04", 7, 30) : d))
+    let d = pt("2026-11-04", h, m, s)
+    #expect(YouTubeWindow.clear(d, .youtube) == (quiet ? pt("2026-11-05", 0, 30) : d))
   }
 
   @Test(arguments: Platform.allCases.filter { $0 != .youtube })
   func otherPlatformsNeverMove(_ p: Platform) {
-    #expect(YouTubeWindow.clear(utc("2026-11-04", 4), p) == utc("2026-11-04", 4))
+    #expect(YouTubeWindow.clear(pt("2026-11-04", 20), p) == pt("2026-11-04", 20))
   }
 
-  /// 9:30 pm New York is outside the window in summer and inside it in winter: the window doesn't move with the clocks.
-  @Test func theWindowIsUTCAcrossBothDSTChanges() {
-    #expect(YouTubeWindow.clear(ny("2026-10-31", 21, 30), .youtube) == ny("2026-10-31", 21, 30))  // EDT: 01:30 UTC
-    #expect(YouTubeWindow.clear(ny("2026-11-01", 21, 30), .youtube) == utc("2026-11-02", 7, 30))  // EST: 02:30 UTC
-    #expect(YouTubeWindow.clear(ny("2027-03-13", 21, 30), .youtube) == utc("2027-03-14", 7, 30))  // EST: 02:30 UTC
-    #expect(YouTubeWindow.clear(ny("2027-03-14", 21, 30), .youtube) == ny("2027-03-14", 21, 30))  // EDT: 01:30 UTC
+  /// The window follows the Pacific clock, so in UTC it moves an hour with the clocks: 02:00–07:00 UTC in summer,
+  /// 03:00–08:00 UTC in winter. 10:30 pm New York is 7:30 pm Pacific all year: always moved, to 00:30 Pacific (3:30 am
+  /// New York, or 2:30 / 4:30 am on the two nights New York changes its clocks three hours before Los Angeles).
+  @Test func theWindowIsPacificAcrossBothDSTChanges() {
+    for day in ["2026-10-31", "2026-11-01", "2027-03-13", "2027-03-14"] {
+      let next = DayMath(tz: TimeZone(identifier: "America/New_York")!).addDays(day, 1)
+      #expect(YouTubeWindow.clear(ny(day, 22, 30), .youtube) == pt(next, 0, 30), "\(day)")
+      #expect(YouTubeWindow.clear(ny(day, 21, 30), .youtube) == ny(day, 21, 30), "\(day)")
+    }
+    #expect(pt("2026-11-01", 0, 30) == ny("2026-11-01", 2, 30) && pt("2027-03-14", 0, 30) == ny("2027-03-14", 4, 30))
+    // In UTC: 02:30 UTC is quiet in summer (7:30 pm PDT) and not in winter (6:30 pm PST); 07:30 UTC the other way round.
+    #expect(YouTubeWindow.clear(utc("2026-10-20", 2, 30), .youtube) == utc("2026-10-20", 7, 30))
+    #expect(YouTubeWindow.clear(utc("2026-11-20", 2, 30), .youtube) == utc("2026-11-20", 2, 30))
+    #expect(YouTubeWindow.clear(utc("2026-10-20", 7, 30), .youtube) == utc("2026-10-20", 7, 30))
+    #expect(YouTubeWindow.clear(utc("2026-11-20", 7, 30), .youtube) == utc("2026-11-20", 8, 30))
+    // The change days themselves: the reset is the Pacific midnight, whatever its UTC offset that night.
+    #expect(YouTubeWindow.nextReset(after: utc("2026-11-01", 6)) == utc("2026-11-01", 7))  // PDT midnight
+    #expect(YouTubeWindow.nextReset(after: utc("2026-11-01", 7, 30)) == utc("2026-11-02", 8))  // the next is PST
+    #expect(YouTubeWindow.nextReset(after: utc("2027-03-14", 7, 30)) == utc("2027-03-14", 8))  // PST midnight
+    #expect(YouTubeWindow.nextReset(after: utc("2027-03-14", 9)) == utc("2027-03-15", 7))  // the next is PDT
+    #expect(YouTubeWindow.isMoved(pt("2026-11-01", 0, 30)) && YouTubeWindow.isMoved(pt("2027-03-14", 0, 30)))
+    #expect(!YouTubeWindow.isMoved(utc("2026-11-20", 7, 30)))
   }
 
-  @Test func theQuotaRetryIsTheNext0730UTCAfterTheFailure() {
-    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-04", 20)).retry == utc("2026-11-05", 7, 30))
-    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-04", 20)).reset == utc("2026-11-05", 7))
-    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-04", 6)).retry == utc("2026-11-04", 7, 30))
-    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-04", 7, 29)).retry == utc("2026-11-04", 7, 30))
-    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-04", 7, 30)).retry == utc("2026-11-05", 7, 30))
-    // Both DST nights: midnight Pacific would drift an hour against this.
-    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-01", 3)).retry == utc("2026-11-01", 7, 30))
-    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2027-03-14", 3)).retry == utc("2027-03-14", 7, 30))
-    #expect(PostizRetrySchedule.next(after: utc("2026-11-04", 20), retry: 4, platform: .youtube, settings: Settings()) == utc("2026-11-05", 7, 30))
+  /// The note in Settings and `djq slot youtube`, in Eric's own clock.
+  @Test func theSettingsNoteSaysItInPlainWords() {
+    #expect(YouTubeWindow.settingsNote(TimeZone(identifier: "America/New_York")!, on: utc("2026-11-11", 12))
+            == "10 pm–3 am moves to 3:30 am: Postiz's YouTube quota resets at midnight Pacific.")
+    #expect(YouTubeWindow.settingsNote(TimeZone(identifier: "America/Los_Angeles")!, on: utc("2026-07-01", 12))
+            == "7 pm–12 am moves to 12:30 am: Postiz's YouTube quota resets at midnight Pacific.")
+    #expect(YouTubeWindow.settingsNote(TimeZone(identifier: "Europe/London")!, on: utc("2026-11-11", 12))
+            == "3 am–8 am moves to 8:30 am: Postiz's YouTube quota resets at midnight Pacific.")
+  }
+
+  func settings(slot: Int = 8 * 60) -> Settings {
+    var s = Settings()
+    s.slotMinutes[.youtube] = slot
+    return s
+  }
+
+  /// R2: the next YouTube slot from Settings, 30 min or more after the next Pacific reset and an hour after the failure.
+  @Test func theQuotaRetryIsTheNextSlotAfterThePacificReset() {
+    let s = settings()
+    // The live case: failed Wed 11 Nov 07:30 UTC (11:30 pm Tuesday Pacific), slot 8:00 am New York.
+    let live = PostizRetrySchedule.youTubeQuota(after: utc("2026-11-11", 7, 30), settings: s)
+    #expect(live.reset == utc("2026-11-11", 8) && live.retry == utc("2026-11-11", 13))
+    // PDT: midnight Pacific is 07:00 UTC.
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-10-20", 7, 30), settings: s).reset == utc("2026-10-21", 7))
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-10-20", 7, 30), settings: s).retry == utc("2026-10-21", 12))
+    #expect(PostizRetrySchedule.youTubeQuota(after: ny("2026-10-20", 23), settings: s).retry == ny("2026-10-21", 8))
+    // November change day: 11:30 pm PDT on the 31st resets at 07:00 UTC; half past midnight PDT on the 1st waits for PST's.
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-01", 6, 30), settings: s).reset == utc("2026-11-01", 7))
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-01", 6, 30), settings: s).retry == ny("2026-11-01", 8))
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-01", 7, 30), settings: s).reset == utc("2026-11-02", 8))
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-01", 7, 30), settings: s).retry == ny("2026-11-02", 8))
+    // March change day.
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2027-03-14", 7, 30), settings: s).reset == utc("2027-03-14", 8))
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2027-03-14", 7, 30), settings: s).retry == ny("2027-03-14", 8))
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2027-03-14", 8, 30), settings: s).reset == utc("2027-03-15", 7))
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2027-03-14", 8, 30), settings: s).retry == ny("2027-03-15", 8))
+    // A slot inside the quiet window counts at its moved time, 00:30 Pacific: never before the reset + 30 min.
+    #expect(PostizRetrySchedule.youTubeQuota(after: utc("2026-11-11", 7, 30), settings: settings(slot: 23 * 60)).retry == utc("2026-11-11", 8, 30))
+    // A failure just after the reset still waits an hour, so the slot that day is taken only when it's far enough.
+    #expect(PostizRetrySchedule.youTubeQuota(after: ny("2026-11-11", 7, 30), settings: s).retry == ny("2026-11-12", 8))
+    // Every try waits for the quota; a YouTube failure over its media backs off like the others.
+    #expect(PostizRetrySchedule.next(after: utc("2026-11-11", 7, 30), retry: 4, platform: .youtube, settings: s) == utc("2026-11-11", 13))
+    #expect(PostizRetrySchedule.next(after: utc("2026-11-11", 7, 30), retry: 1, platform: .youtube, settings: s, quota: false)
+            == utc("2026-11-11", 8, 30))
+  }
+
+  /// The failure's quiet-window time no longer decides anything: the summer and winter failure at the same Pacific time
+  /// retry at the same New York slot.
+  @Test func aFailureInPSTAndInPDTRetryOnTheSameLocalSlot() {
+    let s = settings()
+    #expect(PostizRetrySchedule.youTubeQuota(after: pt("2026-07-15", 23, 30), settings: s).retry == ny("2026-07-16", 8))
+    #expect(PostizRetrySchedule.youTubeQuota(after: pt("2026-12-15", 23, 30), settings: s).retry == ny("2026-12-16", 8))
+  }
+
+  /// Stored under the old 07:00 UTC rule, a YouTube post at 07:30 UTC in winter is 11:30 pm Pacific: the engine moves
+  /// it to 00:30 Pacific by itself, Postiz's copy follows, and posts out of the window and other platforms stay.
+  @Test func storedPostsInTheWindowMoveOutByThemselves() throws {
+    let rig = try Rig(3, platforms: [.youtube, .x]) { $0.enabledPlatforms = [.youtube, .x] }
+    rig.settle()
+    rig.f.setTime("2026-11-02", "06:00")
+    let yts = try rig.f.posts(.youtube).sorted { $0.scheduledAt < $1.scheduledAt }
+    var old = yts[1]
+    old.scheduledAt = utc("2026-11-04", 7, 30)  // the old rule's moved time
+    try rig.store.save(old, note: "test")
+    var pinned = yts[2]
+    pinned.scheduledAt = utc("2026-11-05", 7, 30)
+    try rig.store.save(pinned, note: "test")
+    var slot = try #require(try rig.store.planSlot(id: pinned.planSlotId!))
+    slot.pinned = true
+    try rig.store.save(slot)
+    let x = try rig.f.posts(.x)
+    rig.tick(2)
+    #expect(try rig.store.post(id: old.id)?.scheduledAt == utc("2026-11-04", 8, 30))
+    #expect(try rig.store.post(id: pinned.id)?.scheduledAt == utc("2026-11-05", 8, 30))  // the window applies to pins, as `clear` always did
+    #expect(try rig.store.post(id: yts[0].id)?.scheduledAt == yts[0].scheduledAt)
+    #expect(try rig.f.posts(.x).map(\.scheduledAt) == x.map(\.scheduledAt))
+    #expect(try rig.job(rig.store.post(id: old.id)!)?.remoteDate == utc("2026-11-04", 8, 30))
+    #expect(try Placer(store: rig.store, dm: rig.f.dm).isTaken(.youtube, day: "2026-11-03", position: 0))
+    #expect(try rig.invariants().isEmpty)
+    #expect(try rig.store.moveOutOfYouTubeWindow() == 0)  // nothing left to move
   }
 
   // MARK: Slot times
@@ -66,25 +159,25 @@ import Testing
     }
   }
 
-  @Test func aSlotInTheWindowGoesAt0730AndOtherPlatformsStay() throws {
+  @Test func aSlotInTheWindowGoesAt0030PacificAndOtherPlatformsStay() throws {
     var s = Settings()
     s.slotMinutes[.youtube] = 22 * 60
     s.slotMinutes[.x] = 22 * 60
     let dm = DayMath(settings: s)
-    #expect(s.slotTime(.youtube, date: "2026-11-04", position: 0, dm) == utc("2026-11-05", 7, 30))
+    #expect(s.slotTime(.youtube, date: "2026-11-04", position: 0, dm) == utc("2026-11-05", 8, 30))  // 00:30 PST
     #expect(s.slotTime(.x, date: "2026-11-04", position: 0, dm) == utc("2026-11-05", 3))
-    #expect(s.slotTime(.youtube, date: "2026-07-01", position: 0, dm) == utc("2026-07-02", 7, 30))
+    #expect(s.slotTime(.youtube, date: "2026-07-01", position: 0, dm) == utc("2026-07-02", 7, 30))  // 00:30 PDT
     s.slotMinutes[.youtube] = 8 * 60
     #expect(s.slotTime(.youtube, date: "2026-11-04", position: 0, dm) == utc("2026-11-04", 13))
     #expect(s.slotTime(.youtube, date: "2026-07-01", position: 0, dm) == utc("2026-07-01", 12))
   }
 
-  /// A 23:00 slot posts at 2:30 am the next morning and still belongs to the day it was placed on, or `Placer` would see
-  /// that day free and put a second clip on the same time.
+  /// A 23:00 slot posts at 3:30 am the next morning (00:30 Pacific) and still belongs to the day it was placed on, or
+  /// `Placer` would see that day free and put a second clip on the same time.
   @Test func aNightSlotKeepsItsPlanDay() throws {
     let rig = try nightRig()
     let posts = try rig.store.posts(where: "platform='youtube' AND kind='regular'").sorted { $0.scheduledAt < $1.scheduledAt }
-    #expect(posts.map(\.scheduledAt) == [utc("2026-11-03", 7, 30), utc("2026-11-04", 7, 30), utc("2026-11-05", 7, 30)])
+    #expect(posts.map(\.scheduledAt) == [utc("2026-11-03", 8, 30), utc("2026-11-04", 8, 30), utc("2026-11-05", 8, 30)])
     let dm = try rig.store.dayMath()
     #expect(try posts.map { try rig.store.planDay(of: $0, dm: dm) } == ["2026-11-02", "2026-11-03", "2026-11-04"])
     let placer = try Placer(store: rig.store, dm: dm)
@@ -95,13 +188,13 @@ import Testing
   @Test func aReflowAcrossTheSpringChangeStaysOutOfTheWindow() throws {
     let rig = try Rig(1, platforms: [.youtube]) { $0.enabledPlatforms = [.youtube] }
     var p = try #require(try rig.store.posts(where: "platform='youtube'").first)
-    p.scheduledAt = utc("2027-03-13", 7, 30)  // 2:30 am EST; two days on, that clock time is 06:30 UTC
+    p.scheduledAt = utc("2027-03-13", 8, 30)  // 00:30 PST; two days on, 00:30 PDT is 07:30 UTC
     try rig.store.save(p, note: "test")
     try rig.store.reflow([p], days: 2, dm: try rig.store.dayMath(), note: "test")
     #expect(try rig.store.post(id: p.id)?.scheduledAt == utc("2027-03-15", 7, 30))
   }
 
-  /// 19:00 + 3 h is 03:00 UTC in winter, so the extra post looks the other way.
+  /// 19:00 + 3 h is 10 pm New York, 7 pm Pacific: in the window, so the extra post looks the other way.
   @Test func anExtraPostSkipsTheWindow() throws {
     let rig = try Rig(1, platforms: [.youtube]) { s in
       s.enabledPlatforms = [.youtube]
@@ -133,30 +226,30 @@ import Testing
     func slot(_ t: Date, earliest: Date? = nil) throws -> Date {
       try Sched.retrySlot(store: rig.store, platform: .youtube, target: t, earliest: earliest, settings: s, excluding: [yt.id])
     }
-    #expect(try slot(utc("2026-11-20", 3)) == utc("2026-11-20", 7, 30))
-    try extra(rig, yt, at: utc("2026-11-20", 7, 30))
-    #expect(try slot(utc("2026-11-20", 3)) == utc("2026-11-20", 10, 30))  // the gap, after the move
-    #expect(try slot(utc("2026-11-20", 7, 30), earliest: utc("2026-11-20", 7)) == utc("2026-11-20", 10, 30))  // 04:30 is no room
-    // Pushed later into the window, it comes out at 07:30.
-    try extra(rig, yt, at: utc("2026-11-25", 23, 30))
-    #expect(try slot(utc("2026-11-25", 23, 30)) == utc("2026-11-26", 7, 30))
+    #expect(try slot(pt("2026-11-20", 20)) == pt("2026-11-21", 0, 30))
+    try extra(rig, yt, at: pt("2026-11-21", 0, 30))
+    #expect(try slot(pt("2026-11-20", 20)) == pt("2026-11-21", 3, 30))  // the gap, after the move
+    #expect(try slot(pt("2026-11-21", 0, 30), earliest: pt("2026-11-21", 0)) == pt("2026-11-21", 3, 30))  // 9:30 pm is no room
+    // Pushed later into the window, it comes out at 00:30 Pacific.
+    try extra(rig, yt, at: pt("2026-11-25", 16, 30))
+    #expect(try slot(pt("2026-11-25", 16, 30)) == pt("2026-11-26", 0, 30))
     // Other platforms keep their time.
-    #expect(try Sched.retrySlot(store: rig.store, platform: .x, target: utc("2026-11-20", 3), settings: s) == utc("2026-11-20", 3))
+    #expect(try Sched.retrySlot(store: rig.store, platform: .x, target: pt("2026-11-20", 20), settings: s) == pt("2026-11-20", 20))
   }
 
-  /// The Mac sleeps past the retry's time and wakes inside the window: now + 3 min isn't allowed, 07:30 is.
-  @Test func aLateRetryThatWouldGoInTheWindowWaitsFor0730() throws {
+  /// The Mac sleeps past the retry's time and wakes inside the window: now + 3 min isn't allowed, 00:30 Pacific is.
+  @Test func aLateRetryThatWouldGoInTheWindowWaitsFor0030Pacific() throws {
     let rig = try Rig(1, platforms: [.youtube]) { $0.enabledPlatforms = [.youtube] }
     rig.settle()
     let yt = try #require(try rig.f.post(.youtube, day: "2026-11-02"))
     let j = try #require(try rig.job(yt))
     rig.fake.fail(j.postizId!, error: Self.quota)
-    rig.f.clock.set(utc("2026-11-04", 4))
+    rig.f.clock.set(utc("2026-11-04", 4))  // 8 pm Pacific
     rig.tick()
     let a = try #require(try r8.attempts(rig, yt).last)
-    #expect(a.id != yt.id && a.scheduledAt == utc("2026-11-04", 7, 30))
+    #expect(a.id != yt.id && a.scheduledAt == utc("2026-11-04", 8, 30))
     rig.tick(2)
-    #expect(try rig.job(a)?.remoteDate == utc("2026-11-04", 7, 30))
+    #expect(try rig.job(a)?.remoteDate == utc("2026-11-04", 8, 30))
   }
 
   /// Every create comes through `remoteDate`: a late slot or Post now inside the window waits too, other platforms don't.
@@ -164,20 +257,20 @@ import Testing
     let rig = try Rig(1, platforms: [.youtube, .x])
     rig.f.clock.set(utc("2026-11-04", 4))
     let past = utc("2026-11-04", 3)
-    #expect(try rig.service.remoteDate(for: past, platform: .youtube, integrationId: "ch-youtube") == utc("2026-11-04", 7, 30))
+    #expect(try rig.service.remoteDate(for: past, platform: .youtube, integrationId: "ch-youtube") == utc("2026-11-04", 8, 30))
     #expect(try rig.service.remoteDate(for: past, platform: .x, integrationId: "ch-x") == utc("2026-11-04", 4, 3))
   }
 
-  /// Two jobs never share a minute: the +1 min that dodges a taken 01:59 doesn't get to land on 02:00.
+  /// Two jobs never share a minute: the +1 min that dodges a taken 6:59 pm Pacific doesn't get to land on 7:00 pm.
   @Test func theMinuteAfterATakenOneStaysOutOfTheWindowToo() throws {
     let rig = try Rig(1, platforms: [.youtube]) { $0.enabledPlatforms = [.youtube] }
     rig.settle()
     let yt = try #require(try rig.f.post(.youtube, day: "2026-11-02"))
     var j = try #require(try rig.job(yt))
-    j.remoteDate = utc("2026-11-04", 1, 59)
+    j.remoteDate = pt("2026-11-03", 18, 59)
     try rig.store.save(j)
-    rig.f.clock.set(utc("2026-11-04", 1, 40))
-    #expect(try rig.service.remoteDate(for: utc("2026-11-04", 1, 59), platform: .youtube, integrationId: "ch-youtube") == utc("2026-11-04", 7, 30))
+    rig.f.clock.set(pt("2026-11-03", 18, 40))
+    #expect(try rig.service.remoteDate(for: pt("2026-11-03", 18, 59), platform: .youtube, integrationId: "ch-youtube") == pt("2026-11-04", 0, 30))
   }
 
   // MARK: djq slot
@@ -247,7 +340,8 @@ import Testing
     rig.f.setTime(day(1), "23:30")
     rig.tick()
     let retry = try #require(try r8.attempts(rig, yt).first { $0.kind == .retry })
-    #expect(retry.scheduledAt == utc("2026-11-03", 7, 30))
+    // Tuesday's slot (15:00) after the reset, but Tuesday's own post is there: 3 h earlier, still after the reset.
+    #expect(retry.scheduledAt == rig.f.at(day(2), "12:00"))
     let c = try PostActions(store: rig.store).setSlot(.youtube, minutes: 8 * 60)
     #expect(try rig.store.post(id: repost.id)?.scheduledAt == rig.f.at("2026-11-10", "11:00"))  // the slot + 3 h
     #expect(try rig.store.post(id: retry.id)?.scheduledAt == retry.scheduledAt)
@@ -268,7 +362,7 @@ import Testing
     let rig = try slotRig()
     let before = try rig.f.posts(.youtube)
     let c = try PostActions(store: rig.store).setSlot(.youtube, minutes: 23 * 60, dryRun: true)
-    #expect(c.batchId == nil && c.moved.map(\.to).sorted() == (1...4).map { utc("2026-11-0\($0 + 2)", 7, 30) })
+    #expect(c.batchId == nil && c.moved.map(\.to).sorted() == (1...4).map { utc("2026-11-0\($0 + 2)", 8, 30) })
     #expect(try rig.f.posts(.youtube) == before)
     #expect(try rig.store.settings().slot(for: .youtube) == 15 * 60)
     #expect(try BulkActions(store: rig.store).batches().isEmpty)
@@ -338,9 +432,9 @@ import Testing
     #expect(try rig.f.post(.x, day: day(1))?.scheduledAt == rig.f.at(day(1), "18:00"))
   }
 
-  /// 07:30 UTC can be a night slot moved past midnight or a post that belongs to that morning. Its slot says which.
-  @Test func thePlanSlotSettlesWhichDayA0730PostIs() {
-    let dm = DayMath(settings: Settings()), at = utc("2026-11-04", 7, 30)  // 2:30 am New York on the 4th
+  /// 00:30 Pacific can be a night slot moved past midnight or a post that belongs to that morning. Its slot says which.
+  @Test func thePlanSlotSettlesWhichDayA0030PacificPostIs() {
+    let dm = DayMath(settings: Settings()), at = utc("2026-11-04", 8, 30)  // 3:30 am New York on the 4th
     func day(_ slot: String?, _ p: Platform = .youtube, position: Int = 0) -> String {
       dm.planDay(at, position: position, slotDate: slot, platform: p, offsetMinutes: 180)
     }
@@ -357,7 +451,7 @@ import Testing
     let rig = try nightRig()
     rig.f.setTime(day(1), "06:00")
     try Planner(store: rig.store).pushPlan(from: day(1), days: 1)
-    #expect(try rig.f.posts(.youtube).map(\.scheduledAt).sorted() == [utc("2026-11-04", 7, 30), utc("2026-11-05", 7, 30), utc("2026-11-06", 7, 30)])
+    #expect(try rig.f.posts(.youtube).map(\.scheduledAt).sorted() == [utc("2026-11-04", 8, 30), utc("2026-11-05", 8, 30), utc("2026-11-06", 8, 30)])
     #expect(try rig.f.posts(.youtube).map { try rig.store.planDay(of: $0, dm: rig.f.dm) }.sorted() == [day(2), day(3), day(4)])
   }
 
@@ -399,8 +493,10 @@ import Testing
     #expect(try rig.f.posts(.youtube).map(\.scheduledAt).sorted() == (1...3).map { rig.f.at(day($0), "08:00") })
   }
 
+  /// A night post moved to 00:30 Pacific stays on 00:30 Pacific across both changes (a fixed 24 h would land at 23:30
+  /// or 01:30 Pacific, in the window or off the moved time).
   @Test(arguments: [("2026-10-30", 3), ("2027-03-15", -3)])
-  func aShiftAcrossAClockChangeStaysOn0730(_ from: String, _ days: Int) throws {
+  func aShiftAcrossAClockChangeStaysOn0030Pacific(_ from: String, _ days: Int) throws {
     let rig = try nightRig(1)
     let dm = rig.f.dm
     var p = try #require(try rig.store.posts(where: "platform='youtube'").first)
@@ -408,7 +504,9 @@ import Testing
     try rig.store.save(p, note: "test")
     try rig.store.reflow([p], days: days, dm: dm, note: "test")
     let moved = try #require(try rig.store.post(id: p.id))
-    #expect(moved.scheduledAt == p.scheduledAt.addingTimeInterval(Double(days) * 86400))
+    let la = DayMath(tz: YouTubeWindow.pacific)
+    #expect(moved.scheduledAt == pt(la.addDays(la.key(p.scheduledAt), days), 0, 30))
+    #expect(YouTubeWindow.isMoved(moved.scheduledAt))
     #expect(try rig.store.planDay(of: moved, dm: dm) == dm.addDays(from, days))
   }
 

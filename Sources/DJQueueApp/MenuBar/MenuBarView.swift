@@ -78,14 +78,14 @@ struct MenuBarLabel: View {
     var parts = ["\(d) day\(d == 1 ? "" : "s") scheduled"]
     if m.settings.paused { parts.append("Posting is paused") }
     if !m.engineRunning { parts.append("The engine is stopped") }
-    if !m.problems.isEmpty { parts.append("Something needs attention (\(m.problems.count))") }
+    if m.attentionCount > 0 { parts.append("Something needs attention (\(m.attentionCount))") }
     if let u = AutoUpdateUI.shared.statusText { parts.append(u) }
     return parts.joined(separator: " · ")
   }
 
   var body: some View {
     if let m = host.model {
-      Image(nsImage: MenuBarIcon.image(days: m.runway.approvedDays, errors: m.problems.count, engineOn: m.engineRunning, paused: m.settings.paused,
+      Image(nsImage: MenuBarIcon.image(days: m.runway.approvedDays, errors: m.attentionCount, engineOn: m.engineRunning, paused: m.settings.paused,
                                        update: AutoUpdateUI.shared.dot))
         // The status item lives in the system menu bar, outside our windows, so DSTooltip can't reach it: the one
         // place a native help tag is right.
@@ -125,6 +125,8 @@ struct MenuBarState {
   /// Other posts due now (≤ 3 shown).
   var due: [PlatformPost]
   var problems: [PlatformPost]
+  /// Round 22: channels to reconnect in Postiz (one each), counted with the problems.
+  var signIn: [PostizSignInProblem] = []
   /// Today's posts Postiz handles (≤ 4 shown).
   var postiz: [PlatformPost] = []
   var engineRunning: Bool
@@ -144,6 +146,7 @@ struct MenuBarState {
     next = dueNow.first ?? m.nextPost
     due = Array(dueNow.dropFirst())
     problems = m.problems
+    signIn = m.signInProblems
     postiz = m.postizToday
     engineRunning = m.engineRunning
     paused = m.settings.paused
@@ -194,9 +197,9 @@ struct MenuBarContent: View {
         if !state.postiz.isEmpty { postizList }
       }
       .padding(DS.space.md)
-      if !state.problems.isEmpty || !state.engineRunning || state.update != nil {
+      if !state.problems.isEmpty || !state.signIn.isEmpty || !state.engineRunning || state.update != nil {
         VStack(spacing: DS.space.xs) {
-          if !state.problems.isEmpty { problemsRow }
+          if !state.problems.isEmpty || !state.signIn.isEmpty { problemsRow }
           if !state.engineRunning { engineRow }
           if let u = state.update { updateRow(u) }
         }
@@ -389,7 +392,7 @@ struct MenuBarContent: View {
   // MARK: Attention rows
 
   private var problemsRow: some View {
-    let n = state.problems.count
+    let n = state.problems.count + state.signIn.count
     return Button {
       WindowManager.shared.showMain(screen: .posts)
       model.reviewProblems()

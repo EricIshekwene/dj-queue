@@ -82,6 +82,8 @@ public struct PostizRouter: Sendable {
                         channels: cache?.integrations)
   }
 
+  /// A channel that needs signing in again (disabled, or `refreshNeeded`) still routes to Postiz (round 22): its posts
+  /// wait for it (`PostizService.signInDown`) and go out by themselves once it works, rather than fall back to Manual.
   public func route(_ p: Platform) -> PublishRoute {
     guard settings.publishing.publisher(for: p) == .postiz else { return .manual }
     guard hasKey else { return .fallback(.noKey) }
@@ -90,10 +92,16 @@ public struct PostizRouter: Sendable {
     var provider = PostizPlatforms.provider(p)
     if let channels {
       guard let c = channels.first(where: { $0.id == id }) else { return .fallback(.channelMissing) }
-      if c.disabled { return .fallback(.channelDisabled(c.name)) }
       if !c.identifier.isEmpty { provider = c.identifier }
     }
     return .postiz(integrationId: id, provider: provider)
+  }
+
+  /// The platform's mapped channel as listed, when the list says it needs signing in again.
+  public func channelNeedingSignIn(_ p: Platform) -> PostizIntegration? {
+    guard settings.publishing.publisher(for: p) == .postiz, let id = settings.publishing.channels[p],
+          let c = channels?.first(where: { $0.id == id }), c.needsSignIn else { return nil }
+    return c
   }
 
   public var routes: [Platform: PublishRoute] { Dictionary(uniqueKeysWithValues: Platform.allCases.map { ($0, route($0)) }) }

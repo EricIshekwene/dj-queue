@@ -129,7 +129,7 @@ struct PostsView: View {
   }
 
   private func statusChips(_ scope: [PlatformPost]) -> some View {
-    let problems = scoped(model.problems).count
+    let problems = scoped(model.problems).count + model.signInProblems.count  // round 22: one per channel to reconnect
     let opts = [PostsTab.problems, .scheduled, .posted].map { t in
       DSStatusChipOption(id: t.rawValue, title: t.title, count: t == .problems ? problems : scope.filter { inTab($0, t) }.count,
                          tone: t == .problems && problems > 0 ? .danger : nil, tooltip: t.blurb)
@@ -147,7 +147,7 @@ struct PostsView: View {
       } else if model.posts.isEmpty {
         DSEmptyState(icon: "paperplane", title: "No posts yet", message: "Posts appear once clips have a day on the Calendar.",
                      actionTitle: "Open Calendar") { model.screen = .calendar }
-      } else if list.isEmpty {
+      } else if list.isEmpty && !(tab == .problems && !model.signInProblems.isEmpty) {
         if tab == .problems && !prefs[.posts].isNarrowed(ignoringStatus: true) {
           DSEmptyState(icon: "checkmark.circle", title: "No problems", message: "Every post went out or is on schedule.",
                        actionTitle: "Show all posts") { prefs.setStatus(.posts, nil) }
@@ -163,6 +163,10 @@ struct PostsView: View {
         ScrollViewReader { proxy in
           ScrollView {
             LazyVStack(spacing: DS.space.xs) {
+              // Round 22: a channel to reconnect is one card, above the posts, however many posts wait for it.
+              if tab == .problems {
+                ForEach(model.signInProblems) { item in PostizSignInCard(model: model, item: item) }
+              }
               ForEach(groups) { g in
                 PostGroupCard(model: model, group: g, ordered: ordered, compact: compact, problems: tab == .problems,
                               primaryProblemId: primaryId)
@@ -328,7 +332,7 @@ extension PostsTab {
   /// What the chip holds, in one line (its tooltip).
   var blurb: String {
     switch self {
-    case .problems: "Failed, missed or copyright posts that need you"
+    case .problems: "What needs you: failed, missed or copyright posts, and channels to reconnect in Postiz"
     case .scheduled: "Posts still to go out (missed ones are in Problems)"
     case .posted: "Posts that went live"
     case .all: "Every attempt on every platform"

@@ -70,8 +70,9 @@ import Testing
     let r = Self.doctor(rig.store, keys: rig.keys).run()
     let p = Self.postiz(r)
     #expect(p["postiz.key_invalid"]?.severity == .error && p["postiz.key_invalid"]?.detail.contains("Invalid API key") == true)
-    let cd = try #require(p["postiz.channel_disabled"])
+    let cd = try #require(p["postiz.sign_in"])
     #expect(cd.severity == .error && cd.where_ == ["youtube"] && cd.detail.contains("DJ Lovd YouTube Shorts"))
+    #expect(cd.title == "Reconnect YouTube Shorts in Postiz")
     #expect(p["postiz.rate_limited"]?.severity == .info && p["postiz.rate_limited"]?.title.contains("paused") == true)
     #expect(!r.passed.contains("postiz"))
     // Errors make `djq doctor` exit 2; the key itself never shows up.

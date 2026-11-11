@@ -94,7 +94,7 @@ extension AppModel {
     if postiz.keyInvalid != nil { return "Postiz refused the API key — save it again" }
     guard let id = settings.publishing.channels[p], !id.isEmpty else { return "Pick a Postiz channel for \(p.displayName) first" }
     if postiz.channels != nil && postiz.channel(id) == nil { return "The picked channel isn't in Postiz any more — pick it again" }
-    if let c = postiz.channel(id), c.disabled { return "The channel \(c.name) is disabled in Postiz — reconnect it there" }
+    if let c = postiz.channel(id), c.needsSignIn { return "The channel \(c.name) needs reconnecting in Postiz — reconnect it there" }
     return nil
   }
 
@@ -271,7 +271,7 @@ extension PostizDisplayState {
   var badgeStyle: DSBadgeStyle {
     switch self {
     case .queued, .sending, .scheduled, .draft: .outline
-    case .retrying: .soft(.info)
+    case .retrying: .soft(.neutral)  // round 22: one quiet status pill (Shopify's "Scheduled"), never red
     case .unconfirmed: .soft(.warning)
     case .posting: .soft(.info)
     case .posted: .soft(.success)
@@ -283,7 +283,7 @@ extension PostizDisplayState {
   var badgeIcon: String? {
     switch self {
     case .queued, .sending, .scheduled: "paperplane"
-    case .retrying: "arrow.clockwise"
+    case .retrying: "clock.arrow.circlepath"
     case .unconfirmed: "questionmark.circle"
     case .posting: "arrow.up.circle"
     case .draft: "doc"

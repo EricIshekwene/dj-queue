@@ -174,7 +174,7 @@ public enum StageWording {
   public static func youtubeMoves(to at: Date, setFor exact: Date, settings s: Settings) -> String {
     let dm = DayMath(settings: s)
     let when = dm.key(at) == dm.key(exact) ? clockTime(at, s) : Sched.shortTime(at, s)
-    return "YouTube moves to \(when) (07:30 UTC)"
+    return "YouTube moves to \(when) (00:30 Pacific)"
   }
 
   /// Why a time can't be changed or cleared: Postiz holds a copy that is about to go out and keeps it from here on.
