@@ -8,6 +8,8 @@ public struct ValidationIssue: Sendable, Hashable, Identifiable, Codable {
     case heldInEdit
     /// Round 21: a photo post with no photos left (its last one can't be removed, so this is a broken row).
     case noPhotos
+    /// Round 21 (D20): a photo post in a shape a posting platform refuses (9:16 on Instagram).
+    case photoShape
   }
   public var kind: Kind
   public var platform: Platform?
@@ -41,7 +43,7 @@ extension ValidationIssue.Kind {
   /// Exhaustive on purpose — a new kind must say where it goes.
   public var editorSection: IssueSection? {
     switch self {
-    case .noCrop: .frame
+    case .noCrop, .photoShape: .frame
     case .noText: .text
     case .noTitle: .title
     case .tooLong, .tooLarge: .platforms
@@ -91,6 +93,10 @@ public enum Validation {
       // Round 21: the centred crop is always valid (Send to Queue confirms it) and a photo with no text is fine, so
       // neither blocks. YouTube is never a posting platform here (`re` skips it), so its title isn't checked.
       if photos.isEmpty { out.append(.init(kind: .noPhotos, platform: nil, message: "Add a photo")) }
+      // D20: a shape a posting platform refuses is said here, before the Queue, never as a failure at publish time.
+      for p in settings.activePlatforms where !re.isSkipped(p) {
+        if let why = PhotoRules.shapeProblem(re.aspect, platform: p) { out.append(.init(kind: .photoShape, platform: p, message: why)) }
+      }
     } else {
       if edit.crop == nil { out.append(.init(kind: .noCrop, platform: nil, message: "Confirm the crop")) }
     }

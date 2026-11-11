@@ -173,21 +173,52 @@ import Testing
     #expect(try rig.images(.instagram).first?["id"] as? String == first)
   }
 
-  @Test func theBudgetCountsEveryPhotoBeforeAnythingIsSent() throws {
+  @Test func theBudgetIsSpentPhotoByPhotoAndNothingIsHalfSent() throws {
     let rig = try Rig(photos: 7, budget: 10)
     _ = try rig.scheduleAndRender()
     let report = rig.engine.tick(reason: "t")
-    // Facebook goes first and needs 7 uploads + 1 create with room to spare for a sync: it fits. The next platform
-    // needs only its create (the photos are cached), and so on until the budget is used; nothing is half sent.
-    #expect(rig.fake.uploadCount == 7, "\(report.steps["publish"] ?? "")")
-    #expect(rig.fake.createCount >= 1 && rig.fake.createCount < 5)
+    // Facebook goes first: 7 uploads and its create. The next platforms need only a create (the photos are cached),
+    // until one call is left (kept for a sync); the rest wait for the next hour. No post is ever created short of photos.
+    #expect(rig.fake.uploadCount == 7 && rig.fake.createCount == 2, "\(report.steps["publish"] ?? "")")
+    #expect(report.steps["publish"]?.contains("waiting 3") == true && report.steps["publish"]?.contains("paused") == false)
+    #expect(try rig.images(.facebook).count == 7)
+    #expect(try rig.images(.threads).count == 7)
     #expect(rig.fake.violations.isEmpty)
-    // With no room for the photos at all, nothing is uploaded.
-    let tight = try Rig(photos: 12, budget: 10)  // Facebook alone needs 10 uploads and a create
-    _ = try tight.scheduleAndRender()
-    _ = tight.engine.tick(reason: "t")
-    #expect(tight.fake.uploadCount == 0 && tight.fake.createCount == 0)
-    #expect(try tight.store.openPostizJobs().isEmpty)
+    rig.f.clock.advance(3700)
+    _ = rig.engine.tick(reason: "t")
+    #expect(rig.fake.uploadCount == 7 && rig.fake.createCount == 5)
+  }
+
+  /// Review M2: a carousel needing more uploads than an hour allows used to upload nothing, forever, and hold up every
+  /// post behind it. Now its photos go up as the budget allows, and it is created once they are all there.
+  @Test func aCarouselLargerThanTheHourlyBudgetUploadsOverTwoHoursAndIsCreated() throws {
+    let rig = try Rig(photos: 30, budget: 25) { s in
+      for p in Platform.allCases where p != .tiktok { s.publishing.publishers[p] = .manual }  // a TikTok-only photo dump
+    }
+    rig.f.clock.advance(60)
+    let small = try rig.f.photoPost("small", count: 1, width: 80, height: 60)  // imported later: a day behind the carousel
+    try rig.f.send(small.id)
+    _ = try rig.scheduleAndRender()
+    let big = try #require(try rig.post(.tiktok))
+    let later = try #require(try rig.store.posts(where: "video_id=? AND platform='tiktok'", [small.id]).first)
+    #expect(big.scheduledAt < later.scheduledAt)
+    // Hour one: 24 of the 30 photos (one call stays for a sync), no create, no job, and the publish step isn't stopped.
+    let first = rig.engine.tick(reason: "t")
+    #expect(rig.fake.uploadCount == 24 && rig.fake.createCount == 0, "\(first.steps["publish"] ?? "")")
+    #expect(first.steps["publish"]?.contains("waiting 2") == true && first.steps["publish"]?.contains("paused") == false, "\(first.steps["publish"] ?? "")")
+    #expect(try rig.store.openPostizJobs().isEmpty && first.errors.isEmpty)
+    // Same hour, another tick: nothing is uploaded twice.
+    _ = rig.engine.tick(reason: "t")
+    #expect(rig.fake.uploadCount == 24 && rig.fake.createCount == 0)
+    // Hour two: the last six go up, the carousel is created with all thirty, and the post behind it goes too.
+    rig.f.clock.advance(3700)
+    let second = rig.engine.tick(reason: "t")
+    #expect(rig.fake.uploadCount == 31 && rig.fake.createCount == 2, "\(second.steps["publish"] ?? "")")
+    let counts = rig.fake.livePosts.map { p in ((((p.body["posts"] as? [[String: Any]])?.first?["value"] as? [[String: Any]])?.first?["image"]) as? [Any])?.count ?? 0 }
+    #expect(counts.sorted() == [1, 30], "the carousel went out whole")
+    #expect(try rig.store.livePostizJob(postId: big.id) != nil)
+    #expect(try rig.store.livePostizJob(postId: later.id) != nil)
+    #expect(rig.fake.violations.isEmpty)
   }
 
   @Test func aRefusedPhotoFallsBackToTheCalendar() throws {

@@ -27,9 +27,9 @@ import Testing
     let r = try renderer.ensureRender(videoId: v.id, versionNo: 1, platform: .instagram)
     let dir = ready(f)
     #expect(r.status == .done && r.scope == "all" && r.coverPath == nil && r.loudness == nil && (r.duration ?? 0) == 0)
-    #expect(r.allPaths == (1...3).map { dir.appendingPathComponent("set-1 – v1 – 0\($0).jpg").path })
+    #expect(r.allPaths == (1...3).map { dir.appendingPathComponent("set-1 – v1 – \(v.id.prefix(8)) – 0\($0).jpg").path })
     #expect(r.outputPath == r.allPaths[0] && r.morePaths == Array(r.allPaths.dropFirst()))
-    #expect(Renderer.photoOutputName(video: v, versionNo: 1, index: 11) == "set-1 – v1 – 12.jpg")
+    #expect(Renderer.photoOutputName(video: v, versionNo: 1, index: 11) == "set-1 – v1 – \(v.id.prefix(8)) – 12.jpg")
     // Stored as plain paths (no "\/"), so a dev copy's path rewrite reaches them like `output_path`.
     let raw = try #require(try f.store.db.one("SELECT more_paths FROM renders WHERE id=?", [r.id])?.string("more_paths"))
     #expect(raw.contains(r.allPaths[1]) && raw.contains(r.allPaths[2]) && !raw.contains("\\/"))
@@ -86,7 +86,7 @@ import Testing
       #expect(props[kCGImagePropertyGPSDictionary] == nil && props[kCGImagePropertyExifDictionary].map { "\($0)".contains("GPS") } != true)
       #expect(((props[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1) == 1)
       #expect((props[kCGImagePropertyColorModel] as? String) == (kCGImagePropertyColorModelRGB as String))
-      #expect((props[kCGImagePropertyProfileName] as? String)?.contains("sRGB") != false)
+      #expect((props[kCGImagePropertyProfileName] as? String) == "sRGB IEC61966-2.1", "tagged sRGB, not untagged")
     }
     // Eric's own crop on photo 1, hard left (x 0…240): red reaches most of the way across.
     var e = try f.store.edit(videoId: v.id)

@@ -115,9 +115,9 @@ import Testing
     #expect(try env.djq("queue").out.contains("q1"))
     // Render: two JPEGs in Photos/Ready to Post, no ffmpeg involved.
     let render = try env.djq("render", id)
-    #expect(render.status == 0 && render.out.contains("– v1 – 01.jpg"), "\(render.out)\(render.err)")
+    #expect(render.status == 0 && render.out.contains("q1 – v1 – \(id.prefix(8)) – 01.jpg"), "\(render.out)\(render.err)")
     let dir = env.f.paths.photos.appendingPathComponent("Ready to Post/Shortform")
-    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted() == ["q1 – v1 – 01.jpg", "q1 – v1 – 02.jpg"])
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted() == ["01", "02"].map { "q1 – v1 – \(id.prefix(8)) – \($0).jpg" })
     // The scheduler gives it a day with five posts and none on YouTube; Doctor has nothing to say about photo posts.
     #expect(try env.djq("schedule").status == 0)
     #expect(try env.store.posts(where: "video_id=?", [id]).map(\.platform).sorted() == Platform.allCases.filter(\.supportsPhotos).sorted())

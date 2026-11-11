@@ -47,6 +47,37 @@ public enum PhotoRules {
     ownCrop(photo, edit: e, aspect: aspect) ?? centredCrop(photo, aspect: aspect)
   }
 
+  // MARK: Shapes a platform takes (D20)
+
+  /// The widest and tallest photo (width ÷ height) a platform's publishing API takes. nil = any of `aspects`.
+  /// Instagram: 4:5 up to 1.91:1, so 4:5, 1:1 and 16:9 go and 9:16 doesn't.
+  public static func shapeRange(_ platform: Platform) -> ClosedRange<Double>? {
+    platform == .instagram ? 0.8...1.91 : nil
+  }
+
+  public static func takes(_ aspect: Aspect, platform: Platform) -> Bool {
+    shapeRange(platform).map { $0.contains((aspect.ratio * 1000).rounded() / 1000) } ?? true
+  }
+
+  /// Why `platform` can't post a photo in this shape (nil = it can): the readiness issue's message, and what the
+  /// platform's row says.
+  public static func shapeProblem(_ aspect: Aspect, platform: Platform) -> String? {
+    guard !takes(aspect, platform: platform) else { return nil }
+    return "\(platform.displayName) takes photos from 4:5 to 16:9 — pick another shape or turn \(platform.displayName) off for this post"
+  }
+
+  /// The platforms of `posting` that refuse this shape.
+  public static func refusing(_ aspect: Aspect, posting: [Platform]) -> [Platform] {
+    posting.filter { !takes(aspect, platform: $0) }
+  }
+
+  /// What the aspect picker says next to a shape: "Instagram doesn't take 9:16 photos". nil = every platform does.
+  public static func aspectNote(_ aspect: Aspect, posting: [Platform] = Platform.allCases.filter(\.supportsPhotos)) -> String? {
+    let no = refusing(aspect, posting: posting).sorted().map(\.displayName)
+    guard !no.isEmpty else { return nil }
+    return "\(no.joined(separator: " and ")) \(no.count == 1 ? "doesn't" : "don't") take \(aspect.rawValue) photos"
+  }
+
   // MARK: Text on a range of photos (D7)
 
   /// A text's window as it reads on a photo post: photo `index` (0-based) occupies [index, index + 1), and the text
@@ -104,6 +135,12 @@ public enum PhotoRules {
   /// What the platform's row says for a photo post: why it's off, or how many photos it gets. nil = nothing to say.
   public static func platformNote(count: Int, platform: Platform) -> String? {
     platform.supportsPhotos ? notice(count: count, platform: platform) : youtubeReason
+  }
+
+  /// The same with the post's shape: a shape the platform refuses comes first (it blocks; a dropped photo doesn't).
+  public static func platformNote(count: Int, aspect: Aspect, platform: Platform) -> String? {
+    guard platform.supportsPhotos else { return youtubeReason }
+    return shapeProblem(aspect, platform: platform) ?? notice(count: count, platform: platform)
   }
 
   /// The render's files that go out on `platform`, in order.

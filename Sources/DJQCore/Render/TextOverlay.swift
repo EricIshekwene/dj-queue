@@ -21,6 +21,10 @@ import UniformTypeIdentifiers
 /// font, spacing and opacity through this same path; with no look the pixels are exactly the ones above. The
 /// `ResolvedVersion` variants mean the first text.
 public enum TextOverlay {
+  /// Bump when a change here changes the pixels of a drawn text. A photo post's render hash carries it (when the post has
+  /// text), so those photos render again. Video renders don't read it: for them bump `Renderer.pipelineVersion`, as ever.
+  public static let drawingVersion = "text-1"
+
   /// Width of the text block relative to the frame width.
   public static let maxBlockWidthFraction: CGFloat = 0.82
 

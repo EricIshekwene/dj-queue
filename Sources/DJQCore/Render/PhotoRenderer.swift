@@ -105,10 +105,11 @@ public enum PhotoRenderer {
 // MARK: - Rendering a photo post (the photo half of `RenderService`)
 
 extension Renderer {
-  /// "<video name> – v<n> – 01.jpg" (1-based, two digits).
+  /// "<video name> – v<n> – <post id, 8 characters> – 01.jpg" (1-based, two digits). The id is in the name so two posts
+  /// can never render to one file, whatever their names are (names that differ only by case are one file on a Mac).
   public static func photoOutputName(video: Video, versionNo: Int, index: Int) -> String {
     let base = (outputName(video: video, versionNo: versionNo, platform: nil) as NSString).deletingPathExtension
-    return "\(base) – \(String(format: "%02d", index + 1)).jpg"
+    return "\(base) – \(video.id.prefix(8)) – \(String(format: "%02d", index + 1)).jpg"
   }
 
   struct PhotoPlan {
@@ -117,6 +118,7 @@ extension Renderer {
     var edit: Edit
     var aspect: Aspect
     var version: ResolvedVersion
+    var input: PhotoHashInput
     var hash: String
   }
 
@@ -128,6 +130,13 @@ extension Renderer {
     var aspect: String
     var crops: [CropRect]
     var texts: [HashInput.Text]
+    /// `TextOverlay.drawingVersion` when any text is drawn (nil, and absent, without text): a change to how text is
+    /// drawn re-renders the photo posts that have text and no others.
+    var textDrawing: String? = nil
+  }
+
+  static func photoHash(_ input: PhotoHashInput) throws -> String {
+    SHA256.hash(data: try JSONCoding.encoder.encode(input)).prefix(8).map { String(format: "%02x", $0) }.joined()
   }
 
   func photoPlan(_ video: Video, versionNo: Int) throws -> PhotoPlan {
@@ -138,19 +147,23 @@ extension Renderer {
     let photos = video.photos ?? []
     let edit = try store.edit(videoId: video.id)
     let aspect = PhotoRules.aspect(edit, defaults: settings.defaults)
+    let texts = PreviewKeys.layerWindows(version, trimDuration: Double(photos.count)).map { HashInput.Text($0.layer) }
     let input = PhotoHashInput(
       pipeline: PhotoRenderer.pipelineVersion, photos: photos.map { $0.fingerprint ?? $0.file }, aspect: aspect.rawValue,
-      crops: photos.map { PhotoRules.crop(for: $0, edit: edit, aspect: aspect) },
-      texts: PreviewKeys.layerWindows(version, trimDuration: Double(photos.count)).map { HashInput.Text($0.layer) })
-    let hash = SHA256.hash(data: try JSONCoding.encoder.encode(input)).prefix(8).map { String(format: "%02x", $0) }.joined()
-    return PhotoPlan(video: video, photos: photos, edit: edit, aspect: aspect, version: version, hash: hash)
+      crops: photos.map { PhotoRules.crop(for: $0, edit: edit, aspect: aspect) }, texts: texts,
+      textDrawing: texts.isEmpty ? nil : TextOverlay.drawingVersion)
+    return PhotoPlan(video: video, photos: photos, edit: edit, aspect: aspect, version: version, input: input,
+                     hash: try Self.photoHash(input))
   }
 
-  /// The finished render for this plan whose every file is still there, newest first.
+  /// The finished render for this plan: one file per photo, every one still there. Newest first. A row with fewer
+  /// files than the post has photos is never current, so a carousel can't go out as one photo.
   func photoCurrent(_ p: PhotoPlan) throws -> Render? {
     try store.renders(where: "video_id=? AND version_no=? AND edit_hash=? AND scope='all' AND status='done' AND deleted_at IS NULL",
                       [p.video.id, p.version.number, p.hash])
-      .last { r in !r.allPaths.isEmpty && r.allPaths.allSatisfy { FileManager.default.fileExists(atPath: $0) } }
+      .last { r in
+        !r.allPaths.isEmpty && r.allPaths.count == p.photos.count && r.allPaths.allSatisfy { FileManager.default.fileExists(atPath: $0) }
+      }
   }
 
   /// `ensureRender` for a photo post (called with `renderLock` held): the same row, claim and cross-process lock as a
@@ -181,8 +194,7 @@ extension Renderer {
       let files = try performPhotos(p, renderId: row.id)
       let paths = files.map(\.path)
       let size = files.reduce(Int64(0)) { $0 + max(0, Intake.size($1)) }
-      try store.finishRender(id: row.id, outputPath: paths[0], coverPath: nil, loudness: nil, duration: 0, size: size)
-      try store.setRenderMorePaths(id: row.id, Array(paths.dropFirst()))
+      try store.finishPhotoRender(id: row.id, paths: paths, size: size)  // one statement: never "done" with files missing from the row
       // Rows whose files were just replaced (same names) or that this render supersedes (same key) are retired, and
       // the files this one didn't replace go with them (a carousel that lost a photo would otherwise leave its last
       // file in Ready to Post).
@@ -231,13 +243,27 @@ extension Renderer {
       try PhotoRenderer.writeJPEG(out, to: tmp)
       onProgress?(renderId, Double(i + 1) / Double(p.photos.count) * 0.95)
     }
-    let dir = try destinationDir(p.video)
+    // Under this store's Photos folder, not whatever folder the session row names (a copied database).
+    let dir = outputRoot ?? store.paths.photos.appendingPathComponent("Ready to Post/Shortform")
     try fm.createDirectory(at: dir, withIntermediateDirectories: true)
     var placed: [URL] = []
-    for (i, tmp) in tmps.enumerated() {
-      let dest = dir.appendingPathComponent(Self.photoOutputName(video: p.video, versionNo: p.version.number, index: i))
-      try place(tmp, at: dest)
-      placed.append(dest)
+    do {
+      for (i, tmp) in tmps.enumerated() {
+        let dest = dir.appendingPathComponent(Self.photoOutputName(video: p.video, versionNo: p.version.number, index: i))
+        try photoPlaceHook?(i)
+        try place(tmp, at: dest)
+        placed.append(dest)
+      }
+    } catch {
+      // Some files are new and some old: no finished row may keep pointing at that mix. The rows whose files were
+      // overwritten are retired and the new files removed, so the next ask renders the whole post again.
+      let paths = Set(placed.map(\.path))
+      for old in try store.renders(where: "deleted_at IS NULL AND id<>? AND video_id=? AND status='done'", [renderId, p.video.id])
+      where old.allPaths.contains(where: paths.contains) {
+        try store.markRenderDeleted(id: old.id)
+      }
+      for u in placed where isAppOutput(u) { try? fm.removeItem(at: u) }
+      throw error
     }
     return placed
   }

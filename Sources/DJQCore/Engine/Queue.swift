@@ -46,16 +46,19 @@ public final class Queue: @unchecked Sendable {
 
   /// The Edit stage (`ClipStage.of == .edit`): scored, something still missing (or sent back), plus scored clips whose
   /// file is missing and that aren't scheduled or posted (round 4: they show in Edit with "File missing").
-  /// Photo posts are here scored or not; the unscored ones come first, oldest import first.
+  /// Photo posts are here scored or not; the unscored ones come first, oldest import first. Clips order exactly as
+  /// before (score, part, start; a tie keeps the order they were read in).
   public func needsEdit() throws -> [Video] {
     try store.videos(where: """
       type='short-form' AND excluded=0 AND (score IS NOT NULL OR photos IS NOT NULL) AND
       ((missing=0 AND state='needs_edit') OR (missing=1 AND state IN ('needs_edit','ready','missing_file')))
       """)
       .sorted { a, b in
-        let ka = (a.score ?? -1, a.part ?? 0, a.start ?? 0, a.createdAt.timeIntervalSince1970)
-        let kb = (b.score ?? -1, b.part ?? 0, b.start ?? 0, b.createdAt.timeIntervalSince1970)
-        return ka != kb ? ka < kb : a.id < b.id
+        let ka = (a.score ?? (a.isPhoto ? -1 : 0), a.part ?? 0, a.start ?? 0), kb = (b.score ?? (b.isPhoto ? -1 : 0), b.part ?? 0, b.start ?? 0)
+        if ka != kb { return ka < kb }
+        // A tie: clips stay as they were read (and ahead of photos); photos go oldest import first.
+        guard a.isPhoto, b.isPhoto else { return !a.isPhoto && b.isPhoto }
+        return a.createdAt != b.createdAt ? a.createdAt < b.createdAt : a.id < b.id
       }
   }
 

@@ -244,14 +244,14 @@ public enum PostizPayload {
     return spec
   }
 
-  /// Builds the spec from values already read (pure; tests call it directly). For a video; a photo post's is
-  /// `photoSpec` (this hands over to it where the platform takes photos).
+  /// Builds the spec from values already read (pure). For a photo post this is `photoSpec`, and it throws where that
+  /// does (YouTube): a photo post never gets a video payload.
   public static func spec(post p: PlatformPost, video v: Video, render r: Render, version rv: ResolvedVersion,
                           edit re: ResolvedEdit, settings: Settings, sessionName: String, sets: [HashtagSet],
-                          templates: [CaptionTemplate], integrationId: String, provider: String? = nil) -> PostizPostSpec {
-    if v.isPhoto, let photo = try? photoSpec(post: p, video: v, render: r, version: rv, settings: settings, sessionName: sessionName,
-                                             sets: sets, templates: templates, integrationId: integrationId, provider: provider) {
-      return photo
+                          templates: [CaptionTemplate], integrationId: String, provider: String? = nil) throws -> PostizPostSpec {
+    if v.isPhoto {
+      return try photoSpec(post: p, video: v, render: r, version: rv, settings: settings, sessionName: sessionName,
+                           sets: sets, templates: templates, integrationId: integrationId, provider: provider)
     }
     let pub = settings.publishing
     let test = pub.testMode
@@ -325,13 +325,8 @@ public enum PostizPayload {
     guard let rv = try store.resolvedVersion(videoId: v.id, number: p.versionNo, settings: settings) else {
       throw EngineError("\(v.tag) has no v\(p.versionNo)")
     }
-    if v.isPhoto {
-      return try photoSpec(post: p, video: v, render: r, version: rv, settings: settings, sessionName: try store.sessionName(for: v),
-                           sets: try store.hashtagSets(), templates: try store.captionTemplates(), integrationId: integrationId,
-                           provider: provider)
-    }
     let re = EditResolver.resolve(try store.edit(videoId: v.id), video: v, defaults: settings.defaults)
-    return spec(post: p, video: v, render: r, version: rv, edit: re, settings: settings, sessionName: try store.sessionName(for: v),
+    return try spec(post: p, video: v, render: r, version: rv, edit: re, settings: settings, sessionName: try store.sessionName(for: v),
                 sets: try store.hashtagSets(), templates: try store.captionTemplates(), integrationId: integrationId,
                 provider: provider)
   }

@@ -181,7 +181,8 @@ public final class PhotoImport: @unchecked Sendable {
   @discardableResult
   public func checkFiles() throws -> [String] {
     var gone: [String] = []
-    if let s = try store.session(id: Session.photosId), s.missing { try ensureSession() }
+    // The Photos session follows `Paths.photos` (a moved or copied root), and is never missing.
+    if try store.session(id: Session.photosId) != nil { try ensureSession() }
     for v in try store.videos(where: "photos IS NOT NULL") {
       let missing = try (v.photos ?? []).contains { !fm.fileExists(atPath: try store.photoURL($0, of: v).path) }
       guard missing != v.missing else { continue }
@@ -239,7 +240,8 @@ public final class PhotoImport: @unchecked Sendable {
       let name = String(format: "%02d-%@.%@", n, pid, src.pathExtension.lowercased())
       let dest = dir.appendingPathComponent(name)
       do {
-        try fm.copyItem(at: src, to: dest)
+        // The file itself, never a link to it: an alias or symlink Eric picked still gives DJ Queue its own copy (D2).
+        try fm.copyItem(at: src.resolvingSymlinksInPath(), to: dest)
         guard let size = PhotoRenderer.pixelSize(of: dest) else {
           try? fm.removeItem(at: dest)
           skipped.append(Skipped(file: src.path, reason: "it can't be read as a photo"))
@@ -268,13 +270,21 @@ public final class PhotoImport: @unchecked Sendable {
     return v
   }
 
-  /// A name no other photo post has ("IMG_1234", then "IMG_1234 2"): renders are named after it.
+  /// A name no other photo post has ("IMG_1234", then "IMG_1234 2"): renders are named after it. Names are compared
+  /// the way a file name would be: "Flyer" and "flyer" are one name on a Mac, and so are "a:b" and "a-b" once written.
   private func freeName(_ base: String) throws -> String {
-    let taken = Set(try store.videos(where: "session_id=?", [Session.photosId]).map(\.name))
-    guard taken.contains(base) else { return base }
+    let taken = Set(try store.videos(where: "photos IS NOT NULL").map { Self.fileNameKey($0.name) })
+    guard taken.contains(Self.fileNameKey(base)) else { return base }
     var n = 2
-    while taken.contains("\(base) \(n)") { n += 1 }
+    while taken.contains(Self.fileNameKey("\(base) \(n)")) { n += 1 }
     return "\(base) \(n)"
+  }
+
+  /// What a post's name comes to as part of a render's file name on a case-insensitive volume: `Renderer.outputName`'s
+  /// replacements, one Unicode form, no case.
+  static func fileNameKey(_ name: String) -> String {
+    name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+      .precomposedStringWithCanonicalMapping.folding(options: [.caseInsensitive, .widthInsensitive], locale: nil)
   }
 
   private func insert(id: String, photos: [PhotoItem], baseName base: String, title: String?, titleSource: String) throws -> Video {
@@ -303,10 +313,10 @@ public final class PhotoImport: @unchecked Sendable {
 }
 
 extension Store {
-  /// Where a photo's file is: under the Photos session's folder.
+  /// Where a photo's file is: under this store's Photos folder (`Paths.photos`), whatever folder the session row
+  /// names, so a database copied from another root never reads or writes that root's photos.
   public func photoURL(_ photo: PhotoItem, of v: Video) throws -> URL {
-    let folder = try session(id: v.sessionId)?.folder ?? paths.photos.path
-    return URL(fileURLWithPath: folder).appendingPathComponent(photo.file)
+    paths.photos.appendingPathComponent(photo.file)
   }
 
   /// Every photo file of a post, in order.

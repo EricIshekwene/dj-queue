@@ -381,6 +381,7 @@ public final class PostizService: @unchecked Sendable {
           case .created: created += 1
           case .rejected: rejected += 1
           case .skipped: break
+          case .waiting: waiting += 1
           }
         } catch {
           failed += 1
@@ -465,7 +466,9 @@ public final class PostizService: @unchecked Sendable {
     try store.logEvent("postiz", "Removed from Postiz (\(why))", videoId: j.videoId, postId: j.postId)
   }
 
-  enum SubmitOutcome { case created, rejected, skipped }
+  /// `waiting`: a photo post whose photos don't all fit this hour's budget yet. What fitted is uploaded and cached;
+  /// the next tick carries on, and the posts behind it are still tried.
+  enum SubmitOutcome { case created, rejected, skipped, waiting }
 
   /// Test hook: runs right after Postiz answered a create, before DJ Queue records it (simulates a crash or a
   /// database error at the worst moment).
@@ -498,22 +501,45 @@ public final class PostizService: @unchecked Sendable {
     }
     // A photo post uploads one file per photo (round 21), each cached per render like the video is.
     let kinds = Self.mediaKinds(spec)
-    let cachedMedia = try kinds.map { try store.postizMedia(renderId: spec.renderId, kind: $0.kind) }
+    var cachedMedia = try kinds.map { try store.postizMedia(renderId: spec.renderId, kind: $0.kind) }
     let cachedCover = spec.uploadsCover ? try store.postizMedia(renderId: spec.renderId, kind: "cover") : nil
-    let needed = 1 + cachedMedia.filter { $0 == nil }.count + (spec.uploadsCover && cachedCover == nil ? 1 : 0)
-    let budget = try store.postizBudget()
-    guard !budget.isPaused(now: now),
-          budget.remaining(now: now, limit: settings.publishing.hourlyBudget) - PostizCallKind.create.reserve >= needed else {
-      throw PostizError.overBudget
-    }
     let date = try remoteDate(for: p.scheduledAt, platform: p.platform, integrationId: integrationId)
     var job = PostizJob(postId: p.id, videoId: p.videoId, platform: p.platform, integrationId: integrationId,
                         renderId: spec.renderId, contentHash: spec.contentHash, scheduledAt: p.scheduledAt, remoteDate: date,
                         testMode: spec.testMode, postType: spec.type, createdAt: now, updatedAt: now)
     job.lineage = PostizJob.lineage(p)
     job.content = spec.content
-    guard try store.claimPostizJob(job) else { return .skipped }  // another process, or the lineage is blocked
     let c = client(settings)
+    func room() throws -> Int {
+      let b = try store.postizBudget()
+      if b.isPaused(now: now) { throw PostizError.overBudget }  // after a 429: nothing is sent, for any post
+      return b.remaining(now: now, limit: settings.publishing.hourlyBudget) - PostizCallKind.create.reserve
+    }
+    if spec.isPhotoPost {
+      // A carousel can need more uploads than an hour allows (TikTok takes 35, the default budget is 25), so its photos
+      // go up ahead of the claim, as many as fit: an upload is cached per render and never repeated, and without a
+      // claim nothing can be half sent. The create waits until every photo is up.
+      for (i, k) in kinds.enumerated() where cachedMedia[i] == nil {
+        guard try room() >= 1 else { return .waiting }
+        do {
+          _ = try upload(k.path, k.kind, spec.renderId, c, settings)
+          cachedMedia[i] = try store.postizMedia(renderId: spec.renderId, kind: k.kind)
+        } catch let e as PostizError {
+          switch e {
+          case .overBudget: return .waiting
+          case .validation, .payloadTooLarge:
+            guard try store.claimPostizJob(job) else { return .skipped }
+            if case .validation(let m) = e { try reject(job, p, m, settings) } else { try reject(job, p, "a photo is too large for Postiz", settings) }
+            return .rejected
+          default: throw e
+          }
+        }
+      }
+      guard try room() >= 1 else { return .waiting }
+    }
+    let needed = 1 + cachedMedia.filter { $0 == nil }.count + (spec.uploadsCover && cachedCover == nil ? 1 : 0)
+    guard try room() >= needed else { throw PostizError.overBudget }
+    guard try store.claimPostizJob(job) else { return .skipped }  // another process, or the lineage is blocked
     var media: [PostizMedia] = [], cover: PostizMedia?
     do {
       for (k, cached) in zip(kinds, cachedMedia) {

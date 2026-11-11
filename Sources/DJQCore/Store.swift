@@ -500,6 +500,7 @@ public final class Store: @unchecked Sendable {
   }
 
   public func fileURL(for v: Video) throws -> URL? {
+    if v.isPhoto { return paths.photos.appendingPathComponent(v.file) }  // round 21: always this store's Photos folder
     if v.file.hasPrefix("/") { return URL(fileURLWithPath: v.file) }  // relinked into another session's folder
     guard let s = try session(id: v.sessionId) else { return nil }
     return URL(fileURLWithPath: s.folder).appendingPathComponent(v.file)
@@ -927,6 +928,9 @@ public enum VersionResolver {
     }
     let start = pick("textStart", \.textStart), end = pick("textEnd", \.textEnd)
     let timingDefault = defaulted.contains("textStart") && defaulted.contains("textEnd")
+    // Round 21 (D7): the default timing is in seconds ("First 3 seconds"). On a photo post a window counts photos, so
+    // the default there is no window: the text shows on every photo.
+    let defaultWindow: (start: Double?, end: Double?) = video?.isPhoto == true ? (nil, nil) : d.textWindow
     var r = ResolvedVersion(
       number: number,
       text: text,
@@ -936,8 +940,8 @@ public enum VersionResolver {
       posX: pick("posX", \.posX) ?? d.textPosX,
       posY: pick("posY", \.posY) ?? d.textPosY,
       align: pick("align", \.align) ?? d.textAlign,
-      textStart: timingDefault ? d.textWindow.start : start,
-      textEnd: timingDefault ? d.textWindow.end : end,
+      textStart: timingDefault ? defaultWindow.start : start,
+      textEnd: timingDefault ? defaultWindow.end : end,
       caption: pick("caption", \.caption, captions: true) ?? "",
       captionTemplateId: pick("captionTemplateId", \.captionTemplateId, captions: true),
       hashtagSetIds: pick("hashtagSetIds", \.hashtagSetIds, captions: true) ?? d.hashtagSetIds,

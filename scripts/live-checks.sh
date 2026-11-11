@@ -38,18 +38,9 @@ echo "live-checks: seed ${seed[1]:t}"
 mkdir -p "$HOME_DIR/support"
 SEED_DB="$HOME_DIR/support/queue.sqlite"
 cp "$seed[1]" "$SEED_DB"
-# The database stores absolute paths. Point every one at the dev root, or checks would open the real footage.
-REAL_ROOT="$HOME/Movies/DJ Video"
-DEV_ROOT="$DEV/DJ Video"
-# A JSON column can hold the same paths with escaped slashes ("\/a\/b"): that form is rewritten and checked too.
-REAL_JSON="${REAL_ROOT//\//\\/}"
-DEV_JSON="${DEV_ROOT//\//\\/}"
-columns=("${(@f)$(sqlite3 "$SEED_DB" "SELECT m.name || '.' || p.name FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND p.type LIKE '%TEXT%'")}")
-for col in $columns; do
-  sqlite3 "$SEED_DB" "UPDATE \"${col%%.*}\" SET \"${col#*.}\" = replace(replace(\"${col#*.}\", '$REAL_ROOT', '$DEV_ROOT'), '$REAL_JSON', '$DEV_JSON') WHERE instr(\"${col#*.}\", '$REAL_ROOT') > 0 OR instr(\"${col#*.}\", '$REAL_JSON') > 0" || exit 2
-  left=$(sqlite3 "$SEED_DB" "SELECT count(*) FROM \"${col%%.*}\" WHERE instr(\"${col#*.}\", '$REAL_ROOT') > 0 OR instr(\"${col#*.}\", '$REAL_JSON') > 0")
-  [[ "$left" == 0 ]] || { echo "live-checks: $col still points at the real footage" >&2; exit 2; }
-done
+# The database stores absolute paths. Point every one at the dev root, or checks would open the real footage
+# (plain and JSON-escaped forms; it fails when either is left anywhere).
+scripts/seed-paths.sh "$SEED_DB" "$HOME/Movies/DJ Video" "$DEV/DJ Video" || { echo "live-checks: the seed still points at the real footage" >&2; exit 2; }
 
 typeset -A checks
 checks=(

@@ -53,6 +53,14 @@ public struct Paths: Sendable {
   public var engineLog: URL { logs.appendingPathComponent("engine.log") }
   public var agentPlist: URL { launchAgents.appendingPathComponent("com.djlovd.queue.engine.plist") }
 
+  /// `url` is inside the DJ Video root (symlinks resolved, so a link out of the root doesn't count). Nothing is moved or
+  /// deleted outside it: a dev process with a copied database can't reach a real file, whatever the database says.
+  public func owns(_ url: URL) -> Bool {
+    let base = root.resolvingSymlinksInPath().standardizedFileURL.path
+    let dir = url.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
+    return dir == base || dir.hasPrefix(base.hasSuffix("/") ? base : base + "/")
+  }
+
   public func ensure() throws {
     for d in [appSupport, logs, work, thumbs, proxies, overlays] {
       try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)

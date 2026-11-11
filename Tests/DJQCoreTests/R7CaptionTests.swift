@@ -345,6 +345,7 @@ import Testing
       case .noCaption, .captionTooLong, .titleTooLong: #expect(s == .caption)
       case .missingFile, .corrupt, .heldInEdit: #expect(s == nil)
       case .noPhotos: #expect(s == .photos)  // round 21: a photo post's photos strip
+      case .photoShape: #expect(s == .frame)  // round 21 (D20): the shape is picked in Frame
       }
     }
   }

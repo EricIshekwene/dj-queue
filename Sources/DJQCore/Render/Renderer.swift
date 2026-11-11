@@ -27,6 +27,9 @@ public final class Renderer: RenderService, @unchecked Sendable {
 
   private let renderLock = NSLock()
 
+  /// Test seam: runs before photo `index` of a photo render is moved into place (a failure here is a placing failure).
+  var photoPlaceHook: ((Int) throws -> Void)?
+
   public init(store: Store, outputRoot: URL? = nil) {
     self.store = store
     self.outputRoot = outputRoot
@@ -225,10 +228,12 @@ public final class Renderer: RenderService, @unchecked Sendable {
   }
 
   /// Only files this app creates: `…/Ready to Post/Shortform/<file>` (or inside `outputRoot`).
+  /// Round 21: the folder must also be inside this store's DJ Video root. A database copied from somewhere else can
+  /// name any path; a process only ever deletes under the root it was started with.
   func isAppOutput(_ url: URL) -> Bool {
     let dir = url.deletingLastPathComponent()
     if dir.lastPathComponent == "Shortform", dir.deletingLastPathComponent().lastPathComponent == "Ready to Post" {
-      return true
+      return store.paths.owns(url)
     }
     if let root = outputRoot, dir.standardizedFileURL.path == root.standardizedFileURL.path { return true }
     return false
