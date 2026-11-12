@@ -111,7 +111,7 @@ the video".
 - **Baseline (round 21 and 22 leftovers), fixed in their own commit:** `post-at` step 10 expected the old UTC YouTube window; Settings → Publishing had no badge for an expired sign-in; `photo-editor` compared text pixels at a locked Mac's tolerance. *Why:* the brief's checks must pass before this round's.
 - **One existing test line changed:** `R21FoundationTests.schema8DatabaseGainsTheColumnsAndKeepsEveryRow` asserted `Store.schemaVersion == 9`; it now asserts `>= 9`. *Why:* this round moves the schema to 10.
 
-- **The README GIF shows the top of the inspector, not the whole editor.** *Why:* the Mac locked itself during the build, and a capture taken then draws the player black; the Audio row is what changed. A full-window GIF is one `scripts/readme-media.sh` line away once the checks run on an unlocked Mac.
+- **The README clips come from the final run on an unlocked Mac** (2026-11-11, all ten hidden checks, real window pixels, the player showing the photo). *Why:* the builds ran while the Mac was locked, when a capture draws the player black; the earlier clips were inspector crops and were replaced at ship.
 
 ### After the independent review (round 2)
 
