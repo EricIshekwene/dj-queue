@@ -311,7 +311,7 @@ public enum EditResolver {
     // The clip's one cover frame is used when it's inside the trim being resolved; outside it (a version's own trim, or a
     // clip trim changed from the CLI) the default rule picks one inside, so a cover is always a frame of the video.
     if let t = e.coverTime, t >= tIn - 0.001, t <= tOut + 0.001 { cover = t } else {
-      if e.coverTime == nil { defaulted.insert(.coverTime) }
+      defaulted.insert(.coverTime)  // also when a picked frame is outside this trim: what shows is the default
       switch d.coverFrame {
       case .trimStart: cover = tIn
       case .markerIn: cover = min(max(v.markerIn ?? tIn, tIn), tOut)
