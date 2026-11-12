@@ -49,20 +49,27 @@ extension EditorModel {
   func toggleMarker(at t: Double? = nil) {
     guard !isPhoto, !readOnly, video != nil, duration > 0 else { return }
     let r = TimelineMarks.toggled(edit.marks, at: t ?? playback.time, fps: fps, duration: duration)
-    updateEdit { $0.marks = r.marks }
+    markerStep { $0.marks = r.marks }
   }
 
   func moveMarker(from old: Double, to new: Double) {
     guard !readOnly, video != nil else { return }
-    updateEdit { $0.marks = TimelineMarks.moved($0.marks, from: old, to: new, duration: duration) }
+    markerStep { $0.marks = TimelineMarks.moved($0.marks, from: old, to: new, duration: duration) }
   }
 
   func removeMarker(_ t: Double) {
     guard let i = TimelineMarks.index(near: t, in: edit.marks, tolerance: 0.0005) else { return }
-    updateEdit { $0.marks.remove(at: i) }
+    markerStep { $0.marks.remove(at: i) }
   }
 
-  func clearMarkers() { updateEdit { $0.marks = [] } }
+  func clearMarkers() { markerStep { $0.marks = [] } }
+
+  /// Every marker change is its own undo step, however quickly the next one comes (M, M, M is three steps).
+  private func markerStep(_ f: (inout Edit) -> Void) {
+    lastUndoBreak()
+    updateEdit(f)
+    lastUndoBreak()
+  }
 
   // MARK: Trim handles
 
