@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 10
+  public static let schemaVersion = 11
   /// Schema step that adds `videos.sent_to_queue` (`migrateSentToQueue`). `schemaVersion` stays a literal: build-app.sh
   /// reads the number from that line into the bundle, and `djq autoupdate rollback` relies on it.
   static let sentToQueueVersion = 8
@@ -96,6 +96,7 @@ public final class Store: @unchecked Sendable {
     if v < Self.sentToQueueVersion { try db.exec("PRAGMA user_version = \(Self.sentToQueueVersion)") }
     if v < 9 { try migrateToV9(from: v) }
     if v < 10 { try migrateToV10(from: v) }
+    if v < 11 { try migrateToV11(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -304,6 +305,26 @@ public final class Store: @unchecked Sendable {
       if !cols.contains("still") { try db.exec("ALTER TABLE videos ADD COLUMN still TEXT") }
       try db.exec("PRAGMA user_version = 10")
     }
+  }
+
+  /// Round 27 (Eric: a new version is its own). Every v2 and later stops following earlier versions: what it took from
+  /// them is copied in, it is marked `standalone`, and copied texts get their own ids. Nothing any version shows
+  /// changes: each one's resolved content (texts, look, timing, captions) and so its render and caption hashes stay
+  /// the same, and a clip whose content would change is left as it was and logged. One journaled batch
+  /// (`djq bulk undo` restores it). A file database with data is copied to `<app support>/backups/` first. A new
+  /// database has nothing to migrate.
+  private func migrateToV11(from v: Int) throws {
+    guard v >= 1 else { try db.exec("PRAGMA user_version = 11"); return }
+    if db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM versions WHERE number > 1")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-schema11-\(f.string(from: Date())).sqlite").path)
+    }
+    let r = try VersionSeparationMigration.run(self)
+    Log.shared.info("schema 11: separate versions — \(r.versions) version(s) on \(r.clips.count) clip(s) stand alone, \(r.leftAsIs.count) clip(s) left as they were, batch \(r.batchId ?? "none")")
   }
 
   private func seedDefaults() throws {
@@ -591,6 +612,14 @@ public final class Store: @unchecked Sendable {
   }
 
   public func save(_ v: Version, videoId: String) throws {
+    // Round 27: a v2 or later is always written standing alone. One that still follows earlier versions (made by a path
+    // that predates it, or restored from an old journal) first gets what it shows now copied in, so nothing it shows
+    // changes, and from then on no edit to another version reaches it.
+    var v = v
+    if v.number > 1, v.standalone != true {
+      let others = try versions(videoId: videoId).filter { $0.number != v.number }
+      v = VersionCopy.standingAlone(v, in: others + [v], settings: try settings())
+    }
     try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?) ON CONFLICT(video_id,number) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",
                [videoId, v.number, JSONCoding.string(v), now])
     try refreshState(videoId: videoId)
@@ -601,7 +630,8 @@ public final class Store: @unchecked Sendable {
     try refreshState(videoId: videoId)
   }
 
-  /// Carry-forward resolution of version `number` (spec §3): empty fields inherit from earlier versions.
+  /// Resolution of version `number` (spec §3): empty fields inherit from earlier versions, up to the latest one that
+  /// stands alone (round 27: every v2+ does), and otherwise follow the defaults.
   public func resolvedVersion(videoId: String, number: Int, settings: Settings? = nil) throws -> ResolvedVersion? {
     let all = try versions(videoId: videoId).filter { $0.number <= number }
     guard all.contains(where: { $0.number == number }) || number == 1 else { return nil }
@@ -907,7 +937,11 @@ public enum VersionResolver {
   /// (Title / raw tag verbatim / empty) and talking clips get "No text" when `noTextForTalking` is on.
   public static func resolve(_ versions: [Version], number: Int, settings: Settings, video: Video? = nil) -> ResolvedVersion {
     let d = settings.defaults
-    let chain = versions.filter { $0.number <= number }.sorted { $0.number < $1.number }
+    // Round 27: a version that stands alone (`standalone`) starts the chain: nothing before it carries into it or into
+    // the versions after it.
+    let upTo = versions.filter { $0.number <= number }.sorted { $0.number < $1.number }
+    let cut = upTo.last { $0.standalone == true }?.number ?? Int.min
+    let chain = upTo.filter { $0.number >= cut }
     var inherited = Set<String>()
     var defaulted = Set<String>()
     // Round 20: a version that keeps its own caption (`captionsOwn`, set when a bulk caption change on v1 must not reach

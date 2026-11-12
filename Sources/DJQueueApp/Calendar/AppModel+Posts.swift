@@ -118,8 +118,10 @@ extension AppModel {
     if newVersion {
       let ok = undoable("Re-uploading as a new version — edit it now", "reupload-new-version", ids: [post.videoId], plan: true) {
         let vs = try store.versions(videoId: post.videoId)
-        var v = vs.last ?? Version(number: 1)
-        v.number = (vs.map(\.number).max() ?? 0) + 1
+        // Round 27: a complete copy of the latest version that stands alone (no Ready to repost, no posts).
+        let v = VersionCopy.duplicate(vs.isEmpty ? [Version(number: 1)] : vs, source: vs.last?.number ?? 1,
+                                      as: (vs.map(\.number).max() ?? 1) + 1, settings: try store.settings(),
+                                      video: try store.video(id: post.videoId))
         try store.save(v, videoId: post.videoId)
         try postActions.resolveCopyright(postId: post.id, .reuploadAnyway(versionNo: v.number))
       }

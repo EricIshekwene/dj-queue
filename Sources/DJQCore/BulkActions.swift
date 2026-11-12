@@ -1081,7 +1081,8 @@ public final class BulkActions: @unchecked Sendable {
     var kept = 0
     let captionKeys: Set<String> = ["caption", "captionTemplateId", "hashtagSetIds", "extraHashtags", "youtubeTitle",
                                     "platformCaptions", "youtubeTitleTemplateId"]
-    for ver in later where ver.captionsOwn != true {
+    // Round 27: a version that stands alone never follows v1, so a change there can't reach it.
+    for ver in later where ver.captionsOwn != true && ver.standalone != true {
       let before = VersionResolver.resolve(all, number: ver.number, settings: s, video: v)
       let changes = CaptionFace(before) != CaptionFace(VersionResolver.resolve(after, number: ver.number, settings: s, video: v))
       // A version that follows a kept one is kept too, so deleting the kept one later can't hand it v1's new caption.

@@ -342,11 +342,4 @@ public enum TextLayers {
     return l.text.contains(TextLayer.countdownToken) ? l.text.replacingOccurrences(of: TextLayer.countdownToken, with: numbers)
       .split(whereSeparator: \.isNewline).joined(separator: " ") : numbers
   }
-
-  /// For a new version copied from `r`: its texts and look stay what `r` shows, even when a later version changed them
-  /// (`moreText` and `textLook` would otherwise inherit from the version before the new one).
-  public static func copyAdvanced(into v: inout Version, from r: ResolvedVersion) {
-    v.moreText = r.moreText
-    v.textLook = r.textLook ?? TextLook()
-  }
 }

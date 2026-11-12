@@ -421,7 +421,7 @@ import Testing
       before = try dump(s.db)
     }
     let s = try Store(paths: paths, clock: FixedClock(Fixture.monday9am), path: file.path)
-    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 10 && Store.schemaVersion == 10)
+    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 11 && Store.schemaVersion == 11)
     #expect(try s.db.query("PRAGMA table_info(videos)").contains { $0.string("name") == "still" })
     let after = try dump(s.db)
     #expect(after == before, "every table's rows are what they were")

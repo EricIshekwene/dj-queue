@@ -168,6 +168,10 @@ djq videos --repost-ready [--json]               # same filter on the clip list 
   on v1; a later version that took its caption from v1 keeps it as it was (`captionsOwn: true` on that version: it
   stops inheriting captions, and anything it doesn't set follows the defaults). `apply-defaults --sections text`
   resets the text look and place on every version and keeps each version's words.
+- Round 27: every version from v2 on is its own copy (`standalone: true` in `djq video --json`). Nothing carries
+  forward between versions: editing v1 never changes v2 and the other way round; what a version doesn't set follows
+  the defaults. `djq text|caption|youtube-title --version N` on a version that doesn't exist yet makes it as a full
+  copy of the one before, then applies the change. A copy never carries "Ready to repost".
 
 ## Photo posts (round 21)
 

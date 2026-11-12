@@ -516,6 +516,11 @@ public struct Version: Codable, Sendable, Hashable {
   /// title, per-platform captions) don't carry forward into it from earlier versions; what it doesn't set follows the
   /// defaults. Set by a bulk caption change on v1, after copying in what the version showed, so the change stays on v1.
   public var captionsOwn: Bool?
+  /// Round 27 (Eric: a new version is its own; edits to one version never change another). This version stands alone:
+  /// nothing carries forward into it from earlier versions, and a field it doesn't set follows the defaults. Every
+  /// version made from v2 on is written this way (`VersionCopy`), and schema 11 turned every older v2+ into one,
+  /// copying in what it showed. nil only on v1 and in data from before schema 11.
+  public var standalone: Bool?
 
   public init(number: Int) { self.number = number }
 }

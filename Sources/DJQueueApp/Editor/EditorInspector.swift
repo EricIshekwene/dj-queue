@@ -118,14 +118,14 @@ struct EditorVersionList: View {
     VStack(alignment: .leading, spacing: 2) {
       Text("Versions").font(DS.type.headline).foregroundStyle(DS.color.text)
         .padding(.horizontal, DS.space.sm).padding(.top, DS.space.sm).padding(.bottom, DS.space.xxs)
-      Text("A new version changes the text and caption for a repost. Empty fields carry forward from the version before. Turn on each version that's ready to repost.")
+      Text("Each version is its own copy for a repost: editing one never changes another. Trim, crop and cover are shared by every version. Turn on each version that's ready to repost.")
         .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, DS.space.sm).padding(.bottom, DS.space.xs)
       ForEach(model.versionNumbers, id: \.self) { n in row(n) }
       DSSeparator().padding(.vertical, DS.space.xxs)
-      DSButton("New version", icon: "plus", variant: .ghost, size: .sm,
+      DSButton("New version from v\(model.versionNo)", icon: "plus", variant: .ghost, size: .sm,
                disabledReason: model.readOnly ? "Editing is off for this clip" : nil,
-               tooltip: "Start a new text version for a repost") { model.newVersion(copying: nil) }
+               tooltip: "Copy v\(model.versionNo) as a new version. From then on, editing one never changes the other.") { model.newVersion(copying: nil) }
         .padding(.horizontal, DS.space.xxs).padding(.bottom, DS.space.xs)
     }
     .padding(DS.space.xxs)
@@ -164,7 +164,7 @@ struct EditorVersionList: View {
                    disabledReason: model.repostReadyOff)
         .background(ScriptAnchor("Repost ready v\(n)"))
       Menu {
-        Button("Duplicate as new version") { model.newVersion(copying: n) }
+        Button("Duplicate as a separate version") { model.newVersion(copying: n) }
         if n > 1 { Button("Delete v\(n)…", role: .destructive) { requestDelete(n) } }
       } label: { Image(systemName: "ellipsis").foregroundStyle(DS.color.textSecondary) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
