@@ -287,7 +287,9 @@ enum TrimMarkersScript {
 
     // MARK: 7. A long file opens on its trim
 
-    let long = shorts.filter { $0.duration > 60 }.max { $0.duration < $1.duration }?.id ?? model.videoId
+    // The longest clip with in/out markers: its grace zones run far past a view zoomed on an 8 s trim in the middle.
+    let long = (shorts.filter { $0.duration > 60 && $0.markerIn != nil && $0.markerOut != nil }.max { $0.duration < $1.duration }
+      ?? shorts.filter { $0.duration > 60 }.max { $0.duration < $1.duration })?.id ?? model.videoId
     model.load(long)
     try? await Task.sleep(for: .seconds(2))
     let ld = model.duration
@@ -305,7 +307,7 @@ enum TrimMarkersScript {
       func surfaces(_ v: NSView) -> [NSView] { (v is EditorDragSurface.Surface ? [v] : []) + v.subviews.flatMap(surfaces) }
       let spill = surfaces(host).map { $0.convert($0.bounds, to: nil) }
         .filter { $0.midY > film.minY - 120 && $0.midY < film.maxY + 20 }
-        .filter { $0.maxX > film.maxX + 40 || $0.minX < film.minX - 60 }
+        .filter { $0.maxX > film.maxX + 30 || $0.minX < film.minX - 30 }
       check("no timeline surface reaches past the track while zoomed (\(spill.count) do)", spill.isEmpty)
     }
     model.resetEdit(.trimIn, .trimOut); model.commitTrim()

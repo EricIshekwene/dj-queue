@@ -479,8 +479,8 @@ struct EditorFilmTrack: View {
       }
       markerTicks(m)
       // A handle is only there while its edge is in view (a zoomed timeline can leave it off either side).
-      if a > -Self.handleW - Self.reachOut && a < width + Self.reachOut { handle(.start, m, a: a, b: b) }
-      if b > -Self.reachOut && b < width + Self.handleW + Self.reachOut { handle(.end, m, a: a, b: b) }
+      if (a > -Self.handleW && a < width) || drag?.edge == .start { handle(.start, m, a: a, b: b) }
+      if (b > 0 && b < width + Self.handleW) || drag?.edge == .end { handle(.end, m, a: a, b: b) }
       if let d = drag { readout(d, m) }
     }
     .frame(width: width, height: h, alignment: .topLeading)
@@ -680,7 +680,7 @@ struct EditorTimelineWheel: NSViewRepresentable {
       let p = convert(e.locationInWindow, from: nil)
       guard bounds.contains(p) else { return false }
       let model = parts.model
-      guard model.isCovered?() != true, !model.readOnly, !model.fileMissing, model.video != nil else { return false }
+      guard model.isCovered?() != true, !model.fileMissing, model.video != nil else { return false }
       let v = model.viewport, w = Double(max(parts.width, 1))
       let x = Double(p.x)
       if e.type == .magnify {
@@ -793,7 +793,8 @@ private struct EditorTextBar: View {
     let ca = max(a, -16), cb = min(b, width + 16)
     let selected = bar.draggable && bar.id == model.selectedText
     ZStack(alignment: .leading) {
-      if cb > -2 && ca < width + 2 {
+      // A bar or grip being dragged stays, even past the edge, so the drag never drops.
+      if (cb > -2 && ca < width + 2) || origin != nil {
         fill(selected: selected)
           .frame(width: max(14, cb - ca), height: h)
           .overlay { moveSurface(tr) }
@@ -802,12 +803,12 @@ private struct EditorTextBar: View {
           .offset(x: ca)
       }
       if bar.draggable {
-        if a > -6 && a < width {
+        if (a > -6 && a < width) || origin != nil {
           grip(selected: selected, leading: true, tr)
             .probeFrame("text-start-\(bar.number)")
             .offset(x: a)
         }
-        if b > 0 && b < width + 6 {
+        if (b > 0 && b < width + 6) || origin != nil {
           grip(selected: selected, leading: false, tr)
             .probeFrame("text-end-\(bar.number)")
             .offset(x: b - 6)
@@ -883,6 +884,8 @@ struct EditorTrimLane: View {
   var platform: Platform
   var width: CGFloat
   private let h = EditorTimeline.laneH
+  /// The grip being dragged stays drawn past the view edge so the drag never drops.
+  @State private var dragging: TrimEdge?
 
   var body: some View {
     let m = model.trackMath(width: width)
@@ -900,20 +903,23 @@ struct EditorTrimLane: View {
             .font(.system(size: 9.5, weight: .semibold)).foregroundStyle(DS.color.text).lineLimit(1).padding(.horizontal, 8)
         }
         .frame(width: max(10, min(b, width + 8) - max(a, -8)), height: h).offset(x: max(a, -8))
-      if a > -6 && a < width {
+        .opacity(b < 0 || a > width ? 0 : 1)
+      if (a > -6 && a < width) || dragging == .start {
       RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 6, height: h).offset(x: a)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
+          dragging = .start
           let t = min(m.snapped(v.location.x), r.end - 0.5)
           model.updateEdit { $0.platformTrims[platform]?.start = t }
-        })
+        }.onEnded { _ in dragging = nil })
         .dsTooltip("Drag to set where \(platform.displayName)'s cut starts")
       }
-      if b > 0 && b < width + 6 {
+      if (b > 0 && b < width + 6) || dragging == .end {
       RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 6, height: h).offset(x: b - 6)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
+          dragging = .end
           let t = max(m.snapped(v.location.x, extra: [r.start + lim]), r.start + 0.5)
           model.updateEdit { $0.platformTrims[platform]?.end = t }
-        })
+        }.onEnded { _ in dragging = nil })
         .dsTooltip("Drag to set where \(platform.displayName)'s cut ends (snaps to \(Validation.fmt(lim)))")
       }
     }
