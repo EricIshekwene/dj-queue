@@ -728,6 +728,9 @@ public final class BulkActions: @unchecked Sendable {
           let after = try? JSONCoding.decoder.decode(Snapshot.self, from: Data(asx.utf8)) else {
       throw EngineError("Batch \(id.prefix(8)) journal is unreadable")
     }
+    if !force, rec.action == VersionSeparationMigration.action {
+      throw EngineError("Can't undo \(rec.action): later versions would follow v1 again, so editing v1 would change them. Use force to overwrite.")
+    }
     if !force, rec.action == CaptionRulesMigration.action {
       throw EngineError("Can't undo \(rec.action): clips with scheduled or posted posts would change. Use force to overwrite.")
     }
@@ -778,7 +781,7 @@ public final class BulkActions: @unchecked Sendable {
           var target = b
           if afterById[b.id]?.sent == b.sent { target.sent = cur.sent }
           if cur == target { continue }
-          try restore(target)
+          try restore(target, separating: rec.action != VersionSeparationMigration.action)
           result.changed.append(b.id)
         }
         var touched = Set(result.changed)
@@ -1081,7 +1084,8 @@ public final class BulkActions: @unchecked Sendable {
     var kept = 0
     let captionKeys: Set<String> = ["caption", "captionTemplateId", "hashtagSetIds", "extraHashtags", "youtubeTitle",
                                     "platformCaptions", "youtubeTitleTemplateId"]
-    for ver in later where ver.captionsOwn != true {
+    // Round 27: a version that stands alone never follows v1, so a change there can't reach it.
+    for ver in later where ver.captionsOwn != true && ver.standalone != true {
       let before = VersionResolver.resolve(all, number: ver.number, settings: s, video: v)
       let changes = CaptionFace(before) != CaptionFace(VersionResolver.resolve(after, number: ver.number, settings: s, video: v))
       // A version that follows a kept one is kept too, so deleting the kept one later can't hand it v1's new caption.
@@ -1153,7 +1157,9 @@ public final class BulkActions: @unchecked Sendable {
                     photos: r?.string("photos"), still: try stillSnapshot(id))
   }
 
-  private func restore(_ c: ClipSnap) throws {
+  /// `separating`: round 27, restored v2+ that still follow an earlier version stand alone again (`VersionCopy`),
+  /// showing what the journal holds; off only when undoing schema 11's own batch.
+  private func restore(_ c: ClipSnap, separating: Bool = true) throws {
     let db = store.db
     try db.run("""
       UPDATE videos SET score=?, kind=?, excluded=?, title=?, title_tracks=?, title_source=?, held_in_edit=?,
@@ -1182,6 +1188,10 @@ public final class BulkActions: @unchecked Sendable {
         out = JSONCoding.string(v)
       }
       try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?)", [c.id, number, out, store.clock.now])
+    }
+    if separating, let all = try? store.versions(videoId: c.id),
+       let sep = VersionCopy.separated(all, settings: try store.settings(), video: try store.video(id: c.id)) {
+      for v in sep { try db.run("UPDATE versions SET json=? WHERE video_id=? AND number=?", [JSONCoding.string(v), c.id, v.number]) }
     }
     for r in c.renders ?? [] {
       if r.deletedAt == nil {

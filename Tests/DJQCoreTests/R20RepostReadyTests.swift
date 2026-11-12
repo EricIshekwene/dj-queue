@@ -33,6 +33,8 @@ import Testing
     v2.text = "Second hook"
     try f.store.save(v2, videoId: "clip-0")
     try f.store.save(Version(number: 3), videoId: "clip-0")
+    let stored = try f.store.versions(videoId: "clip-0").first { $0.number == 2 }
+    #expect(stored?.standalone == true && stored?.text == "Second hook")  // round 27: saved standing alone
     #expect(try f.store.setRepostReady(videoId: "clip-0", number: 2, true))
     #expect(try f.store.repostReadyVersions(videoId: "clip-0") == [2])
     let all = try f.store.versions(videoId: "clip-0")
@@ -44,7 +46,7 @@ import Testing
     #expect(try f.store.setRepostReady(videoId: "clip-0", number: 2, false))
     #expect(try f.store.repostReadyVersions(videoId: "clip-0").isEmpty)
     // Cleared = the key is gone again, so the stored JSON is as it was.
-    #expect(try f.store.versions(videoId: "clip-0").first { $0.number == 2 } == v2)
+    #expect(try f.store.versions(videoId: "clip-0").first { $0.number == 2 } == stored)
   }
 
   @Test func markingNeverMovesQueuesOrSchedulesAClip() throws {
@@ -201,11 +203,12 @@ import Testing
     #expect(try face(f, 1, s).template == "other" && face(f, 1, s).groups == ["g1"])
     #expect(try face(f, 2, s) == v2)
     #expect(try face(f, 3, s) == v3)
-    // Only v2 had to stop inheriting; v3 follows v2, which now holds what it showed.
+    // Round 27: v2 and v3 stand alone from the moment they're saved, so nothing on v1 reaches them and no caption pin
+    // is needed.
     let raw = try f.store.versions(videoId: "clip-0")
-    #expect(raw.first { $0.number == 2 }?.captionsOwn == true)
-    #expect(raw.first { $0.number == 3 }?.captionsOwn == true)  // follows v2, so it's kept too
-    // Text still follows v1 where a version doesn't set its own.
+    #expect(raw.first { $0.number == 2 }?.standalone == true && raw.first { $0.number == 2 }?.captionsOwn == nil)
+    #expect(raw.first { $0.number == 3 }?.standalone == true && raw.first { $0.number == 3 }?.captionsOwn == nil)
+    // v3 was saved empty: it was a copy of v2's text then.
     #expect(try f.store.resolvedVersion(videoId: "clip-0", number: 3, settings: s)?.text == "Hook two")
     // A clip with only v1 gets nothing extra.
     #expect(try f.store.versions(videoId: "clip-1").allSatisfy { $0.captionsOwn == nil })

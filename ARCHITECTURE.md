@@ -465,3 +465,6 @@ Whole photo | Fill the frame under the audio's name; `EditorMakingVideo` covers 
 as covered for keys, and the item's stage controls are off (`stageBlocker`). The row's off state comes from `EditorModel.audioBlocker`,
 read with the item off the main thread; menus use `AppModel.audioBlocker`, which reads only loaded data. Cards say "Photo + audio · 0:12" where a clip names its night. Menus: `AudioMenuItems`.
 
+**Every version is its own copy (round 27, schema 11).**
+
+- Round 27 (DECISIONS-R27-VERSIONS.md, schema 11): `Version.standalone` cuts the resolver's chain, so a v2+ never inherits from an earlier version. `Sources/DJQCore/VersionCopy.swift`: `duplicate` (a complete copy of what the source shows, own text ids, no Ready to repost), `standingAlone` (copies in what a version inherits and sets the flag), `separated` (all of a clip's v2+, refused if any version's face would change) and `VersionSeparationMigration` (schema 11: one journaled batch, JSON only, `updated_at` kept, backup first). `Store.save(Version)` separates any v2+ saved without the flag. Every way of making a version (editor, ⌘K/Library duplicate, copyright re-upload, `djq --version N` on a new number) goes through `duplicate`/`save`.

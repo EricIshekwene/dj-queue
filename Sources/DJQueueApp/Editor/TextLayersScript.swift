@@ -805,35 +805,66 @@ enum TextLayersScript {
       check("⌘Z takes the trim and the clamp back", near(raw(id)?.moreText?.last?.start, late.start ?? -1, 0.01))
 
       // The clip may already have later versions of its own (every Edit clip in the 11-12 seed has a v2): a new version
-      // follows the last one and inherits its list, so the numbers and the list come from the clip, not from v1.
+      // takes the next number. Round 27: it is a complete copy of the version being edited, standing alone.
       let last = (try? store.versions(videoId: id))?.map(\.number).max() ?? 1
-      let inherited = saved(id, version: last)?.moreText.map(\.id) ?? []
+      let source = e.versionNo
+      func words(_ l: [TextLayer]?) -> [String] { (l ?? []).map { "\($0.text)|\($0.start ?? -1)|\($0.end ?? -1)|\($0.size)" } }
+      let sourceTexts = saved(id, version: source)?.moreText
       e.newVersion(copying: nil)
       await wait(600)
       let fresh = e.versionNo
-      check("a new version follows the last (v\(fresh))", fresh == last + 1)
-      check("a new version inherits the list and stores none", raw(id, version: fresh)?.moreText == nil && e.resolved.moreText.map(\.id) == inherited)
-      if e.resolved.moreText.isEmpty {  // nothing inherited to edit: give it a text of its own first
-        note("v\(fresh) inherited no texts: the copy-on-first-edit check runs on a text added to it")
+      check("a new version takes the next number (v\(fresh))", fresh == last + 1)
+      check("a new version is a copy of v\(source) stored on its own, timings included",
+            raw(id, version: fresh)?.standalone == true && words(raw(id, version: fresh)?.moreText) == words(sourceTexts))
+      check("its texts have their own ids",
+            Set((raw(id, version: fresh)?.moreText ?? []).map(\.id)).isDisjoint(with: (sourceTexts ?? []).map(\.id)))
+      if e.resolved.moreText.isEmpty {  // nothing copied to edit: give it a text of its own first
+        note("v\(fresh) copied no texts: the edit check runs on a text added to it")
         await click("Add text")
-        await type("Inherited")
+        await type("Copied")
         window.makeFirstResponder(nil)
         await wait(300)
       }
       guard let target = e.resolved.moreText.last else { check("a text to edit on the new version", false); return }
-      let earlierSize = saved(id, version: last)?.moreText.last?.size
+      let earlierSize = saved(id, version: source)?.moreText.last?.size
       e.selectText(target.id)
       await wait(300)
       e.setSelectedSize(target.size == 90 ? 91 : 90)  // the slider's own call: its drag is a SwiftUI gesture
       await wait(600)
-      check("the first edit copies the list into that version", raw(id, version: fresh)?.moreText?.last?.size == (target.size == 90 ? 91 : 90))
-      check("and leaves the earlier version alone", saved(id, version: last)?.moreText.last?.size == earlierSize)
+      check("an edit lands on the new version", raw(id, version: fresh)?.moreText?.last?.size == (target.size == 90 ? 91 : 90))
+      check("and leaves the version it was copied from alone", saved(id, version: source)?.moreText.last?.size == earlierSize)
       e.newVersion(copying: 1)
       await wait(600)
       let copy = e.versionNo
-      check("a copy of an older version carries its texts", copy == fresh + 1 && raw(id, version: copy)?.moreText == saved(id)?.moreText)
+      await shot("version-copy-of-v1")
+      check("a copy of an older version carries its texts", copy == fresh + 1 && words(raw(id, version: copy)?.moreText) == words(saved(id)?.moreText))
 
-      e.selectText(late.id)  // the late text is in this copy of v1; the one edited above may not be
+      // Round 27, the other way: editing v1 after copying it never reaches the copy.
+      let copyBefore = words(raw(id, version: copy)?.moreText)
+      e.selectVersion(1)
+      await wait(500)
+      if let l = e.resolved.moreText.last {
+        e.selectText(l.id)
+        await wait(300)
+        e.setSelectedSize(l.size == 88 ? 87 : 88)
+        await wait(600)
+        e.flushAndWait()
+        check("editing v1 changes v1", raw(id)?.moreText?.last?.size == (l.size == 88 ? 87 : 88))
+        check("and never the copy made from it", words(raw(id, version: copy)?.moreText) == copyBefore)
+        await shot("v1-edited")
+        e.selectVersion(copy)
+        await wait(600)
+        await shot("copy-unchanged")
+        e.selectVersion(1)
+        await wait(500)
+        e.undo()
+        await wait(600)
+      }
+      e.selectVersion(copy)
+      await wait(500)
+
+      // The late text is in this copy of v1 (with its own id there: the copy's last text); the one edited above may not be.
+      e.selectText(e.resolved.moreText.last?.id ?? late.id)
       await wait(300)
       await typeInField("Show from", "1.5")
       e.selectVersion(1)
@@ -842,10 +873,16 @@ enum TextLayersScript {
       check("and doesn't reach the one selected next", raw(id)?.moreText?.last?.start == late.start)
 
       // Undo takes away the version a time was typed in: the time goes too, and Redo keeps what's typed off the one it leaves.
+      e.selectVersion(1)
+      await wait(500)
+      e.selectText(e.resolved.moreText.last?.id ?? late.id)
+      await wait(300)
       let stored = raw(id)?.moreText?.last?.start
       e.newVersion(copying: nil)
       await wait(600)
       let number = e.versionNo
+      e.selectText(e.resolved.moreText.last?.id ?? late.id)  // the copy's own id for that text
+      await wait(300)
       await typeInField("Show from", "2.5")
       await click("Undo")
       window.makeFirstResponder(nil)
@@ -854,12 +891,15 @@ enum TextLayersScript {
       check("a time typed in it doesn't land on the version Undo goes to (\(raw(id)?.moreText?.last?.start ?? -1))", raw(id)?.moreText?.last?.start == stored)
       e.flushAndWait()
       check("nor later", raw(id)?.moreText?.last?.start == stored)
+      e.selectText(e.resolved.moreText.last?.id ?? late.id)
+      await wait(300)
       await typeInField("Show from", "3.5")
       await click("Redo")
       window.makeFirstResponder(nil)
       await wait(800)
       e.flushAndWait()
-      check("a time typed before Redo lands nowhere", raw(id)?.moreText?.last?.start == stored && raw(id, version: number)?.moreText == nil)
+      check("a time typed before Redo lands nowhere", raw(id)?.moreText?.last?.start == stored
+            && raw(id, version: number)?.moreText?.last?.start != 3.5 && raw(id, version: number)?.moreText?.last?.start != 2.5)
       e.selectVersion(1)
       await wait(500)
     }

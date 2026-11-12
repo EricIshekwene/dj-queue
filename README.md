@@ -30,6 +30,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | **Every version in one list** | **Filters › Reposts: Ready to repost** |
 | ![Version list with Ready to repost switches](docs/media/repost-versions.jpg) | ![Library filtered to clips with a version ready to repost](docs/media/repost-filter.jpg) |
 
+**Every version is its own copy (v0.20.0).** A new version is a complete copy of the one it came from (every text with its timing, so a text that runs the whole clip still does, plus the caption) and then stands on its own: editing v1 never changes v2, and the other way round. A copy never carries *Ready to repost*. The clip's Title, trim, crop, cover, size, markers and platforms stay shared by every version. Existing versions were separated without changing anything they show.
+
+| A copy of v1 as v4, then v1 edited: v4 keeps what it had | The version list says what's shared |
+|---|---|
+| ![v1 copied as v4; editing v1 leaves v4 as it was](docs/media/version-copies.gif) | ![Version list: each version is its own copy](docs/media/repost-versions.jpg) |
+
 **Photo posts and set-time posts (v0.15.0).** A photo, or a carousel of several, goes through the same life as a clip: add it, edit it (shape, a crop per photo, texts on the photos you pick, caption, hashtag groups), send it to the Queue with no score, and track it on the Calendar. YouTube Shorts is skipped because it takes video only, and a carousel longer than a platform allows sends its first photos there and says so. Any Queue item, photo or clip, can also go out at an exact day and minute, outside the regular schedule, without moving anything else.
 
 | Add photos — pick or drop them, one carousel or a post per photo | The photo editor — crop each photo, put a text on photos 2–3, reorder, platform notes |
@@ -147,7 +153,7 @@ flowchart LR
 
 - **One process, three roles.** A LaunchAgent starts the app in agent mode at login; the same process hosts the engine loop, the menu-bar item and (on demand) the main window. macOS only delivers notifications from an app bundle, which drove this design. A file lock guarantees one engine per database; the CLI shares the same WAL-mode SQLite file.
 - **Core library (`DJQCore`)** holds everything testable: models, store, intake, validation, captions, planner, engine, renderer, Doctor. The app and the CLI are thin shells over it.
-- **Data model.** Videos (identity from the manifest; app-owned fields like score are never overwritten by intake), edits, text versions with carry-forward, weekly plans, and platform posts with an append-only history. A fix or repost creates a new attempt; history is never rewritten.
+- **Data model.** Videos (identity from the manifest; app-owned fields like score are never overwritten by intake), edits, text versions (each one its own copy since v0.20.0), weekly plans, and platform posts with an append-only history. A fix or repost creates a new attempt; history is never rewritten.
 
 ## Engineering highlights
 

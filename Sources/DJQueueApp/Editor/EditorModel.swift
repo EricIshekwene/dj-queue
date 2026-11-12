@@ -885,7 +885,13 @@ final class EditorModel: ObservableObject {
     var all = versions
     var inserted = false
     if !all.contains(where: { $0.number == 1 }) { all.insert(Version(number: 1), at: 0); inserted = true }
-    if !all.contains(where: { $0.number == versionNo }) { all.append(Version(number: versionNo)); inserted = true }
+    if !all.contains(where: { $0.number == versionNo }) {
+      // Round 27: a version that isn't there yet starts as a copy of the one before it, standing alone.
+      let prev = all.map(\.number).filter { $0 < versionNo }.max() ?? 1
+      all.append(versionNo == 1 ? Version(number: 1) : VersionCopy.duplicate(all, source: prev, as: versionNo, settings: settings, video: video,
+                                                                                    newIds: false))
+      inserted = true
+    }
     guard let i = all.firstIndex(where: { $0.number == versionNo }) else { return }
     var v = all[i]
     f(&v)
@@ -1394,6 +1400,8 @@ final class EditorModel: ObservableObject {
     scrollTarget = .caption
   }
 
+  /// Round 27: a new version is a complete copy of `source` (nil = the version being edited) that stands alone
+  /// (`VersionCopy`): editing it never changes the original, and editing the original never changes it.
   func newVersion(copying source: Int?) {
     guard !readOnly else { return }
     commitCaptionDraft()
@@ -1401,24 +1409,9 @@ final class EditorModel: ObservableObject {
     flush()
     markUndo(coalesce: false)
     let n = (versions.map(\.number).max() ?? 1) + 1
-    var v = Version(number: n)
-    if let s = source, s != versions.map(\.number).max() ?? 1 {
-      let r = VersionResolver.resolve(versions, number: s, settings: settings, video: video)
-      if !r.isDefault("text") { v.text = r.text; v.noText = r.noText }
-      if !r.isDefault("style") { v.style = r.style }
-      if !r.isDefault("size") { v.size = r.size }
-      if !r.isDefault("posX") { v.posX = r.posX; v.posY = r.posY }
-      if !r.isDefault("align") { v.align = r.align }
-      if !r.isDefault("textStart") || !r.isDefault("textEnd") { v.textStart = r.textStart; v.textEnd = r.textEnd }
-      if !r.caption.isEmpty { v.caption = r.caption }
-      v.captionTemplateId = r.captionTemplateId
-      if !r.isDefault("extraHashtags") { v.extraHashtags = r.extraHashtags }
-      if !r.isDefault("hashtagSetIds") { v.hashtagSetIds = r.hashtagSetIds }
-      if !r.youtubeTitle.isEmpty { v.youtubeTitle = r.youtubeTitle }
-      v.youtubeTitleTemplateId = r.youtubeTitleTemplateId
-      if !r.platformCaptions.isEmpty { v.platformCaptions = r.platformCaptions }
-      TextLayers.copyAdvanced(into: &v, from: r)
-    }
+    let from = source ?? versionNo
+    let v = VersionCopy.duplicate(versions.isEmpty ? [Version(number: 1)] : versions, source: from, as: n,
+                                  settings: settings, video: video)
     if !versions.contains(where: { $0.number == 1 }) { versions.insert(Version(number: 1), at: 0); pendingVersions.insert(1) }
     versions.append(v)
     pendingVersions.insert(n)

@@ -170,6 +170,16 @@ func fmt(_ d: Date, _ s: Settings, _ format: String = "EEE d MMM HH:mm") -> Stri
   return iso.string(from: d)
 }
 
+/// Round 27: version `n` as stored, or, when it doesn't exist yet, a complete copy of the version before it that stands
+/// alone (so `--default` on a new version means the defaults, and its texts get their own ids).
+func versionToEdit(_ store: Store, _ v: Video, _ n: Int, _ settings: Settings) throws -> Version {
+  let saved = try store.versions(videoId: v.id)
+  if let x = saved.first(where: { $0.number == n }) { return x }
+  guard n > 1 else { return Version(number: 1) }
+  let prev = saved.map(\.number).filter { $0 < n }.max() ?? 1
+  return VersionCopy.duplicate(saved.isEmpty ? [Version(number: 1)] : saved, source: prev, as: n, settings: settings, video: v)
+}
+
 func resolveVideo(_ store: Store, _ prefix: String) throws -> Video {
   let m = try store.videos(where: "id LIKE ?", [prefix + "%"])
   guard m.count == 1 else { throw CLIError(m.isEmpty ? "no video \(prefix)" : "\(prefix) matches \(m.count) videos — use more characters") }
@@ -444,7 +454,7 @@ func run() throws -> Int32 {
   case "text":
     let v = try resolveVideo(store, try arg(0, "video id"))
     let n = try option("--version").map { try intArg($0, "--version", 1...99) } ?? 1
-    var ver = try store.versions(videoId: v.id).first { $0.number == n } ?? Version(number: n)
+    var ver = try versionToEdit(store, v, n, settings)
     let existing = Set(try store.versions(videoId: v.id).map(\.number))
     if n > 1, !existing.contains(n), !existing.contains(n - 1) { throw CLIError("v\(n - 1) doesn't exist yet") }
     if flag("--none") { ver.noText = true; ver.text = nil }
@@ -461,7 +471,7 @@ func run() throws -> Int32 {
     let v = try resolveVideo(store, try arg(0, "video id"))
     let n = try option("--version").map { try intArg($0, "--version", 1...99) } ?? 1
     let p = try option("--platform").map(platform)
-    var ver = try store.versions(videoId: v.id).first { $0.number == n } ?? Version(number: n)
+    var ver = try versionToEdit(store, v, n, settings)
     let value: String? = flag("--default") ? nil : try arg(1, "caption (or --default)")
     if let p {
       var pc = ver.platformCaptions ?? [:]
@@ -477,7 +487,7 @@ func run() throws -> Int32 {
   case "youtube-title":
     let v = try resolveVideo(store, try arg(0, "video id"))
     let n = try option("--version").map { try intArg($0, "--version", 1...99) } ?? 1
-    var ver = try store.versions(videoId: v.id).first { $0.number == n } ?? Version(number: n)
+    var ver = try versionToEdit(store, v, n, settings)
     if let t = option("--template") {
       let m = settings.youtubeTitleTemplates.filter { $0.id.hasPrefix(t) || $0.name.lowercased() == t.lowercased() }
       if t != "default", m.count != 1 {

@@ -311,8 +311,10 @@ final class AppModel {
       var made = 0
       guard undoable("Re-upload as a new version", "reupload-new-version", ids: [post.videoId], plan: true, {
         let vs = try store.versions(videoId: post.videoId)
-        var v = vs.last ?? Version(number: 1)
-        v.number = (vs.map(\.number).max() ?? 0) + 1
+        // Round 27: a complete copy of the latest version that stands alone (no Ready to repost, no posts).
+        let v = VersionCopy.duplicate(vs.isEmpty ? [Version(number: 1)] : vs, source: vs.last?.number ?? 1,
+                                      as: (vs.map(\.number).max() ?? 1) + 1, settings: try store.settings(),
+                                      video: try store.video(id: post.videoId))
         made = v.number
         try store.save(v, videoId: post.videoId)
         try postActions.resolveCopyright(postId: post.id, .reuploadAnyway(versionNo: made))
@@ -934,8 +936,10 @@ final class AppModel {
   func duplicateVersion(_ videoId: String) {
     undoable("New version added", "duplicate-version", ids: [videoId]) {
       let vs = try store.versions(videoId: videoId)
-      var v = vs.last ?? Version(number: 1)
-      v.number = (vs.map(\.number).max() ?? 0) + 1
+      // Round 27: a complete copy of the latest version that stands alone (no Ready to repost, no posts).
+      let v = VersionCopy.duplicate(vs.isEmpty ? [Version(number: 1)] : vs, source: vs.last?.number ?? 1,
+                                    as: (vs.map(\.number).max() ?? 1) + 1, settings: try store.settings(),
+                                    video: try store.video(id: videoId))
       try store.save(v, videoId: videoId)
     }
   }

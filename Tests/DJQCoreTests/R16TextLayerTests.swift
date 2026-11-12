@@ -352,16 +352,13 @@ private func resolve(_ vs: [Version], _ n: Int? = nil, video: Video? = nil) -> R
   @Test func newVersionCopyKeepsWhatTheSourceShows() {
     let v1 = version(1) { $0.textLook = TextLook(color: "#FF0000"); $0.moreText = [extra("A", id: "a")] }
     let v2 = version(2) { $0.textLook = TextLook(color: "#00FF00"); $0.moreText = [] }
-    var v3 = version(3)
-    TextLayers.copyAdvanced(into: &v3, from: resolve([v1, v2], 1))
+    let v3 = VersionCopy.duplicate([v1, v2], source: 1, as: 3, settings: Settings())
     let r3 = resolve([v1, v2, v3])
-    #expect(r3.textLook?.color == "#FF0000" && r3.moreText.map(\.id) == ["a"])
-    var v4 = version(4)
-    TextLayers.copyAdvanced(into: &v4, from: resolve([v1, v2]))
+    #expect(r3.textLook?.color == "#FF0000" && r3.moreText.map(\.text) == ["A"] && r3.moreText.map(\.id) != ["a"])
+    let v4 = VersionCopy.duplicate([v1, v2, v3], source: 2, as: 4, settings: Settings())
     let r4 = resolve([v1, v2, v3, v4])
     #expect(r4.textLook?.color == "#00FF00" && r4.moreText.isEmpty)
-    var plain = version(5)
-    TextLayers.copyAdvanced(into: &plain, from: resolve([version(1)]))
+    let plain = VersionCopy.duplicate([version(1)], source: 1, as: 5, settings: Settings())
     #expect(resolve([v1, plain]).textLook == nil)
   }
 }
