@@ -521,6 +521,21 @@ public struct Version: Codable, Sendable, Hashable {
   /// version made from v2 on is written this way (`VersionCopy`), and schema 11 turned every older v2+ into one,
   /// copying in what it showed. nil only on v1 and in data from before schema 11.
   public var standalone: Bool?
+  /// Round 30 (Eric: "when I change a clip's trim while editing v3, only v3 changes"). This version's own trim, in
+  /// absolute seconds of the clip file. Both set = the version uses it instead of the clip's trim (`Edit.trimIn/Out`),
+  /// and its texts' times count from its own start. nil = the version follows the clip's trim. Never carried forward;
+  /// a copy of a version takes it (`VersionCopy`).
+  public var trimIn: Double?
+  public var trimOut: Double?
+  /// Round 30: per-platform trims of a version with its own trim (the clip's `Edit.platformTrims` belong to the clip's
+  /// trim, so they never reach a version that has its own). nil/empty = none.
+  public var platformTrims: [Platform: TrimRange]?
+
+  /// True when this version has its own trim (`trimIn` and `trimOut` both set).
+  public var hasOwnTrim: Bool { trimIn != nil && trimOut != nil }
+
+  /// Clears this version's own trim, so it follows the clip's trim again.
+  public mutating func clearOwnTrim() { trimIn = nil; trimOut = nil; platformTrims = nil }
 
   public init(number: Int) { self.number = number }
 }

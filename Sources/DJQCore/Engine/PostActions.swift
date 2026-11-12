@@ -420,7 +420,7 @@ public final class PostActions: @unchecked Sendable {
   /// Records the edit's length-related state for a platform when a too_long failure happens, so the engine only
   /// re-queues after Eric actually changes the trim/skip for it.
   static func snapshotTrim(store: Store, post p: PlatformPost) throws {
-    try store.setKV("tooLong.\(p.id)", trimSignature(try store.resolvedEdit(videoId: p.videoId), p.platform))
+    try store.setKV("tooLong.\(p.id)", trimSignature(try store.resolvedEdit(videoId: p.videoId, version: p.versionNo), p.platform))
   }
 
   /// What a platform's length depends on (resolved: the markers default counts).

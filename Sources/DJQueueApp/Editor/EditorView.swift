@@ -95,7 +95,7 @@ struct EditorView: View {
     // Don't start with the cursor in the Title field (Space should play, not type).
     .onAppear {
       DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
-      if let p = trimPlatform, !model.isPhoto, model.posting(p), model.edit.platformTrims[p] == nil, !model.readOnly {
+      if let p = trimPlatform, !model.isPhoto, model.posting(p), model.platformTrims[p] == nil, !model.readOnly {
         model.addPlatformTrim(p)
         model.scrollTarget = .platforms
       }

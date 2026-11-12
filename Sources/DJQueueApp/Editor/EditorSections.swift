@@ -98,10 +98,20 @@ struct EditorFrameSection: View {
   private var trim: some View {
     let t = model.trim
     let hasMarkers = model.video?.markerIn != nil && model.video?.markerOut != nil
+    let scope = model.trimScope
     return EditorField(label: "Trim", help: "Which seconds of the clip file are posted", isCustom: !model.trimIsDefault,
                        resetHelp: hasMarkers ? "Reset the trim to your in/out markers" : "Reset the trim to the whole file",
-                       onReset: { model.resetEdit(.trimIn, .trimOut); model.commitTrim() }) {
+                       onReset: { model.resetTrim() }) {
       VStack(alignment: .leading, spacing: 4) {
+        // Round 30: where the handles write. Only shown on a clip with more than one version, or once v1 has its own.
+        if model.versionNumbers.count > 1 || model.hasOwnTrim {
+          DSSegmented(selection: Binding(get: { scope }, set: { model.setTrimScope($0) }),
+                      segments: [DSSegment(value: TrimScope.version, title: "v\(model.versionNo) only"),
+                                 DSSegment(value: TrimScope.clip, title: "All versions")],
+                      size: .sm, fullWidth: true)
+            .dsTooltip("Choose what the trim handles change: just this version, or the trim every version shares")
+            .background(ScriptAnchor("Trim scope switch"))
+        }
         HStack(spacing: 6) {
           Text("\(EditorGeometry.time(t.start, tenths: true)) – \(EditorGeometry.time(t.end, tenths: true))")
             .font(DS.type.callout.monospacedDigit()).foregroundStyle(DS.color.text)
@@ -109,14 +119,34 @@ struct EditorFrameSection: View {
           Spacer(minLength: 0)
           if !model.trimIsDefault && hasMarkers {
             DSButton("Trim to markers", variant: .ghost, size: .sm, tooltip: "Back to your in/out markers") {
-              model.resetEdit(.trimIn, .trimOut); model.commitTrim()
+              model.resetTrim()
             }
           }
         }
-        EditorHint(hasMarkers ? (model.trimIsDefault ? "Your markers. Drag a handle into the striped grace zone to extend."
-                                                     : "Changed from your markers.")
-                              : "No markers on this clip — the whole file is used.")
+        EditorHint(Self.trimHint(model, hasMarkers: hasMarkers))
+          .background(ScriptAnchor("Trim scope hint"))
       }
+    }
+  }
+
+  /// What the Trim field says under the times: whose trim this is and what the handles change (round 30), then where it
+  /// comes from.
+  static func trimHint(_ model: EditorModel, hasMarkers: Bool) -> String {
+    let n = model.versionNo
+    let source = hasMarkers ? (model.trimIsDefault ? "Your markers. Drag a handle into the striped grace zone to extend."
+                                                   : "Changed from your markers.")
+                            : "No markers on this clip — the whole file is used."
+    guard model.versionNumbers.count > 1 || model.hasOwnTrim else { return source }
+    let others = model.versionNumbers.filter { $0 != n }
+    let keeping = model.versionsWithOwnTrim.filter { $0 != n }
+    func list(_ xs: [Int]) -> String { xs.map { "v\($0)" }.joined(separator: ", ") }
+    switch model.trimScope {
+    case .version:
+      if model.hasOwnTrim { return "v\(n) has its own trim. Only v\(n) changes\(others.isEmpty ? "" : "; \(list(others)) keep theirs")." }
+      return "The handles give v\(n) its own trim. \(others.isEmpty ? "Only v\(n) changes." : "\(list(others)) keep theirs.")"
+    case .clip:
+      let sharing = model.versionNumbers.filter { !keeping.contains($0) }
+      return "Shared by \(list(sharing))\(keeping.isEmpty ? "" : ". \(list(keeping)) \(keeping.count == 1 ? "has its" : "have their") own and \(keeping.count == 1 ? "keeps it" : "keep them")"). " + source
     }
   }
 }
@@ -245,7 +275,7 @@ struct EditorPlatformsSection: View {
           DSFlowLayout(spacing: 6) {
             ForEach(EditorPlatforms.order) { p in
               let enabled = model.settings.enabledPlatforms.contains(p)
-              let ownTrim = model.posting(p) && model.edit.platformTrims[p] != nil
+              let ownTrim = model.posting(p) && model.platformTrims[p] != nil
               // Round 21 (D8): a platform that takes no photos is off for a photo post and says why.
               let never = model.isPhoto && !p.supportsPhotos
               let what = model.isPhoto ? "post" : "clip"
@@ -273,7 +303,7 @@ struct EditorPlatformsSection: View {
       guard model.settings.enabledPlatforms.contains(p), let lim = model.settings.limits[p]?.maxDuration else { return nil }
       let d = model.resolvedEdit.trim(platform: p).duration
       let mainTooLong = model.trim.duration > lim + 0.05
-      if model.posting(p) { return d > lim + 0.05 || model.edit.platformTrims[p] != nil ? (p, d, lim) : nil }
+      if model.posting(p) { return d > lim + 0.05 || model.platformTrims[p] != nil ? (p, d, lim) : nil }
       return mainTooLong ? (p, d, lim) : nil  // skipped: shown while the main trim is still too long for it
     }
     if !rows.isEmpty {
@@ -297,7 +327,7 @@ struct EditorPlatformsSection: View {
         EditorHint("Too long for \(name) · \(Validation.fmt(d)) / \(Validation.fmt(lim)) — trim it for \(name) or skip \(name)",
                    icon: "exclamationmark.triangle.fill", tone: .warning)
         HStack(spacing: 6) {
-          if model.edit.platformTrims[p] == nil {
+          if model.platformTrims[p] == nil {
             DSButton("Trim for \(name)", icon: "scissors", variant: .outline, size: .sm,
                      tooltip: "Add a \(name)-only trim lane cut at \(Validation.fmt(lim))") { model.addPlatformTrim(p) }
           }
@@ -307,7 +337,7 @@ struct EditorPlatformsSection: View {
       } else {
         EditorHint("\(name) posts its own \(Validation.fmt(d)) trim · the timeline's \(name) lane", icon: "scissors", tone: .success)
         DSButton("Remove \(name) trim", variant: .ghost, size: .sm, tooltip: "Delete the \(name)-only trim; use the main one") {
-          model.updateEdit { $0.platformTrims[p] = nil }
+          model.updatePlatformTrims { $0[p] = nil }
         }
         .padding(.leading, -8)
       }

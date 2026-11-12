@@ -18,18 +18,19 @@ final class FakeRenderer: RenderService, @unchecked Sendable {
   func editHash(videoId: String, versionNo: Int, platform: Platform?) throws -> String {
     let e = try store.edit(videoId: videoId)
     let v = try store.resolvedVersion(videoId: videoId, number: versionNo)
-    let s = JSONCoding.string(e) + JSONCoding.string(v) + (try scope(videoId: videoId, platform: platform))
+    let own = store.rawVersion(videoId: videoId, number: versionNo).map { JSONCoding.string([$0.trimIn, $0.trimOut]) } ?? ""
+    let s = JSONCoding.string(e) + JSONCoding.string(v) + own + (try scope(videoId: videoId, versionNo: versionNo, platform: platform))
     return SHA256.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
   }
 
-  func scope(videoId: String, platform: Platform?) throws -> String {
-    guard let p = platform, try store.edit(videoId: videoId).platformTrims[p] != nil else { return "all" }
+  func scope(videoId: String, versionNo: Int, platform: Platform?) throws -> String {
+    guard let p = platform, try store.resolvedEdit(videoId: videoId, version: versionNo).platformTrims[p] != nil else { return "all" }
     return p.rawValue
   }
 
   func currentRender(videoId: String, versionNo: Int, platform: Platform?) throws -> Render? {
     let h = try editHash(videoId: videoId, versionNo: versionNo, platform: platform)
-    let sc = try scope(videoId: videoId, platform: platform)
+    let sc = try scope(videoId: videoId, versionNo: versionNo, platform: platform)
     return try store.renders(where: "deleted_at IS NULL AND status='done' AND video_id=? AND version_no=? AND edit_hash=? AND scope=?",
                              [videoId, versionNo, h, sc]).last
   }
@@ -45,7 +46,7 @@ final class FakeRenderer: RenderService, @unchecked Sendable {
     let v = try store.video(id: videoId)!
     let folder = URL(fileURLWithPath: try store.session(id: v.sessionId)!.folder).appendingPathComponent("Ready to Post/Shortform")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    let sc = try scope(videoId: videoId, platform: platform)
+    let sc = try scope(videoId: videoId, versionNo: versionNo, platform: platform)
     let name = "\(v.name) – v\(versionNo)\(sc == "all" ? "" : " – \(sc)")"
     let out = folder.appendingPathComponent(name + ".mp4"), cover = folder.appendingPathComponent(name + ".jpg")
     try Data("render".utf8).write(to: out)

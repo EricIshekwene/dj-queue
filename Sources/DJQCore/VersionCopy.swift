@@ -9,8 +9,9 @@ import Foundation
 /// YouTube title and template, per-platform captions). The on-video words are always pinned, even when the source
 /// shows the Title. Every other field the source leaves on the defaults stays on the defaults.
 /// Copied texts get their own ids. It never takes posting state: "Ready to repost" starts off, and posts, schedules and
-/// Postiz jobs belong to their version number, so a new number has none. Trim, crop, cover, aspect, markers and
-/// platforms aren't per version: they are one edit for the clip (round 20), shared by every version.
+/// Postiz jobs belong to their version number, so a new number has none. Crop, cover, aspect, markers and platforms
+/// aren't per version: they are one edit for the clip (round 20), shared by every version. The trim is the clip's
+/// unless a version has its own (round 30): a copy of such a version takes its own trim too.
 public enum VersionCopy {
   /// A new version `number`: a copy of version `source` as `all` resolves it today, standing alone.
   /// `newIds: false` keeps the copied texts' ids, for a caller that applies an edit by id straight after (the copy is

@@ -214,6 +214,9 @@ final class EditorModel: ObservableObject {
   /// Round 24: the trim handle that was last clicked or dragged; ← / → move it until Esc or a click elsewhere.
   @Published var trimEdge: TrimEdge?
   @Published private var zoneSelections: [String: Set<Platform>] = [:]
+  /// Round 30: Eric's pick in the Trim section's "This version / All versions" switch, for one clip and version.
+  /// Otherwise the switch follows `trimScope`'s rule.
+  @Published private var trimScopePick: (videoId: String, version: Int, scope: TrimScope)?
 
   let playback = EditorPlayback()
   private var pendingEdit = false
@@ -412,11 +415,29 @@ final class EditorModel: ObservableObject {
       return ResolvedEdit(aspect: .r9x16, crop: nil, cropConfirmed: false, trimIn: 0, trimOut: 0, coverTime: 0,
                           coverIncludesText: true, platformTrims: [:], skippedPlatforms: [], defaulted: Set(EditField.allCases))
     }
-    return EditResolver.resolve(edit, video: v, defaults: defaults, sourceSize: sourceSize, lastUsedCrop: lastCrop)
+    return EditResolver.resolve(edit, video: v, defaults: defaults, sourceSize: sourceSize, lastUsedCrop: lastCrop,
+                                version: storedVersion)
   }
 
   var aspect: Aspect { resolvedEdit.aspect }
+  /// The trim of the version being edited (round 30: its own, else the clip's). Its texts count from its start.
   var trim: TrimRange { resolvedEdit.trim() }
+  /// The version being edited as stored (nil until it has a row).
+  var storedVersion: Version? { versions.first { $0.number == versionNo } }
+  /// Round 30: the version being edited has its own trim.
+  var hasOwnTrim: Bool { storedVersion?.hasOwnTrim == true && !isPhoto }
+  /// Round 30: where the trim handles write. A version with its own trim always edits it; otherwise Eric's pick in
+  /// the switch, else "This version" when the clip has more than one version (Eric: changing v3's trim changes only v3)
+  /// and "All versions" on a clip with just v1.
+  var trimScope: TrimScope {
+    if hasOwnTrim { return .version }
+    if let p = trimScopePick, p.videoId == videoId, p.version == versionNo { return p.scope }
+    return versionNumbers.count > 1 ? .version : .clip
+  }
+  /// The other versions with their own trim (they never follow the clip's).
+  var versionsWithOwnTrim: [Int] { versions.filter { $0.hasOwnTrim }.map(\.number).sorted() }
+  /// The per-platform trims that apply to the version being edited (its own when it has its own trim).
+  var platformTrims: [Platform: TrimRange] { resolvedEdit.platformTrims }
   /// The default trim (markers ± extra seconds, or the whole file).
   var defaultTrim: TrimRange { video.map { defaults.trim(for: $0) } ?? TrimRange(start: 0, end: 0) }
   var cropIsSet: Bool {
@@ -447,7 +468,8 @@ final class EditorModel: ObservableObject {
   var coverTime: Double { resolvedEdit.coverTime }
 
   func isDefault(_ f: EditField) -> Bool { resolvedEdit.isDefault(f) }
-  var trimIsDefault: Bool { isDefault(.trimIn) && isDefault(.trimOut) }
+  /// "Default" in the Trim field: the version follows the clip's trim and that is still the default.
+  var trimIsDefault: Bool { !hasOwnTrim && isDefault(.trimIn) && isDefault(.trimOut) }
 
   // MARK: Derived — version
 
@@ -698,14 +720,19 @@ final class EditorModel: ObservableObject {
     refreshOverlay()
   }
 
+  /// Round 30: only the versions that use the trim that changed are clamped: the version being edited when it has its
+  /// own trim, else every version that follows the clip's trim. A version with its own trim keeps its texts as they are.
   private func keepInsideTrim() {
     guard !isPhoto else { return }  // a window names photo positions; the photo count clamps it when it's read
     let t = trim
-    if let c = edit.coverTime, c < t.start || c > t.end {
+    let own = hasOwnTrim
+    // The clip's cover belongs to the clip's trim; a version's own trim never moves it (its cover falls back inside).
+    if !own, let c = edit.coverTime, c < t.start || c > t.end {
       edit.coverTime = min(max(c, t.start), max(t.start, t.end - 0.05))
       pendingEdit = true
     }
-    for i in versions.indices where versions[i].textStart != nil || versions[i].textEnd != nil {
+    let affected: (Version) -> Bool = { v in own ? v.number == self.versionNo : !v.hasOwnTrim }
+    for i in versions.indices where affected(versions[i]) && (versions[i].textStart != nil || versions[i].textEnd != nil) {
       // An inverted window means the whole clip (a promoted text has one): clamping would turn it into 0.3 s.
       if let e = versions[i].textEnd, e <= (versions[i].textStart ?? 0) { continue }
       let (s, e) = EditorGeometry.clampTextTiming(start: versions[i].textStart, end: versions[i].textEnd, trimDuration: t.duration)
@@ -715,7 +742,7 @@ final class EditorModel: ObservableObject {
         pendingVersions.insert(versions[i].number)
       }
     }
-    for i in versions.indices {
+    for i in versions.indices where affected(versions[i]) {
       guard let list = versions[i].moreText else { continue }
       let kept = list.map { EditorGeometry.clampLayer($0, trimDuration: t.duration) }
       if kept != list {
@@ -726,16 +753,78 @@ final class EditorModel: ObservableObject {
   }
 
   /// Trim in (absolute seconds); the default value clears the override so the field reads Default again.
+  /// Round 30: in "This version" the version being edited gets (or changes) its own trim; in "All versions" the
+  /// clip's trim changes, for every version that follows it.
   func setTrimIn(_ t: Double, live: Bool = false) {
     if live && !trimDragging { trimDragging = true }
+    if trimScope == .version {
+      let end = trim.end
+      updateOwnTrim(live: live) { $0.trimIn = max(0, t); if $0.trimOut == nil { $0.trimOut = end } }
+      return
+    }
     let d = defaultTrim.start
     updateEdit(live: live) { $0.trimIn = EditorGeometry.override(max(0, t), default: d) }
   }
 
   func setTrimOut(_ t: Double, live: Bool = false) {
     if live && !trimDragging { trimDragging = true }
+    if trimScope == .version {
+      let start = trim.start, dur = duration
+      updateOwnTrim(live: live) { $0.trimOut = dur > 0 ? min(dur, t) : t; if $0.trimIn == nil { $0.trimIn = start } }
+      return
+    }
     let d = defaultTrim.end
     updateEdit(live: live) { $0.trimOut = EditorGeometry.override(min(duration, t), default: d) }
+  }
+
+  /// Round 30: changes the version being edited's own trim (or its per-platform trims). `live` while a handle is
+  /// dragged: its texts are kept inside on `commitTrim()`.
+  func updateOwnTrim(live: Bool = false, _ f: (inout Version) -> Void) {
+    guard !readOnly, video != nil, !isPhoto else { return }
+    let old = trim
+    updateVersion(coalesce: true) { f(&$0) }
+    if trim != old && !live { keepInsideTrim(); scheduleSave() }
+  }
+
+  /// The per-platform trims of the trim the version being edited uses: its own trim's, else the clip's.
+  func updatePlatformTrims(_ f: (inout [Platform: TrimRange]) -> Void) {
+    if hasOwnTrim {
+      updateOwnTrim { v in var m = v.platformTrims ?? [:]; f(&m); v.platformTrims = m.isEmpty ? nil : m }
+    } else {
+      updateEdit { f(&$0.platformTrims) }
+    }
+  }
+
+  /// Round 30: the Trim section's switch. "All versions" makes the version being edited follow the clip's trim
+  /// again (dropping its own, one undo step); "This version" changes nothing until a handle moves.
+  func setTrimScope(_ s: TrimScope) {
+    guard !readOnly, video != nil, !isPhoto else { return }
+    trimScopePick = (videoId, versionNo, s)
+    guard s == .clip, hasOwnTrim else { return }
+    updateVersion(coalesce: false) { $0.clearOwnTrim() }
+    keepInsideTrim()
+    scheduleSave()
+    show("v\(versionNo) uses the trim every version shares again")
+  }
+
+  /// The Trim field's Reset and the timeline's "Trim to markers": the trim shown goes back to the default (markers ±
+  /// extra seconds, or the whole file), in the switch's scope only (round 30). "This version": the version follows the
+  /// clip's trim again when that is the default, else it gets the default as its own. "All versions": the clip's trim.
+  func resetTrim() {
+    guard !readOnly, video != nil else { return }
+    if trimScope == .version {
+      let clipIsDefault = edit.trimIn == nil && edit.trimOut == nil
+      let d = defaultTrim
+      if clipIsDefault {
+        if hasOwnTrim { updateOwnTrim { $0.clearOwnTrim() } }
+      } else {
+        updateOwnTrim { $0.trimIn = d.start; $0.trimOut = d.end }
+      }
+      commitTrim()
+      return
+    }
+    resetEdit(.trimIn, .trimOut)
+    commitTrim()
   }
 
   func setCrop(_ c: CropRect) {
@@ -784,7 +873,7 @@ final class EditorModel: ObservableObject {
     guard !isPhoto else { return }
     let t = trim
     let lim = settings.limits[p]?.maxDuration ?? t.duration
-    updateEdit { $0.platformTrims[p] = TrimRange(start: t.start, end: min(t.end, t.start + lim)) }
+    updatePlatformTrims { $0[p] = TrimRange(start: t.start, end: min(t.end, t.start + lim)) }
   }
 
   func setKind(_ k: Kind) {

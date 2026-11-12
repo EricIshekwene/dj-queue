@@ -192,6 +192,8 @@ public final class BulkActions: @unchecked Sendable {
       if sections.contains(.platforms) { e.skippedPlatforms = []; e.includedPlatforms = [] }
       var changed = false
       if e != e0 { try store.save(e, videoId: v.id); changed = true }
+      // Round 30: the trim section resets every version's own trim too (each follows the clip's default trim again).
+      if sections.contains(.trim), try VersionTrims.dropOwn(store: store, videoId: v.id) > 0 { changed = true }
       let all = try store.versions(videoId: v.id)
       if var v1 = all.first(where: { $0.number == 1 }) {
         let o = v1

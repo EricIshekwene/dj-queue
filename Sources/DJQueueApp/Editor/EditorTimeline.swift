@@ -21,7 +21,7 @@ struct EditorTimeline: View {
   static let textH: CGFloat = 20, filmH: CGFloat = 48, laneH: CGFloat = 18, gap: CGFloat = 8
   static let rulerH: CGFloat = 18, overviewH: CGFloat = 8
 
-  private var lanes: [Platform] { EditorPlatforms.order.filter { model.edit.platformTrims[$0] != nil } }
+  private var lanes: [Platform] { EditorPlatforms.order.filter { model.platformTrims[$0] != nil } }
   /// Height of the text lanes.
   private var textBlock: CGFloat { EditorTextTrack.height(lanes: model.textBars.laneCount) }
   private var textY: CGFloat { Self.rulerH + 4 }
@@ -190,6 +190,11 @@ struct EditorTransport: View {
           DSBadge("\(e.title) selected · ← → move it · Esc", style: .soft(.neutral), size: .sm)
             .background(ScriptAnchor("Trim edge selected"))
             .dsTooltip("← / → move the \(e == .start ? "start" : "end") by your arrow step, ⇧ by one frame. Esc or a click on an empty spot lets it go")
+        } else if model.hasOwnTrim {
+          // Round 30: this version's own trim; other versions keep theirs.
+          DSBadge("v\(model.versionNo) only", style: .soft(.accent), icon: "scissors", size: .sm)
+            .background(ScriptAnchor("Version trim badge"))
+            .dsTooltip("v\(model.versionNo) has its own trim. The other versions keep theirs")
         } else if !model.trimIsDefault {
           DSBadge("Custom", style: .soft(.neutral), size: .sm)
             .dsTooltip(model.video?.markerIn != nil ? "Trim changed from your markers" : "Trim changed from the whole file")
@@ -201,7 +206,7 @@ struct EditorTransport: View {
           DSButton(model.video?.markerIn != nil ? "Trim to markers" : "Whole file", icon: "arrow.uturn.backward", variant: .ghost,
                    size: .sm, tooltip: model.video?.markerIn != nil ? "Reset the trim to your in/out markers"
                                                                      : "Reset the trim to the whole file") {
-            model.resetEdit(.trimIn, .trimOut); model.commitTrim()
+            model.resetTrim()
           }
         }
         timelineTools
@@ -890,7 +895,7 @@ struct EditorTrimLane: View {
 
   var body: some View {
     let m = model.trackMath(width: width)
-    let r = model.edit.platformTrims[platform] ?? model.trim
+    let r = model.platformTrims[platform] ?? model.trim
     let a = m.x(r.start), b = m.x(r.end)
     let lim = model.settings.limits[platform]?.maxDuration ?? .infinity
     let over = r.duration > lim + 0.05
@@ -910,7 +915,7 @@ struct EditorTrimLane: View {
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
           dragging = .start
           let t = min(m.snapped(v.location.x), r.end - 0.5)
-          model.updateEdit { $0.platformTrims[platform]?.start = t }
+          model.updatePlatformTrims { $0[platform]?.start = t }
         }.onEnded { _ in dragging = nil })
         .dsTooltip("Drag to set where \(platform.displayName)'s cut starts")
       }
@@ -919,7 +924,7 @@ struct EditorTrimLane: View {
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
           dragging = .end
           let t = max(m.snapped(v.location.x, extra: [r.start + lim]), r.start + 0.5)
-          model.updateEdit { $0.platformTrims[platform]?.end = t }
+          model.updatePlatformTrims { $0[platform]?.end = t }
         }.onEnded { _ in dragging = nil })
         .dsTooltip("Drag to set where \(platform.displayName)'s cut ends (snaps to \(Validation.fmt(lim)))")
       }
