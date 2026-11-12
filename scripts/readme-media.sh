@@ -148,3 +148,10 @@ gif photo-audio-fit $U/audio-04-clip-editor-with-audio-light $U/audio-06-fill-th
                  $U/audio-09-crop-reset-still-nothing-to-fix-light
 still photo-audio-import $U/audio-19-import-sheet-with-audio-light
 still photo-audio-whole  $U/render-frame-whole-at-2s-light
+
+T=text-fields
+# Round 25: the boxes keep the cursor. The Text box typed into, then Return in the middle of a line (the cursor stays
+# right after it), then the caption doing the same.
+CROP=iw*0.74:ih*0.76:iw*0.26:0 gif text-fields $T/fields-01-text-start-light $T/fields-02-text-typed-light \
+                 $T/fields-03-text-split-light $T/fields-05-caption-typed-light $T/fields-06-caption-split-light
+still text-fields-split $T/fields-03-text-split-light

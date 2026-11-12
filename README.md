@@ -58,6 +58,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | **Whole photo or Fill the frame** — one switch under the audio; Fill asks for the crop, Whole has nothing to fix, also after zooming in and Crop's Reset | **The post** — the whole photo over a blurred copy of itself, with a timed text |
 | ![Switching between Whole photo and Fill the frame in the editor, then zooming the crop in and resetting it](docs/media/photo-audio-fit.gif) | ![A frame of the rendered post: the whole photo across the middle of a 9:16 video](docs/media/photo-audio-whole.jpg) |
 
+**Text boxes keep the cursor (v0.17.1).** Click anywhere in a text box and type, or press Return in the middle of a line, and the cursor stays where you put it. Before, every edit in the middle of the Text on the video sent the cursor to the end, and a Return in an emptied box brought the Title back into it. One fix in the shared text box covers the Text, the caption, each platform's own caption, templates and notes, and a hidden check clicks, types and presses Return in each of them, watching the cursor, the box's height and its scroll every 8 ms.
+
+| Return in the middle of a line, in the Text and the caption | The cursor stays right after the new line |
+|---|---|
+| ![Typing three lines in the Text box, clicking after "Afro" and pressing Return, then the same in the caption](docs/media/text-fields.gif) | ![The Text box split at the click, with the cursor at the start of the new line and the video showing the four lines](docs/media/text-fields-split.jpg) |
+
 ## What it does
 
 The app follows a clip's life — **Score → Edit → Queue → Calendar** — with one job and one primary action per screen, on a calm, rounded design system modelled on ChatGPT's look and shadcn/ui component anatomy.

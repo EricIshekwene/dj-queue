@@ -1297,7 +1297,8 @@ final class EditorModel: ObservableObject {
   /// Title" is the reset (`resetVersion(["text"])`).
   func setText(_ t: String) {
     updateVersion { v in
-      if t.isEmpty { v.text = ""; v.noText = false } else { v.text = t; v.noText = nil }
+      // Blank (nothing, or only spaces and new lines) is "typed nothing yet": kept as typed, never the Title.
+      if t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { v.text = t; v.noText = false } else { v.text = t; v.noText = nil }
     }
   }
 

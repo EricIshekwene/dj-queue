@@ -183,6 +183,10 @@ struct DSTextArea: View {
   @State private var hovering = false
   /// Height the text needs at the field's width (round 7: the field grows to it, then scrolls).
   @State private var contentHeight: CGFloat = 0
+  /// What the box shows. Round 25: the box owns its text while Eric types and hands each change to `text`; a change
+  /// that comes from anywhere else (undo, Reset, another clip or version) replaces it. Bound straight to `text`, a
+  /// binding that redraws the editor on every key put the caret at the end after each edit in the middle of the text.
+  @State private var draft: String
   @Environment(\.dsForcedState) private var forced
 
   init(_ label: String? = nil, placeholder: String, text: Binding<String>, hint: String? = nil, error: String? = nil,
@@ -196,6 +200,7 @@ struct DSTextArea: View {
     self.minHeight = minHeight
     self.maxHeight = maxHeight
     self.focusToken = focusToken
+    _draft = State(initialValue: text.wrappedValue)
   }
 
   /// Inner height: grows with the text from `minHeight` to `maxHeight` (padding included), then the text scrolls.
@@ -206,15 +211,15 @@ struct DSTextArea: View {
 
   var body: some View {
     let isFocused = forced == .focused || focused
-    DSFieldFrame(label: label, hint: hint, error: error, counter: limit.map { (text.count, $0) }) {
+    DSFieldFrame(label: label, hint: hint, error: error, counter: limit.map { (draft.count, $0) }) {
       ZStack(alignment: .topLeading) {
-        if text.isEmpty {
+        if draft.isEmpty {
           // Clipped to the field: a long placeholder never spills over (or covers) what's below.
           Text(placeholder).font(DS.type.body).foregroundStyle(DS.color.textTertiary)
             .padding(.horizontal, 5).padding(.vertical, 1).allowsHitTesting(false)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).clipped()
         }
-        TextEditor(text: $text)
+        TextEditor(text: $draft)
           .font(DS.type.body)
           .foregroundStyle(DS.color.text)
           .scrollContentBackground(.hidden)
@@ -224,7 +229,7 @@ struct DSTextArea: View {
       .frame(height: inner)
       // The text measured at the field's width (never drawn): the field's height follows it.
       .background(alignment: .topLeading) {
-        Text(text.isEmpty ? placeholder : text + "\n")
+        Text(draft.isEmpty ? placeholder : draft + "\n")
           .font(DS.type.body).padding(.horizontal, 5)
           .fixedSize(horizontal: false, vertical: true)
           .hidden()
@@ -236,6 +241,8 @@ struct DSTextArea: View {
                            radius: DS.radius.lg, fill: DS.color.surfaceRaised))
       .onHover { hovering = $0 }
       .onChange(of: focusToken) { _, _ in focused = true }
+      .onChange(of: draft) { _, now in if now != text { text = now } }
+      .onChange(of: text) { _, now in if now != draft { draft = now } }
     }
   }
 }

@@ -532,6 +532,7 @@ struct EditorCaptionText: View {
     VStack(alignment: .leading, spacing: 4) {
       DSTextArea(placeholder: placeholder, text: $text, limit: limit, minHeight: minHeight, maxHeight: maxHeight)
         .accessibilityIdentifier(platform.map { "editor.caption.\($0.rawValue)" } ?? "editor.caption")
+        .background(ScriptAnchor(platform.map { "Caption field \($0.rawValue)" } ?? "Caption field"))
       if platform == nil, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !synced.isEmpty {
         EditorHint("Empty — the template's caption posts until you type one")
       }
