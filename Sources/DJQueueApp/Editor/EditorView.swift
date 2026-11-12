@@ -117,7 +117,8 @@ struct EditorView: View {
   }
 
   /// ⌘Z / ⇧⌘Z (`EditorUndoKeys`), then `EditorKeys` (round 19): Space play/pause · ← / → jump by Eric's arrow step
-  /// (⇧ one frame) · ↑ / ↓ previous / next clip · I / O trim at the playhead · Esc leaves a text field. Typing in a
+  /// (⇧ one frame) · ↑ / ↓ previous / next clip · I / O trim at the playhead · M marker · = / - zoom · a selected trim
+  /// handle takes ← / → (Esc lets it go) · Esc leaves a text field. Typing in a
   /// field keeps its keys; lists keep ↑ / ↓; an overlay over the editor keeps all of them.
   private func handleKey(_ e: NSEvent) -> Bool {
     if EditorUndoKeys.handle(e, model: model) { return true }
@@ -125,7 +126,8 @@ struct EditorView: View {
     guard let action = EditorKeys.action(
       keyCode: e.keyCode, characters: e.charactersIgnoringModifiers, shift: mods.contains(.shift),
       commandLike: !mods.intersection([.command, .option, .control]).isEmpty, focus: EditorFocus.of(e.window),
-      covered: model.isCovered?() == true, hasClip: (!model.fileMissing || model.isPhoto) && model.video != nil)
+      covered: model.isCovered?() == true, hasClip: (!model.fileMissing || model.isPhoto) && model.video != nil,
+      trimEdgeSelected: model.trimEdge != nil && !model.isPhoto)
     else { return false }
     let pb = model.playback
     if model.isPhoto {
@@ -136,7 +138,7 @@ struct EditorView: View {
       case .leaveTextField:
         if e.window?.performKeyEquivalent(with: e) == true { return true }
         EditorFocus.leaveText(in: e.window)
-      case .togglePlay, .trimIn, .trimOut: break
+      case .togglePlay, .trimIn, .trimOut, .toggleMarker, .zoom, .nudgeTrim, .releaseTrimEdge: break
       }
       return true
     }
@@ -146,6 +148,10 @@ struct EditorView: View {
     case .clip(let d): Self.open(d, model: model, in: videoIds)
     case .trimIn: model.setTrimIn(min(pb.time, model.trim.end - 0.5))
     case .trimOut: model.setTrimOut(max(pb.time, model.trim.start + 0.5))
+    case .toggleMarker: model.toggleMarker()
+    case .zoom(let d): model.zoomTimeline(d)
+    case .nudgeTrim(let d, let fine): model.nudgeTrim(d, fine: fine)
+    case .releaseTrimEdge: model.selectTrimEdge(nil)
     case .leaveTextField:
       // A form's Cancel (the group and template forms, `.cancelAction`) takes Esc first: one press closes it.
       if e.window?.performKeyEquivalent(with: e) == true { return true }

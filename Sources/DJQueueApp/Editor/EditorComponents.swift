@@ -129,6 +129,10 @@ struct EditorDragSurface: NSViewRepresentable {
   var onDrag: (CGSize) -> Void
   /// `moved` = it went past `slop`; false is a click.
   var onRelease: (Bool) -> Void
+  /// Round 24: where the press landed, in points from the surface's top-left (the timeline's scrub needs the spot).
+  var onPressAt: ((CGPoint) -> Void)? = nil
+  /// Round 24: the drag with the event's modifier keys (⌥ = fine control on the timeline). Called instead of `onDrag`.
+  var onDragMods: ((CGSize, NSEvent.ModifierFlags) -> Void)? = nil
 
   final class Surface: NSView {
     var parts = EditorDragSurface(cursor: .arrow, onDrag: { _ in }, onRelease: { _ in })
@@ -145,6 +149,10 @@ struct EditorDragSurface: NSViewRepresentable {
       start = event.locationInWindow
       moved = false
       parts.onPress()
+      if let at = parts.onPressAt {
+        let p = convert(event.locationInWindow, from: nil)
+        at(CGPoint(x: p.x, y: isFlipped ? p.y : bounds.height - p.y))
+      }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -152,7 +160,7 @@ struct EditorDragSurface: NSViewRepresentable {
       let d = CGSize(width: event.locationInWindow.x - start.x, height: start.y - event.locationInWindow.y)
       if !moved, abs(d.width) < parts.slop, abs(d.height) < parts.slop { return }
       moved = true
-      parts.onDrag(d)
+      if let f = parts.onDragMods { f(d, event.modifierFlags) } else { parts.onDrag(d) }
     }
 
     override func mouseUp(with event: NSEvent) {
