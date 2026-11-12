@@ -836,6 +836,7 @@ enum TextLayersScript {
       e.newVersion(copying: 1)
       await wait(600)
       let copy = e.versionNo
+      await shot("version-copy-of-v1")
       check("a copy of an older version carries its texts", copy == fresh + 1 && words(raw(id, version: copy)?.moreText) == words(saved(id)?.moreText))
 
       // Round 27, the other way: editing v1 after copying it never reaches the copy.
@@ -850,6 +851,12 @@ enum TextLayersScript {
         e.flushAndWait()
         check("editing v1 changes v1", raw(id)?.moreText?.last?.size == (l.size == 88 ? 87 : 88))
         check("and never the copy made from it", words(raw(id, version: copy)?.moreText) == copyBefore)
+        await shot("v1-edited")
+        e.selectVersion(copy)
+        await wait(600)
+        await shot("copy-unchanged")
+        e.selectVersion(1)
+        await wait(500)
         e.undo()
         await wait(600)
       }

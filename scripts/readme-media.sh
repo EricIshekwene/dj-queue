@@ -110,6 +110,9 @@ R=repost-ready
 CROP=iw*0.25:ih*0.5:iw*0.75:0 gif repost-ready $R/repost-02-v2-row-off-light $R/repost-03-v2-ready-light \
                  $R/repost-04-header-check-v2-light
 still repost-versions  $R/repost-05-version-list-both-ready-light
+# Round 27: a new version is its own copy; editing v1 never changes it.
+T=text-layers
+gif version-copies $T/text-32-version-copy-of-v1-light $T/text-33-v1-edited-light $T/text-34-copy-unchanged-light
 still repost-filter    $R/repost-07-library-filter-ready-light
 still bulk-versions    $R/repost-11-bulk-reset-versions-note-light
 still bulk-caption-versions $R/repost-10-bulk-caption-versions-note-light
