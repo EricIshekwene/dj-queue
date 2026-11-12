@@ -657,7 +657,7 @@ enum TextLayersScript {
         await seek(span.start + Double(k) + 0.5)
         let showing = e.textImages.filter { $0.layerId == id && $0.shows(at: e.playback.time) }.compactMap(\.step)
         check("at \(k + 1) s into it only “\(3 - k)” shows (\(showing))", showing == [k])
-        if k == 1 { await shot("countdown-shows-2") }
+        await shot("countdown-shows-\(3 - k)")
       }
       // Words around the number: typed in the text field, "{n}" is where the number goes.
       e.focusTextField += 1

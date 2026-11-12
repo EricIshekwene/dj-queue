@@ -16,7 +16,7 @@ private func resolve(_ v: Version) -> ResolvedVersion {
     #expect(s.map(\.layer.text) == ["3", "2", "1"])
     #expect(s.allSatisfy { $0.layer.id == "c" && $0.layer.countdown == nil })
     #expect(abs(s[0].window.lowerBound - 7) < 1e-9 && abs(s[0].window.upperBound - (8 - TextLayer.stepGap)) < 1e-9)
-    #expect(abs(s[1].window.lowerBound - 8) < 1e-9 && abs(s[2].window.lowerBound - 9) < 1e-9)
+    #expect(abs(s[1].window.lowerBound - (8 - TextLayer.stepLead)) < 1e-9 && abs(s[2].window.lowerBound - (9 - TextLayer.stepLead)) < 1e-9)
     #expect(s[2].window.upperBound == 10)
     // No two numbers share an instant: each ends before the next begins.
     for k in 0..<2 { #expect(s[k].window.upperBound < s[k + 1].window.lowerBound) }
@@ -29,14 +29,24 @@ private func resolve(_ v: Version) -> ResolvedVersion {
   /// (printed with six decimals), so no frame shows two numbers or none.
   @Test func stepBoundariesAreFrameExactInTheFilterGraph() {
     let s = TextLayer(id: "c", text: "", countdown: 3).steps(in: 0...2, trimDuration: 5)
-    #expect(s.map(\.window.lowerBound) == [0, 0.667, 1.333])
+    #expect(s.map(\.window.lowerBound) == [0, 0.667 - TextLayer.stepLead, 1.333 - TextLayer.stepLead])
     let g = Renderer.overlayGraph(s.map(\.window))
-    #expect(g.contains("between(t,0.000,0.666990)") && g.contains("between(t,0.667,1.332990)") && g.contains("between(t,1.333,2.000)"))
-    // Frames at 30 fps land in exactly one step each.
-    for k in 0..<60 {
-      let t = Double(k) / 30
-      #expect(s.filter { $0.window.contains(t) }.count == 1, "frame \(k)")
+    #expect(g.contains("between(t,0.000,0.666990)") && g.contains("between(t,0.666999,1.332990)") && g.contains("between(t,1.332999,2.000)"))
+    // Frames at 30, 29.97 and 60 fps land in exactly one step each, also one timed a hair under a boundary.
+    for fps in [30.0, 30000.0 / 1001, 60.0] {
+      for k in 0..<Int(2 * fps) {
+        let t = Double(k) / fps
+        #expect(s.filter { $0.window.contains(t) }.count == 1, "frame \(k) at \(fps)")
+      }
     }
+    let tenths = TextLayer(id: "c", text: "", countdown: 10).steps(in: 3...4, trimDuration: 60)
+    for k in 1..<10 {
+      let edge = tenths[k].window.lowerBound + TextLayer.stepLead
+      #expect(tenths.filter { $0.window.contains(edge.nextDown) }.map(\.layer.text) == ["\(10 - k)"])
+    }
+    // A window too short to split on the millisecond still splits, never traps (only djq can store one).
+    let tiny = TextLayer(id: "c", text: "", countdown: 10).steps(in: 5.0005...5.0006, trimDuration: 60)
+    #expect(tiny.count == 10 && tiny.allSatisfy { $0.window.lowerBound <= $0.window.upperBound })
     // A plain text's window prints as before.
     #expect(Renderer.time(1.5) == "1.500" && Renderer.time(86400) == "86400.000")
   }
@@ -64,7 +74,7 @@ private func resolve(_ v: Version) -> ResolvedVersion {
     // A countdown past the trim isn't drawn; one cut by the trim counts down over what's left of it.
     #expect(PreviewKeys.layerWindows(r, trimDuration: 4).map(\.layer.text) == ["Header", "Q1"])
     let cut = PreviewKeys.layerWindows(r, trimDuration: 6.5).filter { $0.layer.id == "c" }
-    #expect(cut.count == 3 && cut.last!.window.lowerBound == 6)
+    #expect(cut.count == 3 && abs(cut.last!.window.lowerBound - (6 - TextLayer.stepLead)) < 1e-9)
   }
 
   @Test func storedJSONAndHashesOnlyChangeWhenACountdownIsUsed() throws {

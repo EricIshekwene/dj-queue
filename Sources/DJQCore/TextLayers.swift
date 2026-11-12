@@ -188,28 +188,32 @@ public struct TextLayer: Codable, Sendable, Hashable, Identifiable {
 
   /// A countdown as the plain texts it draws, one per number, each with its step of `window` (seconds from the trim
   /// start, `PreviewKeys.layerWindows`' rule): `countdown` equal steps from its high number down to 1. Each step but the
-  /// last ends `stepGap` before the next begins, so two numbers never share a frame (the renderer's windows include
-  /// both ends) and no frame falls between them (frames are 33 ms apart; `Renderer.overlayGraph` keeps the digits).
+  /// last ends `stepGap` before the next's boundary and the next starts `stepLead` before it, so two numbers never
+  /// share a frame (the renderer's windows include both ends) and no frame falls between them (frames are at least
+  /// 16 ms apart; `Renderer.overlayGraph` keeps the digits).
   /// Every other text is itself, with `window`.
   public func steps(in window: ClosedRange<Double>, trimDuration d: Double) -> [(layer: TextLayer, window: ClosedRange<Double>)] {
     guard let n = countdown else { return [(self, window)] }
     let a = window.lowerBound, b = max(a, min(window.upperBound, d))
     let len = (b - a) / Double(n)
     guard len > 0 else { return [] }
-    // Inner boundaries on the millisecond, so the renderer's three-decimal times are exact and the gap stays `stepGap`.
-    func boundary(_ k: Int) -> Double { k == 0 ? a : ((a + Double(k) * len) * 1000).rounded() / 1000 }
+    // Inner boundaries on the millisecond (inside the window), so the renderer's times are exact. Each number after
+    // the first starts `stepLead` early, so a frame time ffmpeg computes a hair under the boundary still shows it.
+    func boundary(_ k: Int) -> Double { k == 0 ? a : min(b, max(a, ((a + Double(k) * len) * 1000).rounded() / 1000)) }
     return (0..<n).map { k in
       var l = self
       l.countdown = nil
       l.text = countdownText(n - k)
-      let s = boundary(k)
-      let e = k == n - 1 ? window.upperBound : max(s, boundary(k + 1) - Self.stepGap)
+      let s = k == 0 ? a : max(a, boundary(k) - Self.stepLead)
+      let e = k == n - 1 ? max(s, window.upperBound) : max(s, boundary(k + 1) - Self.stepGap)
       return (l, s...e)
     }
   }
 
-  /// How much earlier than the next number a countdown's number ends: far below a frame, so no frame falls between.
+  /// How much earlier than the next number's boundary a countdown's number ends, and how early the next one starts:
+  /// both far below a frame, so a frame shows exactly one of them, also one ffmpeg times a hair under the boundary.
   public static let stepGap = 0.00001
+  public static let stepLead = 0.000001
 }
 
 extension ResolvedVersion {
