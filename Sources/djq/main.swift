@@ -30,13 +30,14 @@ usage: djq <command> [args]
                                       (array of {video_id, title_suggestions, text_suggestions} for many)
   text <video> "<text>" | --none | --default [--version N]
   overlay list <video> [--version N] [--json]       every text on the clip, numbered (1 = the first text, the one `text` writes)
-  overlay add <video> "<text>" [options]            add a timed text (at most \(TextLayers.maxCount) on a clip)
+  overlay add <video> ["<text>"] [options]          add a timed text (at most \(TextLayers.maxCount) on a clip)
   overlay set <video> <number|id> ["<text>"] [options]
   overlay remove <video> <number|id> [--version N]  removing 1 moves the next text into its place
        options: --start S --end S (seconds from the trim start) --x 0-1 --y 0-1 --style \(TextStyle.allCases.map(\.rawValue).joined(separator: "|"))
        --size 8-400 --align \(TextAlign.allCases.map(\.rawValue).joined(separator: "|")) --color <#hex> --background <#hex> (box, outline or shadow colour by style)
        --font <\(TextFont.allCases.map(\.rawValue).joined(separator: "|"))> --opacity \(TextLook.opacityRange.lowerBound)-\(TextLook.opacityRange.upperBound)
        --tracking \(TextLook.trackingRange.lowerBound)-\(TextLook.trackingRange.upperBound) (share of the font size) --version N --json
+       --countdown \(TextLayer.countdownRange.lowerBound)-\(TextLayer.countdownRange.upperBound)|off: show N, …, 1, one second each, ending at --end (text optional; "{n}" is the number)
        "default" clears a timing or look option
   caption <video> "<caption>" | --default [--platform P] [--version N]
                                       the caption exactly as it posts (nothing appended; {hashtags} = the clip's groups + extras)

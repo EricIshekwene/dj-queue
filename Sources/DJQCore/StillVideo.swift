@@ -802,7 +802,8 @@ public final class StillVideo: @unchecked Sendable {
   }
 
   /// A text's window means photos on a photo post and seconds on a video, so neither survives the change: every text of
-  /// every version shows all the way through until Eric times it.
+  /// every version shows all the way through until Eric times it. A countdown (round 26) needs time, so on the way back
+  /// to a photo it becomes a plain text showing its first number, the one a photo of it would show.
   private func clearTextWindows(_ videoId: String) throws {
     for var ver in try store.versions(videoId: videoId) {
       let o = ver
@@ -811,6 +812,7 @@ public final class StillVideo: @unchecked Sendable {
       ver.moreText = ver.moreText?.map { l in
         var l = l
         l.start = nil; l.end = nil
+        if let n = l.countdown { l.text = l.countdownText(n); l.countdown = nil }
         return l
       }
       if ver != o { try store.save(ver, videoId: videoId) }

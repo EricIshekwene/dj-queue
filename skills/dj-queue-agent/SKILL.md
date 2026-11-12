@@ -94,14 +94,14 @@ Either list may be left out.
 
 ### More texts on a clip, with their own times and look (round 16)
 
-A clip can show up to 12 texts, each in its own window. Number 1 is the first text, the one `djq text` writes, so
+A clip can show up to 32 texts, each in its own window (round 26; it was 12). Number 1 is the first text, the one `djq text` writes, so
 Title-follow, `{text}`, No text and YouTube titles all keep reading it. The rest are extras.
 
 ```sh
 djq overlay list <video> [--version N] [--json]
-djq overlay add <video> "<text>" [--start S] [--end S] [--x 0-1] [--y 0-1] [--style box|outline|shadow] [--size 8-400]
+djq overlay add <video> ["<text>"] [--start S] [--end S] [--x 0-1] [--y 0-1] [--style box|outline|shadow] [--size 8-400]
                 [--align left|center|right] [--color #hex] [--background #hex] [--font <name>] [--opacity 0.1-1]
-                [--tracking -0.1-0.5] [--version N] [--json]
+                [--tracking -0.1-0.5] [--countdown 2-10|off] [--version N] [--json]
 djq overlay set <video> <number|id> ["<text>"] [same options]     # "default" clears --start, --end or a look option
 djq overlay remove <video> <number|id> [--version N]
 ```
@@ -113,10 +113,18 @@ djq overlay remove <video> <number|id> [--version N]
   share of the font size. Fonts: `default rounded serif mono impact futura avenir-next helvetica-neue arial-black georgia didot
   marker-felt american-typewriter`.
 - A new text starts with the first text's style, size, position and look. Give `--y` so it doesn't sit on top of it.
-- `djq overlay remove <video> 1` moves the next text into first place. On the only text it refuses: use `djq text --none`.
+- **Countdown (round 26):** `--countdown N` makes one text show N, …, 2, 1 in equal steps across its window, in one
+  slot. Turning it on with no `--start` takes the last N seconds before `--end` (or before where the text ends; a new
+  text: the end of the trim), one second a number; `--start S` alone gives S to S+N. A new count on a countdown keeps its
+  window unless `--end` is given. The text is optional: empty or without `{n}` the number shows alone; `{n}` is where
+  the number goes (`"Next song in {n}"`). `--countdown off` makes it a plain text again and keeps its window. Text 1 and
+  photo posts can't count down, and a countdown never moves into text 1 (`remove 1` refuses when only countdowns follow).
+  Taking the audio off a photo video turns its countdowns into plain texts with their first number. A quiz question (question, 3-2-1, wrong options red, right one green) is 4 texts this
+  way instead of 6: `djq overlay add <video> --countdown 3 --end 9 --y 0.5 --size 140`.
+- `djq overlay remove <video> 1` moves the next text into first place (never a countdown). On the only text it refuses: use `djq text --none`.
 - `djq text --none` hides every text and keeps the extras stored; turning it off brings them back.
 - In JSON: `overlays` in `djq video --json` (`number`, `id`, `text`, `start`, `end`, `x`, `y`, `style`, `size`, `align`, `color`,
-  `background`, `font`, `opacity`, `tracking`, `drawn`, `shows_from`, `shows_to`), and `moreText` / `textLook` in `versions` and
+  `background`, `font`, `opacity`, `tracking`, `drawn`, `shows_from`, `shows_to`, and `countdown` when it counts down), and `moreText` / `textLook` in `versions` and
   `resolved_v1`, present only when used. `drawn` is false for an empty text, under No text, or when the window misses the trim.
 - A per-platform trim that ends before a text starts just leaves that text out of that platform's video.
 - Bulk Apply defaults (text section) clears the extras and the look too; `djq bulk undo` brings them back.

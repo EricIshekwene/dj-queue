@@ -26,7 +26,8 @@ struct EditorTextSection: View {
                     resetHelp: textResetHelp, customHelp: photo ? "Typed for this post" : "Changed from your New clip defaults",
                     onReset: resetter(["text"])) {
           VStack(alignment: .leading, spacing: DS.space.xs) {
-            DSTextArea(placeholder: r.noText ? "No text on this \(photo ? "post" : "clip")" : first ? "Text on \(what)" : "Type the new text",
+            DSTextArea(placeholder: r.noText ? "No text on this \(photo ? "post" : "clip")" : first ? "Text on \(what)"
+                         : l.countdown != nil ? "Just the number, or words with {n} where it goes" : "Type the new text",
                        text: Binding(get: { r.noText ? "" : l.text }, set: { t in model.setSelectedWords(t) }),
                        minHeight: Self.textAreaHeight(r.noText ? "" : l.text), maxHeight: 120, focusToken: model.focusTextField)
               .disabled(r.noText)
@@ -50,6 +51,8 @@ struct EditorTextSection: View {
           }
         }
         .disabled(model.fieldsOff)
+        // Round 26: any text after the first on a clip can count down, in one slot.
+        if !first && !photo { countdownField(r, l).disabled(model.fieldsOff) }
         // Which photos the selected text shows on. A single photo has nothing to choose.
         if photo && model.isCarousel { EditorPhotoShowsOn(model: model).disabled(model.fieldsOff) }
         EditorField(label: "Style", isCustom: first && !r.isDefault("style"), inheritedFrom: first ? model.source(of: "style") : nil,
@@ -93,7 +96,34 @@ struct EditorTextSection: View {
   }
 
   private static func textTip(_ t: TextLayer, number: Int) -> String {
-    t.isBlank ? "Edit text \(number) (empty)" : "Edit text \(number): “\(Captions.oneLine(t.text))”"
+    if let n = t.countdown { return "Edit text \(number): countdown \(TextLayers.countdownLabel(t, from: n))" }
+    return t.isBlank ? "Edit text \(number) (empty)" : "Edit text \(number): “\(Captions.oneLine(t.text))”"
+  }
+
+  /// Round 26: Off · 3 · 5 · 10, like a camera's self-timer (Mobbin: Future Pro's Timer Off · 5s · 10s). A count set
+  /// through `djq` that isn't one of them gets its own segment, so the control always shows what's stored.
+  private func countdownField(_ r: ResolvedVersion, _ l: TextLayer) -> some View {
+    var counts = [3, 5, 10]
+    if let n = l.countdown, !counts.contains(n) { counts = (counts + [n]).sorted() }
+    let off = r.noText ? noTextReason : nil
+    let span = TextTimeline.span(l, trimDuration: model.trim.duration)
+    return EditorField(label: "Countdown", help: "Show a count down to 1 in this one text, a number at a time") {
+      VStack(alignment: .leading, spacing: DS.space.xs) {
+        DSSegmented(selection: Binding(get: { l.countdown ?? 0 }, set: { n in model.setSelectedCountdown(n == 0 ? nil : n) }),
+                    segments: [DSSegment(value: 0, title: "Off", tooltip: "A plain text", disabledReason: off)]
+                      + counts.map { n in
+                        DSSegment(value: n, title: "\(n)", tooltip: l.countdown == nil ? "Count \(TextLayers.countdownLabel(TextLayer(text: ""), from: n)), one number a second, ending where this text ends"
+                                                            : "Count \(TextLayers.countdownLabel(TextLayer(text: ""), from: n)) across this text's time",
+                                  disabledReason: off)
+                      },
+                    size: .sm, fullWidth: true)
+          .background(ScriptAnchor("Countdown"))
+        if let n = l.countdown {
+          let each = (span.end - span.start) / Double(n)
+          EditorHint("Shows \(TextLayers.countdownLabel(TextLayer(text: ""), from: n)), \(String(format: "%.1f", each)) s each across its time. Type {n} in the text to put words around the number.")
+        }
+      }
+    }
   }
 
   private func placement(_ l: TextLayer) -> String {

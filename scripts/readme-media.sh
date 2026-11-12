@@ -49,6 +49,12 @@ gif() {
   echo "gif   $OUT/$name.gif ($(( $(stat -f %z "$OUT/$name.gif") / 1024 )) KB, $# steps)"
 }
 
+# Round 26: 32 texts on a clip and a one-slot countdown (text-layers check)
+T=text-layers
+still thirty-two-texts $T/text-30-thirty-two-texts-four-lanes-light
+still countdown        $T/text-27-countdown-shows-2-light
+gif   countdown        $T/text-26-countdown-shows-3-light $T/text-27-countdown-shows-2-light $T/text-28-countdown-shows-1-light $T/text-29-countdown-with-words-light
+
 S=screens
 still queue          $S/18-queue-cards-light
 still queue-dark     $S/18-queue-cards-dark

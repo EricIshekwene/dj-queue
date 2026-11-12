@@ -90,6 +90,13 @@ enum TextLayersScript {
       return true
     }
 
+    /// Segment `i` of `n` in a full-width segmented control.
+    @discardableResult func clickSegment(_ label: String, _ i: Int, of n: Int) async -> Bool {
+      guard let f = await control(label) else { return false }
+      await clickAt(NSPoint(x: f.minX + f.width * (CGFloat(i) + 0.5) / CGFloat(n), y: f.midY))
+      return true
+    }
+
     func drag(from a: NSPoint, to b: NSPoint) async {
       mouse(.leftMouseDown, a)
       await wait(40)
@@ -273,6 +280,7 @@ enum TextLayersScript {
       await canvas()
       await stackedExport()
       await deleteAndUndo()
+      await countdown()
       await capAndClipChange(other.id, third: more[0].id, broken: more[1].id)
       await listPreview()
       stageHolds("at the end")
@@ -613,6 +621,77 @@ enum TextLayersScript {
       stageHolds("after undo")
     }
 
+    /// Round 26: one text counts down 3, 2, 1 in one slot, set by a real click on the Countdown control.
+    func countdown() async {
+      guard let e = editor else { return }
+      await click("Index Text")
+      await seek(4)
+      let n = e.texts.count
+      await click("Add text")
+      window.makeFirstResponder(nil)
+      await wait(300)
+      guard let id = e.resolved.moreText.last?.id, e.texts.count == n + 1 else { check("a text to count down", false); return }
+      check("the Countdown control is there for a text after the first", await control("Countdown") != nil)
+      await clickSegment("Countdown", 1, of: 4)  // Off · 3 · 5 · 10
+      await wait(500)
+      guard let l = saved()?.moreText.first(where: { $0.id == id }) else { check("the countdown saved", false); return }
+      check("a click on 3 makes it count down from 3", l.countdown == 3)
+      let span = TextTimeline.span(l, trimDuration: e.trim.duration)
+      // Big, a white box, and clear of the other texts, to read in the shots. Straight after the size change (its new
+      // images still drawing) another text's window moves: the canvas must still end up with every image drawn for
+      // its own key, never the old picture kept as a stand-in (review finding 1).
+      e.setSelectedStyle(.box)
+      e.setSelectedSize(110)
+      e.moveText(id, x: 0.5, y: 0.45)
+      if let other = e.resolved.moreText.first(where: { $0.id != id && $0.countdown == nil }) {
+        e.updateText(other.id) { $0.end = ($0.end ?? e.trim.duration) - 0.2 }
+      }
+      for _ in 0..<12 where e.textImages.contains(where: \.placeholder) { await wait(250) }
+      check("every text image is drawn for its own key after quick edits", !e.textImages.contains(where: \.placeholder))
+      check("one second a number, ending where the text ended (\(span.start)–\(span.end))", near(span.end - span.start, 3, 0.01) && near(span.end, 7, 0.05))
+      check("its bar reads 3 · 2 · 1", e.textBars.bars.first { $0.id == id }?.label == "3 · 2 · 1")
+      await wait(800)
+      let steps = e.textImages.filter { $0.layerId == id }
+      check("the canvas has one image per number (\(steps.count))", steps.count == 3)
+      for k in 0..<3 {
+        await seek(span.start + Double(k) + 0.5)
+        let showing = e.textImages.filter { $0.layerId == id && $0.shows(at: e.playback.time) }.compactMap(\.step)
+        check("at \(k + 1) s into it only “\(3 - k)” shows (\(showing))", showing == [k])
+        await shot("countdown-shows-\(3 - k)")
+      }
+      // Words around the number: typed in the text field, "{n}" is where the number goes.
+      e.focusTextField += 1
+      await wait(400)
+      if let field = window.firstResponder as? NSTextView { field.insertText("Next in {n}", replacementRange: field.selectedRange()) }
+      else { check("the text field takes the keyboard", false) }
+      await wait(600)
+      window.makeFirstResponder(nil)
+      await wait(800)
+      check("the words are kept with the countdown", saved()?.moreText.first { $0.id == id }?.text == "Next in {n}")
+      check("its bar reads Next in 3 · 2 · 1", e.textBars.bars.first { $0.id == id }?.label == "Next in 3 · 2 · 1")
+      await shot("countdown-with-words")
+      // Duplicate keeps it a countdown (review finding 4).
+      let before = e.texts.count
+      e.duplicateText()
+      await wait(400)
+      let copy = saved()?.moreText.last
+      check("Duplicate of a countdown counts down too", e.texts.count == before + 1 && copy?.countdown == 3 && copy?.id != id)
+      if let c = copy?.id { e.selectText(c); e.deleteText() }
+      e.selectText(id)
+      window.makeFirstResponder(nil)  // Duplicate puts the keyboard in the text field; ⌘Z is the editor's here
+      await wait(400)
+      await clickSegment("Countdown", 0, of: 4)
+      await wait(500)
+      check("Off makes it a plain text again, window kept", saved()?.moreText.first { $0.id == id }.map { $0.countdown == nil && near($0.start, span.start, 0.01) } == true)
+      await commandZ()
+      check("⌘Z brings the countdown back", saved()?.moreText.first { $0.id == id }?.countdown == 3)
+      // Out of the way of the cap run: removed again.
+      e.selectText(id)
+      e.deleteText()
+      await wait(400)
+      check("the countdown deletes like any text", saved()?.moreText.contains { $0.id == id } == false)
+    }
+
     func capAndClipChange(_ other: String, third: String, broken: String) async {
       guard let e = editor else { return }
       let selected = e.selectedText
@@ -638,11 +717,15 @@ enum TextLayersScript {
         await type("Text \(n + 1)")
         n += 1
       }
-      check("the cap holds 12", e.texts.count == TextLayers.maxCount)
+      check("the cap holds \(TextLayers.maxCount)", e.texts.count == TextLayers.maxCount)
       check("Add says why it's off", e.addTextOffReason != nil)
       await click("Add text")
       check("one more click adds nothing", e.texts.count == TextLayers.maxCount)
-      await shot("twelve-texts-four-lanes")
+      // Round 26: more texts than the editor's image cache holds (~19 at full size) all stay on the canvas.
+      await wait(2500)
+      let drawn = e.resolved.layers.count
+      check("all \(drawn) texts have their image on the canvas (\(e.textImages.count))", e.textImages.count == drawn)
+      await shot("thirty-two-texts-four-lanes")
       check("no more than four lanes", e.textBars.laneCount <= TextTimeline.maxLanes)
       if let f = ProbeFrames.frames["canvas-output"] { check("the canvas keeps its height at 1440×900 (\(Int(f.height)) pt)", f.height >= 300) }
 
@@ -674,6 +757,8 @@ enum TextLayersScript {
       await shot("no-text-timing-fields")
       e.setNoText(false)
       await wait(600)
+      // Round 26: with up to 32 texts, the ones the image cache let go are drawn again; give that time.
+      for _ in 0..<20 where e.textImages.count < images { await wait(250) }
       check("No text off leaves the first text empty", raw(other)?.text == "")
       check("and the Title doesn't come back on the video (\(e.textImages.count) of \(images))", e.textImages.count == images)
 
