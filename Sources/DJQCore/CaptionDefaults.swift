@@ -80,15 +80,19 @@ public enum CaptionDefaults {
                                                      remainingIssues: [:], summary: "\(action): nothing changed"), kept: [])
     }
     let posted = try HashtagGroupsMigration.clipsWithPosts(store)
-    let kept = try store.videos().filter { v in
+    var kept = try store.videos().filter { v in
       guard v.type != .long, !updateExisting || posted.contains(v.id) else { return false }
       return try pin(v, from: before.settings, to: after.settings.defaults, store: store) != nil
     }
+    // Safety net, as `CaptionTemplates.saveDefaults` has it: any clip with posts whose output would move is held too.
+    for v in try CaptionHold.affected(from: before, to: after, store: store) where !kept.contains(where: { $0.id == v.id }) { kept.append(v) }
     let origin = try source.flatMap { try store.video(id: $0.videoId) }
-    let held = kept + (origin.map { o in kept.contains { $0.id == o.id } ? [] : [o] } ?? [])
-    let r = try bulk.record(action, ids: held.map(\.id), params: ["existing": updateExisting ? "follow" : "keep"], settings: true) {
-      let saved = try held.map { ($0, try CaptionHold.outputs($0, before, store: store), try CaptionHold.signature($0, before, store: store)) }
-      let editsBefore = try held.map { ($0, try store.edit(videoId: $0.id)) }
+    let ids = kept.map(\.id) + (origin.map { o in kept.contains { $0.id == o.id } ? [] : [o.id] } ?? [])
+    let r = try bulk.record(action, ids: ids, params: ["existing": updateExisting ? "follow" : "keep"], settings: true) {
+      let saved = try kept.map { ($0, try CaptionHold.outputs($0, before, store: store), try CaptionHold.signature($0, before, store: store)) }
+      let editsBefore = try kept.map { ($0, try store.edit(videoId: $0.id)) }
+      // The source version itself never moves, whichever way the rest of its clip goes.
+      let sourceBefore = try origin.map { o in (o, try versionOutput(o, source!.number, before, store: store), try store.edit(videoId: o.id)) }
       for v in kept {
         guard let p = try pin(v, from: before.settings, to: after.settings.defaults, store: store) else { continue }
         for version in p.versions { try store.save(version, videoId: v.id) }
@@ -96,11 +100,20 @@ public enum CaptionDefaults {
         try CaptionHold.pinTagsAndTitle(v, from: before, to: after, store: store)
       }
       try store.save(after.settings)
-      if let origin, let number = source?.number { try follow(origin, number: number, choice, settings: after.settings, store: store) }
+      if let origin, let number = source?.number { try follow(origin, number: number, choice, after, store: store) }
       for (v, outputs, signature) in saved {
         try CaptionHold.keep(v, as: outputs, store: store)
         guard try CaptionHold.signature(v, after, store: store) == signature else {
           throw EngineError("What \(v.displayName) posts would change, so nothing was changed")
+        }
+      }
+      if let (o, was, edit) = sourceBefore {
+        guard try versionOutput(o, source!.number, after, store: store) == was else {
+          throw EngineError("What \(o.displayName) posts would change, so nothing was changed")
+        }
+        let now = try store.edit(videoId: o.id)
+        for p in Platform.allCases where edit.isSkipped(p, defaults: before.settings.defaults) != now.isSkipped(p, defaults: after.settings.defaults) {
+          throw EngineError("\(o.displayName) would change where it posts, so nothing was changed")
         }
       }
       for (v, edit) in editsBefore {
@@ -110,30 +123,43 @@ public enum CaptionDefaults {
         }
       }
     }
-    return HashtagGroups.Change(result: r, kept: held.map(\.id))
+    return HashtagGroups.Change(result: r, kept: kept.map(\.id))
+  }
+
+  /// What one version posts: its caption per platform, its YouTube tags and title.
+  struct VersionOutput: Equatable {
+    var captions: [Platform: String]
+    var tags: [String]
+    var title: String
+  }
+
+  static func versionOutput(_ v: Video, _ number: Int, _ from: CaptionHold.Sources, versions: [Version]? = nil, store: Store) throws -> VersionOutput {
+    var vs = try versions ?? store.versions(videoId: v.id)
+    if !vs.contains(where: { $0.number == 1 }) { vs.insert(Version(number: 1), at: 0) }
+    let session = try store.sessionName(for: v)
+    let r = VersionResolver.resolve(vs, number: number, settings: from.settings, video: v)
+    return VersionOutput(captions: CaptionHold.outputs(v, vs, from, session: session)[number] ?? [:], tags: Captions.hashtags(r, sets: from.sets),
+                         title: Captions.youtubeTitle(r, video: v, settings: from.settings))
   }
 
   /// Clears what the source version and edit set to the very values that are now the defaults, one field at a time, keeping a
-  /// clear only where the version still resolves to the same value (a later version could otherwise start inheriting).
-  static func follow(_ v: Video, number: Int, _ c: Choice, settings s: Settings, store: Store) throws {
+  /// clear only where the version still posts exactly the same (a later version could otherwise start inheriting, or a platform
+  /// with its own default template could move).
+  static func follow(_ v: Video, number: Int, _ c: Choice, _ now: CaptionHold.Sources, store: Store) throws {
+    let s = now.settings
     var vs = try store.versions(videoId: v.id)
     if let i = vs.firstIndex(where: { $0.number == number }) {
-      let was = VersionResolver.resolve(vs, number: number, settings: s, video: v)
-      func clear<T: Equatable>(_ kp: WritableKeyPath<Version, T?>, _ picked: Bool, _ same: (ResolvedVersion) -> Bool) {
+      let was = try versionOutput(v, number, now, versions: vs, store: store)
+      func clear<T: Equatable>(_ kp: WritableKeyPath<Version, T?>, _ picked: Bool, _ key: String) throws {
         guard picked, let old = vs[i][keyPath: kp] else { return }
         vs[i][keyPath: kp] = nil
-        let now = VersionResolver.resolve(vs, number: number, settings: s, video: v)
-        if !same(now) { vs[i][keyPath: kp] = old }
+        let r = VersionResolver.resolve(vs, number: number, settings: s, video: v)
+        if try versionOutput(v, number, now, versions: vs, store: store) != was || !r.defaulted.contains(key) { vs[i][keyPath: kp] = old }
       }
-      clear(\.captionTemplateId, c.captionTemplateId != nil) {
-        ($0.captionTemplateId ?? s.defaults.captionTemplateId) == (was.captionTemplateId ?? s.defaults.captionTemplateId) && $0.caption == was.caption
-      }
-      clear(\.hashtagSetIds, c.hashtagSetIds != nil) { $0.hashtagSetIds == was.hashtagSetIds && $0.defaulted.contains("hashtagSetIds") }
-      clear(\.extraHashtags, c.extraHashtags != nil) { $0.extraHashtags == was.extraHashtags && $0.defaulted.contains("extraHashtags") }
-      clear(\.youtubeTitleTemplateId, c.youtubeTitleTemplateId != nil) {
-        ($0.youtubeTitleTemplateId ?? s.defaults.youtubeTitleTemplateId) == (was.youtubeTitleTemplateId ?? s.defaults.youtubeTitleTemplateId)
-          && $0.youtubeTitleTemplate == was.youtubeTitleTemplate
-      }
+      try clear(\.captionTemplateId, c.captionTemplateId != nil, "captionTemplateId")
+      try clear(\.hashtagSetIds, c.hashtagSetIds != nil, "hashtagSetIds")
+      try clear(\.extraHashtags, c.extraHashtags != nil, "extraHashtags")
+      try clear(\.youtubeTitleTemplateId, c.youtubeTitleTemplateId != nil, "youtubeTitleTemplateId")
       try store.save(vs[i], videoId: v.id)
     }
     guard let on = c.platforms else { return }
@@ -168,7 +194,10 @@ public enum CaptionDefaults {
         vs[i].extraHashtags = d0.extraHashtags
         changed.insert(i)
       }
-      if d0.youtubeTitleTemplateId != d1.youtubeTitleTemplateId, r.youtubeTitle.isEmpty, r.youtubeTitleTemplateId == nil {
+      // A chosen title template that was deleted follows the default one too (`Settings.youtubeTitleTemplate(id:)`). A photo
+      // post never goes to YouTube.
+      let followsTitle = r.youtubeTitleTemplateId.map { id in !s.youtubeTitleTemplates.contains { $0.id == id } } ?? true
+      if d0.youtubeTitleTemplateId != d1.youtubeTitleTemplateId, !v.isPhoto, r.youtubeTitle.isEmpty, followsTitle {
         vs[i].youtubeTitleTemplateId = d0.youtubeTitleTemplateId
         changed.insert(i)
       }

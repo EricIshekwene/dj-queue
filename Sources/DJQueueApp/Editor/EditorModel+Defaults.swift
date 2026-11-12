@@ -68,13 +68,12 @@ extension EditorModel {
     return rows
   }
 
-  /// Where new clips would post: this clip's platforms. A photo post can't say anything about YouTube, so that stays as it is.
+  /// Where new clips would post: this clip's platforms. A photo post can't say anything about YouTube, and a platform turned
+  /// off in Settings isn't on screen, so those stay as the defaults have them.
   private var defaultPlatforms: Set<Platform> {
     var on = Set(Platform.allCases.filter { !resolvedEdit.isSkipped($0) })
-    if isPhoto {
-      for p in Platform.allCases where !p.supportsPhotos {
-        if defaults.platforms.contains(p) { on.insert(p) } else { on.remove(p) }
-      }
+    for p in Platform.allCases where (isPhoto && !p.supportsPhotos) || !settings.enabledPlatforms.contains(p) {
+      if defaults.platforms.contains(p) { on.insert(p) } else { on.remove(p) }
     }
     return on
   }
@@ -133,15 +132,15 @@ extension EditorModel {
     else { return false }
     defaultsForm = nil
     let parts = defaultRows.filter { form.picked.contains($0.part) }.map { $0.part.label.lowercased() }
-    let n = change.kept.count
+    let n = change.kept.filter { $0 != id }.count
     var message = "New \(noun)s start with this \(Self.list(parts))"
     if update {
       message += n == 0 ? "" : ". \(n) clip\(n == 1 ? "" : "s") with scheduled or posted posts keep\(n == 1 ? "s" : "") theirs"
     } else if n > 0 {
-      message += ". Clips you already have keep theirs"
+      message += ". \(n) clip\(n == 1 ? "" : "s") you already have keep\(n == 1 ? "s" : "") \(n == 1 ? "its" : "theirs")"
     }
     if let journal = appHooks.afterGroupEdit { journal(change.result, message) } else { show(message) }
-    reloadAfterDefaults(touched: change.kept.contains(videoId))
+    reloadAfterDefaults(touched: true)  // this clip's own values that now equal the defaults were cleared
     return true
   }
 

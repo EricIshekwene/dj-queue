@@ -11,6 +11,10 @@ struct EditorDefaultsArea: View {
     if let form = model.defaultsForm {
       EditorDefaultsFormView(model: model, form: form)
         .background(ScriptAnchor("Defaults form"))
+        // Another version or clip: the form was about the old one. Anything else that changes the caption: count again.
+        .onChange(of: model.versionNo) { _, _ in model.defaultsForm = nil }
+        .onChange(of: model.videoId) { _, _ in model.defaultsForm = nil }
+        .onChange(of: model.fieldRevision) { _, _ in model.refreshDefaultsReach() }
     } else {
       DSButton("Make default for new \(model.noun)s…", icon: "star", variant: .ghost, size: .sm, disabledReason: model.defaultsOffReason,
                tooltip: "Save this \(model.noun)'s caption setup as what new \(model.noun)s start with") {
@@ -46,6 +50,11 @@ struct EditorDefaultsFormView: View {
         }
       }
       existing
+      if choice.captionTemplateId != nil, !model.defaults.platformCaptionTemplates.isEmpty {
+        let names = model.defaults.platformCaptionTemplates.keys.sorted().map(\.displayName)
+        EditorHint("\(EditorModel.list(names)) \(names.count == 1 ? "has its" : "have their") own default template in Settings. Clips that keep theirs keep \(names.count == 1 ? "that platform's" : "those platforms'") caption as written text.",
+                   icon: "info.circle")
+      }
       HStack(spacing: DS.space.xxs) {
         Spacer(minLength: 0)
         DSButton("Cancel", variant: .ghost, size: .sm, tooltip: "Close without changing the defaults", shortcut: "esc") {

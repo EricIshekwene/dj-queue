@@ -149,7 +149,7 @@ import Testing
     try f.store.save(e, videoId: "clip-1")
     let journal = try f.journal("clip-1"), captions = try f.captions("clip-1"), where_ = try posting(f, "clip-1")
     let c = try CaptionDefaults.save(choice.with(platforms: Set(where_)), updateExisting: false, source: ("clip-1", 1), store: f.store, bulk: f.bulk)
-    #expect(c.kept.contains("clip-1"))
+    #expect(!c.kept.contains("clip-1"))
     #expect(try f.captions("clip-1") == captions)
     #expect(try posting(f, "clip-1") == where_)
     let r = try #require(try f.store.resolvedVersion(videoId: "clip-1", number: 1))
@@ -158,6 +158,60 @@ import Testing
     #expect(after.skippedPlatforms.isEmpty && after.includedPlatforms.isEmpty)
     try f.bulk.undo(try #require(c.result.batchId))
     #expect(try f.journal("clip-1") == journal)
+  }
+
+  /// Review r29 #1: a version that chose a title template that was later deleted follows the default one, so it's held too.
+  @Test func aDeletedTitleTemplateIsHeld() throws {
+    let f = try Fixture.planned()
+    var s = try f.store.settings()
+    s.youtubeTitleTemplates.append(TitleTemplate(id: "plain", name: "Plain", template: "{text} plain"))
+    try f.store.save(s)
+    for id in ["clip-0", "clip-1"] {
+      var v = try #require(try f.store.versions(videoId: id).first)
+      v.youtubeTitleTemplateId = "gone"
+      try f.store.save(v, videoId: id)
+    }
+    let before = try ["clip-0", "clip-1"].map { try titles(f, $0) }, hashes = try f.hashes()
+    for update in [false, true] {
+      let c = try CaptionDefaults.save(CaptionDefaults.Choice(youtubeTitleTemplateId: update ? s.defaults.youtubeTitleTemplateId : "plain"),
+                                       updateExisting: false, store: f.store, bulk: f.bulk)
+      if !update { #expect(c.kept.contains("clip-0") && c.kept.contains("clip-1")) }
+      #expect(try ["clip-0", "clip-1"].map { try titles(f, $0) } == before)
+      #expect(try f.hashes() == hashes)
+    }
+  }
+
+  /// Review r29 #2: with the switch on, a source clip without posts saves even when its other versions follow the old defaults;
+  /// its source version posts the same and its other versions follow, with no own captions frozen in.
+  @Test func followModeWithASourceOfSeveralVersions() throws {
+    let f = try Fixture.planned()
+    try withGroup(f)
+    var v2 = Version(number: 2)
+    v2.text = "Second"
+    v2.hashtagSetIds = ["piano"]
+    v2.captionTemplateId = "short"
+    try f.store.save(v2, videoId: "clip-1")
+    let source = try f.captions("clip-1")[2]
+    try CaptionDefaults.save(CaptionDefaults.Choice(captionTemplateId: "short", hashtagSetIds: ["piano"]), updateExisting: true,
+                             source: ("clip-1", 2), store: f.store, bulk: f.bulk)
+    let now = try f.captions("clip-1")
+    #expect(now[2] == source)
+    #expect(now[1]?[.tiktok]?.contains("#piano") == true)
+    #expect(try f.store.versions(videoId: "clip-1").allSatisfy { ($0.platformCaptions ?? [:]).isEmpty })
+  }
+
+  /// Review r29 #5: a photo post isn't pinned for a YouTube title template it never uses.
+  @Test func aPhotoPostIgnoresTheTitleTemplate() throws {
+    let f = try Fixture.planned()
+    var s = try f.store.settings()
+    s.youtubeTitleTemplates.append(TitleTemplate(id: "plain", name: "Plain", template: "{text} plain"))
+    try f.store.save(s)
+    let photo = try #require(try f.store.video(id: "clip-2"))
+    var p = photo
+    p.photos = [PhotoItem(file: "a.jpg", width: 1080, height: 1350)]
+    let pinned = try CaptionDefaults.pin(p, from: s, to: CaptionDefaults.Choice(youtubeTitleTemplateId: "plain").applied(to: s.defaults), store: f.store)
+    #expect(pinned == nil)
+    #expect(try CaptionDefaults.pin(photo, from: s, to: CaptionDefaults.Choice(youtubeTitleTemplateId: "plain").applied(to: s.defaults), store: f.store) != nil)
   }
 }
 
