@@ -47,3 +47,12 @@ Not covered by a check: the step-to-step change while playing (the hidden checks
 render test covers for the export.
 Pre-existing: on the newest seed (r25 backup) 11 checks in `text-layers` fail on main as well as on this branch
 (colour swatch default, end-grip drag, the version-inheritance block); they are about that seed's clips, not this round.
+
+## v0.19.1: the hidden checks fit the newest seed
+
+10. **Not a v0.18.0 regression.** On the 11-12 seed, `text-layers` failed 11–14 checks and the tooltip probe one, on
+    v0.17.1 just the same. Every Edit clip in that seed already has a v2, none has a confirmed crop, and the first is a
+    3-minute file (a point on the film strip is 0.18 s, more than the drags' tolerance). The checks now pick the
+    shortest file, read version numbers from the clip, tap the swatch that is the style's default, and wait for typed
+    keys to land; the tooltip probe counts the hovered Edit tile's fix button when no Edit clip is plain. Nothing in the
+    app changed. text-layers 166/166 and tooltip pass, screen-guard clean.

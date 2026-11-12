@@ -93,6 +93,7 @@ enum DSTooltipProbe {
       let r6Only = ProcessInfo.processInfo.environment["DJQ_TOOLTIP_PROBE"] == "r6"
       var sawReason = false, sawKeys = false
       var tilePicks: [String: Int] = [:]
+      var editAllHaveFixes = false
       var n = 8
       if !r6Only {
         // 1. Queue: toolbar triggers sit 10 pt under the window's top edge → preferred top must flip below.
@@ -185,6 +186,7 @@ enum DSTooltipProbe {
           let plain = scr == .edit ? model.visibleIds[scr]?.first { id in
             model.videos.first { $0.id == id }.map { model.editFixes($0, ids: []).isEmpty } ?? false
           } : nil
+          if scr == .edit, mode == .grid, plain == nil { editAllHaveFixes = true }
           if mode == .grid || mode == .wide, let first = plain ?? model.visibleIds[scr]?.first {
             DSClipCardDebug.hoverIds = [first]
             model.screen = scr == .library ? .health : .library
@@ -352,6 +354,10 @@ enum DSTooltipProbe {
                             ("edit-grid", EditClipActions.openHelp), ("library-grid-dark", "Preview the clip and its status"),
                             ("queue-grid-dark", QueueClipActions.postTodayHelp)]
       where !records.contains(where: { $0.note == "\(page): hover" && $0.label == label }) {
+        // Every Edit clip has a fix to offer (a seed where none has a confirmed crop): the hovered tile shows that fix
+        // instead of the editor button, so the sweep is covered when it reached the tile's own buttons.
+        if page == "edit-grid", editAllHaveFixes, (tilePicks[page] ?? 0) > 0,
+           records.contains(where: { $0.note == "\(page): hover" }) { continue }
         problems.append("\(page): its hovered tile's \"\(label)\" button wasn't reached (tile picks: \(tilePicks[page] ?? 0))")
       }
       if !sawReason && !r6Only { problems.append("no disabled trigger (label + why) was reached") }

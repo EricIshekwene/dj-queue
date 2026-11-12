@@ -222,6 +222,12 @@ enum TextLayersScript {
       check("stage and Send to Queue unchanged \(when)", s.state == b.state && s.sent == b.sent)
     }
 
+    /// Typed keys land a beat later when the Mac is busy: wait up to `ms` for `done` before a check reads the store.
+    func settle(_ ms: Int = 2500, _ done: () -> Bool) async {
+      var waited = 0
+      while !done(), waited < ms { await wait(100); waited += 100 }
+    }
+
     func near(_ a: Double?, _ b: Double, _ tol: Double = 0.25) -> Bool { a.map { abs($0 - b) <= tol } ?? false }
 
     /// The playhead at `t` seconds after the trim start, through the call the filmstrip's scrub ends in: its SwiftUI gesture
@@ -246,13 +252,18 @@ enum TextLayersScript {
       a.refreshNow()
       a.loaded = true
       a.screen = .edit
-      guard let v = a.editList.first(where: { v in
+      // The shortest file that fits: the drags aim at seconds on a film strip as wide as the whole file, so on a 3-minute
+      // file a point is 0.18 s and a 4 s target misses by more than the checks allow (round 26, the 11-12 seed).
+      guard let v = a.editList.filter({ v in
         v.type == .short && !v.missing && v.duration > 22 && ((try? store.edit(videoId: v.id))?.crop) == nil
-      }), let other = a.editList.first(where: { $0.type == .short && !$0.missing && $0.id != v.id }) else {
+      }).min(by: { $0.duration < $1.duration }), let other = a.editList.first(where: { $0.type == .short && !$0.missing && $0.id != v.id }) else {
         check("an Edit clip with no crop", false)
         return
       }
+      // Clips with only their first version first: the versions checks count on v2 and v3 being new.
+      func versionCount(_ id: String) -> Int { (try? store.versions(videoId: id).count) ?? 0 }
       let more = a.editList.filter { $0.type == .short && !$0.missing && $0.id != v.id && $0.id != other.id && $0.duration > 12 }
+        .sorted { versionCount($0.id) < versionCount($1.id) }
       guard more.count >= 2 else { check("two more Edit clips", false); return }
       clip = v.id
       note("clip \(v.id.prefix(8)) “\(a.displayName(v))”")
@@ -332,8 +343,9 @@ enum TextLayersScript {
       }
       check("nor does a grip dragged against the end of the trim", raw()?.textStart == untouched?.textStart && raw()?.textEnd == untouched?.textEnd)
 
-      // The ringed swatch is the default: a tap changes nothing, so nothing gets written.
-      await click("swatch text colour Black")
+      // The ringed swatch is the default: a tap changes nothing, so nothing gets written. Which one that is follows the
+      // style (black on a white box, white otherwise), and New clip defaults decide the style.
+      check("the default swatch is there", await click(TextLook.defaultColor(e.resolved.style) == "#000000" ? "swatch text colour Black" : "swatch text colour White"))
       check("tapping the default colour writes no look", raw()?.textLook == nil)
 
       // The first text ends at 4 s, so the others have room.
@@ -367,6 +379,7 @@ enum TextLayersScript {
       check("it's selected", e.selectedText == second?.id)
       check("the field has the keyboard", window.firstResponder is NSTextView)
       await type("Second hook")
+      await settle { saved()?.moreText.first?.text == "Second hook" }
       r = saved()
       check("typing went into the second text (“\(r?.moreText.first?.text ?? "")”)", r?.moreText.first?.text == "Second hook")
       check("the first text kept its words", r?.text == e.resolved.text && r?.text != "Second hook" && r?.hasText == true)
@@ -387,6 +400,7 @@ enum TextLayersScript {
       await seek(14)
       await click("Add text")
       await type("Third line")
+      await settle { saved()?.moreText.last?.text == "Third line" }
       r = saved()
       check("a third text at another time", r?.moreText.count == 2 && near(r?.moreText.last?.start, 14, 0.3))
       check("it copied the look", r?.moreText.last?.look?.color == "#FF3B30" && r?.moreText.last?.look?.font == .impact)
@@ -790,23 +804,41 @@ enum TextLayersScript {
       await wait(600)
       check("⌘Z takes the trim and the clamp back", near(raw(id)?.moreText?.last?.start, late.start ?? -1, 0.01))
 
+      // The clip may already have later versions of its own (every Edit clip in the 11-12 seed has a v2): a new version
+      // follows the last one and inherits its list, so the numbers and the list come from the clip, not from v1.
+      let last = (try? store.versions(videoId: id))?.map(\.number).max() ?? 1
+      let inherited = saved(id, version: last)?.moreText.map(\.id) ?? []
       e.newVersion(copying: nil)
       await wait(600)
-      check("a new version inherits the list and stores none", raw(id, version: 2)?.moreText == nil && e.resolved.moreText.count == 1)
-      e.selectText(late.id)
+      let fresh = e.versionNo
+      check("a new version follows the last (v\(fresh))", fresh == last + 1)
+      check("a new version inherits the list and stores none", raw(id, version: fresh)?.moreText == nil && e.resolved.moreText.map(\.id) == inherited)
+      if e.resolved.moreText.isEmpty {  // nothing inherited to edit: give it a text of its own first
+        note("v\(fresh) inherited no texts: the copy-on-first-edit check runs on a text added to it")
+        await click("Add text")
+        await type("Inherited")
+        window.makeFirstResponder(nil)
+        await wait(300)
+      }
+      guard let target = e.resolved.moreText.last else { check("a text to edit on the new version", false); return }
+      let earlierSize = saved(id, version: last)?.moreText.last?.size
+      e.selectText(target.id)
       await wait(300)
-      e.setSelectedSize(90)  // the slider's own call: its drag is a SwiftUI gesture
+      e.setSelectedSize(target.size == 90 ? 91 : 90)  // the slider's own call: its drag is a SwiftUI gesture
       await wait(600)
-      check("the first edit copies the list into that version", raw(id, version: 2)?.moreText?.last?.size == 90)
-      check("and leaves the earlier version alone", raw(id)?.moreText?.last?.size == late.size)
+      check("the first edit copies the list into that version", raw(id, version: fresh)?.moreText?.last?.size == (target.size == 90 ? 91 : 90))
+      check("and leaves the earlier version alone", saved(id, version: last)?.moreText.last?.size == earlierSize)
       e.newVersion(copying: 1)
       await wait(600)
-      check("a copy of an older version carries its texts", raw(id, version: 3)?.moreText == raw(id)?.moreText)
+      let copy = e.versionNo
+      check("a copy of an older version carries its texts", copy == fresh + 1 && raw(id, version: copy)?.moreText == saved(id)?.moreText)
 
+      e.selectText(late.id)  // the late text is in this copy of v1; the one edited above may not be
+      await wait(300)
       await typeInField("Show from", "1.5")
       e.selectVersion(1)
       await wait(800)
-      check("a typed time stays on its version", near(raw(id, version: 3)?.moreText?.last?.start, 1.5, 0.02))
+      check("a typed time stays on its version", near(raw(id, version: copy)?.moreText?.last?.start, 1.5, 0.02))
       check("and doesn't reach the one selected next", raw(id)?.moreText?.last?.start == late.start)
 
       // Undo takes away the version a time was typed in: the time goes too, and Redo keeps what's typed off the one it leaves.
