@@ -210,3 +210,13 @@ import Testing
     #expect(try re(f, 1).platformTrims.isEmpty)
   }
 }
+
+@Suite struct R30TimeFormatTests {
+  /// `djq trim` printed 2:60.0 for 179.97 s.
+  @Test func tenthsRoundBeforeTheMinute() {
+    #expect(EditorLogic.time(179.97, tenths: true) == "3:00.0")
+    #expect(EditorLogic.time(59.96, tenths: true) == "1:00.0")
+    #expect(EditorLogic.time(23.155, tenths: true) == "0:23.2")
+    #expect(EditorLogic.time(0, tenths: true) == "0:00.0")
+  }
+}
