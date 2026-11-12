@@ -25,23 +25,27 @@ enum TrimMarkersScript {
     func f2(_ v: Double) -> String { String(format: "%.3f", v) }
 
     // A clip with in/out markers and a text, so every lane is there.
-    let shorts = ids.compactMap { try? store.video(id: $0) }
+    // Only clips whose file is in the dev root (a newer backup can name footage the dev root doesn't have).
+    let shorts = ids.compactMap { try? store.video(id: $0) }.filter { v in
+      ((try? store.fileURL(for: v)) ?? nil).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+    }
+    note("\(shorts.count) of \(ids.count) clips have their file in the dev root")
     let first = shorts.first { $0.markerIn != nil && $0.markerOut != nil && $0.duration > 20 }?.id ?? video
 
     let app = AppModel(store: store)
-    let window = SnapshotWindow.make(NSRect(x: 0, y: 0, width: 1440, height: 900), [.titled, .fullSizeContentView])
+    var window = SnapshotWindow.make(NSRect(x: 0, y: 0, width: 1440, height: 900), [.titled, .fullSizeContentView])
     window.titlebarAppearsTransparent = true
     window.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
-    let model = EditorModel(store: store, videoId: first)
+    var model = EditorModel(store: store, videoId: first)
     model.appHooks = EditorAppHooks(isCovered: { false }, arrowStep: { app.playback.arrowStep },
                                     setArrowStep: { s in app.setPlayback { $0.arrowStep = s } })
-    let host = NSHostingView(rootView: EditorView(model: model, videoIds: ids, onDone: {}))
+    var host = NSHostingView(rootView: EditorView(model: model, videoIds: ids, onDone: {}))
     window.contentView = host
     window.isReleasedWhenClosed = false
     Backstage.show(window)
     defer { window.orderOut(nil); window.close() }
     try? await Task.sleep(for: .seconds(3))
-    let pb = model.playback
+    var pb = model.playback
 
     // MARK: Helpers
 
@@ -58,8 +62,10 @@ enum TrimMarkersScript {
       try? rep.representation(using: .png, properties: [:])?.write(to: file)
       if let ruler = ProbeFrames.frames["ruler"], let film = ProbeFrames.frames["film-track"], let cg = rep.cgImage {
         let k = CGFloat(cg.width) / host.bounds.width
-        // A fixed height (room for the overview under a zoomed timeline), so every crop is the same size for the GIF.
-        let top = ruler.minY - 50, bottom = film.maxY + 30
+        // The same size every time, for the GIF: the overview under a zoomed timeline grows the card upward by 12 pt,
+        // so a fit timeline gets those 12 pt above it instead.
+        let grow: CGFloat = model.timelineZoomed ? 0 : 12
+        let top = ruler.minY - 50 - grow, bottom = film.maxY + 30 + (12 - grow)
         let r = CGRect(x: max(0, ruler.minX - 60) * k, y: max(0, top) * k, width: (ruler.width + 80) * k, height: (bottom - top) * k).integral
         if let crop = cg.cropping(to: r) {
           let t = out.appendingPathComponent(String(format: "timeline-%02d-%@-%@.png", step, name, appearance))
@@ -295,15 +301,29 @@ enum TrimMarkersScript {
     let ld = model.duration
     model.setTrimIn(ld * 0.45); model.setTrimOut(ld * 0.45 + 8); model.commitTrim()
     model.flushAndWait()
-    model.load(long)
-    try? await Task.sleep(for: .seconds(2))
+    // Opened fresh in a new window, as Eric opens a clip (the old window's probe frames go with it).
+    window.orderOut(nil); window.close()
+    await wait(500)
+    ProbeFrames.frames = [:]
+    window = SnapshotWindow.make(NSRect(x: 0, y: 0, width: 1440, height: 900), [.titled, .fullSizeContentView])
+    window.titlebarAppearsTransparent = true
+    window.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
+    model = EditorModel(store: store, videoId: long)
+    model.appHooks = EditorAppHooks(isCovered: { false }, arrowStep: { app.playback.arrowStep },
+                                    setArrowStep: { s in app.setPlayback { $0.arrowStep = s } })
+    host = NSHostingView(rootView: EditorView(model: model, videoIds: ids, onDone: {}))
+    window.contentView = host
+    window.isReleasedWhenClosed = false
+    Backstage.show(window)
+    pb = model.playback
+    try? await Task.sleep(for: .seconds(3))
     check("a \(Int(ld)) s file with an 8 s trim opens zoomed on the trim (\(f2(model.viewport.start))–\(f2(model.viewport.end)))",
           model.timelineZoomed && model.viewport.start <= model.trim.start && model.viewport.end >= model.trim.end && model.viewport.span < 30)
     check("…where a point is a few hundredths of a second (\(f2(spp())) s/pt)", spp() < 0.05)
     await shot("long-file")
     // Zoomed on a long file, nothing on the timeline takes the mouse outside the track (the grace zones run thousands of
     // points past it, and would otherwise cover the inspector).
-    if let film = probe("film-track") {
+    if let film = probe("film-track") ?? { check("film track found on the long clip", false); return nil }() {
       func surfaces(_ v: NSView) -> [NSView] { (v is EditorDragSurface.Surface ? [v] : []) + v.subviews.flatMap(surfaces) }
       let spill = surfaces(host).map { $0.convert($0.bounds, to: nil) }
         .filter { $0.midY > film.minY - 120 && $0.midY < film.maxY + 20 }

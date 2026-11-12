@@ -69,8 +69,6 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | Grab, drag with the time pill, nudge with the arrows, M markers, snap, zoom | Markers in dark |
 |---|---|
 | ![Dragging the trim end with its time pill, nudging it, adding markers, snapping onto one and zooming](docs/media/trim-markers.gif) | ![The timeline with two markers in dark mode](docs/media/trim-markers-dark.jpg) |
-| **A long file opens on its trim** — a point is about a hundredth of a second | |
-| ![A 2:38 file opened zoomed on an 8 s trim](docs/media/trim-long-file.jpg) | |
 
 ## What it does
 

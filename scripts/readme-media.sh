@@ -158,11 +158,10 @@ still text-fields-split $T/fields-03-text-split-light
 T=trim-markers
 # Round 24: trim handles and markers. Crops of just the timeline card (the script writes them beside each full shot):
 # grab the end handle, drag it with its time pill, nudge it with the arrows, M markers, the end snapping onto one,
-# zoom with the overview, and a long file opening on its trim.
+# and zoom with the overview. (The long-file shot isn't used: its dev clip is a personal one.)
 gif trim-markers $T/timeline-01-handles-light $T/timeline-02-end-selected-light $T/timeline-03-dragging-readout-light \
                  $T/timeline-04-nudged-light $T/timeline-05-markers-light $T/timeline-06-end-snapped-light \
-                 $T/timeline-08-zoomed-light $T/timeline-09-long-file-light
-still trim-markers-dark $T/timeline-05-markers-dark
-still trim-long-file    $T/timeline-09-long-file-light
+                 $T/timeline-08-zoomed-light
+still trim-markers-dark $T-dark/timeline-05-markers-dark
 
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }
