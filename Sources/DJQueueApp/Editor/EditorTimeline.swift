@@ -83,7 +83,8 @@ struct EditorTimeline: View {
     .onChange(of: model.videoId) { _, _ in reloadStrip() }
     .onChange(of: model.fileURL) { _, _ in reloadStrip() }
     // A zoomed timeline follows the playhead while it plays.
-    .onReceive(playback.$time) { t in if playback.isPlaying { model.revealOnTimeline(t) } }
+    // A zoomed timeline follows the playhead a page at a time while it plays (not a sliver every frame).
+    .onReceive(playback.$time) { t in if playback.isPlaying { model.pageTimeline(to: t) } }
   }
 
   @State private var lastWidth: CGFloat = 0
@@ -310,7 +311,7 @@ struct EditorRuler: View {
         .offset(x: x)
         .allowsHitTesting(false)
       }
-      ForEach(model.marks, id: \.self) { t in
+      ForEach(model.marks.filter { pinDrag?.from == $0 || (m.x($0) > -8 && m.x($0) < width + 8) }, id: \.self) { t in
         pin(t, m)
       }
     }
@@ -379,7 +380,7 @@ struct EditorMarkLines: View {
   var body: some View {
     let m = model.trackMath(width: width)
     ZStack(alignment: .topLeading) {
-      ForEach(model.marks, id: \.self) { t in
+      ForEach(model.marks.filter { m.x($0) > -2 && m.x($0) < width + 2 }, id: \.self) { t in
         Rectangle().fill(DS.color.accent.opacity(0.55)).frame(width: 1, height: height).offset(x: m.x(t) - 0.5, y: top)
       }
     }
@@ -397,6 +398,9 @@ struct EditorScrub: View {
   /// Where this surface starts on the track, so its own press point maps to a time.
   var originX: CGFloat
   @State private var pressX: CGFloat?
+  /// The time the pointer (or the snap) last asked for: the release lands exactly there, never on where the player's
+  /// loose seek happened to stop.
+  @State private var target: Double?
 
   var body: some View {
     EditorDragSurface(cursor: .arrow, slop: 0, onPress: {
@@ -404,7 +408,8 @@ struct EditorScrub: View {
       playback.pause()
     }, onDrag: { _ in }, onRelease: { _ in
       pressX = nil
-      playback.seek(playback.time, exact: true)
+      if let t = target { playback.seek(t, exact: true) }
+      target = nil
     }, onPressAt: { p in
       pressX = originX + p.x
       seek(originX + p.x, fine: NSEvent.modifierFlags.contains(.option))
@@ -417,6 +422,7 @@ struct EditorScrub: View {
   private func seek(_ x: CGFloat, fine: Bool) {
     let tr = model.trim
     let t = fine ? math.t(x) : math.snap(math.t(x), extra: [tr.start, tr.end]).value
+    target = t
     playback.seek(t)
   }
 }
@@ -451,26 +457,30 @@ struct EditorFilmTrack: View {
         .probeFrame("film-track")
       // Grace zones: the seconds the file keeps beyond the markers (striped; extendable). Hoverable for the tooltip;
       // they carry the same scrub, so clicking/dragging on them still moves the playhead.
+      // Zoomed in, only the part in view is drawn and takes the mouse.
       ForEach(grace, id: \.start) { z in
-        let zx = m.x(z.start), zw = max(1, m.x(z.end) - zx)
-        EditorGraceZone(width: zw, height: h, leading: z.start < 0.01)
-          .overlay { EditorScrub(model: model, playback: playback, math: m, originX: zx) }
-          .dsTooltip(z.start < 0.01 ? "Grace: drag the trim start into these seconds"
-                                    : "Grace: drag the trim end into these seconds")
-          .offset(x: zx)
+        let zx = max(m.x(z.start), -4), ze = min(m.x(z.end), width + 4)
+        if ze - zx > 0.5 {
+          EditorGraceZone(width: ze - zx, height: h, leading: z.start < 0.01)
+            .overlay { EditorScrub(model: model, playback: playback, math: m, originX: zx) }
+            .dsTooltip(z.start < 0.01 ? "Grace: drag the trim start into these seconds"
+                                      : "Grace: drag the trim end into these seconds")
+            .offset(x: zx)
+        }
       }
       // Dim outside the trim.
       Rectangle().fill(Color.black.opacity(0.5)).frame(width: max(0, min(a, width)), height: h).allowsHitTesting(false)
       Rectangle().fill(Color.black.opacity(0.5)).frame(width: max(0, width - max(b, 0)), height: h).offset(x: max(b, 0))
         .allowsHitTesting(false)
-      RoundedRectangle(cornerRadius: 4).stroke(Self.handle, lineWidth: 2.5)
-        .frame(width: max(0, b - a), height: h - 2).offset(x: a, y: 1).allowsHitTesting(false)
+      let oa = max(a, -6), ob = min(b, width + 6)
+      if ob > oa {
+        RoundedRectangle(cornerRadius: 4).stroke(Self.handle, lineWidth: 2.5)
+          .frame(width: ob - oa, height: h - 2).offset(x: oa, y: 1).allowsHitTesting(false)
+      }
       markerTicks(m)
       // A handle is only there while its edge is in view (a zoomed timeline can leave it off either side).
-      if b > -Self.reachOut && a < width + Self.reachOut {
-        if a > -Self.handleW - Self.reachOut { handle(.start, m, a: a, b: b) }
-        if b < width + Self.handleW + Self.reachOut { handle(.end, m, a: a, b: b) }
-      }
+      if a > -Self.handleW - Self.reachOut && a < width + Self.reachOut { handle(.start, m, a: a, b: b) }
+      if b > -Self.reachOut && b < width + Self.handleW + Self.reachOut { handle(.end, m, a: a, b: b) }
       if let d = drag { readout(d, m) }
     }
     .frame(width: width, height: h, alignment: .topLeading)
@@ -479,22 +489,28 @@ struct EditorFilmTrack: View {
   /// A handle: drawn inside the trim, grabbed from `reachOut` outside to `reachIn` past it inside (shrinking on a short
   /// trim so the two never cover each other).
   @ViewBuilder private func handle(_ edge: TrimEdge, _ m: EditorTrackMath, a: CGFloat, b: CGFloat) -> some View {
-    let inner = max(4, min(Self.handleW + Self.reachIn, (b - a) / 2))
-    let grabW = Self.reachOut + inner
-    let x = edge == .start ? a - Self.reachOut : b - inner
+    let g = Self.handleGeometry(edge, a: a, b: b)
     let selected = model.trimEdge == edge
-    ZStack(alignment: edge == .start ? .leading : .trailing) {
+    ZStack(alignment: .topLeading) {
       Color.clear
-      handleView(edge, selected: selected).frame(width: min(Self.handleW, inner))
-        .padding(edge == .start ? .leading : .trailing, Self.reachOut)
+      handleView(edge, selected: selected).frame(width: Self.handleW).offset(x: g.visible - g.grab)
     }
-    .frame(width: grabW, height: h)
+    .frame(width: g.grabW, height: h, alignment: .topLeading)
     .overlay { surface(edge, m) }
     .dsTooltip(edge == .start ? "Drag to set the start (⌥ for fine control). Click it, then ← → to nudge"
                               : "Drag to set the end (⌥ for fine control). Click it, then ← → to nudge",
                shortcut: edge == .start ? "I" : "O")
     .probeFrame(edge == .start ? "trim-start" : "trim-end")
-    .offset(x: x)
+    .offset(x: g.grab)
+  }
+
+  /// Where a handle is drawn (`visible`) and grabbed (`grab` … `grab + grabW`). Inside the trim normally; a trim too
+  /// narrow for two handles has them outside it, start to the left and end to the right, each grabbable up to the
+  /// middle, so neither covers the other.
+  static func handleGeometry(_ edge: TrimEdge, a: CGFloat, b: CGFloat) -> (visible: CGFloat, grab: CGFloat, grabW: CGFloat) {
+    let l = TrimRules.handleLayout(edge, a: Double(a), b: Double(b), handleW: Double(handleW), reachOut: Double(reachOut),
+                                   reachIn: Double(reachIn))
+    return (CGFloat(l.visible), CGFloat(l.grab), CGFloat(l.grabWidth))
   }
 
   private func handleView(_ edge: TrimEdge, selected: Bool) -> some View {
@@ -554,9 +570,9 @@ struct EditorFilmTrack: View {
     let note = d.fine ? " · fine" : d.snapped ? " · snapped" : ""
     let text = "\(EditorPreciseTime.string(t))\(note)"
     let x = min(max(m.x(t) + (d.edge == .start ? 4 : -4), 40), width - 40)
-    return Text(text).font(.system(size: 10.5, weight: .semibold).monospacedDigit()).foregroundStyle(.white)
+    return Text(text).font(DS.type.micro.monospacedDigit().weight(.semibold)).foregroundStyle(DS.color.inverseText)
       .padding(.horizontal, 6).padding(.vertical, 2)
-      .background(Color.black.opacity(0.75), in: Capsule())
+      .background(DS.color.inverseSurface.opacity(0.9), in: Capsule())
       .fixedSize()
       .frame(width: 120)
       .offset(x: x - 60, y: h - 20)
@@ -568,6 +584,7 @@ struct EditorFilmTrack: View {
   @ViewBuilder private func markerTicks(_ m: EditorTrackMath) -> some View {
     let marks = [(model.video?.markerIn, "in"), (model.video?.markerOut, "out")]
       .compactMap { t, k in t.map { ($0, k) } }.filter { $0.0 >= 0 && $0.0 <= model.duration }
+      .filter { m.x($0.0) > -6 && m.x($0.0) < width + 6 }
     ForEach(marks, id: \.1) { t, kind in
       VStack(spacing: 0) {
         Image(systemName: "arrowtriangle.down.fill").font(.system(size: 7)).foregroundStyle(.white)
@@ -663,6 +680,7 @@ struct EditorTimelineWheel: NSViewRepresentable {
       let p = convert(e.locationInWindow, from: nil)
       guard bounds.contains(p) else { return false }
       let model = parts.model
+      guard model.isCovered?() != true, !model.readOnly, !model.fileMissing, model.video != nil else { return false }
       let v = model.viewport, w = Double(max(parts.width, 1))
       let x = Double(p.x)
       if e.type == .magnify {
@@ -771,21 +789,29 @@ private struct EditorTextBar: View {
   var body: some View {
     let tr = model.trim, m = math
     let a = m.x(tr.start + bar.span.start), b = m.x(tr.start + bar.span.end)
+    // Zoomed in, a bar can run far past the track: draw (and take the mouse on) only its visible part.
+    let ca = max(a, -16), cb = min(b, width + 16)
     let selected = bar.draggable && bar.id == model.selectedText
     ZStack(alignment: .leading) {
-      fill(selected: selected)
-        .frame(width: max(14, b - a), height: h)
-        .overlay { moveSurface(tr) }
-        .dsTooltip(bar.draggable ? "Click to edit this text, drag to move it" : "Edit the overlay text")
-        .probeFrame("text-bar-\(bar.number)")
-        .offset(x: a)
+      if cb > -2 && ca < width + 2 {
+        fill(selected: selected)
+          .frame(width: max(14, cb - ca), height: h)
+          .overlay { moveSurface(tr) }
+          .dsTooltip(bar.draggable ? "Click to edit this text, drag to move it" : "Edit the overlay text")
+          .probeFrame("text-bar-\(bar.number)")
+          .offset(x: ca)
+      }
       if bar.draggable {
-        grip(selected: selected, leading: true, tr)
-          .probeFrame("text-start-\(bar.number)")
-          .offset(x: a)
-        grip(selected: selected, leading: false, tr)
-          .probeFrame("text-end-\(bar.number)")
-          .offset(x: b - 6)
+        if a > -6 && a < width {
+          grip(selected: selected, leading: true, tr)
+            .probeFrame("text-start-\(bar.number)")
+            .offset(x: a)
+        }
+        if b > 0 && b < width + 6 {
+          grip(selected: selected, leading: false, tr)
+            .probeFrame("text-end-\(bar.number)")
+            .offset(x: b - 6)
+        }
       }
     }
     .frame(width: width, height: h, alignment: .leading)
@@ -873,19 +899,23 @@ struct EditorTrimLane: View {
           Text("\(platform.displayName) · \(Validation.fmt(r.duration)) / \(Validation.fmt(lim))")
             .font(.system(size: 9.5, weight: .semibold)).foregroundStyle(DS.color.text).lineLimit(1).padding(.horizontal, 8)
         }
-        .frame(width: max(10, b - a), height: h).offset(x: a)
+        .frame(width: max(10, min(b, width + 8) - max(a, -8)), height: h).offset(x: max(a, -8))
+      if a > -6 && a < width {
       RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 6, height: h).offset(x: a)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
           let t = min(m.snapped(v.location.x), r.end - 0.5)
           model.updateEdit { $0.platformTrims[platform]?.start = t }
         })
         .dsTooltip("Drag to set where \(platform.displayName)'s cut starts")
+      }
+      if b > 0 && b < width + 6 {
       RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 6, height: h).offset(x: b - 6)
         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("track")).onChanged { v in
           let t = max(m.snapped(v.location.x, extra: [r.start + lim]), r.start + 0.5)
           model.updateEdit { $0.platformTrims[platform]?.end = t }
         })
         .dsTooltip("Drag to set where \(platform.displayName)'s cut ends (snaps to \(Validation.fmt(lim)))")
+      }
     }
     .frame(width: width, height: h, alignment: .leading)
   }

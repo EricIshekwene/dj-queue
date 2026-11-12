@@ -123,6 +123,37 @@ import Testing
     #expect(EditorLogic.snap(12.05, to: c, tolerance: 0.1).value == 12)
   }
 
+  @Test func handlesNeverCoverEachOther() {
+    for w in [0.0, 1, 10, 30, 36, 37, 60, 400] {
+      let s = TrimRules.handleLayout(.start, a: 100, b: 100 + w, handleW: 14, reachOut: 10, reachIn: 8)
+      let e = TrimRules.handleLayout(.end, a: 100, b: 100 + w, handleW: 14, reachOut: 10, reachIn: 8)
+      #expect(s.grab + s.grabWidth <= e.grab + 0.0001, "grab areas overlap at \(w) pt")
+      #expect(s.visible + 14 <= e.visible + 0.0001, "handles drawn over each other at \(w) pt")
+      #expect(s.grabWidth >= 14 && e.grabWidth >= 14, "too small to grab at \(w) pt")
+    }
+    // A normal trim: inside, 32 pt to grab, starting 10 pt outside.
+    let s = TrimRules.handleLayout(.start, a: 100, b: 500, handleW: 14, reachOut: 10, reachIn: 8)
+    #expect(s.visible == 100 && s.grab == 90 && s.grabWidth == 32)
+  }
+
+  @Test func playbackPagesTheZoomedViewOncePerScreen() {
+    let v = TimelineViewport(start: 10, end: 20)
+    #expect(v.paged(to: 15, duration: 100) == v)
+    let p = v.paged(to: 20.05, duration: 100)
+    #expect(p.span == 10 && p.start > 19 && p.start < 20)
+    // A loop back to the trim start jumps back too.
+    #expect(v.paged(to: 3, duration: 100).start < 3)
+  }
+
+  @Test func onlyAMarkerChangeIsMarksOnly() {
+    var a = Edit(); a.trimIn = 2
+    var b = a; b.marks = [4]
+    #expect(b.differsOnlyInMarks(from: a))
+    #expect(!a.differsOnlyInMarks(from: a))
+    var c = b; c.trimOut = 9
+    #expect(!c.differsOnlyInMarks(from: a))
+  }
+
   // MARK: Keys
 
   func act(_ code: UInt16, _ chars: String? = nil, shift: Bool = false, focus: EditorKeys.Focus = .none,

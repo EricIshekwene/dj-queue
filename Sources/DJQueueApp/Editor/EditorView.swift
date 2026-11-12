@@ -151,7 +151,10 @@ struct EditorView: View {
     case .toggleMarker: model.toggleMarker()
     case .zoom(let d): model.zoomTimeline(d)
     case .nudgeTrim(let d, let fine): model.nudgeTrim(d, fine: fine)
-    case .releaseTrimEdge: model.selectTrimEdge(nil)
+    case .releaseTrimEdge:
+      // A form's Cancel takes Esc first, as it does from a text field; the next Esc lets the handle go.
+      if e.window?.performKeyEquivalent(with: e) == true { return true }
+      model.selectTrimEdge(nil)
     case .leaveTextField:
       // A form's Cancel (the group and template forms, `.cancelAction`) takes Esc first: one press closes it.
       if e.window?.performKeyEquivalent(with: e) == true { return true }

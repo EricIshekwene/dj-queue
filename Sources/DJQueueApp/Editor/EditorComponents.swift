@@ -252,21 +252,30 @@ final class EditorFrameStrip: ObservableObject {
     cache.setObject(Entry(out), forKey: key as NSString, cost: out.reduce(0) { $0 + $1.1.bytesPerRow * $1.1.height })
   }
   private var task: Task<Void, Never>?
+  /// Round 24: the file the frames on show came from. Zooming the same file keeps them until the new ones are ready
+  /// (no flash of an empty strip); another file clears them.
+  private var shownURL: URL?
 
   func load(url: URL?, from a: Double, to b: Double, count: Int, sync: Bool = false) {
     task?.cancel()
-    guard let url, b > a, count > 0 else { frames = []; return }
+    guard let url, b > a, count > 0 else { frames = []; shownURL = nil; return }
     let key = "\(url.path)|\(Int(a * 10))|\(Int(b * 10))|\(count)"
-    if let c = Self.cache.object(forKey: key as NSString) { frames = c.frames.map { (time: $0.0, image: $0.1) }; return }
+    if let c = Self.cache.object(forKey: key as NSString) {
+      frames = c.frames.map { (time: $0.0, image: $0.1) }
+      shownURL = url
+      return
+    }
     let times = (0..<count).map { a + (b - a) * (Double($0) + 0.5) / Double(count) }
     if sync {
       let out = Self.generate(url: url, times: times)
       Self.store(out, key: key)
       frames = out.map { (time: $0.0, image: $0.1) }
+      shownURL = url
       return
     }
     loading = true
-    frames = []
+    if shownURL != url { frames = [] }
+    shownURL = url
     task = Task.detached(priority: .utility) { [weak self] in
       let out = Self.generate(url: url, times: times)
       guard !Task.isCancelled else { return }

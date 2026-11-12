@@ -472,6 +472,14 @@ public struct Edit: Codable, Sendable, Hashable {
 
   /// True when nothing is overridden.
   public var isEmpty: Bool { self == Edit() }
+
+  /// Round 24: true when `self` and `other` differ only in Eric's timeline markers, which change no pixels (a save
+  /// like that leaves the clip's preview stamp alone).
+  public func differsOnlyInMarks(from other: Edit) -> Bool {
+    var a = self, b = other
+    a.marks = []; b.marks = []
+    return a == b && marks != other.marks
+  }
 }
 
 /// Text versions with carry-forward: nil fields inherit from the previous version (spec §3).

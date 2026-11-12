@@ -43,6 +43,13 @@ extension EditorModel {
     if v != viewport { setViewport(v) }
   }
 
+  /// While playing: a page at a time (`TimelineViewport.paged`).
+  func pageTimeline(to t: Double) {
+    guard timelineZoomed else { return }
+    let v = viewport.paged(to: t, duration: duration)
+    if v != viewport { setViewport(v) }
+  }
+
   // MARK: Markers
 
   /// M: a marker at the playhead, or the one it's on goes. Undo takes it back.

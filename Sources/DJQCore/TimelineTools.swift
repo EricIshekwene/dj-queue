@@ -68,6 +68,14 @@ public struct TimelineViewport: Equatable, Sendable {
     return self
   }
 
+  /// Playback leaving the view: the next page (or the trim start after a loop), the playhead a little in. Unchanged
+  /// while it's in view, so the view moves once per screenful, not every frame.
+  public func paged(to t: Double, duration: Double) -> TimelineViewport {
+    guard span > 0, t < start || t > end - span * 0.01 else { return self }
+    let a = t - span * 0.05
+    return TimelineViewport(start: a, end: a + span).clamped(duration)
+  }
+
   // MARK: x ↔ time
 
   public func x(_ t: Double, width: Double) -> Double { span > 0 ? (t - start) / span * width : 0 }
@@ -176,6 +184,25 @@ public enum TrimRules {
     let amount = fine ? ArrowStep.frame.seconds(fps: fps) : step.seconds(fps: fps)
     let from = edge == .start ? trim.start : trim.end
     return clampedEdge(edge, from + Double(direction.signum()) * amount, trim: trim, duration: duration)
+  }
+
+  /// Where a trim handle is drawn (`visible`, its left x) and grabbed (`grab` … `grab + grabWidth`), with the trim at
+  /// `a` … `b` points. Inside the trim normally, grabbable `reachOut` outside it; a trim too narrow for two handles has
+  /// them outside it, start left and end right, each grabbable up to the middle, so neither covers the other.
+  public static func handleLayout(_ edge: TrimEdge, a: Double, b: Double, handleW: Double, reachOut: Double,
+                                  reachIn: Double) -> (visible: Double, grab: Double, grabWidth: Double) {
+    let w = max(b - a, 0), half = w / 2
+    if w < 2 * handleW + 8 {
+      switch edge {
+      case .start: let g = a - handleW - reachOut / 2; return (a - handleW, g, a + half - g)
+      case .end: let g = b - half; return (b, g, b + handleW + reachOut / 2 - g)
+      }
+    }
+    let inner = min(handleW + reachIn, half)
+    switch edge {
+    case .start: return (a, a - reachOut, reachOut + inner)
+    case .end: return (b - handleW, b - inner, inner + reachOut)
+    }
   }
 
   /// Snap targets for a trim handle: clip ends, the CapCut in/out markers and Eric's own markers.

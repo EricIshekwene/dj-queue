@@ -58,7 +58,8 @@ enum TrimMarkersScript {
       try? rep.representation(using: .png, properties: [:])?.write(to: file)
       if let ruler = ProbeFrames.frames["ruler"], let film = ProbeFrames.frames["film-track"], let cg = rep.cgImage {
         let k = CGFloat(cg.width) / host.bounds.width
-        let top = ruler.minY - 50, bottom = film.maxY + 30 + (model.timelineZoomed ? 14 : 0)
+        // A fixed height (room for the overview under a zoomed timeline), so every crop is the same size for the GIF.
+        let top = ruler.minY - 50, bottom = film.maxY + 30
         let r = CGRect(x: max(0, ruler.minX - 60) * k, y: max(0, top) * k, width: (ruler.width + 80) * k, height: (bottom - top) * k).integral
         if let crop = cg.cropping(to: r) {
           let t = out.appendingPathComponent(String(format: "timeline-%02d-%@-%@.png", step, name, appearance))

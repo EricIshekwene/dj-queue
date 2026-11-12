@@ -58,6 +58,14 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | **Whole photo or Fill the frame** — one switch under the audio; Fill asks for the crop, Whole has nothing to fix, also after zooming in and Crop's Reset | **The post** — the whole photo over a blurred copy of itself, with a timed text |
 | ![Switching between Whole photo and Fill the frame in the editor, then zooming the crop in and resetting it](docs/media/photo-audio-fit.gif) | ![A frame of the rendered post: the whole photo across the middle of a 9:16 video](docs/media/photo-audio-whole.jpg) |
 
+**Trim handles and timeline markers (v0.18.0).** The yellow trim handles sit inside the trim with a wide grab area, and a handle follows your pointer from where you pressed it, so it never jumps. Hold ⌥ while dragging for a tenth of the speed and no snapping; a pill shows the exact time as it moves. Click a handle and ← → move it by your arrow step (⇧ one frame); Esc lets it go. The timeline zooms with − and + (or = and -, or a pinch), Fit shows the whole file, and an overview bar under a zoomed timeline pans it. A file whose trim is a small part of it opens zoomed on the trim. Press M to drop a marker at the playhead (M on a marker removes it): trim handles, the playhead, text bars and platform cuts all snap to your markers, and they're saved with the clip.
+
+| Grab, drag with the time pill, nudge with the arrows, M markers, snap, zoom | Markers in dark |
+|---|---|
+| ![Dragging the trim end with its time pill, nudging it, adding markers, snapping onto one and zooming](docs/media/trim-markers.gif) | ![The timeline with two markers in dark mode](docs/media/trim-markers-dark.jpg) |
+| **A long file opens on its trim** — a point is about a hundredth of a second | |
+| ![A 2:38 file opened zoomed on an 8 s trim](docs/media/trim-long-file.jpg) | |
+
 ## What it does
 
 The app follows a clip's life — **Score → Edit → Queue → Calendar** — with one job and one primary action per screen, on a calm, rounded design system modelled on ChatGPT's look and shadcn/ui component anatomy.
