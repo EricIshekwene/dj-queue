@@ -55,6 +55,10 @@ public enum CaptionDefaults {
     for v in try store.videos() where try v.type != .long && pin(v, from: s, to: after, store: store) != nil {
       if posted.contains(v.id) { r.held.append(v.id) } else { r.follow.append(v.id) }
     }
+    var to = try CaptionHold.Sources(store)
+    let from = to
+    to.settings.defaults = after
+    for v in try CaptionHold.affected(from: from, to: to, store: store) where !r.held.contains(v.id) { r.held.append(v.id) }
     return r
   }
 
@@ -94,9 +98,11 @@ public enum CaptionDefaults {
       // The source version itself never moves, whichever way the rest of its clip goes.
       let sourceBefore = try origin.map { o in (o, try versionOutput(o, source!.number, before, store: store), try store.edit(videoId: o.id)) }
       for v in kept {
-        guard let p = try pin(v, from: before.settings, to: after.settings.defaults, store: store) else { continue }
-        for version in p.versions { try store.save(version, videoId: v.id) }
-        if let e = p.edit { try store.save(e, videoId: v.id, remembersCrop: false) }
+        if let p = try pin(v, from: before.settings, to: after.settings.defaults, store: store) {
+          for version in p.versions { try store.save(version, videoId: v.id) }
+          if let e = p.edit { try store.save(e, videoId: v.id, remembersCrop: false) }
+        }
+        // Every held clip, including those only the safety net found (a photo post's unused YouTube title, say).
         try CaptionHold.pinTagsAndTitle(v, from: before, to: after, store: store)
       }
       try store.save(after.settings)

@@ -213,6 +213,20 @@ import Testing
     #expect(pinned == nil)
     #expect(try CaptionDefaults.pin(photo, from: s, to: CaptionDefaults.Choice(youtubeTitleTemplateId: "plain").applied(to: s.defaults), store: f.store) != nil)
   }
+
+  /// Re-review r29: a photo post with posts doesn't block a new YouTube title default, and keeps what it posts.
+  @Test func aPhotoPostWithPostsDoesntBlockATitleDefault() throws {
+    let f = try Fixture.planned()
+    var s = try f.store.settings()
+    s.youtubeTitleTemplates.append(TitleTemplate(id: "plain", name: "Plain", template: "{text} plain"))
+    try f.store.save(s)
+    try f.store.db.run("UPDATE videos SET photos=? WHERE id='clip-0'", [#"[{"id":"p1","file":"a.jpg","width":1080,"height":1350}]"#])
+    let before = try f.captions("clip-0")
+    let c = try CaptionDefaults.save(CaptionDefaults.Choice(youtubeTitleTemplateId: "plain"), updateExisting: false, store: f.store, bulk: f.bulk)
+    #expect(try f.store.settings().defaults.youtubeTitleTemplateId == "plain")
+    #expect(try f.captions("clip-0") == before)
+    #expect(c.result.batchId != nil)
+  }
 }
 
 private extension CaptionDefaults.Choice {
