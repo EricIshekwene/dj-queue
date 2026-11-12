@@ -64,7 +64,7 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![Typing three lines in the Text box, clicking after "Afro" and pressing Return, then the same in the caption](docs/media/text-fields.gif) | ![The Text box split at the click, with the cursor at the start of the new line and the video showing the four lines](docs/media/text-fields-split.jpg) |
 
-**32 texts and a countdown (VERSION).** A clip can now hold 32 timed texts (it was 12), enough for a quiz version with a header, three questions and a closing line. Any text after the first can be a **countdown**: pick Countdown 3 (or 5, or 10) and that one text shows 3, 2, 1, a second each, ending where the text ends, so a 3-2-1 takes one slot instead of three. Leave the text empty for just the number, or type `Next song in {n}` to put words around it. The export draws exactly what the editor shows, one number per frame. Agents use `djq overlay add <video> --countdown 3 --end 9`.
+**32 texts and a countdown (v0.18.0).** A clip can now hold 32 timed texts (it was 12), enough for a quiz version with a header, three questions and a closing line. Any text after the first can be a **countdown**: pick Countdown 3 (or 5, or 10) and that one text shows 3, 2, 1, a second each, ending where the text ends, so a 3-2-1 takes one slot instead of three. Leave the text empty for just the number, or type `Next song in {n}` to put words around it. The export draws exactly what the editor shows, one number per frame. Agents use `djq overlay add <video> --countdown 3 --end 9`.
 
 | Countdown 3 on one text: 3, 2, 1, then words around the number | 32 texts on one clip |
 |---|---|
