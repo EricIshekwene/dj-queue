@@ -345,7 +345,7 @@ enum TextLayersScript {
 
       // The ringed swatch is the default: a tap changes nothing, so nothing gets written. Which one that is follows the
       // style (black on a white box, white otherwise), and New clip defaults decide the style.
-      await click(TextLook.defaultColor(e.resolved.style) == "#000000" ? "swatch text colour Black" : "swatch text colour White")
+      check("the default swatch is there", await click(TextLook.defaultColor(e.resolved.style) == "#000000" ? "swatch text colour Black" : "swatch text colour White"))
       check("tapping the default colour writes no look", raw()?.textLook == nil)
 
       // The first text ends at 4 s, so the others have room.
@@ -814,6 +814,7 @@ enum TextLayersScript {
       check("a new version follows the last (v\(fresh))", fresh == last + 1)
       check("a new version inherits the list and stores none", raw(id, version: fresh)?.moreText == nil && e.resolved.moreText.map(\.id) == inherited)
       if e.resolved.moreText.isEmpty {  // nothing inherited to edit: give it a text of its own first
+        note("v\(fresh) inherited no texts: the copy-on-first-edit check runs on a text added to it")
         await click("Add text")
         await type("Inherited")
         window.makeFirstResponder(nil)
