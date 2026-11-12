@@ -96,7 +96,7 @@ struct EditorView: View {
     .onAppear {
       DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
       if let p = trimPlatform, !model.isPhoto, model.posting(p), model.platformTrims[p] == nil, !model.readOnly {
-        model.addPlatformTrim(p)
+        model.addPlatformTrim(p, shared: true)
         model.scrollTarget = .platforms
       }
     }

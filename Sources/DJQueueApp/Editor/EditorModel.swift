@@ -877,11 +877,15 @@ final class EditorModel: ObservableObject {
   }
 
   /// "Trim for X": opens the per-platform trim lane, starting from the main trim cut to the platform limit.
-  func addPlatformTrim(_ p: Platform) {
+  /// `shared` (round 30): the Edit list's "Trim for X" fix. Unless the version has its own trim, the lane goes on the
+  /// trim every version shares, so every version without its own gets it (the fix is for the clip, not one version).
+  func addPlatformTrim(_ p: Platform, shared: Bool = false) {
     guard !isPhoto else { return }
     let t = trim
     let lim = settings.limits[p]?.maxDuration ?? t.duration
-    updatePlatformTrims { $0[p] = TrimRange(start: t.start, end: min(t.end, t.start + lim)) }
+    let cut = TrimRange(start: t.start, end: min(t.end, t.start + lim))
+    if shared && !hasOwnTrim { updateEdit { $0.platformTrims[p] = cut }; return }
+    updatePlatformTrims { $0[p] = cut }
   }
 
   func setKind(_ k: Kind) {
