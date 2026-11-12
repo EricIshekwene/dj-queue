@@ -1790,7 +1790,9 @@ final class EditorModel: ObservableObject {
   // MARK: Text images (TextOverlay PNGs drawn over the player, one per text: preview == export)
 
   /// Drawn texts by `PreviewKeys.layerKey`, so moving one text in time or editing one never redraws the rest. Full-size
-  /// images are 8 MB each at 1080 wide: this holds a full clip of 12 with room for what's being edited, and evicts past it.
+  /// images are 8 MB each at 1080 wide: this holds about 19, and evicts past it. A clip can show more (32 texts, and a
+  /// countdown draws a number each), so what is on the canvas is held by `textImages` itself, never only by this cache:
+  /// a refresh hands the images it just drew straight to `build` (round 26).
   private nonisolated static let drawnTexts = CostCappedCache<String, EditorDrawnText>(costLimit: 160 << 20)
 
   private nonisolated static func draw(_ l: TextLayer, aspect: Aspect, key: String) -> EditorDrawnText? {
@@ -1807,44 +1809,71 @@ final class EditorModel: ObservableObject {
     let r = resolved, a = aspect, tr = trim
     let photo = isPhoto, count = photoCount
     if photo { refreshPhotoImages() }
-    let windows = Dictionary(PreviewKeys.layerWindows(r, trimDuration: tr.duration).map { ($0.layer.id, $0.window) }) { x, _ in x }
-    let wanted = r.layers.map { l in
+    let all = PreviewKeys.layerWindows(r, trimDuration: tr.duration)
+    let windows = Dictionary(all.map { ($0.layer.id, $0.window) }) { x, _ in x }
+    let wanted = r.layers.flatMap { l -> [(id: String, layer: TextLayer, key: String, window: ClosedRange<Double>?, step: Int?)] in
+      // A countdown on a clip is one image per number, each with its step (round 26). Outside the trim it keeps its
+      // first number, with no window, so the canvas can still show it dimmed while it's selected.
+      if !photo, let n = l.countdown {
+        let steps = all.filter { $0.layer.id == l.id }
+        guard !steps.isEmpty else {
+          var first = l; first.countdown = nil; first.text = l.countdownText(n)
+          return [(id: "\(l.id)#0", layer: first, key: PreviewKeys.layerKey(first, aspect: a), window: nil, step: 0)]
+        }
+        return steps.enumerated().map { k, st in
+          (id: "\(l.id)#\(k)", layer: st.layer, key: PreviewKeys.layerKey(st.layer, aspect: a),
+           window: (st.window.lowerBound + tr.start)...(st.window.upperBound + tr.start), step: k)
+        }
+      }
       // A photo post's window is the photos a text shows on, as indexes (first…last), by the renderer's own rule
       // (`PhotoRules.photoRange`): the canvas asks `shows(at:)` with the current photo's index.
-      (layer: l, key: PreviewKeys.layerKey(l, aspect: a),
-       window: photo ? windows[l.id].flatMap { PhotoRules.photoRange($0, count: count) }.map { Double($0.lowerBound - 1)...Double($0.upperBound - 1) }
-                     : windows[l.id].map { ($0.lowerBound + tr.start)...($0.upperBound + tr.start) })
+      return [(id: l.id, layer: l, key: PreviewKeys.layerKey(l, aspect: a),
+               window: photo ? windows[l.id].flatMap { PhotoRules.photoRange($0, count: count) }.map { Double($0.lowerBound - 1)...Double($0.upperBound - 1) }
+                             : windows[l.id].map { ($0.lowerBound + tr.start)...($0.upperBound + tr.start) }, step: nil)]
     }
-    let signature = wanted.map { "\($0.layer.id)|\($0.key)|\($0.window.map { "\($0.lowerBound)-\($0.upperBound)" } ?? "off")" }
+    let signature = wanted.map { "\($0.id)|\($0.key)|\($0.window.map { "\($0.lowerBound)-\($0.upperBound)" } ?? "off")" }
     guard signature != overlaySignature else { return }
     overlaySignature = signature
     overlayTask?.cancel()
     let before = Dictionary(textImages.map { ($0.id, $0.drawn) }) { x, _ in x }
-    let build: (Bool) -> [EditorTextImage] = { useOld in
+    // What is on the canvas now and what the cache has now, by key, held here: drawing the missing ones can evict
+    // others from the cache before `build` reads it, and an image stays usable while it's held.
+    var current = Dictionary(textImages.filter { !$0.placeholder }.map { ($0.key, $0.drawn) }) { x, _ in x }
+    for w in wanted where current[w.key] == nil { current[w.key] = Self.drawnTexts.value(w.key) }
+    // An old picture kept under a new key while its new one draws is a placeholder: never taken as that key's image.
+    let build: ([String: EditorDrawnText], Bool) -> [EditorTextImage] = { [current] fresh, useOld in
       wanted.compactMap { w in
-        guard let d = Self.drawnTexts.value(w.key) ?? (useOld ? before[w.layer.id] : nil) else { return nil }
-        return EditorTextImage(id: w.layer.id, key: w.key, drawn: d, window: w.window)
+        if let d = fresh[w.key] ?? current[w.key] ?? Self.drawnTexts.value(w.key) {
+          return EditorTextImage(id: w.id, layerId: w.layer.id, key: w.key, drawn: d, window: w.window, step: w.step)
+        }
+        guard useOld, let d = before[w.id] else { return nil }
+        return EditorTextImage(id: w.id, layerId: w.layer.id, key: w.key, drawn: d, window: w.window, step: w.step, placeholder: true)
       }
     }
-    let missing = wanted.filter { Self.drawnTexts.value($0.key) == nil }.map { (layer: $0.layer, key: $0.key) }
+    var seen = Set<String>()
+    let missing = wanted.filter { current[$0.key] == nil && seen.insert($0.key).inserted }
+      .map { (layer: $0.layer, key: $0.key) }
     if snapshotMode {
-      for m in missing { _ = Self.draw(m.layer, aspect: a, key: m.key) }
-      textImages = build(false)
+      var fresh: [String: EditorDrawnText] = [:]
+      for m in missing { fresh[m.key] = Self.draw(m.layer, aspect: a, key: m.key) }
+      textImages = build(fresh, false)
       return
     }
-    textImages = build(true)
+    textImages = build([:], true)
     guard !missing.isEmpty else { return }
     overlayTask = Task.detached(priority: .userInitiated) { [weak self] in
+      var fresh: [String: EditorDrawnText] = [:]
       for m in missing {
         if Task.isCancelled { return }
-        _ = Self.draw(m.layer, aspect: a, key: m.key)
+        fresh[m.key] = Self.draw(m.layer, aspect: a, key: m.key)
       }
-      await self?.textImagesDrawn(signature, build)
+      let drawn = fresh
+      await self?.textImagesDrawn(signature) { build(drawn, false) }
     }
   }
 
-  private func textImagesDrawn(_ signature: [String], _ build: (Bool) -> [EditorTextImage]) {
-    if overlaySignature == signature { textImages = build(false) }
+  private func textImagesDrawn(_ signature: [String], _ build: () -> [EditorTextImage]) {
+    if overlaySignature == signature { textImages = build() }
   }
 
   /// Any text on the cover.
@@ -1855,8 +1884,10 @@ final class EditorModel: ObservableObject {
   /// The texts on the cover: what `Media.coverComposite` draws for this frame.
   var coverTextImages: [EditorTextImage] {
     guard resolvedEdit.coverIncludesText else { return [] }
-    let ids = PreviewKeys.coverLayers(resolved, offset: coverTime - trim.start, trimDuration: trim.duration).map(\.id)
-    return textImages.filter { ids.contains($0.id) }
+    let at = coverTime - trim.start
+    let ids = PreviewKeys.coverLayers(resolved, offset: at, trimDuration: trim.duration).map(\.id)
+    // A countdown is on the cover as the number showing at that frame.
+    return textImages.filter { ids.contains($0.layerId) && ($0.step == nil || $0.shows(at: coverTime)) }
   }
 
   // MARK: Texts (round 16): the first text routes to the version's fields, the others to `moreText`
@@ -1892,7 +1923,8 @@ final class EditorModel: ObservableObject {
                                   span: r.hasText && !r.noText ? TextTimeline.span(r.firstLayer, trimDuration: d) : (0, d), lane: 0)
     guard !r.noText else { return ([first], 1) }
     var bars = [first] + r.moreText.enumerated().map { i, l in
-      EditorTimelineBar(id: l.id, number: i + 2, label: l.isBlank ? "Empty text" : Captions.oneLine(l.text), on: !l.isBlank, draggable: true,
+      EditorTimelineBar(id: l.id, number: i + 2, label: l.countdown.map { TextLayers.countdownLabel(l, from: $0) } ?? (l.isBlank ? "Empty text" : Captions.oneLine(l.text)),
+                        on: !l.isBlank, draggable: true,
                         span: TextTimeline.span(l, trimDuration: d), lane: 0)
     }
     let lanes = TextTimeline.lanes(bars.map(\.span))
@@ -1912,7 +1944,10 @@ final class EditorModel: ObservableObject {
     let r = resolved
     if !selectedIsFirst { return nil }
     if r.moreText.isEmpty { return "The only text can't be deleted; use No text" }
-    return r.moreText.contains { !$0.isBlank } ? nil : "Type in another text first, or use No text"
+    if r.moreText.contains(where: { !$0.isBlank && $0.countdown == nil }) { return nil }
+    // Round 26: a countdown never becomes text 1 (it would count down in captions and titles).
+    return r.moreText.contains { $0.countdown != nil } ? "A countdown can't be text 1; type in a plain text first, or use No text"
+                                                       : "Type in another text first, or use No text"
   }
 
   /// Appends `l` and selects it. A text sharing the time of the one it copies goes just below it, or neither could be read.
@@ -1943,7 +1978,9 @@ final class EditorModel: ObservableObject {
     if isPhoto, like.start == nil, like.end == nil { add(TextLayers.new(text: like.text, like: like), overlapping: true); return }
     defer { if isPhoto { showSelectedTextPhoto() } }  // the copy may sit on the next photo: the canvas goes there
     let (w, overlaps) = TextTimeline.duplicateWindow(TextTimeline.span(like, trimDuration: trim.duration), trimDuration: trim.duration)
-    add(TextLayers.new(text: like.text, like: like, start: w.start, end: w.end), overlapping: overlaps)
+    var copy = TextLayers.new(text: like.text, like: like, start: w.start, end: w.end)
+    copy.countdown = like.countdown  // a copy of a countdown counts down too
+    add(copy, overlapping: overlaps)
   }
 
   /// Deletes the selected text. Deleting the first text moves the next one into its place.
@@ -1953,6 +1990,19 @@ final class EditorModel: ObservableObject {
     let r = resolved, id = selectedText
     updateVersion(coalesce: false) { v in if let n = TextLayers.removing(id, from: v, resolved: r) { v = n } }
     selectedTextRaw = TextLayer.firstId
+  }
+
+  /// Round 26: makes the selected text a countdown from `count` (nil = a plain text again). Turning it on gives it one
+  /// second a number, ending where it ends (`TextLayers.countdownWindow`); changing the count keeps its window.
+  func setSelectedCountdown(_ count: Int?) {
+    guard !selectedIsFirst, !isPhoto else { return }
+    let l = selectedLayer, d = trim.duration
+    guard l.countdown != count else { return }
+    let w = l.countdown == nil ? count.map { TextLayers.countdownWindow($0, span: TextTimeline.span(l, trimDuration: d), trimDuration: d) } : nil
+    updateText(l.id) { x in
+      x.countdown = count
+      if let w { x.start = w.start; x.end = w.end }
+    }
   }
 
   func setSelectedWords(_ t: String) {
@@ -2051,14 +2101,27 @@ struct EditorDrawnText {
 /// A drawn text on this clip: `window` is when it shows, in seconds of the clip file (nil = the trim leaves it out).
 /// On a photo post it is the photos it shows on, as indexes from the first to the last (nil = none).
 struct EditorTextImage: Identifiable {
+  /// The text's id, or "<id>#<step>" for one number of a countdown (round 26).
   var id: String
+  /// The text this draws, which selection, dragging and moving act on.
+  var layerId: String
   var key: String
   var drawn: EditorDrawnText
   var window: ClosedRange<Double>?
+  /// Which number of a countdown this is, from 0 (its highest); nil for every other text.
+  var step: Int? = nil
+  /// The text's previous picture, shown until the one for `key` is drawn.
+  var placeholder = false
 
   var image: CGImage { drawn.image }
   var bounds: CGRect { drawn.bounds }
-  func shows(at t: Double) -> Bool { window.map { t >= $0.lowerBound - 0.01 && t <= $0.upperBound + 0.01 } ?? false }
+  /// A countdown's numbers follow each other exactly, so two never show at once; any other text gets a frame's slack.
+  func shows(at t: Double) -> Bool {
+    guard let w = window else { return false }
+    return step == nil ? t >= w.lowerBound - 0.01 && t <= w.upperBound + 0.01 : t >= w.lowerBound && t <= w.upperBound
+  }
+  /// Shown faded while selected and off screen: a countdown fades in as its first number only.
+  var fadesWhenHidden: Bool { step == nil || step == 0 }
 }
 
 /// Player + playhead time, separate from the model so 30 Hz time updates only redraw the playhead.

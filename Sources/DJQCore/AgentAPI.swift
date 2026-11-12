@@ -133,17 +133,19 @@ public enum AgentAPI {
     /// When it shows in the main trim, in seconds from the trim start (null when it isn't drawn).
     public var shows_from: Double?
     public var shows_to: Double?
+    /// Round 26: a countdown's first number (it shows that, …, 1 across its window); absent for every other text.
+    public var countdown: Int? = nil
   }
 
   /// Every text of a resolved version, numbered, against a trim of `trimDuration` seconds.
   public static func overlays(_ r: ResolvedVersion, trimDuration d: Double) -> [OverlayOut] {
     let windows = PreviewKeys.layerWindows(r, trimDuration: d)
     return r.allLayers.enumerated().map { i, l in
-      let w = windows.first { $0.layer.id == l.id }?.window
+      let w = PreviewKeys.window(of: l.id, in: windows)
       return OverlayOut(number: i + 1, id: l.id, text: l.text, style: l.style.rawValue, size: l.size, x: l.posX, y: l.posY,
                         align: l.align.rawValue, start: l.start, end: l.end, color: l.look?.color, background: l.look?.accent,
                         font: l.look?.font?.rawValue, opacity: l.look?.opacity, tracking: l.look?.tracking, drawn: w != nil,
-                        shows_from: w?.lowerBound, shows_to: w.map { min($0.upperBound, d) })
+                        shows_from: w?.lowerBound, shows_to: w.map { min($0.upperBound, d) }, countdown: l.countdown)
     }
   }
 

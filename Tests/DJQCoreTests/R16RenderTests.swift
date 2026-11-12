@@ -260,8 +260,8 @@ private final class Layered {
       let r = try env.djq("overlay", "add", "clip-0", "T\(i)", "--start", "\(i)")
       #expect(r.status == 0, "\(r.err)")
     }
-    try fails("overlay", "add", "clip-0", "Thirteen", contains: "already has 12")
-    #expect(try list(env).count == 12)
+    try fails("overlay", "add", "clip-0", "Thirty-three", contains: "already has 32")  // round 26: was 12
+    #expect(try list(env).count == 32)
   }
 
   @Test func anInvertedWindowDoesntBlockOtherEdits() throws {

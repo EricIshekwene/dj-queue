@@ -49,7 +49,9 @@ struct PreviewInfo: Sendable {
 extension AppModel {
   /// Overlay images (≤540 wide), least recently used evicted past 64 MB. Keyed by `PreviewKeys.layerKey` (text, look,
   /// style, size, position and aspect), so clips with the same text share one image.
-  nonisolated static let overlayCache = CostCappedCache<String, CGImage>(costLimit: 64 << 20)
+  /// 256 MB since round 26 (was 64): a clip can show 32 texts, and a countdown draws a number each, at about 2 MB a
+  /// 540-wide 9:16 image, so a few such tiles fit without evicting each other.
+  nonisolated static let overlayCache = CostCappedCache<String, CGImage>(costLimit: 256 << 20)
   /// Overlay + timing loads run here, two at a time.
   nonisolated static let previewWork = DispatchQueue(label: "djq.previews", qos: .userInitiated, attributes: .concurrent)
   nonisolated static let previewGate = DispatchSemaphore(value: 2)
