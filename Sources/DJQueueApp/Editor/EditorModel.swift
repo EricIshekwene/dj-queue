@@ -1894,6 +1894,9 @@ final class EditorModel: ObservableObject {
 
   /// The text being edited. Everything that selects one writes here: the switcher, a timeline bar, the canvas.
   @Published private var selectedTextRaw = TextLayer.firstId
+  /// Round 28: false after a click on an empty spot: the selected text has no outline or highlighted bar until
+  /// something selects a text again (the Text section still edits it).
+  @Published var textSelectionShown = true
   /// Bumped when the text field should take the keyboard (a new text).
   @Published var focusTextField = 0
 
@@ -1906,7 +1909,10 @@ final class EditorModel: ObservableObject {
   /// 1 for the first text.
   var selectedNumber: Int { (texts.firstIndex { $0.id == selectedText } ?? 0) + 1 }
 
-  func selectText(_ id: String) { if id != selectedTextRaw { selectedTextRaw = id } }
+  func selectText(_ id: String) {
+    if id != selectedTextRaw { selectedTextRaw = id }
+    if !textSelectionShown { textSelectionShown = true }
+  }
 
   /// One change to a text through `TextLayers.updating`, which copies an inherited list into this version on its first
   /// edit and writes only what changed on the first text.
@@ -1957,6 +1963,7 @@ final class EditorModel: ObservableObject {
     if overlapping { l.posY = TextTimeline.clearY(l.posY) }
     updateVersion(coalesce: false) { v in if let n = TextLayers.adding(l, to: v, resolved: r) { v = n } }
     selectedTextRaw = l.id
+    textSelectionShown = true
     focusTextField += 1
   }
 
