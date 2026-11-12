@@ -137,7 +137,17 @@ SwiftUI app per `design/DESIGN.md`. Talks only to the APIs above and `Store`. Ru
 ## Round 16 additions: timed texts and the text look
 
 - **One text is still the Version fields.** `Version.moreText: [TextLayer]?` holds every text after the first and carries forward as a whole list (nil inherits, [] = none); `Version.textLook: TextLook?` is the first text's look (an empty look = back to default). Both are optional JSON keys, so nothing is rewritten, Title-follow keeps working and `hasText` still means the first text. `ResolvedVersion` adds `moreText`, `textLook` (written only when used), `firstLayer`, `allLayers` (every text, numbered), `layers` (what draws) and `hasDrawnText` (what Health's "No text" asks).
-- **`TextLayers`** (`DJQCore/TextLayers.swift`) holds the pure edits, shared by the editor and `djq overlay`: `new`, `layer(ref)`, `adding`, `updating`, `removing`, `promotingNext`, `copyAdvanced`, and the cap (`maxCount`, 12 with the first text).
+- **`TextLayers`** (`DJQCore/TextLayers.swift`) holds the pure edits, shared by the editor and `djq overlay`: `new`, `layer(ref)`, `adding`, `updating`, `removing`, `promotingNext`, `copyAdvanced`, and the cap (`maxCount`, 32 with the first text since round 26; it was 12).
+- **Countdown (round 26).** `TextLayer.countdown: Int?` (2–10, absent from JSON when nil). `TextLayer.steps(in:trimDuration:)`
+  turns a countdown into one plain text per number, each with an equal step of its window (all but the last end 1 ms
+  early, so two numbers never share a frame), and `PreviewKeys.layerWindows` returns those steps under the countdown's
+  id. Everything that draws (renderer, list previews, covers, the editor canvas) goes through `layerWindows`, so a
+  countdown renders exactly like its numbers typed as separate texts; `PreviewKeys.window(of:in:)` gives a text's whole
+  window back for `djq overlay list`. `HashInput.Text.countdown` is absent when nil, so existing edit hashes hold. The
+  editor shows a countdown as one bar ("3 · 2 · 1") and one image per number (`EditorTextImage.layerId` / `step`).
+- **Editor text images at 32 texts.** `EditorModel.drawnTexts` (160 MB, about 19 full-size images) is a cache, not the
+  source of what's on the canvas: `refreshOverlay` holds what's on screen and what the cache has before drawing the
+  missing ones, so drawing can't evict an image the canvas still needs.
 - **`TextOverlay`** draws a `TextLayer`. `Layout` takes the look through the same Core Text path (colour, accent by style, font with system fallback, kerning, opacity as one transparency layer); a nil look doesn't touch the path, so the PNG is byte-identical.
 - **`PreviewKeys`** has the shared rules: `layerWindows` (first text as ever; an extra starting past the trim or inverted isn't drawn), `coverLayers` (what shows at the cover frame, else the first text), `layerKey` and `coverKey` for caches. `textKey` is unchanged for one plain text.
 - **Renderer**: one PNG input per text, chained `overlay` filters each with its own `between(t,…)` (`Renderer.overlayGraph`). `HashInput` adds `text.look` and `moreText`, nil and absent when unused, so existing edit hashes hold and `pipelineVersion` stays.

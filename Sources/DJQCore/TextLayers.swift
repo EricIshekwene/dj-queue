@@ -139,14 +139,24 @@ public struct TextLayer: Codable, Sendable, Hashable, Identifiable {
   public var start: Double?
   public var end: Double?
   public var look: TextLook?
+  /// Round 26: a countdown text shows `countdown`, …, 2, 1 in equal steps across its window (one second each when its
+  /// window is `countdown` seconds long), in one slot. "{n}" in its text is where the number goes; with no "{n}" the
+  /// number shows alone. nil for every other text (and absent from stored JSON). Never on the first text.
+  public var countdown: Int?
+
+  /// How far a countdown can count from.
+  public static let countdownRange = 2...10
+  /// Where the number goes in a countdown's text.
+  public static let countdownToken = "{n}"
 
   public init(id: String = TextLayer.newId(), text: String, style: TextStyle = .box, size: Double = 64, posX: Double = 0.5,
-              posY: Double = 0.5, align: TextAlign = .center, start: Double? = nil, end: Double? = nil, look: TextLook? = nil) {
+              posY: Double = 0.5, align: TextAlign = .center, start: Double? = nil, end: Double? = nil, look: TextLook? = nil,
+              countdown: Int? = nil) {
     self.id = id; self.text = text; self.style = style; self.size = size; self.posX = posX; self.posY = posY
-    self.align = align; self.start = start; self.end = end; self.look = look
+    self.align = align; self.start = start; self.end = end; self.look = look; self.countdown = countdown
   }
 
-  enum CodingKeys: String, CodingKey { case id, text, style, size, posX, posY, align, start, end, look }
+  enum CodingKeys: String, CodingKey { case id, text, style, size, posX, posY, align, start, end, look, countdown }
 
   /// Tolerant: a layer with a value this build can't read keeps the rest, so one field never loses the version.
   public init(from dec: Decoder) throws {
@@ -161,12 +171,39 @@ public struct TextLayer: Codable, Sendable, Hashable, Identifiable {
     start = (try? c.decodeIfPresent(Double.self, forKey: .start)) ?? nil
     end = (try? c.decodeIfPresent(Double.self, forKey: .end)) ?? nil
     look = (try? c.decodeIfPresent(TextLook.self, forKey: .look)) ?? nil
+    countdown = ((try? c.decodeIfPresent(Int.self, forKey: .countdown)) ?? nil).map {
+      min(max($0, Self.countdownRange.lowerBound), Self.countdownRange.upperBound)
+    }
   }
 
   public static func newId() -> String { String(UUID().uuidString.prefix(8)).lowercased() }
 
-  /// Nothing to draw (empty texts stay stored but never show).
-  public var isBlank: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+  /// Nothing to draw (empty texts stay stored but never show). A countdown always has its number to draw.
+  public var isBlank: Bool { countdown == nil && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+  /// What a countdown shows at `number`: its text with "{n}" replaced, else the number alone.
+  public func countdownText(_ number: Int) -> String {
+    text.contains(Self.countdownToken) ? text.replacingOccurrences(of: Self.countdownToken, with: "\(number)") : "\(number)"
+  }
+
+  /// A countdown as the plain texts it draws, one per number, each with its step of `window` (seconds from the trim
+  /// start, `PreviewKeys.layerWindows`' rule): `countdown` equal steps from its high number down to 1. Each step but the
+  /// last ends a millisecond early, so two numbers never share a frame (the renderer's windows include both ends).
+  /// Every other text is itself, with `window`.
+  public func steps(in window: ClosedRange<Double>, trimDuration d: Double) -> [(layer: TextLayer, window: ClosedRange<Double>)] {
+    guard let n = countdown else { return [(self, window)] }
+    let a = window.lowerBound, b = max(a, min(window.upperBound, d))
+    let len = (b - a) / Double(n)
+    guard len > 0 else { return [] }
+    return (0..<n).map { k in
+      var l = self
+      l.countdown = nil
+      l.text = countdownText(n - k)
+      let s = a + Double(k) * len
+      let e = k == n - 1 ? window.upperBound : max(s, a + Double(k + 1) * len - 0.001)
+      return (l, s...e)
+    }
+  }
 }
 
 extension ResolvedVersion {
@@ -193,7 +230,7 @@ extension ResolvedVersion {
 /// version: `moreText` carries forward as one value (nil inherits, [] = explicitly none).
 public enum TextLayers {
   /// Most texts on a clip, the first text included.
-  public static let maxCount = 12
+  public static let maxCount = 32
   /// An end past any trim, for "to the end of the clip" where nil would inherit one. `PreviewKeys.textWindow` and
   /// `EditorLogic.clampTextTiming` bring it back to the trim.
   public static let farEnd = 86_400.0
@@ -203,7 +240,7 @@ public enum TextLayers {
   /// A new text that looks like `like` (its style, size, position, alignment and look), with its own id and window.
   public static func new(text: String, like: TextLayer, start: Double? = nil, end: Double? = nil) -> TextLayer {
     var l = like
-    l.id = TextLayer.newId(); l.text = text; l.start = start; l.end = end
+    l.id = TextLayer.newId(); l.text = text; l.start = start; l.end = end; l.countdown = nil
     return l
   }
 
@@ -261,9 +298,10 @@ public enum TextLayers {
   }
 
   /// The first text is gone: the next text with words moves into the first-text fields (S1-R7), look and window
-  /// included, and leaves the list. "No text" stays as it was. nil when no other text has words.
+  /// included, and leaves the list. "No text" stays as it was. nil when no other text has words. A countdown is never
+  /// promoted (the first text can't count down).
   public static func promotingNext(_ v: Version, resolved r: ResolvedVersion) -> Version? {
-    guard let next = r.moreText.first(where: { !$0.isBlank }) else { return nil }
+    guard let next = r.moreText.first(where: { !$0.isBlank && $0.countdown == nil }) else { return nil }
     var out = v
     out.text = next.text
     if r.noText { out.noText = true }
@@ -279,6 +317,24 @@ public enum TextLayers {
 
   /// For a new version copied from `r`: its texts and look stay what `r` shows, even when a later version changed them
   /// (`moreText` and `textLook` would otherwise inherit from the version before the new one).
+  /// A countdown's window for `count` from a text's current `span` (seconds from the trim start, `TextTimeline.span`)
+  /// in a trim of `d` seconds: one second a number, ending where the text ends, or starting where it starts when there's
+  /// no room before the end.
+  public static func countdownWindow(_ count: Int, span: TextTimeline.Span, trimDuration d: Double) -> TextTimeline.Span {
+    let len = min(Double(count), d)
+    let end = min(span.end, d)
+    if end - len >= 0 { return (end - len, end) }
+    return (0, len)
+  }
+
+  /// How a countdown reads in a list or on its timeline bar: "3 · 2 · 1", or "10 … 1" past five, with its words when
+  /// it has any around the number.
+  public static func countdownLabel(_ l: TextLayer, from n: Int) -> String {
+    let numbers = n <= 5 ? (1...n).reversed().map(String.init).joined(separator: " · ") : "\(n) … 1"
+    return l.text.contains(TextLayer.countdownToken) ? l.text.replacingOccurrences(of: TextLayer.countdownToken, with: numbers)
+      .split(whereSeparator: \.isNewline).joined(separator: " ") : numbers
+  }
+
   public static func copyAdvanced(into v: inout Version, from r: ResolvedVersion) {
     v.moreText = r.moreText
     v.textLook = r.textLook ?? TextLook()

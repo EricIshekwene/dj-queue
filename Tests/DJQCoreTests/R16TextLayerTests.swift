@@ -201,16 +201,16 @@ private func resolve(_ vs: [Version], _ n: Int? = nil, video: Video? = nil) -> R
     #expect(r.layers.map(\.id) == ["a", "c"] && r.hasDrawnText && !r.hasText)
   }
 
-  @Test func capIsTwelveTextsWithTheFirst() {
-    #expect(TextLayers.maxCount == 12)
-    var v = version(1) { $0.text = "First"; $0.moreText = (0..<10).map { extra("T\($0)") } }
+  @Test func capIsThirtyTwoTextsWithTheFirst() {  // round 26: was 12
+    #expect(TextLayers.maxCount == 32)
+    var v = version(1) { $0.text = "First"; $0.moreText = (0..<30).map { extra("T\($0)") } }
     var r = resolve([v])
     #expect(TextLayers.canAdd(r))
-    let added = TextLayers.adding(extra("Eleven"), to: v, resolved: r)
-    #expect(added?.moreText?.count == 11)
+    let added = TextLayers.adding(extra("Thirty-two"), to: v, resolved: r)
+    #expect(added?.moreText?.count == 31)
     v = added!
     r = resolve([v])
-    #expect(r.allLayers.count == 12 && !TextLayers.canAdd(r))
+    #expect(r.allLayers.count == 32 && !TextLayers.canAdd(r))
     #expect(TextLayers.adding(extra("Too many"), to: v, resolved: r) == nil)
   }
 

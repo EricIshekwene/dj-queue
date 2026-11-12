@@ -14,6 +14,8 @@ enum OverlayCommand {
     var color: String??, background: String??
     var font: TextFont??
     var opacity: Double??, tracking: Double??
+    /// Round 26: nil = not given, .some(nil) = "off".
+    var countdown: Int??
 
     /// nil = not given, .some(nil) = "default".
     private static func cleared<T>(_ raw: String?, _ parse: (String) throws -> T) rethrows -> T?? {
@@ -63,10 +65,31 @@ enum OverlayCommand {
       }
       o.opacity = try cleared(option("--opacity")) { try number($0, "--opacity", TextLook.opacityRange) }
       o.tracking = try cleared(option("--tracking")) { try number($0, "--tracking", TextLook.trackingRange) }
+      o.countdown = try option("--countdown").map { raw -> Int? in
+        if raw == "off" || raw == "default" { return nil }
+        guard let n = Int(raw), TextLayer.countdownRange.contains(n) else {
+          throw CLIError("--countdown must be a whole number \(TextLayer.countdownRange.lowerBound)–\(TextLayer.countdownRange.upperBound), or off (got \(raw))")
+        }
+        return n
+      }
       return o
     }
 
-    func apply(to l: inout TextLayer) throws {
+    /// `trimDuration` places a countdown with no `--start`: its last `countdown` seconds before `--end` (or the end of
+    /// the trim), one second a number.
+    func apply(to l: inout TextLayer, trimDuration d: Double) throws {
+      if let countdown {
+        if l.id == TextLayer.firstId, countdown != nil {
+          throw CLIError("text 1 can't count down: add the countdown as its own text (djq overlay add <video> --countdown 3)")
+        }
+        l.countdown = countdown
+        if let n = countdown, start == nil {
+          // Ends where asked, else where the text already ends (a new text: the end of the trim).
+          let endAt = end.map { $0 ?? d } ?? TextTimeline.span(l, trimDuration: d).end
+          let w = TextLayers.countdownWindow(n, span: (0, endAt), trimDuration: d)
+          l.start = w.start; l.end = w.end
+        }
+      }
       if let start { l.start = start }
       if let end { l.end = end }
       // Only when asked: a first text can already hold an inverted window (it means the whole clip), and that mustn't
@@ -143,21 +166,26 @@ enum OverlayCommand {
       for o in list { print("  " + line(o)) }
 
     case "add":
-      let text = try arg(2, "text")
-      guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CLIError("write the text to add") }
+      let counting = (options.countdown ?? nil) != nil
+      if counting, v.isPhoto { throw CLIError("a photo post can't count down: a countdown needs time, and a photo has none") }
+      // A countdown needs no words: with none (or no "{n}") it shows the number alone.
+      let text = counting && args.count <= 2 ? "" : try arg(2, "text")
+      guard counting || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CLIError("write the text to add") }
       var l = TextLayers.new(text: text, like: r.firstLayer)
-      try options.apply(to: &l)
+      try options.apply(to: &l, trimDuration: trim.duration)
       guard let next = TextLayers.adding(l, to: ver, resolved: r) else {
         throw CLIError("\(v.tag) already has \(TextLayers.maxCount) texts, the most a clip can have")
       }
-      return try finish(next, "\(v.tag) v\(number): added text \(r.allLayers.count + 1) [\(l.id)] \"\(Captions.oneLine(text))\"")
+      let what = l.countdown.map { n in "a countdown from \(n) [\(l.id)]" } ?? "text \(r.allLayers.count + 1) [\(l.id)] \"\(Captions.oneLine(text))\""
+      return try finish(next, "\(v.tag) v\(number): added \(what)")
 
     case "set":
       let l = try target(2)
+      if (options.countdown ?? nil) != nil, v.isPhoto { throw CLIError("a photo post can't count down: a countdown needs time, and a photo has none") }
       var thrown: Error?
       let next = TextLayers.updating(l.id, in: ver, resolved: r) { x in
         if args.count > 3 { x.text = args[3] }
-        do { try options.apply(to: &x) } catch { thrown = error }
+        do { try options.apply(to: &x, trimDuration: trim.duration) } catch { thrown = error }
       }
       if let thrown { throw thrown }
       return try finish(next, "\(v.tag) v\(number): updated text \(l.id == TextLayer.firstId ? "1" : l.id)")
@@ -187,6 +215,7 @@ enum OverlayCommand {
     if let f = o.font { parts.append(f) }
     if let a = o.opacity { parts.append(String(format: "opacity %.2f", a)) }
     if let t = o.tracking { parts.append(String(format: "tracking %.2f", t)) }
+    if let n = o.countdown { parts.append("counts down from \(n)") }
     return "\(pad(String(o.number), 3))\(pad(o.id, 10))\(pad(when, 14))\"\(Captions.oneLine(o.text))\"  \(parts.joined(separator: " · "))"
   }
 }

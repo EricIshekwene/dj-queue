@@ -294,10 +294,12 @@ public final class Renderer: RenderService, @unchecked Sendable {
       var textStart: Double?, textEnd: Double?
       /// nil (and absent from the JSON) for today's look, so an existing hash can't change.
       var look: TextLook? = nil
+      /// Round 26: nil (absent) for every text but a countdown, same reason.
+      var countdown: Int? = nil
 
       init(_ l: TextLayer) {
         text = l.text; style = l.style.rawValue; size = l.size; posX = l.posX; posY = l.posY; align = l.align.rawValue
-        textStart = l.start; textEnd = l.end; look = l.look?.normalized
+        textStart = l.start; textEnd = l.end; look = l.look?.normalized; countdown = l.countdown
       }
     }
     var pipeline: String

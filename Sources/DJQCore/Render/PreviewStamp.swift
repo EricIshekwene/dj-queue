@@ -96,6 +96,7 @@ public enum PreviewKeys {
     var parts = [l.text, l.style.rawValue, String(format: "%.3f", l.size), String(format: "%.4f", l.posX),
                  String(format: "%.4f", l.posY), l.align.rawValue, aspect.rawValue]
     if let look = l.look?.normalized { parts.append(JSONCoding.string(look)) }
+    if let n = l.countdown { parts.append("countdown \(n)") }
     return parts.joined(separator: "\u{1F}")
   }
 
@@ -117,16 +118,25 @@ public enum PreviewKeys {
   }
 
   /// Every drawn text with when it shows in a trim of `dur` seconds, in stacking order: the one rule the renderer and
-  /// every preview share (S1-R5). The first text follows `textWindow`. Another text starting at or past the end of the
+  /// every preview share (S1-R5). A countdown comes as one plain text per number (`TextLayer.steps`), each keeping the
+  /// countdown's id, so it is drawn, previewed and rendered exactly alike. The first text follows `textWindow`. Another text starting at or past the end of the
   /// trim, or with an inverted window, isn't drawn in that trim (per-platform trims), and its end is clamped.
   public static func layerWindows(_ v: ResolvedVersion?, trimDuration dur: Double) -> [(layer: TextLayer, window: ClosedRange<Double>)] {
     guard let v, dur > 0 else { return [] }
-    return v.layers.compactMap { l in
-      if l.id == TextLayer.firstId { return textWindow(v, trimDuration: dur).map { (l, $0) } }
+    return v.layers.flatMap { l -> [(layer: TextLayer, window: ClosedRange<Double>)] in
+      if l.id == TextLayer.firstId { return textWindow(v, trimDuration: dur).map { [(l, $0)] } ?? [] }
       let ts = max(0, l.start ?? 0)
       let te = min(dur + 1, l.end ?? (dur + 1))
-      return ts >= dur || te <= ts ? nil : (l, ts...te)
+      return ts >= dur || te <= ts ? [] : l.steps(in: ts...te, trimDuration: dur)
     }
+  }
+
+  /// When a text shows as a whole (a countdown from its first number to its last), from `layerWindows`. Nil when it
+  /// isn't drawn in this trim.
+  public static func window(of id: String, in windows: [(layer: TextLayer, window: ClosedRange<Double>)]) -> ClosedRange<Double>? {
+    let mine = windows.filter { $0.layer.id == id }.map(\.window)
+    guard let a = mine.map(\.lowerBound).min(), let b = mine.map(\.upperBound).max() else { return nil }
+    return a...b
   }
 
   /// The texts on a cover `offset` seconds after the trim start: the ones showing at that frame, else the first text
