@@ -28,6 +28,7 @@ struct EditorCaptionSection: View {
         hashtags(r)
         if !model.isPhoto { youtube(r) }  // round 21 (D8): a photo post never goes to YouTube
         ownCaptions(r)
+        EditorDefaultsArea(model: model)  // round 29: this setup → New clip defaults
       }
     }
     .onAppear { syncDrafts() }
@@ -87,7 +88,7 @@ struct EditorCaptionSection: View {
     let selected = model.selectedTemplate, off = model.groupsOffReason
     return DSXMenuButton(tooltip: off ?? "Template actions", size: .sm) {
       if let t = model.defaultCandidate {
-        Button("Set “\(t.name)” as default") { model.setDefaultTemplate(t.id) }
+        Button("Make “\(t.name)” the default…") { dsWithAnimation { model.openDefaultsForm(only: .template) } }
           .disabled(off != nil)
       }
       Button("New template…") { dsWithAnimation { model.openTemplateForm() } }

@@ -177,6 +177,8 @@ final class EditorModel: ObservableObject {
   @Published var openPlatformCaption: Platform?
   /// The hashtag group form, when it's open.
   @Published var groupForm: EditorGroupForm?
+  /// Round 29: the "Make default…" form under the Caption section.
+  @Published var defaultsForm: EditorDefaultsForm?
   var appHooks = EditorAppHooks()
   var onDeleteGroup: ((HashtagSet) -> Void)? { appHooks.deleteGroup }
   var onDeleteTemplate: ((CaptionTemplate) -> Void)? { appHooks.deleteTemplate }
@@ -322,6 +324,7 @@ final class EditorModel: ObservableObject {
     fileURL = nil
     openPlatformCaption = nil
     groupForm = nil
+    defaultsForm = nil
     titleDraft = nil
     selectedTextRaw = TextLayer.firstId
     textSelectionShown = true
@@ -1011,7 +1014,7 @@ final class EditorModel: ObservableObject {
   }
 
   /// Versions changed under the editor (a freeze, or Undo of one): the history no longer applies to them.
-  private func replaceVersions(_ fresh: [Version]) {
+  func replaceVersions(_ fresh: [Version]) {
     versions = fresh
     syncedVersions = fresh
     clearUndo()
@@ -1021,7 +1024,7 @@ final class EditorModel: ObservableObject {
 
   /// One journaled write through the core path, after the session so far and any pending editor saves; the chips re-read
   /// the table.
-  private func writeGroup(failure: String = "Couldn't save the group", _ write: @escaping @Sendable (Store, BulkActions) throws -> HashtagGroups.Change) -> HashtagGroups.Change? {
+  func writeGroup(failure: String = "Couldn't save the group", _ write: @escaping @Sendable (Store, BulkActions) throws -> HashtagGroups.Change) -> HashtagGroups.Change? {
     appHooks.beforeGroupWrite?()
     flush()
     let store = store
@@ -1038,6 +1041,13 @@ final class EditorModel: ObservableObject {
       show("\(failure): \(error.localizedDescription)")
       return nil
     }
+  }
+
+  /// Round 29: "Make default…" wrote this clip too (its versions or platforms now say the old defaults explicitly).
+  func reloadAfterDefaults(touched: Bool) {
+    guard touched else { fieldRevision &+= 1; return }
+    if let e = try? store.edit(videoId: videoId) { edit = e }
+    replaceVersions((try? store.versions(videoId: videoId)) ?? versions)
   }
 
   /// Makes `id` the default template, through the core path: this clip's own choice stays, and the Default label follows.

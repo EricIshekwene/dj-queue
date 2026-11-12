@@ -18,6 +18,7 @@ import SwiftUI
 ///   `DJQ_EDITOR_KEYS_SCRIPT=<dir>` drives the editor's keys and the arrow step (`EditorKeysScript`, round 19);
 ///   `DJQ_TRIM_MARKERS_SCRIPT=<dir>` drives the trim handles, zoom and M markers (`TrimMarkersScript`, round 24);
 ///   `DJQ_EDITOR_TEMPLATE_SCRIPT=<dir>` drives the template actions and part chips (`EditorTemplateScript`);
+///   `DJQ_EDITOR_DEFAULTS_SCRIPT=<dir>` drives "Make default for new clips…" (`EditorDefaultsScript`, round 29);
 ///   `DJQ_TEXT_LAYERS_SCRIPT=<dir>` drives timed texts end to end, export included (`TextLayersScript`);
 ///   `DJQ_REPOST_READY_SCRIPT=<dir>` drives Ready to repost and bulk edits on versions (`RepostReadyScript`);
 ///   `DJQ_TEXT_FIELDS_SCRIPT=<dir>` clicks and types in every kind of multi-line box (`TextFieldsScript`, round 25);
@@ -72,6 +73,9 @@ enum EditorSnapshot {
       }
       if let dir = env["DJQ_EDITOR_TEMPLATE_SCRIPT"] {
         return await EditorTemplateScript.run(store: store, video: pick.id, ids: ids, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
+      }
+      if let dir = env["DJQ_EDITOR_DEFAULTS_SCRIPT"] {
+        return await EditorDefaultsScript.run(store: store, video: pick.id, ids: ids, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
       }
       if let dir = env["DJQ_SETTINGS_GROUP_SCRIPT"] {
         return await SettingsGroupScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
