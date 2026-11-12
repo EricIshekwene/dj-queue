@@ -51,10 +51,11 @@ struct EditorTimeline: View {
             ZStack(alignment: .topLeading) {
               EditorRuler(model: model, playback: playback, width: w)
               EditorMarkLines(model: model, width: w, top: Self.rulerH, height: tracksHeight - Self.rulerH)
-              EditorTextTrack(model: model, playback: playback, width: w)
-                .offset(y: textY)
               EditorFilmTrack(model: model, playback: playback, strip: strip, width: w)
                 .offset(y: filmY)
+              // Text after the film: in the full window something of the film track took the mouse over the text row.
+              EditorTextTrack(model: model, playback: playback, width: w)
+                .offset(y: textY)
               ForEach(Array(lanes.enumerated()), id: \.element) { i, p in
                 EditorTrimLane(model: model, platform: p, width: w)
                   .offset(y: filmY + Self.filmH + Self.gap + CGFloat(i) * (Self.laneH + 4))
