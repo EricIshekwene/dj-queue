@@ -16,10 +16,18 @@ the old cap of 12.
    full-size text images, and the canvas was rebuilt from the cache after drawing, so drawing the 20th evicted an image
    still on screen. `refreshOverlay` now holds the on-screen and cached images before it draws. The hidden check adds
    texts up to 32 and asserts every one has its image, and toggles No text on 31 texts and asserts all come back.
-   Memory: what's on the canvas is held (8 MB a text at 1080 wide), so a 32-text clip holds about 260 MB while open.
+   Memory: what's on the canvas is held (8 MB a text at 1080 wide), so a 32-text clip holds about 260 MB while open,
+   and each countdown number is an image too (a quiz with three 3-counts: 26 images). 32 texts of 10-counts would be
+   about 2.5 GB; nobody builds that, so there's no extra cap, but cropping the editor's text images to their bounds is
+   the follow-up if it ever matters. An old picture shown while a text's new one draws is marked a placeholder and is
+   never taken as the new key's image (review finding: a quick second edit could otherwise freeze the old pixels).
+   List tiles: their overlay cache went from 64 MB to 256 MB (about 2 MB a 540-wide image), so 32-text tiles don't
+   evict each other.
 4. **A countdown is one text** (the optional ask, built because it fits the quiz). `--countdown N` (2–10) shows N, …, 1
    in equal steps of its window, one second each by default, ending at `--end`. Rendered by expanding into plain texts in
-   `PreviewKeys.layerWindows`, the one window rule every preview and the renderer share, so preview == export.
+   `PreviewKeys.layerWindows`, the one window rule every preview and the renderer share, so preview == export. Inner
+   step boundaries sit on the millisecond and each number ends 10 µs before the next (the filter graph prints such a
+   time with six decimals), so at any frame rate a frame shows exactly one number.
 5. **Words around the number with `{n}`.** An empty text, or one with no `{n}`, shows the number alone; `"Next song in
    {n}"` shows the words. Chosen over appending the number so the typed words can sit anywhere.
 6. **Not on text 1, not on photo posts.** Text 1 is the Title-follow / `{text}` / YouTube-title text, and a countdown
@@ -27,8 +35,12 @@ the old cap of 12.
 7. **Editor control: Countdown · Off / 3 / 5 / 10** under the text field of any text after the first, like a camera's
    self-timer (Mobbin reference: Future Pro's Timer Off · 5s · 10s). Turning it on gives the text one second a number,
    ending where it ended; changing the count or turning it off keeps its window; the bar reads "3 · 2 · 1". A count set
-   through `djq` that isn't one of those gets its own segment.
-8. **Edit hashes.** `countdown` is absent from stored JSON and from the render hash when nil: existing clips don't
+   through `djq` that isn't one of those gets its own segment. `djq overlay set --countdown N` on a countdown keeps its
+   window too, unless `--end` is given. Duplicate copies the countdown; Delete on text 1 says why when only countdowns
+   follow it (one can't become text 1).
+8. **Remove audio.** A photo video's countdown becomes a plain text with its first number when it turns back into a
+   photo post (a photo has no time to count in, and the editor hides Countdown on photos).
+9. **Edit hashes.** `countdown` is absent from stored JSON and from the render hash when nil: existing clips don't
    re-render and the golden hash tests are unchanged.
 
 Not covered by a check: the step-to-step change while playing (the hidden checks seek, they don't play), which the

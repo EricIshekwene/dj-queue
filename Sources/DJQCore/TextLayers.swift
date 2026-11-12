@@ -188,22 +188,28 @@ public struct TextLayer: Codable, Sendable, Hashable, Identifiable {
 
   /// A countdown as the plain texts it draws, one per number, each with its step of `window` (seconds from the trim
   /// start, `PreviewKeys.layerWindows`' rule): `countdown` equal steps from its high number down to 1. Each step but the
-  /// last ends a millisecond early, so two numbers never share a frame (the renderer's windows include both ends).
+  /// last ends `stepGap` before the next begins, so two numbers never share a frame (the renderer's windows include
+  /// both ends) and no frame falls between them (frames are 33 ms apart; `Renderer.overlayGraph` keeps the digits).
   /// Every other text is itself, with `window`.
   public func steps(in window: ClosedRange<Double>, trimDuration d: Double) -> [(layer: TextLayer, window: ClosedRange<Double>)] {
     guard let n = countdown else { return [(self, window)] }
     let a = window.lowerBound, b = max(a, min(window.upperBound, d))
     let len = (b - a) / Double(n)
     guard len > 0 else { return [] }
+    // Inner boundaries on the millisecond, so the renderer's three-decimal times are exact and the gap stays `stepGap`.
+    func boundary(_ k: Int) -> Double { k == 0 ? a : ((a + Double(k) * len) * 1000).rounded() / 1000 }
     return (0..<n).map { k in
       var l = self
       l.countdown = nil
       l.text = countdownText(n - k)
-      let s = a + Double(k) * len
-      let e = k == n - 1 ? window.upperBound : max(s, a + Double(k + 1) * len - 0.001)
+      let s = boundary(k)
+      let e = k == n - 1 ? window.upperBound : max(s, boundary(k + 1) - Self.stepGap)
       return (l, s...e)
     }
   }
+
+  /// How much earlier than the next number a countdown's number ends: far below a frame, so no frame falls between.
+  public static let stepGap = 0.00001
 }
 
 extension ResolvedVersion {
@@ -315,11 +321,9 @@ public enum TextLayers {
     return out
   }
 
-  /// For a new version copied from `r`: its texts and look stay what `r` shows, even when a later version changed them
-  /// (`moreText` and `textLook` would otherwise inherit from the version before the new one).
   /// A countdown's window for `count` from a text's current `span` (seconds from the trim start, `TextTimeline.span`)
-  /// in a trim of `d` seconds: one second a number, ending where the text ends, or starting where it starts when there's
-  /// no room before the end.
+  /// in a trim of `d` seconds: one second a number, ending where the text ends, or from the start of the trim when
+  /// there's no room before that end.
   public static func countdownWindow(_ count: Int, span: TextTimeline.Span, trimDuration d: Double) -> TextTimeline.Span {
     let len = min(Double(count), d)
     let end = min(span.end, d)
@@ -335,6 +339,8 @@ public enum TextLayers {
       .split(whereSeparator: \.isNewline).joined(separator: " ") : numbers
   }
 
+  /// For a new version copied from `r`: its texts and look stay what `r` shows, even when a later version changed them
+  /// (`moreText` and `textLook` would otherwise inherit from the version before the new one).
   public static func copyAdvanced(into v: inout Version, from r: ResolvedVersion) {
     v.moreText = r.moreText
     v.textLook = r.textLook ?? TextLook()

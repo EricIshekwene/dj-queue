@@ -112,7 +112,8 @@ struct EditorTextSection: View {
         DSSegmented(selection: Binding(get: { l.countdown ?? 0 }, set: { n in model.setSelectedCountdown(n == 0 ? nil : n) }),
                     segments: [DSSegment(value: 0, title: "Off", tooltip: "A plain text", disabledReason: off)]
                       + counts.map { n in
-                        DSSegment(value: n, title: "\(n)", tooltip: "Count \(TextLayers.countdownLabel(TextLayer(text: ""), from: n)), one number a second, ending where this text ends",
+                        DSSegment(value: n, title: "\(n)", tooltip: l.countdown == nil ? "Count \(TextLayers.countdownLabel(TextLayer(text: ""), from: n)), one number a second, ending where this text ends"
+                                                            : "Count \(TextLayers.countdownLabel(TextLayer(text: ""), from: n)) across this text's time",
                                   disabledReason: off)
                       },
                     size: .sm, fullWidth: true)

@@ -1838,12 +1838,16 @@ final class EditorModel: ObservableObject {
     let before = Dictionary(textImages.map { ($0.id, $0.drawn) }) { x, _ in x }
     // What is on the canvas now and what the cache has now, by key, held here: drawing the missing ones can evict
     // others from the cache before `build` reads it, and an image stays usable while it's held.
-    var current = Dictionary(textImages.map { ($0.key, $0.drawn) }) { x, _ in x }
+    var current = Dictionary(textImages.filter { !$0.placeholder }.map { ($0.key, $0.drawn) }) { x, _ in x }
     for w in wanted where current[w.key] == nil { current[w.key] = Self.drawnTexts.value(w.key) }
+    // An old picture kept under a new key while its new one draws is a placeholder: never taken as that key's image.
     let build: ([String: EditorDrawnText], Bool) -> [EditorTextImage] = { [current] fresh, useOld in
       wanted.compactMap { w in
-        guard let d = fresh[w.key] ?? current[w.key] ?? Self.drawnTexts.value(w.key) ?? (useOld ? before[w.id] : nil) else { return nil }
-        return EditorTextImage(id: w.id, layerId: w.layer.id, key: w.key, drawn: d, window: w.window, step: w.step)
+        if let d = fresh[w.key] ?? current[w.key] ?? Self.drawnTexts.value(w.key) {
+          return EditorTextImage(id: w.id, layerId: w.layer.id, key: w.key, drawn: d, window: w.window, step: w.step)
+        }
+        guard useOld, let d = before[w.id] else { return nil }
+        return EditorTextImage(id: w.id, layerId: w.layer.id, key: w.key, drawn: d, window: w.window, step: w.step, placeholder: true)
       }
     }
     var seen = Set<String>()
@@ -1940,7 +1944,10 @@ final class EditorModel: ObservableObject {
     let r = resolved
     if !selectedIsFirst { return nil }
     if r.moreText.isEmpty { return "The only text can't be deleted; use No text" }
-    return r.moreText.contains { !$0.isBlank } ? nil : "Type in another text first, or use No text"
+    if r.moreText.contains(where: { !$0.isBlank && $0.countdown == nil }) { return nil }
+    // Round 26: a countdown never becomes text 1 (it would count down in captions and titles).
+    return r.moreText.contains { $0.countdown != nil } ? "A countdown can't be text 1; type in a plain text first, or use No text"
+                                                       : "Type in another text first, or use No text"
   }
 
   /// Appends `l` and selects it. A text sharing the time of the one it copies goes just below it, or neither could be read.
@@ -1971,7 +1978,9 @@ final class EditorModel: ObservableObject {
     if isPhoto, like.start == nil, like.end == nil { add(TextLayers.new(text: like.text, like: like), overlapping: true); return }
     defer { if isPhoto { showSelectedTextPhoto() } }  // the copy may sit on the next photo: the canvas goes there
     let (w, overlaps) = TextTimeline.duplicateWindow(TextTimeline.span(like, trimDuration: trim.duration), trimDuration: trim.duration)
-    add(TextLayers.new(text: like.text, like: like, start: w.start, end: w.end), overlapping: overlaps)
+    var copy = TextLayers.new(text: like.text, like: like, start: w.start, end: w.end)
+    copy.countdown = like.countdown  // a copy of a countdown counts down too
+    add(copy, overlapping: overlaps)
   }
 
   /// Deletes the selected text. Deleting the first text moves the next one into its place.
@@ -2101,6 +2110,8 @@ struct EditorTextImage: Identifiable {
   var window: ClosedRange<Double>?
   /// Which number of a countdown this is, from 0 (its highest); nil for every other text.
   var step: Int? = nil
+  /// The text's previous picture, shown until the one for `key` is drawn.
+  var placeholder = false
 
   var image: CGImage { drawn.image }
   var bounds: CGRect { drawn.bounds }

@@ -82,12 +82,17 @@ enum OverlayCommand {
         if l.id == TextLayer.firstId, countdown != nil {
           throw CLIError("text 1 can't count down: add the countdown as its own text (djq overlay add <video> --countdown 3)")
         }
+        let was = l.countdown
         l.countdown = countdown
-        if let n = countdown, start == nil {
-          // Ends where asked, else where the text already ends (a new text: the end of the trim).
+        // Turning a countdown on with no --start: one second a number, ending at --end, else where the text already
+        // ends (a new text: the end of the trim). From --start with no --end: one second a number from there. Changing
+        // the count of a countdown keeps its window, as the editor does.
+        if let n = countdown, start == nil, was == nil || end != nil {
           let endAt = end.map { $0 ?? d } ?? TextTimeline.span(l, trimDuration: d).end
           let w = TextLayers.countdownWindow(n, span: (0, endAt), trimDuration: d)
           l.start = w.start; l.end = w.end
+        } else if let n = countdown, let s = start ?? nil, end == nil, was == nil {
+          l.start = s; l.end = min(d, s + Double(n))
         }
       }
       if let start { l.start = start }
@@ -193,6 +198,9 @@ enum OverlayCommand {
     default:  // remove
       let l = try target(2)
       guard let next = TextLayers.removing(l.id, from: ver, resolved: r) else {
+        if l.id == TextLayer.firstId, r.moreText.contains(where: { $0.countdown != nil }) {
+          throw CLIError("a countdown can't be text 1, and \(v.tag) has no other text with words: add one first, or use djq text \(short(v.id)) --none")
+        }
         throw CLIError("that's the only text on \(v.tag): use djq text \(short(v.id)) --none for no text, or --default to follow the Title")
       }
       return try finish(next, l.id == TextLayer.firstId

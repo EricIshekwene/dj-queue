@@ -400,7 +400,10 @@ struct EditorZonesCanvas: View {
           let dimmed = model.isPhoto ? [] : model.textImages.filter {
             !$0.shows(at: playback.time) && $0.fadesWhenHidden && !showing.contains($0.layerId) && ($0.layerId == model.selectedText || $0.layerId == drag?.id)
           }
-          ForEach(dimmed + on) { t in textHandle(t, in: out) }
+          // One handle a text: a countdown's handle stays the same view as its numbers change, so a drag survives them.
+          var seen = Set<String>()
+          let handles = (dimmed + on).filter { seen.insert($0.layerId).inserted }
+          ForEach(handles, id: \.layerId) { t in textHandle(t, in: out) }
         }
         if snapX || snapY { guides(in: out) }
         if !playback.ready { DSSpinner(size: 16).position(x: geo.size.width / 2, y: geo.size.height / 2) }

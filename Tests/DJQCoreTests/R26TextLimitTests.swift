@@ -15,7 +15,7 @@ private func resolve(_ v: Version) -> ResolvedVersion {
     let s = l.steps(in: 7...10, trimDuration: 20)
     #expect(s.map(\.layer.text) == ["3", "2", "1"])
     #expect(s.allSatisfy { $0.layer.id == "c" && $0.layer.countdown == nil })
-    #expect(abs(s[0].window.lowerBound - 7) < 1e-9 && abs(s[0].window.upperBound - 7.999) < 1e-9)
+    #expect(abs(s[0].window.lowerBound - 7) < 1e-9 && abs(s[0].window.upperBound - (8 - TextLayer.stepGap)) < 1e-9)
     #expect(abs(s[1].window.lowerBound - 8) < 1e-9 && abs(s[2].window.lowerBound - 9) < 1e-9)
     #expect(s[2].window.upperBound == 10)
     // No two numbers share an instant: each ends before the next begins.
@@ -23,6 +23,22 @@ private func resolve(_ v: Version) -> ResolvedVersion {
     // A plain text is itself.
     let plain = TextLayer(id: "p", text: "Hi")
     #expect(plain.steps(in: 1...2, trimDuration: 5).map(\.layer) == [plain])
+  }
+
+  /// Inner boundaries sit on the millisecond, so the renderer's times are exact; a number ends `stepGap` before the next
+  /// (printed with six decimals), so no frame shows two numbers or none.
+  @Test func stepBoundariesAreFrameExactInTheFilterGraph() {
+    let s = TextLayer(id: "c", text: "", countdown: 3).steps(in: 0...2, trimDuration: 5)
+    #expect(s.map(\.window.lowerBound) == [0, 0.667, 1.333])
+    let g = Renderer.overlayGraph(s.map(\.window))
+    #expect(g.contains("between(t,0.000,0.666990)") && g.contains("between(t,0.667,1.332990)") && g.contains("between(t,1.333,2.000)"))
+    // Frames at 30 fps land in exactly one step each.
+    for k in 0..<60 {
+      let t = Double(k) / 30
+      #expect(s.filter { $0.window.contains(t) }.count == 1, "frame \(k)")
+    }
+    // A plain text's window prints as before.
+    #expect(Renderer.time(1.5) == "1.500" && Renderer.time(86400) == "86400.000")
   }
 
   @Test func theNumberGoesWhereNIsElseAlone() {
@@ -223,14 +239,22 @@ private final class Quiz {
 
     // Words around the number, a different count, then off (its window stays).
     let id = try #require(l[1]["id"] as? String)
-    r = try env.djq("overlay", "set", "clip-0", id, "Next in {n}", "--countdown", "5")
+    r = try env.djq("overlay", "set", "clip-0", id, "Next in {n}", "--countdown", "5")  // a new count keeps the window
     #expect(r.status == 0, "\(r.err)")
     l = try list(env)
-    #expect(l[1]["countdown"] as? Int == 5 && l[1]["text"] as? String == "Next in {n}" && l[1]["start"] as? Double == 5)
+    #expect(l[1]["countdown"] as? Int == 5 && l[1]["text"] as? String == "Next in {n}" && l[1]["start"] as? Double == 7)
+    r = try env.djq("overlay", "set", "clip-0", id, "--countdown", "5", "--end", "12")  // with --end: the last 5 s before it
+    l = try list(env)
+    #expect(r.status == 0 && l[1]["start"] as? Double == 7 && l[1]["end"] as? Double == 12)
     r = try env.djq("overlay", "set", "clip-0", id, "--countdown", "off")
     #expect(r.status == 0, "\(r.err)")
     l = try list(env)
-    #expect(l[1]["countdown"] == nil && l[1]["start"] as? Double == 5 && l[1]["end"] as? Double == 10)
+    #expect(l[1]["countdown"] == nil && l[1]["start"] as? Double == 7 && l[1]["end"] as? Double == 12)
+
+    // From --start with no --end: one second a number from there.
+    r = try env.djq("overlay", "add", "clip-0", "--countdown", "3", "--start", "2")
+    l = try list(env)
+    #expect(r.status == 0 && l[2]["start"] as? Double == 2 && l[2]["end"] as? Double == 5)
 
     // Refusals: the first text, an out-of-range count, plain text with no words.
     r = try env.djq("overlay", "set", "clip-0", "1", "--countdown", "3")
@@ -239,6 +263,10 @@ private final class Quiz {
     #expect(r.status != 0 && r.err.contains("--countdown"))
     r = try env.djq("overlay", "add", "clip-0", "   ")
     #expect(r.status != 0 && r.err.contains("write the text"))
+    // Text 1 with only countdowns after it can't be removed, and says why.
+    try env.djq("overlay", "remove", "clip-0", id)
+    r = try env.djq("overlay", "remove", "clip-0", "1")
+    #expect(r.status != 0 && r.err.contains("a countdown can't be text 1"), "\(r.err)")
   }
 
   /// The quiz layout from the request: header, three questions of six texts (question, 3-2-1, wrong, right) and a
@@ -262,5 +290,23 @@ private final class Quiz {
     let r = try env.djq("overlay", "add", "clip-0", "Thirty-three")
     #expect(r.status != 0 && r.err.contains("already has 32 texts"))
     #expect(try list(env).count == 32)
+  }
+}
+
+/// A photo with audio is a video, so it can count down; taking the audio off makes it a photo post again, where a
+/// countdown has no time: it becomes a plain text with its first number.
+@Suite(.enabled(if: Tone.haveTools, "ffmpeg and ffprobe aren't installed")) struct R26PhotoAudioCountdownTests {
+  @Test func removeAudioTurnsACountdownIntoItsFirstNumber() throws {
+    let f = try Fixture(clips: [], longform: false)
+    let made = try f.still(seconds: 3)
+    var one = Version(number: 1)
+    one.text = "Loft nights"
+    one.moreText = [TextLayer(id: "c", text: "Next in {n}", start: 0, end: 3, countdown: 3), TextLayer(id: "p", text: "Plain")]
+    try f.store.save(one, videoId: made.id)
+    let v = try StillVideo(store: f.store).removeAudio(videoId: made.id).video
+    #expect(v.isPhoto)
+    let r = try #require(try f.store.resolvedVersion(videoId: v.id, number: 1))
+    #expect(r.moreText.map(\.text) == ["Next in 3", "Plain"] && r.moreText.allSatisfy { $0.countdown == nil && $0.start == nil })
+    #expect(PhotoRules.layers(r, onPhoto: 0, of: 1).map(\.text) == ["Loft nights", "Next in 3", "Plain"])
   }
 }

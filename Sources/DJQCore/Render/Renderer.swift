@@ -388,6 +388,12 @@ public final class Renderer: RenderService, @unchecked Sendable {
   /// Appended to the picture chain: PNG input `i + 1` over it during `windows[i]`, each over the last, so overlaps stack
   /// in list order. Empty with no texts. The chain ends without an output label, and with one text this is the graph
   /// every earlier render used.
+  /// A window time for `overlayGraph`: three decimals as always, six when three would round it (a countdown's numbers
+  /// end `TextLayer.stepGap` before the next begins, round 26), so no number shares a frame with the next.
+  static func time(_ d: Double) -> String {
+    abs(d * 1000 - (d * 1000).rounded()) < 1e-6 ? f(d) : String(format: "%.6f", d)
+  }
+
   static func overlayGraph(_ windows: [ClosedRange<Double>]) -> String {
     guard !windows.isEmpty else { return "" }
     var inputs = "", chain = "", below = "bg"
@@ -395,7 +401,7 @@ public final class Renderer: RenderService, @unchecked Sendable {
       let ov = i == 0 ? "ov" : "ov\(i)"
       inputs += "[\(i + 1):v]format=rgba,scale=out_color_matrix=bt709:out_range=tv,format=yuva420p[\(ov)];"
       chain += "[\(below)][\(ov)]overlay=0:0:format=yuv420:eof_action=repeat"
-        + ":enable='between(t,\(f(w.lowerBound)),\(f(w.upperBound)))'"
+        + ":enable='between(t,\(time(w.lowerBound)),\(time(w.upperBound)))'"
       if i < windows.count - 1 {
         below = "o\(i)"
         chain += "[\(below)];"

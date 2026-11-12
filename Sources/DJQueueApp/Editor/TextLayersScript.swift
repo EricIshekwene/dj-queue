@@ -637,8 +637,17 @@ enum TextLayersScript {
       guard let l = saved()?.moreText.first(where: { $0.id == id }) else { check("the countdown saved", false); return }
       check("a click on 3 makes it count down from 3", l.countdown == 3)
       let span = TextTimeline.span(l, trimDuration: e.trim.duration)
-      e.setSelectedSize(110)  // big enough to read in the shots
-      await wait(300)
+      // Big, a white box, and clear of the other texts, to read in the shots. Straight after the size change (its new
+      // images still drawing) another text's window moves: the canvas must still end up with every image drawn for
+      // its own key, never the old picture kept as a stand-in (review finding 1).
+      e.setSelectedStyle(.box)
+      e.setSelectedSize(110)
+      e.moveText(id, x: 0.5, y: 0.45)
+      if let other = e.resolved.moreText.first(where: { $0.id != id && $0.countdown == nil }) {
+        e.updateText(other.id) { $0.end = ($0.end ?? e.trim.duration) - 0.2 }
+      }
+      for _ in 0..<12 where e.textImages.contains(where: \.placeholder) { await wait(250) }
+      check("every text image is drawn for its own key after quick edits", !e.textImages.contains(where: \.placeholder))
       check("one second a number, ending where the text ended (\(span.start)–\(span.end))", near(span.end - span.start, 3, 0.01) && near(span.end, 7, 0.05))
       check("its bar reads 3 · 2 · 1", e.textBars.bars.first { $0.id == id }?.label == "3 · 2 · 1")
       await wait(800)
@@ -661,6 +670,16 @@ enum TextLayersScript {
       check("the words are kept with the countdown", saved()?.moreText.first { $0.id == id }?.text == "Next in {n}")
       check("its bar reads Next in 3 · 2 · 1", e.textBars.bars.first { $0.id == id }?.label == "Next in 3 · 2 · 1")
       await shot("countdown-with-words")
+      // Duplicate keeps it a countdown (review finding 4).
+      let before = e.texts.count
+      e.duplicateText()
+      await wait(400)
+      let copy = saved()?.moreText.last
+      check("Duplicate of a countdown counts down too", e.texts.count == before + 1 && copy?.countdown == 3 && copy?.id != id)
+      if let c = copy?.id { e.selectText(c); e.deleteText() }
+      e.selectText(id)
+      window.makeFirstResponder(nil)  // Duplicate puts the keyboard in the text field; ⌘Z is the editor's here
+      await wait(400)
       await clickSegment("Countdown", 0, of: 4)
       await wait(500)
       check("Off makes it a plain text again, window kept", saved()?.moreText.first { $0.id == id }.map { $0.countdown == nil && near($0.start, span.start, 0.01) } == true)

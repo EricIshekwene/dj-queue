@@ -114,10 +114,12 @@ djq overlay remove <video> <number|id> [--version N]
   marker-felt american-typewriter`.
 - A new text starts with the first text's style, size, position and look. Give `--y` so it doesn't sit on top of it.
 - **Countdown (round 26):** `--countdown N` makes one text show N, …, 2, 1 in equal steps across its window, in one
-  slot. With no `--start` it takes the last N seconds before `--end` (or before where the text ends; a new text: the end
-  of the trim), one second a number. The text is optional: empty or without `{n}` the number shows alone; `{n}` is where
+  slot. Turning it on with no `--start` takes the last N seconds before `--end` (or before where the text ends; a new
+  text: the end of the trim), one second a number; `--start S` alone gives S to S+N. A new count on a countdown keeps its
+  window unless `--end` is given. The text is optional: empty or without `{n}` the number shows alone; `{n}` is where
   the number goes (`"Next song in {n}"`). `--countdown off` makes it a plain text again and keeps its window. Text 1 and
-  photo posts can't count down. A quiz question (question, 3-2-1, wrong options red, right one green) is 4 texts this
+  photo posts can't count down, and a countdown never moves into text 1 (`remove 1` refuses when only countdowns follow).
+  Taking the audio off a photo video turns its countdowns into plain texts with their first number. A quiz question (question, 3-2-1, wrong options red, right one green) is 4 texts this
   way instead of 6: `djq overlay add <video> --countdown 3 --end 9 --y 0.5 --size 140`.
 - `djq overlay remove <video> 1` moves the next text into first place (never a countdown). On the only text it refuses: use `djq text --none`.
 - `djq text --none` hides every text and keeps the extras stored; turning it off brings them back.
