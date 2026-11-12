@@ -888,7 +888,8 @@ final class EditorModel: ObservableObject {
     if !all.contains(where: { $0.number == versionNo }) {
       // Round 27: a version that isn't there yet starts as a copy of the one before it, standing alone.
       let prev = all.map(\.number).filter { $0 < versionNo }.max() ?? 1
-      all.append(versionNo == 1 ? Version(number: 1) : VersionCopy.duplicate(all, source: prev, as: versionNo, settings: settings, video: video))
+      all.append(versionNo == 1 ? Version(number: 1) : VersionCopy.duplicate(all, source: prev, as: versionNo, settings: settings, video: video,
+                                                                                    newIds: false))
       inserted = true
     }
     guard let i = all.firstIndex(where: { $0.number == versionNo }) else { return }

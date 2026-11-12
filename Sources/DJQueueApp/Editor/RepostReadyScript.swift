@@ -167,7 +167,16 @@ enum RepostReadyScript {
       a.loaded = true
       a.screen = .edit
       let shorts = a.editList.filter { $0.type == .short && !$0.missing }
-      guard let v = shorts.first, let other = shorts.dropFirst().first else { check("two Edit clips", false); return }
+      // A clip with one version (the seed may give some Edit clips a v2 already), and any other Edit clip.
+      let single = shorts.filter { ((try? store.versions(videoId: $0.id)) ?? []).allSatisfy { $0.number == 1 } }
+      if single.isEmpty, let first = shorts.first {
+        // Every Edit clip in this seed has a v2 already: this scratch copy's first one goes back to v1 only.
+        for n in ((try? store.versions(videoId: first.id)) ?? []).map(\.number) where n > 1 { try? store.deleteVersion(videoId: first.id, number: n) }
+        note("every Edit clip had a v2: \(first.id.prefix(8))'s later versions were removed in this scratch copy")
+        a.refreshNow()
+      }
+      let ones = a.editList.filter { $0.type == .short && !$0.missing && ((try? store.versions(videoId: $0.id)) ?? []).allSatisfy { $0.number == 1 } }
+      guard let v = ones.first, let other = shorts.first(where: { $0.id != v.id }) else { check("an Edit clip with one version, and another", false); return }
       clip = v.id
       note("clip \(v.id.prefix(8)) “\(a.displayName(v))”")
       check("the clip starts with no version ready", ready().isEmpty)
@@ -316,7 +325,8 @@ enum RepostReadyScript {
                                       settings: s)
       }
       let captionBefore = shown(before)
-      check("v2 inherits its caption from v1 before the bulk edit", before.inherited.contains("captionTemplateId") || before.isDefault("captionTemplateId"))
+      // Round 27: v2 was made as a copy of v1 and holds its own caption from then on.
+      check("v2 holds its own copy of v1's caption before the bulk edit", raw(2)?.standalone == true && before.inherited.isEmpty)
 
       // The Caption dialog says captions change on v1 only.
       a.screen = .edit

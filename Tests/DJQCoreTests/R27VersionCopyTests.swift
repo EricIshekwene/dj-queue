@@ -119,6 +119,48 @@ import Testing
     #expect(try f.store.resolvedVersion(videoId: "clip-0", number: 2)?.captionTemplateId == "short")
   }
 
+  /// Review finding 5: a copy of a version that shows the Title keeps those words when the Title changes later.
+  @Test func aCopyPinsTheWordsItShowsEvenFromTheTitle() throws {
+    let f = try Fixture.engine(1)
+    try f.updateSettings { $0.defaults.textSource = .title }
+    try f.store.setTitle("clip-0", "First title")
+    try f.store.save(Version(number: 1), videoId: "clip-0")
+    let copy = VersionCopy.duplicate(try f.store.versions(videoId: "clip-0"), source: 1, as: 2, settings: try f.store.settings(),
+                                     video: try f.store.video(id: "clip-0"))
+    try f.store.save(copy, videoId: "clip-0")
+    #expect(try f.store.resolvedVersion(videoId: "clip-0", number: 2)?.text == "First title")
+    try f.store.setTitle("clip-0", "Second title")
+    #expect(try f.store.resolvedVersion(videoId: "clip-0", number: 2)?.text == "First title")
+  }
+
+  /// Review finding 2: undoing an older batch never brings back versions that follow v1.
+  @Test func undoingAnOldBatchSeparatesTheRestoredVersions() throws {
+    let f = try Fixture.engine(1)
+    var v2 = Version(number: 2)
+    v2.text = "Old v2"
+    let b = BulkActions(store: f.store)
+    // A batch whose journal holds a linked v2, as one from before round 27 would.
+    let r = try b.record("old-batch", ids: ["clip-0"], revalidate: false) {
+      try f.store.db.run("INSERT OR REPLACE INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?)",
+                         ["clip-0", 2, JSONCoding.string(v2), 1.0])
+    }
+    try f.store.db.run("UPDATE batches SET before=after WHERE id=?", [try #require(r.batchId)])
+    try f.store.db.run("DELETE FROM versions WHERE video_id='clip-0' AND number=2")
+    _ = try b.undo(try #require(r.batchId), force: true)
+    let restored = try #require(try f.store.versions(videoId: "clip-0").first { $0.number == 2 })
+    #expect(restored.standalone == true && restored.text == "Old v2" && restored.captionTemplateId == "short")
+  }
+
+  @Test func undoingTheSeparationNeedsForce() throws {
+    let f = try Fixture.engine(1)
+    let r = try BulkActions(store: f.store).record(VersionSeparationMigration.action, ids: ["clip-0"], revalidate: false) {
+      var v2 = Version(number: 2)
+      v2.standalone = true
+      try f.store.save(v2, videoId: "clip-0")
+    }
+    #expect(throws: (any Error).self) { try BulkActions(store: f.store).undo(try #require(r.batchId)) }
+  }
+
   // MARK: Schema 11
 
   @Test func schema11SeparatesOldVersionsWithoutChangingWhatTheyShow() throws {

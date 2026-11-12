@@ -616,8 +616,8 @@ public final class Store: @unchecked Sendable {
     // that predates it, or restored from an old journal) first gets what it shows now copied in, so nothing it shows
     // changes, and from then on no edit to another version reaches it.
     var v = v
-    if v.number > 1, v.standalone != true {
-      let others = try versions(videoId: videoId).filter { $0.number != v.number }
+    // An unreadable sibling row (Doctor reports it) never blocks the save: the version is then saved as given.
+    if v.number > 1, v.standalone != true, let others = try? versions(videoId: videoId).filter({ $0.number != v.number }) {
       v = VersionCopy.standingAlone(v, in: others + [v], settings: try settings())
     }
     try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?) ON CONFLICT(video_id,number) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",

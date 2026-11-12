@@ -118,7 +118,7 @@ struct EditorVersionList: View {
     VStack(alignment: .leading, spacing: 2) {
       Text("Versions").font(DS.type.headline).foregroundStyle(DS.color.text)
         .padding(.horizontal, DS.space.sm).padding(.top, DS.space.sm).padding(.bottom, DS.space.xxs)
-      Text("Each version is its own copy for a repost: editing one never changes another. Trim, crop and cover are shared by every version. Turn on each version that's ready to repost.")
+      Text("Each version is its own copy for a repost: editing one never changes another. The clip's Title, trim, crop, cover, size, markers and platforms are shared by every version. Turn on each version that's ready to repost.")
         .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, DS.space.sm).padding(.bottom, DS.space.xs)
       ForEach(model.versionNumbers, id: \.self) { n in row(n) }

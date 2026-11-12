@@ -130,7 +130,11 @@ enum OverlayCommand {
     if number > 1, !existing.contains(number), !existing.contains(number - 1) { throw CLIError("v\(number - 1) doesn't exist yet") }
     var chain = saved
     if !existing.contains(1) { chain.insert(Version(number: 1), at: 0) }
-    if !chain.contains(where: { $0.number == number }) { chain.append(Version(number: number)) }
+    // Round 27: a version that doesn't exist yet starts as a full copy of the one before it, standing alone.
+    if !chain.contains(where: { $0.number == number }) {
+      let prev = chain.map(\.number).filter { $0 < number }.max() ?? 1
+      chain.append(VersionCopy.duplicate(chain, source: prev, as: number, settings: settings, video: v))
+    }
     let ver = chain.first { $0.number == number }!
     let r = VersionResolver.resolve(chain, number: number, settings: settings, video: v)
     let trim = try store.resolvedEdit(videoId: v.id, settings: settings).trim()

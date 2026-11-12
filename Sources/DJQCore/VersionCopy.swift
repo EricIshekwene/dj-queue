@@ -6,22 +6,30 @@ import Foundation
 ///
 /// What a copy takes (DECISIONS-R27-VERSIONS.md): every text with its words, look, place and timing (a text that runs
 /// the whole clip still does), "No text", and the whole caption (written caption, template, hashtag groups, extra tags,
-/// YouTube title and template, per-platform captions). Fields the source leaves on the defaults stay on the defaults.
+/// YouTube title and template, per-platform captions). The on-video words are always pinned, even when the source
+/// shows the Title. Every other field the source leaves on the defaults stays on the defaults.
 /// Copied texts get their own ids. It never takes posting state: "Ready to repost" starts off, and posts, schedules and
 /// Postiz jobs belong to their version number, so a new number has none. Trim, crop, cover, aspect, markers and
 /// platforms aren't per version: they are one edit for the clip (round 20), shared by every version.
 public enum VersionCopy {
   /// A new version `number`: a copy of version `source` as `all` resolves it today, standing alone.
+  /// `newIds: false` keeps the copied texts' ids, for a caller that applies an edit by id straight after (the copy is
+  /// then written over a version the caller's resolution already showed).
   public static func duplicate(_ all: [Version], source: Int, as number: Int, settings: Settings,
-                               video: Video? = nil) -> Version {
+                               video: Video? = nil, newIds: Bool = true) -> Version {
     let base = all.first { $0.number == source } ?? Version(number: source)
     var v = standingAlone(base, in: all.contains { $0.number == source } ? all : all + [base], settings: settings,
                           video: video, alwaysOwn: true)
+    // The words on the video are what makes a version: a copy keeps the ones it shows even when the source follows
+    // the clip's Title (or "No text" by default), so a later Title edit can't change the copy's video.
+    let shown = VersionResolver.resolve(all.contains { $0.number == source } ? all : all + [base], number: source,
+                                        settings: settings, video: video)
+    if shown.isDefault("text") { v.text = shown.text; v.noText = shown.noText }
     v.number = number
     v.repostReady = nil
     v.captionsOwn = nil
     v.standalone = true
-    if let more = v.moreText { v.moreText = more.map { var l = $0; l.id = TextLayer.newId(); return l } }
+    if newIds, let more = v.moreText { v.moreText = more.map { var l = $0; l.id = TextLayer.newId(); return l } }
     return v
   }
 

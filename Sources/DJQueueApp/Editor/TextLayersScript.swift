@@ -856,7 +856,8 @@ enum TextLayersScript {
       e.selectVersion(copy)
       await wait(500)
 
-      e.selectText(late.id)  // the late text is in this copy of v1; the one edited above may not be
+      // The late text is in this copy of v1 (with its own id there: the copy's last text); the one edited above may not be.
+      e.selectText(e.resolved.moreText.last?.id ?? late.id)
       await wait(300)
       await typeInField("Show from", "1.5")
       e.selectVersion(1)
@@ -865,10 +866,16 @@ enum TextLayersScript {
       check("and doesn't reach the one selected next", raw(id)?.moreText?.last?.start == late.start)
 
       // Undo takes away the version a time was typed in: the time goes too, and Redo keeps what's typed off the one it leaves.
+      e.selectVersion(1)
+      await wait(500)
+      e.selectText(e.resolved.moreText.last?.id ?? late.id)
+      await wait(300)
       let stored = raw(id)?.moreText?.last?.start
       e.newVersion(copying: nil)
       await wait(600)
       let number = e.versionNo
+      e.selectText(e.resolved.moreText.last?.id ?? late.id)  // the copy's own id for that text
+      await wait(300)
       await typeInField("Show from", "2.5")
       await click("Undo")
       window.makeFirstResponder(nil)
@@ -877,6 +884,8 @@ enum TextLayersScript {
       check("a time typed in it doesn't land on the version Undo goes to (\(raw(id)?.moreText?.last?.start ?? -1))", raw(id)?.moreText?.last?.start == stored)
       e.flushAndWait()
       check("nor later", raw(id)?.moreText?.last?.start == stored)
+      e.selectText(e.resolved.moreText.last?.id ?? late.id)
+      await wait(300)
       await typeInField("Show from", "3.5")
       await click("Redo")
       window.makeFirstResponder(nil)
