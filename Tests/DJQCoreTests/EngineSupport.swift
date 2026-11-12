@@ -18,7 +18,7 @@ final class FakeRenderer: RenderService, @unchecked Sendable {
   func editHash(videoId: String, versionNo: Int, platform: Platform?) throws -> String {
     let e = try store.edit(videoId: videoId)
     let v = try store.resolvedVersion(videoId: videoId, number: versionNo)
-    let own = store.rawVersion(videoId: videoId, number: versionNo).map { JSONCoding.string([$0.trimIn, $0.trimOut]) } ?? ""
+    let own = store.rawVersion(videoId: videoId, number: versionNo).map { JSONCoding.string([$0.trimIn, $0.trimOut]) + JSONCoding.string($0.trimsByPlatform) } ?? ""
     let s = JSONCoding.string(e) + JSONCoding.string(v) + own + (try scope(videoId: videoId, versionNo: versionNo, platform: platform))
     return SHA256.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
   }

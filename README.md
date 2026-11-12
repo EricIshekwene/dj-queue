@@ -30,7 +30,7 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | **Every version in one list** | **Filters › Reposts: Ready to repost** |
 | ![Version list with Ready to repost switches](docs/media/repost-versions.jpg) | ![Library filtered to clips with a version ready to repost](docs/media/repost-filter.jpg) |
 
-**Every version is its own copy (v0.20.0).** A new version is a complete copy of the one it came from (every text with its timing, so a text that runs the whole clip still does, plus the caption) and then stands on its own: editing v1 never changes v2, and the other way round. A copy never carries *Ready to repost*. The clip's Title, trim, crop, cover, size, markers and platforms stay shared by every version. Existing versions were separated without changing anything they show.
+**Every version is its own copy (v0.20.0).** A new version is a complete copy of the one it came from (every text with its timing, so a text that runs the whole clip still does, plus the caption) and then stands on its own: editing v1 never changes v2, and the other way round. A copy never carries *Ready to repost*. The clip's Title, crop, cover, size, markers and platforms stay shared by every version (and the trim, unless a version has its own: see below). Existing versions were separated without changing anything they show.
 
 | A copy of v1 as v4, then v1 edited: v4 keeps what it had | The version list says what's shared |
 |---|---|
@@ -41,6 +41,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | Tick what new clips start with, then Make default; Post to with the switch on | The form in dark |
 |---|---|
 | ![The Make default form in the Caption section: parts ticked, one unticked, saved, then Post to with Also update on](docs/media/caption-defaults.gif) | ![Make default for new clips with Post to ticked and the Also update switch on, dark mode](docs/media/caption-defaults-dark.jpg) |
+
+**A trim per version (v0.23.0).** Trim v3 down to the part its words are about and only v3 changes: v1 and v2 keep their full length, and every version's texts count from its own start. The Trim field says whose trim the handles change, *v3 only* or *All versions*, and the timeline marks a version with its own trim. Renders, covers, the platform length checks and Postiz all use each version's own trim. Agents set it with `djq trim <clip> --in S --out S --version N`.
+
+| Editing v3: the drag changes v3 only, v1 keeps its trim | *All versions* edits the trim the others share |
+|---|---|
+| ![Dragging v3's trim end; v1 keeps the shared trim](docs/media/version-trim.gif) | ![Trim switch on All versions, dark](docs/media/version-trim-dark.jpg) |
 
 **Photo posts and set-time posts (v0.15.0).** A photo, or a carousel of several, goes through the same life as a clip: add it, edit it (shape, a crop per photo, texts on the photos you pick, caption, hashtag groups), send it to the Queue with no score, and track it on the Calendar. YouTube Shorts is skipped because it takes video only, and a carousel longer than a platform allows sends its first photos there and says so. Any Queue item, photo or clip, can also go out at an exact day and minute, outside the regular schedule, without moving anything else.
 

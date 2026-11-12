@@ -787,9 +787,17 @@ final class EditorModel: ObservableObject {
   }
 
   /// The per-platform trims of the trim the version being edited uses: its own trim's, else the clip's.
+  /// On "vN only" with no own trim yet, the version first takes its own copy of what it shows (the trim and its
+  /// per-platform trims), so the change stays on this version as the switch says.
   func updatePlatformTrims(_ f: (inout [Platform: TrimRange]) -> Void) {
     if hasOwnTrim {
       updateOwnTrim { v in var m = v.platformTrims ?? [:]; f(&m); v.platformTrims = m.isEmpty ? nil : m }
+    } else if trimScope == .version && !isPhoto {
+      let t = trim, shown = platformTrims
+      updateOwnTrim { v in
+        v.trimIn = t.start; v.trimOut = t.end
+        var m = shown; f(&m); v.platformTrims = m.isEmpty ? nil : m
+      }
     } else {
       updateEdit { f(&$0.platformTrims) }
     }

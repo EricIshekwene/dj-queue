@@ -127,6 +127,29 @@ import Testing
     #expect(PostizPayload.coverMs(edit: try re(f, 3), render: render, platform: .instagram) == 1000)
   }
 
+  /// Review: the clip's one cover must be a frame of whatever trim is resolved, the clip's own included.
+  @Test func aCoverOutsideTheClipsTrimFallsBackInside() throws {
+    let f = try threeVersions()
+    var e = try f.store.edit(videoId: "clip-0")
+    e.coverTime = 16
+    try f.store.save(e, videoId: "clip-0")
+    try VersionTrims.setClip(store: f.store, videoId: "clip-0", start: 4, end: 10)
+    let c = try re(f, 1).coverTime
+    #expect(c >= 4 && c <= 10)
+  }
+
+  /// Review: a version's per-platform trims are stored as a keyed object, so the row's JSON never changes order.
+  @Test func versionPlatformTrimsStoreDeterministically() throws {
+    var v = Version(number: 3)
+    v.trimIn = 1; v.trimOut = 9
+    v.platformTrims = [.x: TrimRange(start: 2, end: 5), .facebook: TrimRange(start: 1, end: 8), .tiktok: TrimRange(start: 1, end: 3)]
+    let a = JSONCoding.string(v), b = JSONCoding.string(v)
+    #expect(a == b)
+    #expect(a.contains("\"trimsByPlatform\":{\"facebook\""))
+    let back = try JSONCoding.decoder.decode(Version.self, from: Data(a.utf8))
+    #expect(back.platformTrims?[.x] == TrimRange(start: 2, end: 5) && back == v)
+  }
+
   @Test func djqTrimRulesAndDefaults() throws {
     let f = try threeVersions()
     let def = try re(f, 1).trim()

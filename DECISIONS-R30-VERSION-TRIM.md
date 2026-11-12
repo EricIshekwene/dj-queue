@@ -13,10 +13,13 @@ each version's trim. S1-R3 repair vid 1, vid 2, vid 3a. S1-R4 `djq trim`, trims 
   Never carried forward. A copy of a version takes it (round 27 copies are complete).
 - **D2. The clip's per-platform trims belong to the clip's trim.** A version with its own trim never gets them (a
   Facebook cut made for a 2-minute clip makes no sense on a 24 s version); it has its own `Version.platformTrims`,
-  which the editor's "Trim for X" lane writes when the version has its own trim.
-- **D3. The cover stays one per clip.** A version with its own trim uses the clip's cover frame when it's inside its
-  trim; otherwise the default rule (trim start / marker / offset) inside its own trim. A version's trim change never
-  moves the clip's cover.
+  which the editor's "Trim for X" lane writes when the version has its own trim. On "v3 only" with no own trim yet,
+  "Trim for X" and the platform lanes first give v3 its own copy of what it shows (review), so the shared trim never
+  changes from that side of the switch. Stored as `trimsByPlatform` (a keyed object, so rows stay deterministic).
+- **D3. The cover stays one per clip.** Any version uses the clip's cover frame when it's inside that version's trim
+  (its own or the clip's); otherwise the default rule (trim start / marker / offset) inside it, so a cover is always a
+  frame of the posted video (review: `djq trim` on the clip could leave it outside). A version's trim change never moves
+  the clip's cover.
 - **D4. Readiness is still v1's** (like text and caption): `Validation.issues` uses v1's trim. Each post's length is
   checked against its own version's trim by the engine's platform check, and the editor shows the version being edited.
 - **D5. The editor's switch.** The Trim field gets a two-segment switch, "v3 only · All versions" (the existing
@@ -37,7 +40,9 @@ each version's trim. S1-R3 repair vid 1, vid 2, vid 3a. S1-R4 `djq trim`, trims 
   and v2 quiz were made on, and the "about 22.9–135.2 s" in the ask), so it goes back to that rather than the markers
   default (3–180 s); vid 2 and vid 3a had no trim, so they go back to the default. vid 1's Facebook trim
   (23.3–47.2 s, made alongside v3's trim) is cleared. Each v3 gets exactly the trim it had, so v3's video is unchanged.
-  Done with `djq trim` after install (one undo step each), proven first on a copy of the newest backup.
+  Done with `djq trim` after install (one undo step each), proven first on a copy of the newest backup. Effect to
+  note: at 112 s vid 1's v1 is "Too long for Facebook (1:52 > 1:30)" again, as it was before the v3 trims; it stays in
+  Edit until Facebook gets a trim or is skipped (Eric's call; nothing is scheduled for it).
 - **D9. Not repaired: v2's text times.** The old editor already clamped the v2 quiz texts to the 23.7 s / 27.8 s /
   19.4 s trims (answers now sit in the last 0.3 s), and no backup holds the countdown design before that clamp. v1 and
   v2 get their full length back; the quiz texts on v2 need re-timing (the "vid N quiz" clips hold the full design).

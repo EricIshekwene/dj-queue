@@ -528,8 +528,13 @@ public struct Version: Codable, Sendable, Hashable {
   public var trimIn: Double?
   public var trimOut: Double?
   /// Round 30: per-platform trims of a version with its own trim (the clip's `Edit.platformTrims` belong to the clip's
-  /// trim, so they never reach a version that has its own). nil/empty = none.
-  public var platformTrims: [Platform: TrimRange]?
+  /// trim, so they never reach a version that has its own). nil/empty = none. Stored by platform name, so the JSON is
+  /// a keyed object whose keys sort (deterministic rows); read and write it through `platformTrims`.
+  public var trimsByPlatform: [String: TrimRange]?
+  public var platformTrims: [Platform: TrimRange]? {
+    get { trimsByPlatform.map { Dictionary(uniqueKeysWithValues: $0.compactMap { k, v in Platform(rawValue: k).map { ($0, v) } }) } }
+    set { trimsByPlatform = newValue.map { Dictionary(uniqueKeysWithValues: $0.map { ($0.key.rawValue, $0.value) }) } }
+  }
 
   /// True when this version has its own trim (`trimIn` and `trimOut` both set).
   public var hasOwnTrim: Bool { trimIn != nil && trimOut != nil }
