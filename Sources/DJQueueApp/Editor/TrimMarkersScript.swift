@@ -224,6 +224,12 @@ enum TrimMarkersScript {
       check("a click 4 pt from a marker puts the playhead on it (\(f2(pb.time)) vs \(f2(m0)))", abs(pb.time - m0) < 0.0005)
       await click(NSPoint(x: x + 30, y: film.midY))
       check("a click away from it doesn't snap", abs(pb.time - m0) > 0.05)
+      // Held for a moment before the release (the player's loose seek has landed by then): still exactly on it.
+      mouse(.leftMouseDown, NSPoint(x: x, y: film.midY))
+      try? await Task.sleep(for: .milliseconds(250))
+      mouse(.leftMouseUp, NSPoint(x: x, y: film.midY))
+      await wait()
+      check("a held click lands exactly on the marker too (\(f2(pb.time)) vs \(f2(m0)))", abs(pb.time - m0) < 0.0005)
     }
     // A text bar's end grip, dragged near a marker, snaps to it.
     if model.textBars.bars.first?.draggable == true, let grip = probe("text-end-1"), let film = probe("film-track") {
@@ -293,6 +299,15 @@ enum TrimMarkersScript {
           model.timelineZoomed && model.viewport.start <= model.trim.start && model.viewport.end >= model.trim.end && model.viewport.span < 30)
     check("…where a point is a few hundredths of a second (\(f2(spp())) s/pt)", spp() < 0.05)
     await shot("long-file")
+    // Zoomed on a long file, nothing on the timeline takes the mouse outside the track (the grace zones run thousands of
+    // points past it, and would otherwise cover the inspector).
+    if let film = probe("film-track") {
+      func surfaces(_ v: NSView) -> [NSView] { (v is EditorDragSurface.Surface ? [v] : []) + v.subviews.flatMap(surfaces) }
+      let spill = surfaces(host).map { $0.convert($0.bounds, to: nil) }
+        .filter { $0.midY > film.minY - 120 && $0.midY < film.maxY + 20 }
+        .filter { $0.maxX > film.maxX + 40 || $0.minX < film.minX - 60 }
+      check("no timeline surface reaches past the track while zoomed (\(spill.count) do)", spill.isEmpty)
+    }
     model.resetEdit(.trimIn, .trimOut); model.commitTrim()
     model.flushAndWait()
 
