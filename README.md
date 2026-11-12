@@ -36,6 +36,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![v1 copied as v4; editing v1 leaves v4 as it was](docs/media/version-copies.gif) | ![Version list: each version is its own copy](docs/media/repost-versions.jpg) |
 
+**Caption defaults from the editor (v0.21.0).** At the foot of the editor's Caption section, *Make default for new clips…* lists this clip's caption template, hashtag groups (in order), extra hashtags, YouTube title template and the platforms it posts to. What differs from New clip defaults starts ticked; Make default saves the ticked parts, and the clip then reads Default. New clips start with it. Clips you already have keep exactly what they post, unless you turn on *Also update N clips that use the current defaults*; clips with scheduled or posted posts always keep theirs. A caption you typed yourself can't be a default (save it as a template first). One Undo takes it all back. The template menu's "Make … the default…" opens the same form.
+
+| Tick what new clips start with, then Make default; Post to with the switch on | The form in dark |
+|---|---|
+| ![The Make default form in the Caption section: parts ticked, one unticked, saved, then Post to with Also update on](docs/media/caption-defaults.gif) | ![Make default for new clips with Post to ticked and the Also update switch on, dark mode](docs/media/caption-defaults-dark.jpg) |
+
 **Photo posts and set-time posts (v0.15.0).** A photo, or a carousel of several, goes through the same life as a clip: add it, edit it (shape, a crop per photo, texts on the photos you pick, caption, hashtag groups), send it to the Queue with no score, and track it on the Calendar. YouTube Shorts is skipped because it takes video only, and a carousel longer than a platform allows sends its first photos there and says so. Any Queue item, photo or clip, can also go out at an exact day and minute, outside the regular schedule, without moving anything else.
 
 | Add photos — pick or drop them, one carousel or a post per photo | The photo editor — crop each photo, put a text on photos 2–3, reorder, platform notes |
