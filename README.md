@@ -58,6 +58,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | **Whole photo or Fill the frame** — one switch under the audio; Fill asks for the crop, Whole has nothing to fix, also after zooming in and Crop's Reset | **The post** — the whole photo over a blurred copy of itself, with a timed text |
 | ![Switching between Whole photo and Fill the frame in the editor, then zooming the crop in and resetting it](docs/media/photo-audio-fit.gif) | ![A frame of the rendered post: the whole photo across the middle of a 9:16 video](docs/media/photo-audio-whole.jpg) |
 
+**Text boxes keep the cursor (v0.17.1).** Click anywhere in a text box and type, or press Return in the middle of a line, and the cursor stays where you put it. Before, every edit in the middle of the Text on the video sent the cursor to the end, and a Return in an emptied box brought the Title back into it. One fix in the shared text box covers the Text, the caption, each platform's own caption, templates and notes, and a hidden check clicks, types and presses Return in each of them, watching the cursor, the box's height and its scroll every 8 ms.
+
+| Return in the middle of a line, in the Text and the caption | The cursor stays right after the new line |
+|---|---|
+| ![Typing three lines in the Text box, clicking after "Afro" and pressing Return, then the same in the caption](docs/media/text-fields.gif) | ![The Text box split at the click, with the cursor at the start of the new line and the video showing the four lines](docs/media/text-fields-split.jpg) |
+
 **Trim handles and timeline markers (v0.18.0).** The yellow trim handles sit inside the trim with a wide grab area, and a handle follows your pointer from where you pressed it, so it never jumps. Hold ⌥ while dragging for a tenth of the speed and no snapping; a pill shows the exact time as it moves. Click a handle and ← → move it by your arrow step (⇧ one frame); Esc lets it go. The timeline zooms with − and + (or = and -, or a pinch), Fit shows the whole file, and an overview bar under a zoomed timeline pans it. A file whose trim is a small part of it opens zoomed on the trim. Press M to drop a marker at the playhead (M on a marker removes it): trim handles, the playhead, text bars and platform cuts all snap to your markers, and they're saved with the clip.
 
 | Grab, drag with the time pill, nudge with the arrows, M markers, snap, zoom | Markers in dark |

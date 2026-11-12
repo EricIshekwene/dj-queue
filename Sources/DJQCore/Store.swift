@@ -936,7 +936,9 @@ public enum VersionResolver {
         if v.number != number { inherited.insert("text"); inherited.insert("noText") }
         break
       }
-      if v.noText == false, v.number == number { decided = true; break }  // explicitly cleared "No text"
+      // Explicitly cleared "No text": what was typed stays, even when it's only spaces or empty lines (round 25: a
+      // Return in an emptied box brought the Title back into it).
+      if v.noText == false, v.number == number { text = v.text ?? ""; decided = true; break }
     }
     if !decided {
       defaulted.insert("text"); defaulted.insert("noText")
