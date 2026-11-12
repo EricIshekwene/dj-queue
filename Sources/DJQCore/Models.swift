@@ -421,12 +421,16 @@ public struct Edit: Codable, Sendable, Hashable {
   /// Round 21: a photo post's confirmed crop per photo (`PhotoItem.id` → crop in that photo's upright pixels). A photo
   /// without one uses the centred crop for the post's aspect. Empty for videos, and then absent from the stored JSON.
   public var photoCrops: [String: CropRect] = [:]
+  /// Round 24: Eric's own timeline markers (absolute seconds in the clip file, sorted). Trim handles, the playhead and
+  /// text bars snap to them. Not part of any render (`Renderer.HashInput` never reads them). Absent from the JSON when
+  /// empty, so stored rows don't change.
+  public var marks: [Double] = []
 
   public init() {}
 
   enum CodingKeys: String, CodingKey {
     case aspectOverride = "aspect", crop, trimIn, trimOut, coverTime
-    case coverIncludesTextOverride = "coverIncludesText", platformTrims, skippedPlatforms, includedPlatforms, photoCrops
+    case coverIncludesTextOverride = "coverIncludesText", platformTrims, skippedPlatforms, includedPlatforms, photoCrops, marks
   }
 
   public init(from d: Decoder) throws {
@@ -441,6 +445,7 @@ public struct Edit: Codable, Sendable, Hashable {
     skippedPlatforms = try c.decodeIfPresent(Set<Platform>.self, forKey: .skippedPlatforms) ?? []
     includedPlatforms = try c.decodeIfPresent(Set<Platform>.self, forKey: .includedPlatforms) ?? []
     photoCrops = ((try? c.decodeIfPresent([String: CropRect].self, forKey: .photoCrops)) ?? nil) ?? [:]
+    marks = ((try? c.decodeIfPresent([Double].self, forKey: .marks)) ?? nil) ?? []
   }
 
   /// Deterministic JSON (sets sorted), so stored rows and hashes don't change when nothing changed.
@@ -456,6 +461,7 @@ public struct Edit: Codable, Sendable, Hashable {
     try c.encode(skippedPlatforms.sorted { $0.rawValue < $1.rawValue }, forKey: .skippedPlatforms)
     try c.encode(includedPlatforms.sorted { $0.rawValue < $1.rawValue }, forKey: .includedPlatforms)
     if !photoCrops.isEmpty { try c.encode(photoCrops, forKey: .photoCrops) }
+    if !marks.isEmpty { try c.encode(marks, forKey: .marks) }
   }
 
   /// True when the clip doesn't post on `p` (skipped, or left out by the default platforms and not turned on).
@@ -466,6 +472,14 @@ public struct Edit: Codable, Sendable, Hashable {
 
   /// True when nothing is overridden.
   public var isEmpty: Bool { self == Edit() }
+
+  /// Round 24: true when `self` and `other` differ only in Eric's timeline markers, which change no pixels (a save
+  /// like that leaves the clip's preview stamp alone).
+  public func differsOnlyInMarks(from other: Edit) -> Bool {
+    var a = self, b = other
+    a.marks = []; b.marks = []
+    return a == b && marks != other.marks
+  }
 }
 
 /// Text versions with carry-forward: nil fields inherit from the previous version (spec §3).

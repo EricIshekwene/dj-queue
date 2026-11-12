@@ -16,6 +16,7 @@ import SwiftUI
 ///   `DJQ_EDITOR_CAPTION_SCRIPT=<dir>` drives the real caption field (`EditorCaptionScript`);
 ///   `DJQ_SETTINGS_GROUP_SCRIPT=<dir>` drives the real Settings group rows (`SettingsGroupScript`);
 ///   `DJQ_EDITOR_KEYS_SCRIPT=<dir>` drives the editor's keys and the arrow step (`EditorKeysScript`, round 19);
+///   `DJQ_TRIM_MARKERS_SCRIPT=<dir>` drives the trim handles, zoom and M markers (`TrimMarkersScript`, round 24);
 ///   `DJQ_EDITOR_TEMPLATE_SCRIPT=<dir>` drives the template actions and part chips (`EditorTemplateScript`);
 ///   `DJQ_TEXT_LAYERS_SCRIPT=<dir>` drives timed texts end to end, export included (`TextLayersScript`);
 ///   `DJQ_REPOST_READY_SCRIPT=<dir>` drives Ready to repost and bulk edits on versions (`RepostReadyScript`);
@@ -77,6 +78,10 @@ enum EditorSnapshot {
       if let dir = env["DJQ_EDITOR_KEYS_SCRIPT"] {
         return await EditorKeysScript.run(store: store, video: pick.id, ids: ids, dir: dir,
                                           appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
+      }
+      if let dir = env["DJQ_TRIM_MARKERS_SCRIPT"] {
+        return await TrimMarkersScript.run(store: store, video: pick.id, ids: ids, dir: dir,
+                                           appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
       }
       if let dir = env["DJQ_PHOTO_EDITOR_SCRIPT"] {
         try SampleData.addPhotoPosts(store: store, now: store.clock.now, scratch: tmp.appendingPathComponent("photo-samples"))

@@ -70,6 +70,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![Stepping through a countdown text in the editor: 3, then 2, then 1, then "Next in 1"](docs/media/countdown.gif) | ![The editor with all 32 text chips and the texts on the video](docs/media/thirty-two-texts.jpg) |
 
+**Trim handles and timeline markers (v0.19.0).** The yellow trim handles sit inside the trim with a wide grab area, and a handle follows your pointer from where you pressed it, so it never jumps. Hold ⌥ while dragging for a tenth of the speed and no snapping; a pill shows the exact time as it moves. Click a handle and ← → move it by your arrow step (⇧ one frame); Esc lets it go. The timeline zooms with − and + (or = and -, or a pinch), Fit shows the whole file, and an overview bar under a zoomed timeline pans it. A file whose trim is a small part of it opens zoomed on the trim. Press M to drop a marker at the playhead (M on a marker removes it): trim handles, the playhead, text bars and platform cuts all snap to your markers, and they're saved with the clip.
+
+| Grab, drag with the time pill, nudge with the arrows, M markers, snap, zoom | Markers in dark |
+|---|---|
+| ![Dragging the trim end with its time pill, nudging it, adding markers, snapping onto one and zooming](docs/media/trim-markers.gif) | ![The timeline with two markers in dark mode](docs/media/trim-markers-dark.jpg) |
+
 ## What it does
 
 The app follows a clip's life — **Score → Edit → Queue → Calendar** — with one job and one primary action per screen, on a calm, rounded design system modelled on ChatGPT's look and shadcn/ui component anatomy.

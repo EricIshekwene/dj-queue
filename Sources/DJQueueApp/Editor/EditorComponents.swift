@@ -129,6 +129,10 @@ struct EditorDragSurface: NSViewRepresentable {
   var onDrag: (CGSize) -> Void
   /// `moved` = it went past `slop`; false is a click.
   var onRelease: (Bool) -> Void
+  /// Round 24: where the press landed, in points from the surface's top-left (the timeline's scrub needs the spot).
+  var onPressAt: ((CGPoint) -> Void)? = nil
+  /// Round 24: the drag with the event's modifier keys (⌥ = fine control on the timeline). Called instead of `onDrag`.
+  var onDragMods: ((CGSize, NSEvent.ModifierFlags) -> Void)? = nil
 
   final class Surface: NSView {
     var parts = EditorDragSurface(cursor: .arrow, onDrag: { _ in }, onRelease: { _ in })
@@ -145,6 +149,10 @@ struct EditorDragSurface: NSViewRepresentable {
       start = event.locationInWindow
       moved = false
       parts.onPress()
+      if let at = parts.onPressAt {
+        let p = convert(event.locationInWindow, from: nil)
+        at(CGPoint(x: p.x, y: isFlipped ? p.y : bounds.height - p.y))
+      }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -152,7 +160,7 @@ struct EditorDragSurface: NSViewRepresentable {
       let d = CGSize(width: event.locationInWindow.x - start.x, height: start.y - event.locationInWindow.y)
       if !moved, abs(d.width) < parts.slop, abs(d.height) < parts.slop { return }
       moved = true
-      parts.onDrag(d)
+      if let f = parts.onDragMods { f(d, event.modifierFlags) } else { parts.onDrag(d) }
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -244,21 +252,30 @@ final class EditorFrameStrip: ObservableObject {
     cache.setObject(Entry(out), forKey: key as NSString, cost: out.reduce(0) { $0 + $1.1.bytesPerRow * $1.1.height })
   }
   private var task: Task<Void, Never>?
+  /// Round 24: the file the frames on show came from. Zooming the same file keeps them until the new ones are ready
+  /// (no flash of an empty strip); another file clears them.
+  private var shownURL: URL?
 
   func load(url: URL?, from a: Double, to b: Double, count: Int, sync: Bool = false) {
     task?.cancel()
-    guard let url, b > a, count > 0 else { frames = []; return }
+    guard let url, b > a, count > 0 else { frames = []; shownURL = nil; return }
     let key = "\(url.path)|\(Int(a * 10))|\(Int(b * 10))|\(count)"
-    if let c = Self.cache.object(forKey: key as NSString) { frames = c.frames.map { (time: $0.0, image: $0.1) }; return }
+    if let c = Self.cache.object(forKey: key as NSString) {
+      frames = c.frames.map { (time: $0.0, image: $0.1) }
+      shownURL = url
+      return
+    }
     let times = (0..<count).map { a + (b - a) * (Double($0) + 0.5) / Double(count) }
     if sync {
       let out = Self.generate(url: url, times: times)
       Self.store(out, key: key)
       frames = out.map { (time: $0.0, image: $0.1) }
+      shownURL = url
       return
     }
     loading = true
-    frames = []
+    if shownURL != url { frames = [] }
+    shownURL = url
     task = Task.detached(priority: .utility) { [weak self] in
       let out = Self.generate(url: url, times: times)
       guard !Task.isCancelled else { return }

@@ -115,7 +115,6 @@ still bulk-versions    $R/repost-11-bulk-reset-versions-note-light
 still bulk-caption-versions $R/repost-10-bulk-caption-versions-note-light
 
 du -sh "$OUT"
-(( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }
 
 # Round 21: photo posts and "Post at a set time". No player in these, so the whole window shows.
 P=photo-import
@@ -161,3 +160,14 @@ T=text-fields
 CROP=iw*0.74:ih*0.76:iw*0.26:0 gif text-fields $T/fields-01-text-start-light $T/fields-02-text-typed-light \
                  $T/fields-03-text-split-light $T/fields-05-caption-typed-light $T/fields-06-caption-split-light
 still text-fields-split $T/fields-03-text-split-light
+
+T=trim-markers
+# Round 24: trim handles and markers. Crops of just the timeline card (the script writes them beside each full shot):
+# grab the end handle, drag it with its time pill, nudge it with the arrows, M markers, the end snapping onto one,
+# and zoom with the overview. (The long-file shot isn't used: its dev clip is a personal one.)
+gif trim-markers $T/timeline-01-handles-light $T/timeline-02-end-selected-light $T/timeline-03-dragging-readout-light \
+                 $T/timeline-04-nudged-light $T/timeline-05-markers-light $T/timeline-06-end-snapped-light \
+                 $T/timeline-08-zoomed-light
+still trim-markers-dark $T-dark/timeline-05-markers-dark
+
+(( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }

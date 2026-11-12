@@ -207,6 +207,10 @@ final class EditorModel: ObservableObject {
   @Published var audioBlocker: String?
   /// True while a trim handle is being dragged (expensive derived work waits for the drag end).
   @Published private(set) var trimDragging = false
+  /// Round 24: the part of the clip file the timeline shows (nil before a clip loads, which reads as the whole file).
+  @Published var viewportRaw: TimelineViewport?
+  /// Round 24: the trim handle that was last clicked or dragged; ← / → move it until Esc or a click elsewhere.
+  @Published var trimEdge: TrimEdge?
   @Published private var zoneSelections: [String: Set<Platform>] = [:]
 
   let playback = EditorPlayback()
@@ -320,6 +324,8 @@ final class EditorModel: ObservableObject {
     groupForm = nil
     titleDraft = nil
     selectedTextRaw = TextLayer.firstId
+    viewportRaw = nil
+    trimEdge = nil
     loading = true
     clearUndo()
     playback.unload()
@@ -347,6 +353,7 @@ final class EditorModel: ObservableObject {
     readOnly = l.readOnly; loadError = l.error
     audioBlocker = l.audioBlocker
     fieldRevision &+= 1
+    viewportRaw = l.video?.isPhoto == true ? nil : TimelineViewport.initial(duration: duration, trim: trim)
     if let v = l.video, let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
     if !posting(previewPlatform) { previewPlatform = postingPlatforms.first ?? .tiktok }
     refreshOverlay()

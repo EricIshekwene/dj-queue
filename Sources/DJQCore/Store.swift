@@ -571,8 +571,11 @@ public final class Store: @unchecked Sendable {
       struct P: Codable { var x: Double; var y: Double }
       try setKV("defaults.lastCropCentre", P(x: (c.x + c.w / 2) / Double(w), y: (c.y + c.h / 2) / Double(h)))
     }
-    try db.run("INSERT INTO edits(video_id,json,updated_at) VALUES(?,?,?) ON CONFLICT(video_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",
-               [videoId, JSONCoding.string(e), now])
+    // Round 24: a change to markers alone keeps `updated_at`, so the lists don't rebuild a preview nothing in changed.
+    let marksOnly = (try? edit(videoId: videoId)).map { e.differsOnlyInMarks(from: $0) } ?? false
+    try db.run("INSERT INTO edits(video_id,json,updated_at) VALUES(?,?,?) ON CONFLICT(video_id) DO UPDATE SET json=excluded.json, "
+               + "updated_at=CASE WHEN ? THEN edits.updated_at ELSE excluded.updated_at END",
+               [videoId, JSONCoding.string(e), now, marksOnly ? 1 : 0])
     try refreshState(videoId: videoId)
   }
 
