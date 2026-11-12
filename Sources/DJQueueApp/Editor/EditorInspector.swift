@@ -43,7 +43,7 @@ struct EditorInspector: View {
               EditorPlatformsSection(model: model).disabled(model.fieldsOff)
             }
             .padding(.bottom, DS.space.xxl)
-              // Round 28: a press on the column's background (beside, between and below the sections, not on a control)
+            // Round 28: a press on the column's background (beside, between and below the sections, not on a control)
             // lets go of the selected text, a trim handle and a field's cursor (`EditorClickAway`). Below a short
             // column the background still reaches the bottom, so that space counts as empty too.
             .frame(maxWidth: .infinity, minHeight: viewport.size.height, alignment: .topLeading)

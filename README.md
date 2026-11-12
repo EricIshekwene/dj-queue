@@ -82,6 +82,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![Dragging the trim end with its time pill, nudging it, adding markers, snapping onto one and zooming](docs/media/trim-markers.gif) | ![The timeline with two markers in dark mode](docs/media/trim-markers-dark.jpg) |
 
+**Click an empty spot to let go (v0.21.0).** A click anywhere empty in the editor (beside the picture, the timeline's blank space, the header, or the inspector's margins and headings) lets go of what was selected: the text loses its outline and highlighted bar, a clicked trim handle lets go so ← → move the playhead again, and a text box gives up the cursor so Space plays. Clicking something else just moves the selection there. Before, a clicked trim handle kept the arrow keys until Esc, which made the editor feel stuck.
+
+| Select a text, click beside the picture; select the end handle, click the picture, → moves the playhead | Let go, in dark |
+|---|---|
+| ![Text 2 selected with its outline and bar, a click beside the picture clears both; the end handle selected, a click on the picture releases it and the arrow moves the playhead](docs/media/deselect.gif) | ![The editor in dark after a click on an empty spot: no outline, no handle selected](docs/media/deselect-dark.jpg) |
+
 ## What it does
 
 The app follows a clip's life — **Score → Edit → Queue → Calendar** — with one job and one primary action per screen, on a calm, rounded design system modelled on ChatGPT's look and shadcn/ui component anatomy.

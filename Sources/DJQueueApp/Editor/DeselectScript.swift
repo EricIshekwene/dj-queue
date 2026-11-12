@@ -124,7 +124,8 @@ enum DeselectScript {
     if model.selectedLayer.text.isEmpty { model.setText("DROP AT 0:42") }
     if model.texts.count < 2 {
       model.addText()
-      model.updateText(model.selectedText, coalesce: false) { $0.text = "SECOND TEXT" }
+      // Outlined, so the selection's outline around it shows against the picture (a white box would hide it).
+      model.updateText(model.selectedText, coalesce: false) { $0.text = "SECOND TEXT"; $0.style = .outline }
     }
     let second = model.texts.count > 1 ? model.texts[1].id : model.selectedText
     window.makeFirstResponder(nil)
@@ -191,12 +192,17 @@ enum DeselectScript {
     await wait(600)
     if let h = handle(second) { _ = await centre(h) }
     check("text 2 selected again", model.shownText == second)
-    if let chip = EditorKeysScript.anchors(in: host, named: "Text 2").first {
-      let f = chip.convert(chip.bounds, to: nil)
+    // Its style tile is already the one picked, so the click changes nothing but must not let go.
+    if let tile = EditorKeysScript.anchors(in: host, named: "Style \(TextStyle.outline.displayName)").first {
+      let f = tile.convert(tile.bounds, to: nil)
       await click(NSPoint(x: f.midX, y: f.midY))
-      check("a click on a control in the inspector keeps the text selected", model.shownText == second)
+      check("a click on a control in the inspector (a style tile) keeps the text selected", model.shownText == second)
+      // A heading is a label, not a control: the press reaches the backdrop.
+      await click(NSPoint(x: f.minX + 6, y: f.maxY + 14))
+      check("a click on the Style heading lets go of the text (a label counts as empty)", model.shownText == nil)
+      if let h = handle(second) { _ = await centre(h) }
     } else {
-      note("no “Text 2” anchor: the control check is skipped")
+      check("the Outline style tile", false)
     }
 
     // MARK: 4. The timeline's and the header's empty space

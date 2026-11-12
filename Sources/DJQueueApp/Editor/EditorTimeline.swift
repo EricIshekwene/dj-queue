@@ -189,7 +189,7 @@ struct EditorTransport: View {
         if let e = model.trimEdge {
           DSBadge("\(e.title) selected · ← → move it · Esc", style: .soft(.neutral), size: .sm)
             .background(ScriptAnchor("Trim edge selected"))
-            .dsTooltip("← / → move the \(e == .start ? "start" : "end") by your arrow step, ⇧ by one frame. Esc or a click on the film lets it go")
+            .dsTooltip("← / → move the \(e == .start ? "start" : "end") by your arrow step, ⇧ by one frame. Esc or a click on an empty spot lets it go")
         } else if !model.trimIsDefault {
           DSBadge("Custom", style: .soft(.neutral), size: .sm)
             .dsTooltip(model.video?.markerIn != nil ? "Trim changed from your markers" : "Trim changed from the whole file")

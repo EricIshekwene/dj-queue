@@ -324,6 +324,7 @@ final class EditorModel: ObservableObject {
     groupForm = nil
     titleDraft = nil
     selectedTextRaw = TextLayer.firstId
+    textSelectionShown = true
     viewportRaw = nil
     trimEdge = nil
     loading = true
