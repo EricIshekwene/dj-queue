@@ -37,38 +37,43 @@ behave as before. Long-form is never reposted. The spacing numbers were left to 
    first), so new clips go out before any repeat and the calendar goes round the clips. A tie goes to the Queue order.
 9. **Inside a clip, every version's first post comes before any repeat, older versions first:** v1 · 1, v2 · 1, v3 · 1,
    then v1 · 2, v2 · 2, … This puts the longest possible time between a version and its repeat.
-10. **Nothing fits → the position stays open.** The gaps are rules, not preferences: when no clip may post on a day (few
+10. **Repeats look a week ahead, first posts a month.** A clip's first post takes any open day up to the 30-day horizon,
+    as before. A clip that already has a day or a post (its repeats and later versions) only takes days up to 7 days
+    ahead (`Planner.repeatHorizonDays`). With every version posting twice the Queue always has more posts than the
+    month has days; filling the month with reposts would leave a clip Eric sends today waiting 30 days. This way a new
+    clip always finds a day at most a week after what's already planned, and the reposts fill in as the week rolls on.
+11. **Nothing fits → the position stays open.** The gaps are rules, not preferences: when no clip may post on a day (few
     clips in the Queue, or all of them inside their gaps), that day stays empty and the next pass fills it once
     something fits. Eric's own Pin and Post today ignore the gaps (they are his explicit choice) and take the clip's
     next waiting unit.
-11. **The calendar isn't reshuffled.** Days that were already scheduled keep their clips; new units fill open days after
+12. **The calendar isn't reshuffled.** Days that were already scheduled keep their clips; new units fill open days after
     them. A relay (posts per day or the sort changed) re-lays units the same way it re-laid clips.
 
 ## What stays the same
 
-12. **Posts per day, slot times, the YouTube quiet window (`YouTubeWindow`), the 30-minute lead, the 30-day horizon,
+13. **Posts per day, slot times, the YouTube quiet window (`YouTubeWindow`), the 30-minute lead, the 30-day horizon,
     automatic retries, Post now, Shift plan, the Placer's one regular post per platform, day and position** are untouched:
     a unit's slot creates its posts through the same code. A retry or a fix is the same unit again (its version and post
     number), so self-healing counts per unit.
-13. **Never double-post, per unit.** The Postiz lineage is one version post on one platform: `video#platform#main` for
+14. **Never double-post, per unit.** The Postiz lineage is one version post on one platform: `video#platform#main` for
     v1 · 1 (unchanged), `#v<N>` for version N's first post (what a repost of version N always was), `#v<N>p<K>` for its
     post K. The automatic-retry key gets the same `p<K>` suffix from post 2 on. Every existing job and retry key keeps
     its string.
-14. **Long-form is never reposted:** it has no units, and `djq post-count` refuses it.
-15. **Ready to repost (round 20) stays a mark**, not an input: every version of a Queue clip now posts its count anyway.
+15. **Long-form is never reposted:** it has no units, and `djq post-count` refuses it.
+16. **Ready to repost (round 20) stays a mark**, not an input: every version of a Queue clip now posts its count anyway.
     `djq repost <video> <platform>` posts the clip's next unit that platform doesn't have yet (with its cooldown); the
     planner then gives that unit a day for the other platforms.
 
 ## Data
 
-16. **Schema 12, additive and lossless:** three nullable columns (NULL reads as 1, so every slot, post and journal snapshot
+17. **Schema 12, additive and lossless:** three nullable columns (NULL reads as 1, so every slot, post and journal snapshot
     from before reads v1 · post 1 exactly as it was). The database is backed up to
     `<app support>/backups/queue-before-schema12-*.sqlite` first.
-17. **The back catalogue doesn't go out again by itself.** Clips that had finished posting at the upgrade (Posted or
+18. **The back catalogue doesn't go out again by itself.** Clips that had finished posting at the upgrade (Posted or
     Partial) are recorded with their highest version (`plan.finishedBeforeR31`): those versions keep the one post they
     had (v1 once, an older v2+ never by itself). A version Eric adds to such a clip later, or a count he sets, follows
     the new rule. Clips still scheduled or posting get their second posts and their other versions.
-18. **The count is per version and never part of how it looks:** setting it writes only that version's JSON
+19. **The count is per version and never part of how it looks:** setting it writes only that version's JSON
     (`updated_at` stays, no preview or render change), a copied version posts the default number of times, an open
     editor keeps a count set from `djq`, and bulk undo ignores it like Ready to repost.
-19. **A copyright re-upload as another version** is that version's next post on that platform.
+20. **A copyright re-upload as another version** is that version's next post on that platform.
