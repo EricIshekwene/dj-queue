@@ -210,9 +210,10 @@ struct ScheduleSettings: View {
                  range: 1...8, less: "Retry failed posts sooner after the slot", more: "Retry failed posts later after the slot",
                  format: SettingsFmt.hours)
     }
-    SettingsRow("Repost cooldown", description: "Days before the same clip can post again on a platform.") {
+    SettingsRow("Repost cooldown", description: "Only for a Repost you start: days after the clip's last post on a platform before it can post there again.") {
       DSXStepper(label: "Repost cooldown", int: model.binding(\.repostCooldownDays) { "Repost cooldown set to \(SettingsFmt.days($0))" },
-                 range: 1...90, format: SettingsFmt.days)
+                 range: 1...90, less: "Let a Repost you start go out sooner", more: "Make a Repost you start wait longer",
+                 format: SettingsFmt.days)
     }
 
     // Round 31 (DECISIONS-R31.md): every version is its own post in the plan, and posts this many times, spaced.

@@ -53,8 +53,8 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | Posts per version in Settings, a version's own count in the editor, then the Queue and the Calendar | The Queue: the next version post on the date chip, the rest waiting |
 |---|---|
 | ![Posts per version in Settings › Schedule, v2 set to 3 in the editor, the Queue card with its version posts, the Calendar week](docs/media/version-posts.gif) | ![Queue cards with Today · v1 · 1 of 2 and a v1 · 2 of 2 · waiting tag](docs/media/version-posts-queue.jpg) |
-| **The Calendar week** — every card says its version post | |
-| ![Calendar week in dark with v1 · 1 of 2 under each title](docs/media/version-posts-calendar.jpg) | |
+| **The Calendar week** — every card says its version post, repeats included | **Month** — the short form, "v1 2/2" |
+| ![Calendar week with v1 · 1 of 2 and v1 · 2 of 2 under the titles](docs/media/version-posts-calendar.jpg) | ![Calendar month in dark with v1 1/2 and v1 2/2 on the chips](docs/media/version-posts-month.jpg) |
 
 **Photo posts and set-time posts (v0.15.0).** A photo, or a carousel of several, goes through the same life as a clip: add it, edit it (shape, a crop per photo, texts on the photos you pick, caption, hashtag groups), send it to the Queue with no score, and track it on the Calendar. YouTube Shorts is skipped because it takes video only, and a carousel longer than a platform allows sends its first photos there and says so. Any Queue item, photo or clip, can also go out at an exact day and minute, outside the regular schedule, without moving anything else.
 

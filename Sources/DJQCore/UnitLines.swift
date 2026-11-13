@@ -70,8 +70,13 @@ public enum UnitLines {
     switch l.state {
     case .day(let d): return "\(what) goes out \(day(d))"
     case .waiting: return "\(what) is waiting for a day: it gets one by itself, spaced from this clip's other posts"
-    case .done: return "\(what) is done on every platform (posted, on its way, or skipped)"
+    case .done: return "\(what) is done on every platform (posted, on its way, failed for good, or skipped)"
     }
+  }
+
+  /// "v2 1/2" where room is short (Month chips); "v2" when the version posts once.
+  public static func short(_ u: PostUnit, count: Int) -> String {
+    count > 1 || u.post > 1 ? "v\(u.version) \(u.post)/\(max(count, u.post))" : "v\(u.version)"
   }
 
   /// "Version 2, post 1 of 2" (the post count is per platform).

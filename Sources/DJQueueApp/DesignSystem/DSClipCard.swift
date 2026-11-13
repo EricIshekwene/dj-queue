@@ -523,7 +523,17 @@ struct DSClipCard<Actions: View>: View {
         }
       }
       .font(DS.type.calloutSemibold.monospacedDigit()).frame(width: 40, alignment: .trailing)
-      Text(clip.dateText ?? "").font(DS.type.caption).foregroundStyle(DS.color.textSecondary).frame(width: 96, alignment: .leading).lineLimit(1)
+      // Round 31: the version post going out that day on a second line, and the clip's other version posts on hover.
+      VStack(alignment: .leading, spacing: 1) {
+        Text(clip.dateText ?? "").font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+        if clip.dateUnit != nil || !clip.units.isEmpty {
+          Text(clip.dateUnit.map { $0 + (clip.units.isEmpty ? "" : "  +\(clip.units.count)") } ?? "\(clip.units.count) version posts")
+            .font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary).lineLimit(1)
+            .background(ScriptAnchor("List unit \(clip.id)"))
+        }
+      }
+      .frame(width: 124, alignment: .leading)
+      .dsTooltip(clip.units.isEmpty ? nil : ([clip.dateUnit.map { "Next: \($0)" }].compactMap { $0 } + clip.units.map(\.text)).joined(separator: "\n"))
       HStack(spacing: 4) {
         ForEach(clip.platforms) { p in DSPlatformIcon(platform: p.platform, state: p.state, size: 20) }
       }

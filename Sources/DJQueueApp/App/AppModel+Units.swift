@@ -11,6 +11,12 @@ extension AppModel {
   }
 
   func unitLabel(_ slot: PlanSlot) -> String { unitLabel(slot.videoId, slot.unit) }
+
+  /// "v2 1/2", for a Month chip (the full words are in its tooltip).
+  func unitShortLabel(_ slot: PlanSlot) -> String {
+    guard let book = unitBook, book[slot.videoId] != nil else { return UnitLines.short(slot.unit, count: 1) }
+    return UnitLines.short(slot.unit, count: book.count(slot.videoId, version: slot.versionNo))
+  }
   func unitLabel(_ post: PlatformPost) -> String { unitLabel(post.videoId, post.unit) }
 
   /// "Version 2, post 1 of 2 on each platform" (hover).

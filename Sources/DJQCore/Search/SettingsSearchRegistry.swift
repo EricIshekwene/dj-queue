@@ -87,7 +87,7 @@ public enum SettingsSearchRegistry {
     .row(.schedule, "Post early", group: "Posting", description: "Allow posting any time on the day, before the slot."),
     .row(.schedule, "Late grace", group: "Posting", description: "A post is still due this long after its slot; after that the plan shifts."),
     .row(.schedule, "Retry stagger", group: "Posting", description: "Re-queued failures post this long after the day's slot."),
-    .row(.schedule, "Repost cooldown", group: "Posting", description: "Days before the same clip can post again on a platform."),
+    .row(.schedule, "Repost cooldown", group: "Posting", description: "Only for a Repost you start: days after the clip's last post on a platform before it can post there again."),
     // round 31: every version posts its count, spaced
     .group(.schedule, "Versions", description: "Each version of a clip is its own post. Reposts go by count, never by views."),
     .row(.schedule, "Posts per version", group: "Versions",

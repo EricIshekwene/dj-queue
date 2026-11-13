@@ -1273,7 +1273,9 @@ final class EditorModel: ObservableObject {
       guard let fresh = try? store.hashtagSets(), let saved = try? store.versions(videoId: id),
             let st = try? store.settings(), let tpl = try? store.captionTemplates() else { return }
       DispatchQueue.main.async {
-        guard let self, self.videoId == id, fresh != self.sets || st != self.settings || tpl != self.templates else { return }
+        guard let self, self.videoId == id else { return }
+        self.syncPostCounts(saved)
+        guard fresh != self.sets || st != self.settings || tpl != self.templates else { return }
         self.commitCaptionDraft()
         self.sets = fresh
         self.settings = st
@@ -1624,6 +1626,18 @@ final class EditorModel: ObservableObject {
     let c = postCount(n)
     show(count == nil ? "v\(n) posts the default number of times (\(c))"
            : c == 0 ? "v\(n) won't post" : "v\(n) posts \(c == 1 ? "once" : "\(c) times") on each platform")
+  }
+
+  /// Round 31: a count set outside the editor (`djq post-count`) while it's open reaches the Posts row and its stepper.
+  /// A count changed here and not yet written stays as it is.
+  private func syncPostCounts(_ saved: [Version]) {
+    for s in saved {
+      guard let i = versions.firstIndex(where: { $0.number == s.number }) else { continue }
+      let base = syncedVersions.first { $0.number == s.number }?.postCount
+      guard versions[i].postCount == base, versions[i].postCount != s.postCount else { continue }
+      versions[i].postCount = s.postCount
+      if let j = syncedVersions.firstIndex(where: { $0.number == s.number }) { syncedVersions[j].postCount = s.postCount }
+    }
   }
 
   /// Writes only the count and records it as saved, so the next save of that version carries it unchanged.

@@ -170,7 +170,7 @@ The view toggle is a segmented capsule in the toolbar, icons only with tooltips:
 | Selection | checkbox 20 pt circle at left edge on hover or in selection mode. Selected = 2 pt `text.primary` ring + `fill.selected` | checkbox top-left on the cover | not selectable (one at a time) | checkbox column |
 | Drag | handle ⋮⋮ appears on hover at the far left (Queue only) | — | — | — |
 
-Rules: never show the version on cards. Never show platform icons for a clip that isn't planned. Missing-file clips get a danger chip ("File missing · Relink") and no autoplay. Autoplay is capped at four concurrent players; with "Small previews: play on hover only" on (the default) one small preview plays at a time.
+Rules: never show the version on cards, with one exception since round 31: every version of a clip is its own post in the plan, so a card in the Queue and on the Calendar says which *version post* it is ("v2 · 1 of 2"; DECISIONS-R31.md). The Queue card puts the next one on its date chip and the others in one line of small tags (as many as fit, then +N); Calendar cards carry a small outlined mark under the title (Month: "v2 1/2"); Posts shows it in its Version column. Nothing else on a card names a version. Never show platform icons for a clip that isn't planned. Missing-file clips get a danger chip ("File missing · Relink") and no autoplay. Autoplay is capped at four concurrent players; with "Small previews: play on hover only" on (the default) one small preview plays at a time.
 
 ## 5. Bulk selection bar
 
@@ -211,7 +211,7 @@ Content area = 1180 × 848 (window minus sidebar and toolbar). "Hidden" lists wh
 - **Job:** keep ready clips in posting order.
 - **Toolbar:** "Queue" · "41 ready · next Thu 5 Nov" · runway chip · sort menu ("Worst → best ▾", tie rule inside) · view toggle. There is **no filled primary**, because the primary act is direct manipulation (drag to reorder).
 - **Cards (default):** position number (`caption` tertiary) · drag handle on hover · thumb · title + meta · score · next-date chip · platform state icons (planned = outlined glyph, posted = glyph + green dot, failed = red dot) · pin glyph if pinned. Hover actions: **Post today**, **Pin to date…**, ⋯ (Skip next, Exclude, Open editor).
-- **Hidden:** unscored and not-ready clips (those live in Score/Edit), excluded clips, versions.
+- **Hidden:** unscored and not-ready clips (those live in Score/Edit), excluded clips. Versions show only as version posts (round 31): the next one on the date chip, the others as one line of tags, and on a second line of List's Next column.
 - **Empty:** "Nothing ready yet" + **Go to Edit**.
 
 ### 6.4 Calendar — `C.W` TikTok Studio scheduler + Hootsuite week media cards (replaces §6.4 Week and §6.5 Today, round 13)
@@ -276,7 +276,7 @@ Locked: `R2.EDITOR` Arcade floating inspector with segmented controls (alts: Ele
 ```
 
 - **Full window.** The editor takes over the window, with the sidebar hidden. ‹ Back returns to the screen it came from. **Why:** the preview must be as large as possible, and Edit → editor → Edit is a loop.
-- **Header 52:** ‹ Back · Title (click to rename) · ‹ › previous/next clip in the current list · validation chip ("2 to fix" in warning tint, or "Ready" in success tint; click scrolls to the first problem) · version picker `v1 ▾` (versions are only visible here) · **Done** (primary).
+- **Header 52:** ‹ Back · Title (click to rename) · ‹ › previous/next clip in the current list · validation chip ("2 to fix" in warning tint, or "Ready" in success tint; click scrolls to the first problem) · version picker `v1 ▾` (the only place to pick a version; round 31 cards name version posts, not versions to edit) · **Done** (primary).
 - **Canvas (`bg.canvas`):** a mode segmented control at the top centre: **Frame** (crop on the dimmed 16:9 source), **Safe zones** (platform overlays tinted and labelled, multi-select chips: all six or None), and **Phone** (realistic mock, §8). In Phone mode the platform chips under the preview are single-select. The preview sits at 340×604 in Frame/Safe modes and in a 300×650 device in Phone mode.
 - **Inspector (340 wide, floating card inset 12 from top/right/bottom, scrolls):** sections separated by a full-width hairline (`DSSeparator`, 20 pt above and below) with `DSSectionHeader` titles and secondary field labels (round 5: sections ran together at 24 pt gaps). There are no tabs: one scrolling column with a sticky mini-index at the top (Title · Frame · Text · Caption · Cover · Platforms). **Why:** Arcade and ChatGPT settings both show one calm column, and tabs hide what's missing.
   - **Title:** "Title suggestions" chips (outlined capsules, `caption`, tracks in tertiary text) from `title_suggestions`, then the raw tag as a ghost chip, then a text field. No suggestions shows just the field and the hint "No title suggestions yet".

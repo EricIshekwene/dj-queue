@@ -286,19 +286,73 @@ enum VersionPostsScript {
       check("the clip's card on \(next?.date ?? "?") says \(next.map { a.unitLabel($0) } ?? "?")",
             next == nil || cards.contains { $0.slot.id == next?.id })
       await shot("calendar-week-version-posts")
-      // The first week with a repeat or a later version on it (the days already planned keep their clips, so the first
-      // ones can be weeks out); the week after when there's none yet.
-      let repeatDay = ((try? store.planSlots(where: "date>=?", [today])) ?? []).filter { $0.unit != .first }.map(\.date).min()
-      note(repeatDay.map { "first repeat or later version on \($0)" } ?? "no repeat or later version has a day yet in this copy")
-      if let repeatDay { a.calendarAnchor = repeatDay } else { a.stepCalendar(1) }
+      // Repeats and later versions: in this copy every day to 25 Nov already has a first post, and a repeat looks only a
+      // week ahead, so none has a day yet. The engine's pass as it will run in a week gives them days after that.
+      let dm = DayMath(settings: settings())
+      if ((try? store.planSlots(where: "date>=?", [today])) ?? []).allSatisfy({ $0.unit == .first }) {
+        note("seeding: the engine's pass as of \(dm.addDays(today, 8)) 08:00 (this copy only), so repeats get their days")
+        _ = try? Planner(store: store).autoSchedule(now: dm.at(dm.addDays(today, 8), minutes: 8 * 60))
+      }
+      let later = ((try? store.planSlots(where: "date>=?", [today])) ?? []).filter { $0.unit != .first }
+        .sorted { ($0.date, $0.position) < ($1.date, $1.position) }
+      check("repeats and later versions have days (\(later.count))", !later.isEmpty)
+      guard let pick = later.first(where: { $0.versionNo > 1 }) ?? later.first else { return }
       a.refreshNow()
-      await wait(2500)
-      let later = a.calendarDays.flatMap { a.calendarClips($0) }
-      let laterMarks = Set(marks("Unit mark "))
-      check("that week: every card has its version post (\(later.count) cards)",
-            later.allSatisfy { laterMarks.contains("Unit mark \($0.video.id) \($0.slot.unit)") })
-      note("that week: " + later.map { a.unitLabel($0.slot) }.joined(separator: ", "))
-      await shot("calendar-repeats-week")
+      await wait(800)
+      let want = units(pick.videoId).first { $0.version == pick.versionNo && $0.post_number == pick.postNo }?.label
+      note("showing \(pick.date): \(pick.videoId.prefix(8)) \(want ?? "?")")
+      check("its label is the store's: \(want ?? "?")", want != nil && a.unitLabel(pick) == want && want != "v1 · 1 of 2")
+      let mark = "Unit mark \(pick.videoId) \(pick.unit)"
+      a.calendarAnchor = pick.date
+      for mode in [CalendarViewMode.week, .threeDay, .day, .month] {
+        a.calendarMode = mode
+        a.refreshNow()
+        await wait(2500)
+        let shown = Set(marks("Unit mark "))
+        let cards: [(String, PostUnit, PlanSlot?)] = mode == .day
+          ? a.calendarDayGroups(pick.date).compactMap { g in (g.slot?.unit ?? g.posts.first?.unit).map { (g.videoId, $0, g.slot) } }
+          : a.calendarDays.flatMap { a.calendarClips($0) }.map { ($0.video.id, $0.slot.unit, $0.slot) }
+        if mode == .month {
+          // Month shows as many chips as fit, then "+N more": every drawn chip carries its version post, short.
+          check("Month: drawn chips carry their version post (\(shown.count) of \(cards.count))",
+                !shown.isEmpty && shown.allSatisfy { m in cards.contains { "Unit mark \($0.0) \($0.1)" == m } })
+          check("Month: the short form reads \(a.unitShortLabel(pick))", a.unitShortLabel(pick).contains("/") || !(want ?? "").contains(" of "))
+        } else {
+          check("\(mode.title): every card has its version post (\(cards.count))",
+                !cards.isEmpty && cards.allSatisfy { shown.contains("Unit mark \($0.0) \($0.1)") })
+        }
+        check("\(mode.title): \(want ?? "?") is on \(pick.date)", shown.contains(mark) || mode == .month)
+        await shot("calendar-\(mode.rawValue)-later-posts")
+      }
+
+      // The Queue's List view says the version post too, on the second line of Next.
+      a.screen = .queue
+      a.setViewMode(.list, for: .queue)
+      ListPrefs.shared.setSearch(.queue, a.displayName(clip))
+      await wait(1800)
+      check("Queue List: the clip's row says its version post", has("List unit \(id)"))
+      await shot("queue-list-version-posts")
+      ListPrefs.shared.reset()
+      a.setViewMode(.wide, for: .queue)
+
+      // A count set from djq while the editor is open reaches its Posts row.
+      a.openEditor(id, in: [id])
+      await wait(3000)
+      if let e = EditorModel.live, e.videoId == id {
+        e.selectVersion(2)
+        await wait(600)
+        _ = try? store.setPostCount(videoId: id, number: 2, 4)
+        e.reloadGroups()
+        await wait(1200)
+        check("djq post-count while the editor is open → the Posts row shows 4", e.postCount(2) == 4 && e.ownPostCount(2) == 4)
+        await click("Post count", at: .trailing)
+        check("…and + counts on from it (5)", count(id, 2) == 5)
+        e.flushAndWait()
+        a.closeEditor()
+        await wait(600)
+      } else {
+        check("the editor opens again", false)
+      }
     }
   }
 }

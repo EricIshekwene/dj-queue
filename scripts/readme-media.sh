@@ -198,8 +198,10 @@ V=version-posts
 # in the editor, then the Queue (next version post on the date chip, the others as tags) and the Calendar week.
 gif version-posts $V/version-posts-01-settings-posts-per-version-light $V/version-posts-02-editor-v2-default-light \
                   $V/version-posts-03-editor-v2-own-count-light $V/version-posts-05-queue-two-versions-light \
-                  $V/version-posts-04-queue-version-posts-light $V/version-posts-06-calendar-week-version-posts-light
+                  $V/version-posts-04-queue-version-posts-light $V/version-posts-07-calendar-week-later-posts-light \
+                  $V/version-posts-10-calendar-month-later-posts-light
 still version-posts-queue $V/version-posts-04-queue-version-posts-light
-still version-posts-calendar $V-dark/version-posts-06-calendar-week-version-posts-dark
+still version-posts-calendar $V/version-posts-07-calendar-week-later-posts-light
+still version-posts-month $V-dark/version-posts-10-calendar-month-later-posts-dark
 
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }

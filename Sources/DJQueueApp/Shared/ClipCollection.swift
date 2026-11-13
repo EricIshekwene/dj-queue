@@ -257,7 +257,7 @@ struct ClipListColumns: View {
       Color.clear.frame(width: 24, height: 1)
       Text("Clip").frame(maxWidth: .infinity, alignment: .leading)
       Text("Score").frame(width: 40, alignment: .trailing)
-      Text("Next").frame(width: 96, alignment: .leading)
+      Text("Next").frame(width: 124, alignment: .leading)
       Text("Platforms").frame(width: 150, alignment: .leading)
       Color.clear.frame(width: 28, height: 1)
     }

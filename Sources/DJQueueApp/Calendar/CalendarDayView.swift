@@ -191,7 +191,7 @@ struct NextUpCard: View {
     default: when = post.scheduledAt > model.now ? "in \(AppModel.countdown(to: post.scheduledAt, now: model.now))" : "due now"
     }
     let day = model.dm.key(post.scheduledAt) == model.todayKey ? "" : "\(Fmt.day(post.scheduledAt, tz: model.tz, style: "EEE")) "
-    return "Next: \(post.platform.displayName) · \(day)\(time) · \(when)" + (model.hasSetTime(post) ? " · set time" : "")
+    return "Next: \(post.platform.displayName) · \(day)\(time) · \(when) · \(model.unitLabel(post))" + (model.hasSetTime(post) ? " · set time" : "")
   }
 }
 
