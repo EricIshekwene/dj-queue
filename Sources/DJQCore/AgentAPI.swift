@@ -135,6 +135,11 @@ public enum AgentAPI {
     public var shows_to: Double?
     /// Round 26: a countdown's first number (it shows that, …, 1 across its window); absent for every other text.
     public var countdown: Int? = nil
+    /// Round 30: the version's trim these times count from (absolute seconds in the clip file), and whether it is the
+    /// version's own trim (false = the clip's). Absent where no trim was given.
+    public var trim_in: Double? = nil
+    public var trim_out: Double? = nil
+    public var own_trim: Bool? = nil
   }
 
   /// Every text of a resolved version, numbered, against a trim of `trimDuration` seconds.
@@ -146,6 +151,16 @@ public enum AgentAPI {
                         align: l.align.rawValue, start: l.start, end: l.end, color: l.look?.color, background: l.look?.accent,
                         font: l.look?.font?.rawValue, opacity: l.look?.opacity, tracking: l.look?.tracking, drawn: w != nil,
                         shows_from: w?.lowerBound, shows_to: w.map { min($0.upperBound, d) }, countdown: l.countdown)
+    }
+  }
+
+  /// Round 30: the texts of a version timed against `edit`'s trim (that version's own, else the clip's), each saying
+  /// which trim that is.
+  public static func overlays(_ r: ResolvedVersion, edit re: ResolvedEdit) -> [OverlayOut] {
+    overlays(r, trimDuration: re.trimOut - re.trimIn).map {
+      var o = $0
+      o.trim_in = re.trimIn; o.trim_out = re.trimOut; o.own_trim = re.hasVersionTrim
+      return o
     }
   }
 
@@ -167,6 +182,34 @@ public enum AgentAPI {
     public var posts: [PostOut]
     /// Round 16: every text of v1 in order, the first text first (also in `versions` and `resolved_v1`, as stored).
     public var overlays: [OverlayOut] = []
+    /// Round 30: each version's trim as it renders and posts (its own, else the clip's).
+    public var version_trims: [VersionTrimOut] = []
+  }
+
+  /// Round 30: one version's trim. `own` = the version's own trim (`djq trim --version`); false = it follows the clip's
+  /// trim (`clip_default` says whether that is still the default: markers ± extra seconds).
+  public struct VersionTrimOut: Codable, Sendable, Hashable {
+    public var version: Int
+    public var trim_in: Double
+    public var trim_out: Double
+    public var duration: Double
+    public var own: Bool
+    public var clip_default: Bool
+    public var platform_trims: [String: TrimRange]
+  }
+
+  /// Every stored version's trim (v1 even when no row is stored yet).
+  public static func versionTrims(_ id: String, store: Store, settings: Settings) throws -> [VersionTrimOut] {
+    guard let v = try store.video(id: id), !v.isPhoto else { return [] }
+    let edit = try store.edit(videoId: id)
+    let all = (try? store.versions(videoId: id)) ?? []
+    let numbers = Set([1] + all.map(\.number)).sorted()
+    return numbers.map { n in
+      let re = EditResolver.resolve(edit, video: v, defaults: settings.defaults, version: all.first { $0.number == n })
+      return VersionTrimOut(version: n, trim_in: re.trimIn, trim_out: re.trimOut, duration: re.trimOut - re.trimIn,
+                            own: re.hasVersionTrim, clip_default: !re.hasVersionTrim && re.isDefault(.trimIn) && re.isDefault(.trimOut),
+                            platform_trims: Dictionary(uniqueKeysWithValues: re.platformTrims.map { ($0.key.rawValue, $0.value) }))
+    }
   }
 
   public struct WeekOut: Codable, Sendable {
@@ -267,7 +310,8 @@ public enum AgentAPI {
       versions: try store.versions(videoId: id), resolved_v1: r1, captions: captions, youtube_title: yt,
       issues: v.type == .short ? try Validation.issues(video: v, store: store) : [],
       plan: try store.planSlots(where: "video_id=?", [id]), posts: try store.posts(where: "video_id=?", [id]).map(post),
-      overlays: r1.map { overlays($0, trimDuration: trim.duration) } ?? [])
+      overlays: r1.map { overlays($0, trimDuration: trim.duration) } ?? [],
+      version_trims: try versionTrims(id, store: store, settings: settings))
   }
 
   /// `djq week --json [date]`

@@ -44,7 +44,7 @@ import Testing
     // The same render for every platform, and again on the next ask (nothing re-rendered).
     for p in Platform.allCases {
       #expect(try renderer.ensureRender(videoId: v.id, versionNo: 1, platform: p).id == r.id)
-      #expect(try renderer.scope(videoId: v.id, platform: p) == "all")
+      #expect(try renderer.scope(videoId: v.id, versionNo: 1, platform: p) == "all")
     }
     #expect(try f.store.renders().count == 1)
     // Each of the other shapes, 1080 wide.

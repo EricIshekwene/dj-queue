@@ -119,7 +119,8 @@ extension Media {
 
   static func proxyGeometry(store: Store, video: Video, range: ProxyRange) throws -> (CropRect?, Aspect, TrimRange) {
     // The default crop needs the source size: use the cached one, else probe once (then it is cached).
-    let re = try store.resolvedEdit(videoId: video.id, sourceSize: sourceSize(store: store, video: video))
+    // v1's trim (round 30: a version with its own trim plays its part of this, or shows its cover).
+    let re = try store.resolvedEdit(videoId: video.id, version: 1, sourceSize: sourceSize(store: store, video: video))
     let trim = range == .trim ? re.trim() : TrimRange(start: 0, end: video.duration)
     return (re.crop, re.aspect, trim)
   }

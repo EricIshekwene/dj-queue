@@ -169,7 +169,9 @@ public enum Media {
     guard let src = try? store.fileURL(for: video), FileManager.default.fileExists(atPath: src.path) else { return nil }
     let settings = (try? store.settings()) ?? Settings()
     let raw = (try? store.edit(videoId: video.id)) ?? Edit()
-    let edit = EditResolver.resolve(raw, video: video, defaults: settings.defaults)
+    // Round 30: the version's own trim when it has one (its default cover frame and text times follow it).
+    let edit = EditResolver.resolve(raw, video: video, defaults: settings.defaults,
+                                    version: store.rawVersion(videoId: video.id, number: version))
     var t = seconds ?? edit.coverTime
     if video.duration > 0 { t = min(max(0, t), max(0, video.duration - 0.05)) }
     let anchor = settings.defaults.cropAnchor

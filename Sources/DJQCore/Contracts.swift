@@ -8,8 +8,9 @@ import Foundation
 public protocol RenderService: AnyObject, Sendable {
   /// Hash of everything that changes the output file (edit, resolved version, scope, render settings).
   func editHash(videoId: String, versionNo: Int, platform: Platform?) throws -> String
-  /// "all", or the platform's rawValue when the edit has a per-platform trim for it.
-  func scope(videoId: String, platform: Platform?) throws -> String
+  /// "all", or the platform's rawValue when version `versionNo`'s trim (its own, else the clip's) has a per-platform
+  /// trim for it.
+  func scope(videoId: String, versionNo: Int, platform: Platform?) throws -> String
   /// A finished render matching the current hash, or nil.
   func currentRender(videoId: String, versionNo: Int, platform: Platform?) throws -> Render?
   /// Returns a matching finished render, rendering now if needed (blocking; call off the main thread).

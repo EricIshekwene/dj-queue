@@ -325,7 +325,9 @@ public enum PostizPayload {
     guard let rv = try store.resolvedVersion(videoId: v.id, number: p.versionNo, settings: settings) else {
       throw EngineError("\(v.tag) has no v\(p.versionNo)")
     }
-    let re = EditResolver.resolve(try store.edit(videoId: v.id), video: v, defaults: settings.defaults)
+    // Round 30: the post's version's trim (the cover time counts from its render's start).
+    let re = EditResolver.resolve(try store.edit(videoId: v.id), video: v, defaults: settings.defaults,
+                                  version: store.rawVersion(videoId: v.id, number: p.versionNo))
     return try spec(post: p, video: v, render: r, version: rv, edit: re, settings: settings, sessionName: try store.sessionName(for: v),
                 sets: try store.hashtagSets(), templates: try store.captionTemplates(), integrationId: integrationId,
                 provider: provider)

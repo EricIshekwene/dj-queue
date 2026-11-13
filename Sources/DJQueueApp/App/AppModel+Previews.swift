@@ -39,6 +39,10 @@ struct PreviewInfo: Sendable {
   var stamp: String
   var aspect: Aspect
   var trimIn: Double
+  /// Round 30: where this version's trim ends, and the trim the clip's tile proxy covers (v1's). A version with its own
+  /// trim plays its part of that proxy, or shows its cover when the proxy doesn't hold it.
+  var trimOut: Double = 0
+  var proxyTrim: TrimRange = TrimRange(start: 0, end: 0)
   /// One entry per drawn text, in stacking order: its image's `overlayCache` key, and when it shows relative to the trim
   /// start (the renderer's rule).
   var layers: [(key: String, window: ClosedRange<Double>)]
@@ -134,7 +138,18 @@ extension AppModel {
     if v.type == .short, let info = previewInfo[Self.infoKey(v.id, version)], info.stamp == stamp {
       p.aspectRatio = info.aspect.ratio
       guard info.textKey != "none" else { return p }
-      let offset = playback.loop == .wholeFile ? info.trimIn : 0
+      var offset = playback.loop == .wholeFile ? info.trimIn : 0
+      // Round 30: a version with its own trim. Its texts count from its own start, so they shift by where that sits in
+      // the tile proxy (v1's trim), and the tile loops just its part. A part outside the proxy shows the cover.
+      if playback.loop != .wholeFile, version != 1,
+         abs(info.trimIn - info.proxyTrim.start) > 0.01 || abs(info.trimOut - info.proxyTrim.end) > 0.01 {
+        if info.trimIn >= info.proxyTrim.start - 0.01, info.trimOut <= info.proxyTrim.end + 0.01 {
+          offset = info.trimIn - info.proxyTrim.start
+          p.loopRange = offset...(info.trimOut - info.proxyTrim.start)
+        } else {
+          p.proxyURL = nil
+        }
+      }
       p.overlays = info.layers.compactMap { l in
         Self.overlayCache.value(l.key).map {
           DSTimedOverlay(key: l.key, image: $0, window: (l.window.lowerBound + offset)...(l.window.upperBound + offset))
@@ -253,7 +268,8 @@ extension AppModel {
 
   /// Resolves the edit + version and draws each text into `overlayCache` (those not there yet).
   nonisolated static func loadPreviewInfo(store: Store, videoId: String, version: Int, stamp: String) -> PreviewInfo? {
-    guard let settings = try? store.settings(), let re = try? store.resolvedEdit(videoId: videoId, settings: settings) else { return nil }
+    guard let settings = try? store.settings(), let re = try? store.resolvedEdit(videoId: videoId, version: version, settings: settings),
+          let re1 = try? store.resolvedEdit(videoId: videoId, settings: settings) else { return nil }
     let rv = (try? store.resolvedVersion(videoId: videoId, number: version, settings: settings)) ?? nil
     let trim = re.trim()
     let shown = PreviewKeys.layerWindows(rv, trimDuration: trim.end - trim.start)
@@ -263,7 +279,7 @@ extension AppModel {
         overlayCache.set(img, for: s.key, cost: img.bytesPerRow * img.height)
       }
     }
-    return PreviewInfo(stamp: stamp, aspect: re.aspect, trimIn: trim.start, layers: shown.map { (key: $0.key, window: $0.window) },
+    return PreviewInfo(stamp: stamp, aspect: re.aspect, trimIn: trim.start, trimOut: trim.end, proxyTrim: re1.trim(), layers: shown.map { (key: $0.key, window: $0.window) },
                        textKey: PreviewKeys.textKey(rv, aspect: re.aspect), version: rv)
   }
 

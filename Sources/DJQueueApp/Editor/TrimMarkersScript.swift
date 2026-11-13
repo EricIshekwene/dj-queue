@@ -177,7 +177,7 @@ enum TrimMarkersScript {
     check("…and → moves the playhead again", abs(pb.time - t0 - 2) < 0.05 && abs(model.trim.end - (e1 - 2 + 1 / model.fps)) < 0.005)
 
     // Put the trim back for the marker part.
-    model.resetEdit(.trimIn, .trimOut); model.commitTrim()
+    model.resetTrim()
     await wait()
 
     // MARK: 4. M markers
@@ -219,7 +219,7 @@ enum TrimMarkersScript {
         check("⌥ drags past a marker without snapping", abs(model.trim.end - mk) > 0.0005)
       }
     }
-    model.resetEdit(.trimIn, .trimOut); model.commitTrim()
+    model.resetTrim()
     await press("\u{1b}", code: EditorKeys.escape)
     await wait()
     // The playhead: a click 4 pt off the first marker puts it on the marker.
@@ -330,7 +330,7 @@ enum TrimMarkersScript {
         .filter { $0.maxX > film.maxX + 30 || $0.minX < film.minX - 30 }
       check("no timeline surface reaches past the track while zoomed (\(spill.count) do)", spill.isEmpty)
     }
-    model.resetEdit(.trimIn, .trimOut); model.commitTrim()
+    model.resetTrim()
     model.flushAndWait()
 
     note("\(failed == 0 ? "all passed" : "\(failed) failed")")

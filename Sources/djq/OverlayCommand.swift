@@ -137,7 +137,9 @@ enum OverlayCommand {
     }
     let ver = chain.first { $0.number == number }!
     let r = VersionResolver.resolve(chain, number: number, settings: settings, video: v)
-    let trim = try store.resolvedEdit(videoId: v.id, settings: settings).trim()
+    // Round 30: this version's trim (its own, else the clip's); its texts' times count from its start.
+    let re = EditResolver.resolve(try store.edit(videoId: v.id), video: v, defaults: settings.defaults, version: ver)
+    let trim = re.trim()
 
     func target(_ i: Int) throws -> TextLayer {
       let ref = try arg(i, "text number or id")
@@ -157,7 +159,7 @@ enum OverlayCommand {
         left = "\(v.tag) left the Queue for Edit: \(why). Add a text or use djq text --none, then Send to Queue."
       }
       if json {
-        try printJSON(AgentAPI.overlays(after, trimDuration: trim.duration))
+        try printJSON(AgentAPI.overlays(after, edit: re))
         if let left { FileHandle.standardError.write(Data((left + "\n").utf8)) }
         return 0
       }
@@ -169,9 +171,10 @@ enum OverlayCommand {
 
     switch sub {
     case "list":
-      let list = AgentAPI.overlays(r, trimDuration: trim.duration)
+      let list = AgentAPI.overlays(r, edit: re)
       if json { try printJSON(list); return 0 }
       print("\(v.tag) v\(number): \(list.count) text\(list.count == 1 ? "" : "s")\(r.noText ? " (No text is on: none show)" : "")")
+      if !v.isPhoto { print("  " + TrimCommand.describe(re, version: number)) }
       for o in list { print("  " + line(o)) }
 
     case "add":

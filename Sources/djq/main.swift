@@ -48,6 +48,7 @@ usage: djq <command> [args]
                                       YouTube title templates ({text}); undo with bulk undo
   caption-templates [--json] | add "<name>" "<template>" | edit <id> [--name N] [--template T] | delete <id>
                                       caption templates ({text} {title} {set} {link} {tag} {hashtags}, hashtags can be typed in); undo with bulk undo
+\(TrimCommand.usage)
   kind <video> "dj vid"|talking
   bulk <action> [args] (--ids a,b,c | --filter F) [--dry-run] [--json]
        actions: make-ready (Send to Queue with defaults: Eric's word only) | apply-defaults [--sections frame,trim,text,cover,caption,platforms] | score <n|clear>
@@ -241,7 +242,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at", "trim"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -270,11 +271,12 @@ func run() throws -> Int32 {
                              "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "longform-posted",
                              "score", "exclude", "include", "pause", "resume", "intake", "tick", "render",
                              "title", "suggest", "text", "overlay", "caption", "kind", "bulk", "unqueue", "requeue", "stage",
-                             "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "slot"]
+                             "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "slot", "trim"]
   var wrote = writes.contains(cmd)
     && !(cmd == "slot" && (args.contains("--dry-run") || args.filter { !$0.hasPrefix("--") }.count < 2))
     && !(cmd == "bulk" && (args.contains("--dry-run") || args.first == "batches"))
     && !(cmd == "overlay" && args.first == "list")
+    && !(cmd == "trim" && !args.contains { ["--in", "--out", "--default"].contains($0) })
     && !((cmd == "unqueue" || cmd == "requeue" || cmd == "stage") && args.contains("--dry-run"))
     && !(cmd == "stage" && !args.contains("back") && !args.contains("forward"))
     && !((cmd == "hashtag-groups" || cmd == "title-templates" || cmd == "caption-templates") && (args.isEmpty || args.first == "--json" || args.first == "list"))
@@ -398,6 +400,8 @@ func run() throws -> Int32 {
     }
     let re = d.resolved_edit
     print("  trim \(EditorLogic.time(re.trimIn, tenths: true))–\(EditorLogic.time(re.trimOut, tenths: true))\(re.isDefault(.trimIn) && re.isDefault(.trimOut) ? " (default)" : "") · aspect \(re.aspect.rawValue) · crop \(re.cropConfirmed ? "confirmed" : "not confirmed")")
+    // Round 30: each version's own trim (or that it follows the clip's), when any version has its own.
+    if d.version_trims.contains(where: \.own) { for t in d.version_trims { print("    " + TrimCommand.describe(t)) } }
     if let r = d.resolved_v1 { print("  text \(r.noText ? "(no text)" : "\"\(Captions.oneLine(r.text))\"")\(r.isDefault("text") ? " (default)" : "")") }
     if d.overlays.count > 1 { print("  \(d.overlays.count) texts on the video (djq overlay list \(short(v.id)))") }
     if d.versions.count > 1 || !d.video.repost_ready_versions.isEmpty {
@@ -986,6 +990,9 @@ func run() throws -> Int32 {
 
   case "post-at":
     return try PostAtCommand.run(store, settings, &wrote)
+
+  case "trim":
+    return try TrimCommand.run(store, settings, &wrote)
 
   case "agent":
     switch try arg(0, "install|uninstall|status") {

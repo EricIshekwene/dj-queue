@@ -65,6 +65,7 @@ checks=(
   settings-group "DJQ_SNAPSHOT_EDITOR=1 DJQ_SETTINGS_GROUP_SCRIPT=@"
   editor-keys    "DJQ_SNAPSHOT_EDITOR=1 DJQ_EDITOR_KEYS_SCRIPT=@"
   trim-markers   "DJQ_SNAPSHOT_EDITOR=1 DJQ_TRIM_MARKERS_SCRIPT=@"
+  version-trim   "DJQ_SNAPSHOT_EDITOR=1 DJQ_VERSION_TRIM_SCRIPT=@"
   repost-ready   "DJQ_SNAPSHOT_EDITOR=1 DJQ_REPOST_READY_SCRIPT=@"
   photo-import   "DJQ_PHOTO_IMPORT_SCRIPT=1"
   photo-editor   "DJQ_SNAPSHOT_EDITOR=1 DJQ_PHOTO_EDITOR_SCRIPT=@"
@@ -74,14 +75,14 @@ checks=(
   deselect       "DJQ_SNAPSHOT_EDITOR=1 DJQ_DESELECT_SCRIPT=@"
 )
 # The editor scripts take one look per run; these are the same checks in dark.
-for name in text-layers bulk-caption bulk-crop editor-group editor-caption editor-template editor-defaults settings-group editor-keys trim-markers repost-ready \
+for name in text-layers bulk-caption bulk-crop editor-group editor-caption editor-template editor-defaults settings-group editor-keys trim-markers version-trim repost-ready \
             photo-import photo-editor post-at photo-audio text-fields deselect; do
   checks[$name-dark]="${checks[$name]} DJQ_EDITOR_LIVE_APPEARANCE=dark"
 done
 order=(guard screens gallery editor editor-selftest editor-live tooltip tooltip-pass hover search send-to-queue text-layers
-       bulk-caption bulk-crop editor-group editor-caption editor-template editor-defaults settings-group editor-keys trim-markers repost-ready
+       bulk-caption bulk-crop editor-group editor-caption editor-template editor-defaults settings-group editor-keys trim-markers version-trim repost-ready
        text-layers-dark bulk-caption-dark bulk-crop-dark editor-group-dark editor-caption-dark editor-template-dark editor-defaults-dark settings-group-dark
-       editor-keys-dark trim-markers-dark repost-ready-dark
+       editor-keys-dark trim-markers-dark version-trim-dark repost-ready-dark
        photo-import photo-editor post-at photo-import-dark photo-editor-dark post-at-dark
        photo-audio photo-audio-dark text-fields text-fields-dark deselect deselect-dark)
 (( $# )) && order=("$@")

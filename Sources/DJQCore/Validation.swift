@@ -88,7 +88,8 @@ public enum Validation {
       out.append(.init(kind: .corrupt, platform: nil, message: "Saved edit can't be read — see Doctor"))
       return out
     }
-    let re = EditResolver.resolve(edit, video: v, defaults: settings.defaults)
+    // Readiness is v1's (round 30: its own trim when it has one; each version's own length is checked where it posts).
+    let re = EditResolver.resolve(edit, video: v, defaults: settings.defaults, version: store.rawVersion(videoId: v.id, number: 1))
     if let photos = v.photos {
       // Round 21: the centred crop is always valid (Send to Queue confirms it) and a photo with no text is fine, so
       // neither blocks. YouTube is never a posting platform here (`re` skips it), so its title isn't checked.

@@ -506,6 +506,7 @@ public final class StillVideo: @unchecked Sendable {
         e.trimIn = nil; e.trimOut = nil; e.platformTrims = [:]; e.coverTime = nil
         for p in Platform.allCases where !p.supportsPhotos { e.skippedPlatforms.remove(p) }  // the skip a photo post is given
         try self.store.save(e, videoId: videoId, remembersCrop: false)
+        try VersionTrims.dropOwn(store: self.store, videoId: videoId)
         try self.clearTextWindows(videoId)
         try self.store.refreshState(videoId: videoId)
         try self.store.logEvent("photo", "Added audio to \(cur.name): now a video (\(prepared.name), \(Validation.fmt(made.duration)))",
@@ -557,6 +558,7 @@ public final class StillVideo: @unchecked Sendable {
         let end = made.duration + 0.05
         if (e.trimIn ?? 0) >= made.duration || (e.trimOut ?? 0) > end { e.trimIn = nil; e.trimOut = nil }
         e.platformTrims = e.platformTrims.filter { $0.value.start < made.duration && $0.value.end <= end }
+        try VersionTrims.dropOwn(store: self.store, videoId: videoId, keepingInside: end)
         if let c = e.coverTime, c > made.duration { e.coverTime = nil }
         let whole = Self.crop(made, fit: .whole)
         if newFit != still.fits {
@@ -672,6 +674,7 @@ public final class StillVideo: @unchecked Sendable {
       e.photoCrops = [:]
       e.trimIn = nil; e.trimOut = nil; e.platformTrims = [:]; e.coverTime = nil
       try self.store.save(e, videoId: videoId, remembersCrop: false)  // a photo post's edit is stored with YouTube off
+      try VersionTrims.dropOwn(store: self.store, videoId: videoId)
       try self.clearTextWindows(videoId)
       try self.store.refreshState(videoId: videoId)
       try self.store.logEvent("photo", "Removed the audio from \(v.name): a photo post again", videoId: videoId)

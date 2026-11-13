@@ -164,7 +164,7 @@ djq videos --repost-ready [--json]               # same filter on the clip list 
 - `repost_ready_versions` is on every clip in `djq videos --json`; `repostReady: true` on the version in `djq video --json`.
 - Long-form is never reposted (refused). A version that doesn't exist is refused.
 - Bulk edits on a clip with several versions reach every version except captions. Crop, trim, cover, aspect and
-  platforms are one edit per clip. Caption changes (template, groups, extras, YouTube title, parts, drop hashtags) land
+  platforms are one edit per clip (round 30: a version can also have its own trim, see below). Caption changes (template, groups, extras, YouTube title, parts, drop hashtags) land
   on v1; a later version that took its caption from v1 keeps it as it was (`captionsOwn: true` on that version: it
   stops inheriting captions, and anything it doesn't set follows the defaults). `apply-defaults --sections text`
   resets the text look and place on every version and keeps each version's words.
@@ -172,6 +172,24 @@ djq videos --repost-ready [--json]               # same filter on the clip list 
   forward between versions: editing v1 never changes v2 and the other way round; what a version doesn't set follows
   the defaults. `djq text|caption|youtube-title --version N` on a version that doesn't exist yet makes it as a full
   copy of the one before, then applies the change. A copy never carries "Ready to repost".
+
+### Trim per version (round 30)
+
+```sh
+djq trim <video> [--json]                                  # each version's trim: its own, or the clip's
+djq trim <video> --in S --out S [--version N] [--json]     # the clip's trim, or version N's own (one side alone keeps the other)
+djq trim <video> --default [--version N] [--json]          # the clip's trim back to the default (+ its per-platform trims
+                                                           # cleared); with --version, v N follows the clip's trim again
+```
+
+- Seconds are absolute in the clip file. A version with its own trim renders, posts, gets its cover and has its
+  platform length checked on it, and its texts' `--start/--end` count from its own start. The clip's per-platform
+  trims never reach a version with its own trim.
+- Versions without their own trim share the clip's. Changing the clip's trim never changes a version that has its own.
+- `djq video --json` has `version_trims` (`version, trim_in, trim_out, duration, own, clip_default, platform_trims`);
+  `djq overlay list` prints the version's trim and each text carries `trim_in`, `trim_out`, `own_trim` in `--json`.
+- Every change is one `djq bulk undo` step. A copy of a version takes its own trim; `bulk apply-defaults --sections trim`
+  clears every version's own trim. Set trims only when Eric asks.
 
 ## Photo posts (round 21)
 

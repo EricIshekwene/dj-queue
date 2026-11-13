@@ -204,8 +204,9 @@ public enum EditorLogic {
   public static func time(_ s: Double, tenths: Bool = false) -> String {
     let s = max(0, s)
     if tenths {
-      let m = Int(s) / 60
-      return String(format: "%d:%04.1f", m, s - Double(m * 60))
+      // Round to tenths first, so 179.97 s reads 3:00.0, not 2:60.0.
+      let d = Int((s * 10).rounded())
+      return String(format: "%d:%02d.%d", d / 600, (d % 600) / 10, d % 10)
     }
     let t = Int(s.rounded())
     return String(format: "%d:%02d", t / 60, t % 60)

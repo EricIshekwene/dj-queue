@@ -4,7 +4,8 @@ import Foundation
 /// change does to a clip's versions, and the line every bulk dialog shows when the selection has clips with more than
 /// one version.
 public enum BulkVersionScope: Sendable, Hashable {
-  /// Crop, trim, cover, aspect, platforms, text look: one edit for the clip, so every version.
+  /// Crop, trim, cover, aspect, platforms, text look: one edit for the clip, so every version. (Round 30: a version can
+  /// have its own trim; a bulk trim reset clears those too, so every version follows the default again.)
   case every
   /// Template, hashtag groups, extras, YouTube title, caption text: v1 only; v2 and later keep theirs.
   case captionsV1Only

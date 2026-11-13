@@ -185,4 +185,12 @@ CROP=iw*0.26:ih*0.9:iw*0.74:ih*0.1 gif caption-defaults $D/def-02-form-open-ligh
 still caption-defaults-form $D/def-02-form-open-light
 still caption-defaults-dark $D-dark/def-06-form-platforms-update-dark
 
+T=version-trim
+# Round 30: a trim per version. Editing v3 of a clip with three versions: the drag gives v3 its own trim (the switch
+# says "v3 only", the timeline badge too), v1 still shows the trim the others share, then "All versions".
+gif version-trim $T/vtrim-01-v3-before-light $T/vtrim-02-v3-own-trim-light $T/vtrim-03-v1-keeps-its-trim-light \
+                 $T/vtrim-04-all-versions-light
+still version-trim $T/vtrim-02-v3-own-trim-light
+still version-trim-dark $T-dark/vtrim-04-all-versions-dark
+
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }

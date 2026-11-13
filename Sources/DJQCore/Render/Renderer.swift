@@ -45,9 +45,10 @@ public final class Renderer: RenderService, @unchecked Sendable {
 
   // MARK: RenderService
 
-  public func scope(videoId: String, platform: Platform?) throws -> String {
+  public func scope(videoId: String, versionNo: Int, platform: Platform?) throws -> String {
     if try photoPost(videoId) != nil { return "all" }  // one set of files for every platform
-    let edit = try store.edit(videoId: videoId)
+    // Round 30: a version with its own trim has its own per-platform trims (the clip's belong to the clip's trim).
+    let edit = try store.resolvedEdit(videoId: videoId, version: versionNo)
     if let p = platform, edit.platformTrims[p] != nil { return p.rawValue }
     return "all"
   }
@@ -324,7 +325,9 @@ public final class Renderer: RenderService, @unchecked Sendable {
     }
     let raw = try store.edit(videoId: videoId)
     // Only a confirmed crop renders (the default anchor crop is a suggestion until Eric confirms it).
-    var edit = EditResolver.resolve(raw, video: video, defaults: settings.defaults)
+    // Round 30: the version's own trim when it has one (its texts count from its own start), else the clip's.
+    var edit = EditResolver.resolve(raw, video: video, defaults: settings.defaults,
+                                    version: store.rawVersion(videoId: videoId, number: versionNo))
     if !edit.cropConfirmed { edit.crop = nil }
     let scopePlatform = platform.flatMap { edit.platformTrims[$0] != nil ? $0 : nil }
     let scope = scopePlatform?.rawValue ?? "all"

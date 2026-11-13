@@ -128,9 +128,9 @@ func meanAbsDiff(_ a: CGImage, _ b: CGImage, in rect: CGRect? = nil) -> Double {
 
     // Per-platform trim: X gets its own scope and hash; the shared render is unchanged.
     try rf.edit { $0.platformTrims[.x] = TrimRange(start: 1, end: 2.5) }
-    #expect(try rf.renderer.scope(videoId: rf.id, platform: .x) == "x")
-    #expect(try rf.renderer.scope(videoId: rf.id, platform: .tiktok) == "all")
-    #expect(try rf.renderer.scope(videoId: rf.id, platform: nil) == "all")
+    #expect(try rf.renderer.scope(videoId: rf.id, versionNo: 1, platform: .x) == "x")
+    #expect(try rf.renderer.scope(videoId: rf.id, versionNo: 1, platform: .tiktok) == "all")
+    #expect(try rf.renderer.scope(videoId: rf.id, versionNo: 1, platform: nil) == "all")
     #expect(try rf.hash(.x) != h5)
     #expect(try rf.hash() == h5)
   }

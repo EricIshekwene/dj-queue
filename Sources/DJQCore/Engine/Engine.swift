@@ -240,7 +240,7 @@ public final class Engine: @unchecked Sendable {
         try store.save(p, note: "edit changed — re-render")
       }
       // Back off: this exact render (same edit/version hash) failed < 1 h ago → skip without using the budget.
-      let scope = try renderer.scope(videoId: p.videoId, platform: p.platform)
+      let scope = try renderer.scope(videoId: p.videoId, versionNo: p.versionNo, platform: p.platform)
       let hash = try renderer.editHash(videoId: p.videoId, versionNo: p.versionNo, platform: p.platform)
       let failKey = "renderFail.\(p.videoId)#\(p.versionNo)#\(scope)"
       if let last: RenderFailure = try store.kv(failKey), last.hash == hash,
@@ -396,16 +396,19 @@ public final class Engine: @unchecked Sendable {
     let active = Set(settings.activePlatforms)
     var failed = 0, requeued = 0, skipped = 0
     var cache: [String: (Video, ResolvedEdit, [ValidationIssue])] = [:]
-    func info(_ id: String) throws -> (Video, ResolvedEdit, [ValidationIssue])? {
-      if let c = cache[id] { return c }
+    // Round 30: per version, since a version can have its own trim (its own length).
+    func info(_ id: String, _ version: Int) throws -> (Video, ResolvedEdit, [ValidationIssue])? {
+      let key = "\(id)#\(version)"
+      if let c = cache[key] { return c }
       guard let v = try store.video(id: id) else { return nil }
-      let e = EditResolver.resolve(try store.edit(videoId: id), video: v, defaults: settings.defaults)
+      let e = EditResolver.resolve(try store.edit(videoId: id), video: v, defaults: settings.defaults,
+                                   version: store.rawVersion(videoId: id, number: version))
       let c = (v, e, Validation.platformIssues(video: v, resolved: e, settings: settings))
-      cache[id] = c
+      cache[key] = c
       return c
     }
     for var p in try store.posts(where: "state IN ('planned','rendering','rendered','due','overdue')") {
-      guard let (_, _, issues) = try info(p.videoId),
+      guard let (_, _, issues) = try info(p.videoId, p.versionNo),
             let issue = issues.first(where: { $0.kind == .tooLong && $0.platform == p.platform }) else { continue }
       p.state = .failed
       p.errorType = .tooLong
@@ -418,7 +421,7 @@ public final class Engine: @unchecked Sendable {
       failed += 1
     }
     for var p in try store.posts(where: "state='failed' AND error_type='too_long' AND resolution IS NULL") {
-      guard let (v, edit, issues) = try info(p.videoId), active.contains(p.platform), try !store.isHeld(v) else { continue }
+      guard let (v, edit, issues) = try info(p.videoId, p.versionNo), active.contains(p.platform), try !store.isHeld(v) else { continue }
       let newer = try store.posts(where: "video_id=? AND platform=? AND attempt_no>?", [p.videoId, p.platform.rawValue, p.attemptNo])
       guard newer.isEmpty else { continue }
       let snapshot: String? = try store.kv("tooLong.\(p.id)")

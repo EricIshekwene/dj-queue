@@ -209,8 +209,13 @@ public struct ResolvedEdit: Sendable, Hashable, Codable {
   /// Effective skipped platforms (explicit skips + platforms the defaults leave out and the clip didn't turn on).
   public var skippedPlatforms: Set<Platform>
   public var defaulted: Set<EditField>
+  /// Round 30: the version whose own trim this is (`Version.trimIn/Out`); nil = the clip's trim. `trimIn`, `trimOut`
+  /// and `platformTrims` are that version's then, and a default cover frame follows its start.
+  public var trimVersion: Int? = nil
 
   public func isDefault(_ f: EditField) -> Bool { defaulted.contains(f) }
+  /// True when the trim is a version's own, not the clip's (round 30).
+  public var hasVersionTrim: Bool { trimVersion != nil }
 
   public func trim(platform: Platform? = nil) -> TrimRange {
     if let p = platform, let t = platformTrims[p] { return t }
@@ -221,6 +226,7 @@ public struct ResolvedEdit: Sendable, Hashable, Codable {
 
   enum CodingKeys: String, CodingKey {
     case aspect, crop, cropConfirmed, trimIn, trimOut, coverTime, coverIncludesText, platformTrims, skippedPlatforms, defaulted
+    case trimVersion
   }
 
   /// Deterministic JSON (sets sorted, platform keys as strings).
@@ -233,6 +239,7 @@ public struct ResolvedEdit: Sendable, Hashable, Codable {
     try c.encode(Dictionary(uniqueKeysWithValues: platformTrims.map { ($0.key.rawValue, $0.value) }), forKey: .platformTrims)
     try c.encode(skippedPlatforms.map(\.rawValue).sorted(), forKey: .skippedPlatforms)
     try c.encode(defaulted.map(\.rawValue).sorted(), forKey: .defaulted)
+    try c.encodeIfPresent(trimVersion, forKey: .trimVersion)
   }
 
   public init(from dec: Decoder) throws {
@@ -248,6 +255,7 @@ public struct ResolvedEdit: Sendable, Hashable, Codable {
     platformTrims = Dictionary(uniqueKeysWithValues: pt.compactMap { k, v in Platform(rawValue: k).map { ($0, v) } })
     skippedPlatforms = Set((try c.decode([String].self, forKey: .skippedPlatforms)).compactMap(Platform.init))
     defaulted = Set((try c.decode([String].self, forKey: .defaulted)).compactMap(EditField.init))
+    trimVersion = try c.decodeIfPresent(Int.self, forKey: .trimVersion)
   }
 
   public init(aspect: Aspect, crop: CropRect?, cropConfirmed: Bool, trimIn: Double, trimOut: Double, coverTime: Double,
@@ -261,8 +269,11 @@ public struct ResolvedEdit: Sendable, Hashable, Codable {
 
 public enum EditResolver {
   /// Pure resolution. `sourceSize` (or the video's cached size) is needed for the default crop.
+  /// `version` (round 30): the version being shown, posted or rendered. When it has its own trim, the result's trim,
+  /// per-platform trims and default cover frame are that version's (`trimVersion` says so); an explicit cover outside
+  /// it falls back to the default rule inside it. nil, or a version that follows the clip = the clip's trim.
   public static func resolve(_ e: Edit, video v: Video, defaults d: NewClipDefaults, sourceSize: CGSize? = nil,
-                             lastUsedCrop: CGPoint? = nil) -> ResolvedEdit {
+                             lastUsedCrop: CGPoint? = nil, version: Version? = nil) -> ResolvedEdit {
     if let photos = v.photos { return resolvePhotos(e, photos, defaults: d) }
     var defaulted = Set<EditField>()
     let aspect = e.aspectOverride ?? d.aspect
@@ -288,9 +299,19 @@ public enum EditResolver {
     if tOut <= tIn {  // one side overridden past the other's default: fall back to the file end/start
       if e.trimIn != nil { tOut = v.duration > tIn ? v.duration : tIn + 0.3 } else { tIn = 0 }
     }
+    var platformTrims = e.platformTrims
+    var trimVersion: Int? = nil
+    if let own = version.flatMap({ ownTrim($0, video: v) }) {
+      tIn = own.start; tOut = own.end
+      platformTrims = version?.platformTrims ?? [:]
+      trimVersion = version?.number
+      defaulted.remove(.trimIn); defaulted.remove(.trimOut)
+    }
     let cover: Double
-    if let t = e.coverTime { cover = t } else {
-      defaulted.insert(.coverTime)
+    // The clip's one cover frame is used when it's inside the trim being resolved; outside it (a version's own trim, or a
+    // clip trim changed from the CLI) the default rule picks one inside, so a cover is always a frame of the video.
+    if let t = e.coverTime, t >= tIn - 0.001, t <= tOut + 0.001 { cover = t } else {
+      defaulted.insert(.coverTime)  // also when a picked frame is outside this trim: what shows is the default
       switch d.coverFrame {
       case .trimStart: cover = tIn
       case .markerIn: cover = min(max(v.markerIn ?? tIn, tIn), tOut)
@@ -300,9 +321,18 @@ public enum EditResolver {
     if e.coverIncludesTextOverride == nil { defaulted.insert(.coverIncludesText) }
     let skipped = Set(Platform.allCases.filter { e.isSkipped($0, defaults: d) })
     if e.skippedPlatforms.isEmpty && e.includedPlatforms.isEmpty { defaulted.insert(.platforms) }
-    return ResolvedEdit(aspect: aspect, crop: crop, cropConfirmed: confirmed, trimIn: tIn, trimOut: tOut,
-                        coverTime: cover, coverIncludesText: e.coverIncludesTextOverride ?? d.coverIncludesText,
-                        platformTrims: e.platformTrims, skippedPlatforms: skipped, defaulted: defaulted)
+    var r = ResolvedEdit(aspect: aspect, crop: crop, cropConfirmed: confirmed, trimIn: tIn, trimOut: tOut,
+                         coverTime: cover, coverIncludesText: e.coverIncludesTextOverride ?? d.coverIncludesText,
+                         platformTrims: platformTrims, skippedPlatforms: skipped, defaulted: defaulted)
+    r.trimVersion = trimVersion
+    return r
+  }
+
+  /// A version's own trim, kept inside the file (round 30). nil when it has none, or one that leaves under 0.3 s.
+  public static func ownTrim(_ ver: Version, video v: Video) -> TrimRange? {
+    guard !v.isPhoto, let a = ver.trimIn, let b = ver.trimOut else { return nil }
+    let lo = max(0, a), hi = v.duration > 0 ? min(v.duration, b) : b
+    return hi - lo >= 0.3 ? TrimRange(start: lo, end: hi) : nil
   }
 
   /// A photo post (round 21). The aspect follows `defaults.photoAspect`; `crop` is the first photo's (every photo
@@ -340,11 +370,20 @@ public enum EditResolver {
 
 extension Store {
   /// The edit with defaults applied. Uses `sourceSize`, else the video's cached size, for the default crop.
-  public func resolvedEdit(videoId: String, sourceSize: CGSize? = nil, settings: Settings? = nil) throws -> ResolvedEdit {
+  /// `version` (round 30): whose trim to use. A version with its own trim gets it; one without (or an unreadable
+  /// versions row) gets the clip's. Version 1 by default: what the clip's tiles, proxies and readiness show.
+  public func resolvedEdit(videoId: String, version: Int = 1, sourceSize: CGSize? = nil,
+                           settings: Settings? = nil) throws -> ResolvedEdit {
     guard let v = try video(id: videoId) else { throw StoreError.corruptRow("videos", videoId) }
     let s = try settings ?? self.settings()
     return EditResolver.resolve(try edit(videoId: videoId), video: v, defaults: s.defaults, sourceSize: sourceSize,
-                                lastUsedCrop: s.defaults.cropAnchor == .lastUsed ? try lastCropCentre() : nil)
+                                lastUsedCrop: s.defaults.cropAnchor == .lastUsed ? try lastCropCentre() : nil,
+                                version: rawVersion(videoId: videoId, number: version))
+  }
+
+  /// The stored version `number` as it is (no carry-forward), nil when it isn't stored or the rows can't be read.
+  public func rawVersion(videoId: String, number: Int) -> Version? {
+    (try? versions(videoId: videoId))?.first { $0.number == number }
   }
 
   /// Normalised centre of the most recently confirmed crop (for the "Same as last crop" anchor).
