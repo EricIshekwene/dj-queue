@@ -901,7 +901,7 @@ func run() throws -> Int32 {
       print(settings.postsPerVersion)
       break
     }
-    let n = try intArg(raw, "posts-per-version", 0...PostUnits.maxCount)
+    let n = try intArg(raw, "posts-per-version", 1...PostUnits.maxCount)
     guard n != settings.postsPerVersion else {
       print("posts per version is already \(n)")
       break

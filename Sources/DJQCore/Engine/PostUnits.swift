@@ -21,7 +21,7 @@ public enum PostUnits {
   public static func count(_ number: Int, own: Int?, settings: Settings, finishedUpTo: Int?) -> Int {
     if let own { return min(max(0, own), maxCount) }
     if let top = finishedUpTo, number <= top { return number == 1 ? 1 : 0 }
-    return min(max(0, settings.postsPerVersion), maxCount)
+    return min(max(1, settings.postsPerVersion), maxCount)
   }
 }
 
@@ -71,15 +71,21 @@ public struct UnitBook: Sendable {
     let dm = DayMath(settings: settings)
     let vids = try videos ?? store.videos(where: "type='short-form'")
     let finished: [String: Int] = (try? store.kv(PostUnits.finishedKey, as: [String: Int].self)) ?? [:]
+    // Only the clips asked about: `computeState` reads one clip's book on every state refresh.
+    let ids = vids.filter { $0.type == .short }.map(\.id)
+    let some = videos != nil
+    let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+    let only = some ? (ids.isEmpty ? "0" : "video_id IN (\(marks))") : "1"
+    let binds: [SQLBindable?] = some ? ids : []
     var versions: [String: [Int: Int?]] = [:]
-    for r in try store.db.query("SELECT video_id, number, json FROM versions") {
+    for r in try store.db.query("SELECT video_id, number, json FROM versions WHERE \(only)", binds) {
       guard let id = r.string("video_id"), let n = r.int("number") else { continue }
       let own = r.string("json").flatMap { try? JSONCoding.decoder.decode(Version.self, from: Data($0.utf8)) }?.postCount
       versions[id, default: [:]][n] = own
     }
     let stale = Set(try store.stalePastDraftSlots(today: dm.key(store.clock.now)).map(\.id))
-    let slots = Dictionary(grouping: try store.planSlots().filter { !stale.contains($0.id) }, by: \.videoId)
-    let posts = Dictionary(grouping: try store.posts(), by: \.videoId)
+    let slots = Dictionary(grouping: try store.planSlots(where: only, binds).filter { !stale.contains($0.id) }, by: \.videoId)
+    let posts = Dictionary(grouping: try store.posts(where: only, binds), by: \.videoId)
     let defaults = settings.defaults
     for v in vids where v.type == .short {
       var counts: [Int: Int] = [:]
@@ -218,6 +224,8 @@ extension Store {
         try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,0)", [videoId, 1, JSONCoding.string(ver)])
       }
       changed = true
+      // A lower count takes its extra version posts off the calendar at once (the engine's pass does it too).
+      try Planner(store: self).dropUnitsBeyondCount(videoId: videoId)
       try logEvent("version", count.map { "v\(number) posts \($0) time\($0 == 1 ? "" : "s") on each platform" }
                      ?? "v\(number) posts the default number of times", videoId: videoId)
       try refreshState(videoId: videoId)

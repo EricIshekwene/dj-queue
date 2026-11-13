@@ -51,10 +51,20 @@ behave as before. Long-form is never reposted. The spacing numbers were left to 
 
 ## What stays the same
 
+12a. **A lower count takes its extra posts off.** Lowering a version's count (editor, `djq post-count`) or posts per
+    version takes the version posts it no longer asks for off the calendar at once, when they can move like a relayed
+    day (unpinned, nothing posted, every live post an hour or more away). A pinned or set-time day is Eric's and stays.
+12b. **Doctor counts only what a pass would place.** Open days with repeats waiting for their gap are the design, so
+    `plan.gaps` warns only when the planner itself would fill an open day and hasn't.
 13. **Posts per day, slot times, the YouTube quiet window (`YouTubeWindow`), the 30-minute lead, the 30-day horizon,
     automatic retries, Post now, Shift plan, the Placer's one regular post per platform, day and position** are untouched:
     a unit's slot creates its posts through the same code. A retry or a fix is the same unit again (its version and post
     number), so self-healing counts per unit.
+13a. **Automatic retries are per version post (narrows DECISIONS-R8 §9).** Round 8 stopped every automatic retry on a
+    platform once any post of the clip there was published or had an open job. Every version now posts its count on
+    purpose, so that would leave every repeat's failure to Eric. A retry now waits for, or is ruled out by, its own
+    version post only (its jobs under either lineage it can carry, and its other rows of any kind). A copyright problem
+    anywhere on the clip and platform still rules it out: the song is in every version.
 14. **Never double-post, per unit.** The Postiz lineage is one version post on one platform: `video#platform#main` for
     v1 · 1 (unchanged), `#v<N>` for version N's first post (what a repost of version N always was), `#v<N>p<K>` for its
     post K. The automatic-retry key gets the same `p<K>` suffix from post 2 on. Every existing job and retry key keeps

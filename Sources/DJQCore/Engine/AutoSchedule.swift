@@ -110,8 +110,14 @@ extension Planner {
     try store.dropStalePastDraftSlots(today: today)
     var ctx = Pass(now: now, today: today, settings: settings, dm: dm, picker: PlatformPicker(queue: queue, settings: settings))
     try adoptDraftSlots(&ctx, &r)
+    // Round 31: a lowered count takes its extra version posts off before anything is filled.
+    if try dropUnitsBeyondCount(now: now) > 0 { ctx.placer = nil }
     let first = try relayIfDue(&ctx, &r)
     try fill(&ctx, first: first, &r)
+    // A count or posts per version that changed can finish a clip that has nothing left to post (or reopen one).
+    for v in try store.videos(where: "type='short-form' AND state IN ('planned','posting','posted','partial')") {
+      try store.refreshState(v, context: nil)
+    }
     r.clips.sort { ($0.date, $0.position) < ($1.date, $1.position) }
     let queued = try queue.ordered().count
     r.waiting = try schedulable(settings).count
@@ -247,7 +253,13 @@ extension Planner {
   /// lineage blocks a new create until that's confirmed); one whose job isn't settled or ended Postiz delivery for good,
   /// or that went to Eric by hand, stays.
   private func movableSlots(_ c: Pass) throws -> [PlanSlot] {
-    let cutoff = c.now.addingTimeInterval(Self.relayLead)
+    try store.planSlots(where: "date>=? AND pinned=0 AND exact_at IS NULL", [c.today]).sorted { ($0.date, $0.position) < ($1.date, $1.position) }
+      .filter { try isMovable($0, now: c.now) }
+  }
+
+  /// One slot of `movableSlots` (unpinned and from today on is the caller's to check).
+  func isMovable(_ s: PlanSlot, now: Date) throws -> Bool {
+    let cutoff = now.addingTimeInterval(Self.relayLead)
     let untouched: Set<PostState> = [.planned, .rendering, .rendered]
     func movable(_ p: PlatformPost) throws -> Bool {
       guard !p.state.isTerminal else { return true }  // failed/skipped history is detached and kept
@@ -258,11 +270,66 @@ extension Planner {
       guard let job = try store.livePostizJob(postId: p.id) else { return true }
       return job.phase == .live && job.remoteDate >= cutoff
     }
-    return try store.planSlots(where: "date>=? AND pinned=0 AND exact_at IS NULL", [c.today]).sorted { ($0.date, $0.position) < ($1.date, $1.position) }
-      .filter { s in
-        let posts = try store.slotPosts(s.id)
-        return try !posts.contains { $0.state == .posted } && posts.allSatisfy(movable)
+    let posts = try store.slotPosts(s.id)
+    return try !posts.contains { $0.state == .posted } && posts.allSatisfy(movable)
+  }
+
+  /// Round 31: a version post a lowered count no longer asks for (the version's own count, or posts per version) comes
+  /// off the calendar, when it can move like a relayed slot: unpinned, nothing posted, every live post an hour or more
+  /// away and untouched. A pinned or set-time day is Eric's own and stays. Returns how many came off.
+  @discardableResult
+  public func dropUnitsBeyondCount(now: Date? = nil, videoId: String? = nil) throws -> Int {
+    let now = now ?? store.clock.now
+    let settings = try store.settings()
+    let dm = DayMath(settings: settings)
+    var clause = "date>=? AND pinned=0 AND exact_at IS NULL"
+    var binds: [SQLBindable?] = [dm.key(now)]
+    if let videoId { clause += " AND video_id=?"; binds.append(videoId) }
+    let slots = try store.planSlots(where: clause, binds)
+    guard !slots.isEmpty else { return 0 }
+    let vids = try Set(slots.map(\.videoId)).compactMap { try store.video(id: $0) }
+    let book = try UnitBook(store: store, settings: settings, videos: vids)
+    var n = 0
+    for s in slots {
+      guard let c = book[s.videoId], s.postNo > (c.counts[s.versionNo] ?? 0), try isMovable(s, now: now) else { continue }
+      // Like `remove(slotId:)`: its automatic retries go too, and so does any other attempt of it still waiting.
+      try store.dropAutoRetries(slot: s)
+      for p in try store.posts(where: "video_id=? AND version_no=? AND COALESCE(post_no,1)=? AND kind<>'regular' AND state IN ('planned','rendering','rendered')",
+                               [s.videoId, s.versionNo, s.postNo]) where try store.finalPostizJob(postId: p.id) == nil {
+        try store.deletePost(p.id)
       }
+      try clearSlot(s)
+      try store.deletePlanSlot(s.id)
+      try store.refreshState(videoId: s.videoId)
+      try store.logEvent("plan", "\(BulkActions.day(s.date, dm, settings)): \(book.label(s.videoId, s.unit)) taken off, v\(s.versionNo) posts \(c.counts[s.versionNo] ?? 0) time\((c.counts[s.versionNo] ?? 0) == 1 ? "" : "s") now", videoId: s.videoId)
+      n += 1
+    }
+    return n
+  }
+
+  /// What a pass would schedule, without writing anything (Doctor). The same picker over the same open days; it doesn't
+  /// know which platforms would still get a post, so it can count one too many, never too few.
+  public func fillPreview(now: Date? = nil) throws -> Int {
+    let settings = try store.settings()
+    guard !settings.paused, !settings.activePlatforms.isEmpty else { return 0 }
+    let now = now ?? store.clock.now
+    let dm = DayMath(settings: settings)
+    let backlog = try schedulable(settings)
+    guard !backlog.isEmpty else { return 0 }
+    var picker = UnitPicker(book: try UnitBook(store: store, settings: settings, videos: backlog), order: backlog.map(\.id), dm: dm,
+                            repeatLimit: dm.addDays(dm.key(now), Self.repeatHorizonDays))
+    var n = 0
+    let byId = Dictionary(backlog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    for (day, _) in try openPositions(now: now, settings: settings, dm: dm) {
+      let near = try overlapNeighbours(day, settings, dm)
+      guard let (id, unit) = picker.pick(day: day, allowed: { id in
+        guard let v = byId[id] else { return false }
+        return !near.contains { Queue.overlaps($0, v) }
+      }) else { continue }
+      picker.placed(id, unit, day: day)
+      n += 1
+    }
+    return n
   }
 
   /// Open positions in calendar order take the next version post (`UnitPicker`: the round-31 spacing and round-robin rules),

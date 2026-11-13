@@ -309,6 +309,7 @@ public final class Planner: @unchecked Sendable {
     try store.db.transaction {
       let aa = try isApproved(sa), ba = try isApproved(sb)
       (sa.videoId, sb.videoId) = (sb.videoId, sa.videoId)
+      (sa.unit, sb.unit) = (sb.unit, sa.unit)  // round 31: each clip keeps its own version post
       try store.save(sa)
       try store.save(sb)
       try regenerateMany([(sa, aa), (sb, ba)], settings: settings, dm: dm)
