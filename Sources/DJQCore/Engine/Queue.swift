@@ -22,13 +22,18 @@ public final class Queue: @unchecked Sendable {
   public func ordered(platform: Platform? = nil) throws -> [Video] {
     let settings = try store.settings()
     let slotted = try slottedVideoIds(settings)
+    let cands = try candidates()
+    // Round 31: the global backlog is every clip with a post still waiting for a day (a version, or the next post of
+    // one), whether or not it already has days; each version posts its count (`PostUnits`). A clip with no day at all
+    // stays in it as before, even with nowhere left to post (`Planner.schedulable` leaves that one out).
+    let book = platform == nil ? try UnitBook(store: store, settings: settings, videos: cands) : nil
     var out: [Video] = []
-    for v in try candidates() {
+    for v in cands {
       if let p = platform {
         if v.alreadyPostedOn.contains(p) { continue }
         if try !store.platformHistory(videoId: v.id, platform: p).isEmpty { continue }
         if try store.edit(videoId: v.id).isSkipped(p, defaults: settings.defaults) { continue }
-      } else if slotted.contains(v.id) {
+      } else if slotted.contains(v.id), book?.pending(v.id).isEmpty ?? true {
         continue
       }
       if try isValid(v) { out.append(v) }
@@ -84,9 +89,13 @@ public final class Queue: @unchecked Sendable {
       through = d
       d = dm.addDays(d, 1)
     }
-    let ready = try Planner(store: store).schedulable(settings).count  // not clips that will never get a day
+    // Round 31: days are posts, and a clip makes one per version post (`PostUnits`), so both counts are posts.
+    let waiting = try Planner(store: store).schedulable(settings)  // not clips that will never get a day
     // Missing-file clips are in Edit but can't become posting days until relinked, so runway leaves them out.
-    let edit = try needsEdit().filter { !$0.missing }.count
+    let editClips = try needsEdit().filter { !$0.missing }
+    let book = try UnitBook(store: store, settings: settings, videos: waiting + editClips)
+    let ready = waiting.reduce(0) { $0 + book.pending($1.id).count }
+    let edit = editClips.reduce(0) { $0 + (book[$1.id]?.total ?? 1) }
     return Runway(approvedDays: approved, readyDays: ready / perDay, totalDays: approved + (ready + edit) / perDay,
                   scheduledThrough: through)
   }

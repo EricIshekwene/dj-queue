@@ -28,6 +28,7 @@ import Testing
       f = try Fixture(clips: clipList)
       try f.paths.ensure()
       store = try Store(paths: f.paths)
+      try Fixture.onePostEach(store)
       _ = try Intake(store: store).run()
       for i in 0..<clips {
         var e = Edit()

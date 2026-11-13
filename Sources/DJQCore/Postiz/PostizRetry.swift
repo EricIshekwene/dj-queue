@@ -170,8 +170,8 @@ extension Store {
     for a in try posts(where: "video_id=? AND kind<>'regular'", [videoId]) where !a.state.isTerminal {
       var r = try autoRetries(a)
       guard r.lastPostId == a.id, try finalPostizJob(postId: a.id) == nil else { continue }
-      let failures = try posts(where: "video_id=? AND platform=? AND version_no=? AND state='failed' AND resolution='retried' AND attempt_no<?",
-                               [videoId, a.platform.rawValue, a.versionNo, a.attemptNo])
+      let failures = try posts(where: "video_id=? AND platform=? AND version_no=? AND COALESCE(post_no,1)=? AND state='failed' AND resolution='retried' AND attempt_no<?",
+                               [videoId, a.platform.rawValue, a.versionNo, a.postNo, a.attemptNo])
       guard var f = failures.max(by: { $0.attemptNo < $1.attemptNo }) else { continue }
       f.resolution = nil
       try save(f, note: "retry waits: sent back to Edit")
@@ -350,7 +350,7 @@ extension PostizService {
 
   /// The version is in the key, so a repost counts apart from the clip's regular post.
   static func autoRetryKey(_ p: PlatformPost) -> String {
-    "\(autoRetryPrefix)\(p.videoId)#\(p.platform.rawValue)#v\(p.versionNo)"
+    "\(autoRetryPrefix)\(p.videoId)#\(p.platform.rawValue)#v\(p.versionNo)" + (p.postNo > 1 ? "p\(p.postNo)" : "")
   }
 
   func autoRetries(_ p: PlatformPost) throws -> PostizAutoRetries { try store.autoRetries(p) }
@@ -411,24 +411,44 @@ extension PostizService {
     return try !Self.settingsAllow(p.platform, router.settings) || !router.route(p.platform).isPostiz || signInDown(p.platform, router: router)
   }
 
-  /// This failure can never retry by itself: skipped in the editor, or a job of the clip + platform was published or
-  /// was a copyright problem, or another post of it is posted or has one. The whole clip + platform, not one lineage.
+  /// This failure can never retry by itself: skipped in the editor, or a copyright problem of the clip + platform (a
+  /// job or a post: the same song is in every version), or this version post was published, or another post of it is
+  /// posted. Round 31 narrows round 8's whole-clip guard (DECISIONS-R8 §9) to the version post: every version now posts
+  /// its count on purpose, so another version post having gone out is the plan, not a double post.
   func retryRuledOut(_ p: PlatformPost) throws -> Bool {
     if (try? store.resolvedEdit(videoId: p.videoId))?.isSkipped(p.platform) == true { return true }
-    let jobs = try store.postizJobs(where: """
-      video_id=? AND platform=? AND kind='post' AND (close_reason IN ('published','inbox','copyright') OR remote_state='PUBLISHED')
-      """, [p.videoId, p.platform.rawValue])
-    guard jobs.isEmpty else { return true }
+    let copyright = try store.postizJobs(where: "video_id=? AND platform=? AND kind='post' AND close_reason='copyright'",
+                                         [p.videoId, p.platform.rawValue])
+    guard copyright.isEmpty else { return true }
+    let lineages = Self.unitLineages(p)
+    let published = try store.postizJobs(where: """
+      lineage IN (?, ?) AND kind='post' AND (close_reason IN ('published','inbox') OR remote_state='PUBLISHED')
+      """, lineages)
+    guard published.isEmpty else { return true }
     return try store.posts(where: "video_id=? AND platform=?", [p.videoId, p.platform.rawValue])
-      .contains { $0.id != p.id && ($0.state == .posted || $0.state.isCopyright) }
+      .contains { $0.id != p.id && ($0.state.isCopyright || ($0.state == .posted && Self.sameUnit($0, p))) }
   }
 
-  /// Another job of the clip + platform is open, or another post of it is live: not while that lasts.
+  /// Another job of this version post is open, or another post of it is live: not while that lasts.
   func retryMustWait(_ p: PlatformPost) throws -> Bool {
-    let open = try store.postizJobs(where: "video_id=? AND platform=? AND kind='post' AND closed_at IS NULL", [p.videoId, p.platform.rawValue])
+    let open = try store.postizJobs(where: "lineage IN (?, ?) AND kind='post' AND closed_at IS NULL", Self.unitLineages(p))
     guard open.isEmpty else { return true }
     return try store.posts(where: "video_id=? AND platform=?", [p.videoId, p.platform.rawValue])
-      .contains { $0.id != p.id && !$0.state.isTerminal }
+      .contains { $0.id != p.id && !$0.state.isTerminal && Self.sameUnit($0, p) }
+  }
+
+  /// One version post on one platform, whatever kind its rows are (a repost of v1 · 1 is still v1 · 1). Post 0 is a
+  /// re-upload from before round 31, part of the clip's first post.
+  static func sameUnit(_ a: PlatformPost, _ b: PlatformPost) -> Bool {
+    func key(_ p: PlatformPost) -> PostUnit { p.postNo == 0 ? .first : p.unit }
+    return a.videoId == b.videoId && a.platform == b.platform && key(a) == key(b)
+  }
+
+  /// Both lineages a version post's jobs can carry (a regular post's and a repost's: they differ only for v1 · 1).
+  static func unitLineages(_ p: PlatformPost) -> [SQLBindable?] {
+    let u = p.postNo == 0 ? PostUnit.first : p.unit
+    return [PostizJob.lineage(videoId: p.videoId, platform: p.platform, kind: .regular, versionNo: u.version, postNo: u.post),
+            PostizJob.lineage(videoId: p.videoId, platform: p.platform, kind: .repost, versionNo: u.version, postNo: u.post)]
   }
 
   /// What a retry waits for: a sentence ("when posting resumes"), whether it's a setting rather than a pause, and

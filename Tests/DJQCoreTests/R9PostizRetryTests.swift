@@ -876,7 +876,7 @@ import Testing
     let (rig, x) = try xRig()
     try another(rig, x, at: rig.f.clock.now.addingTimeInterval(30 * 86400))
     var other = try #require(try rig.store.posts(where: "video_id=? AND version_no=9", [x.videoId]).first)
-    other.versionNo = 1
+    other.versionNo = 1  // round 31: a repost row of the same version post (v1 · 1) is the same post: the retry waits
     try rig.store.save(other, note: "test")
     try fail(rig, x)
     let f = try #require(try rig.store.post(id: x.id))

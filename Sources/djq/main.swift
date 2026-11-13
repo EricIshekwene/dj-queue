@@ -73,6 +73,11 @@ usage: djq <command> [args]
   fixed <post> | reset <post> | skip <post> | post-now <post> | shift-plan <post>
   copyright <post> reupload [N]|skip|accept
   repost <video> <platform> | longform-posted <video> <url>
+  post-count <video> [--version N] <0-9|default> [--json]   how many times a version posts on each platform
+                                      (default: Settings, 2); 0 = that version doesn't post. Shows every version post
+  posts-per-version [0-9] [--dry-run] show or set the default (Settings → Schedule); undo with bulk undo
+  post-spacing [--clip D] [--version D] [--dry-run]   show or set the gaps: days between two posts of one clip (≥1),
+                                      days before a version posts again; undo with bulk undo
   repost-ready <video> [--version N] [--off]   mark a text version ready to repost (or not); default v1
                                       it only marks the version: nothing is queued, scheduled or posted
   repost-ready --list [--json]        every clip with a version ready to repost
@@ -209,7 +214,8 @@ func tagOf(_ store: Store, _ videoId: String) -> String { (try? store.video(id: 
 func printPosts(_ store: Store, _ posts: [PlatformPost], _ s: Settings) {
   if posts.isEmpty { print("  (none)"); return }
   for p in posts {
-    var line = "  \(short(p.id))  \(fmt(p.scheduledAt, s))  \(pad(p.platform.displayName, 14)) \(pad(p.state.displayName, 10)) \(tagOf(store, p.videoId)) v\(p.versionNo)"
+    let unit = p.unit.label(of: (try? store.postCount(videoId: p.videoId, version: p.versionNo, settings: s)) ?? 1)
+    var line = "  \(short(p.id))  \(fmt(p.scheduledAt, s))  \(pad(p.platform.displayName, 14)) \(pad(p.state.displayName, 10)) \(tagOf(store, p.videoId)) \(unit)"
     if p.attemptNo > 1 || p.kind != .regular { line += "  [\(p.kind.rawValue) #\(p.attemptNo)]" }
     line += PostAtCommand.postMark(store, p)
     if let e = p.errorMessage, p.state.isProblem { line += "  — \(e)" }
@@ -236,13 +242,14 @@ func printWeek(_ store: Store, _ week: String) throws {
         return "\(p.platform.shortName) \(p.state.rawValue)\(other)"
       }.joined(separator: " · ")
       let score = v?.score.map { String($0) } ?? "–"
-      print("  \(label)  \(short(sl.id))  \(pad((v?.tag ?? sl.videoId) + " (\(score))", 34))\(PostAtCommand.mark(sl, s))\(states.isEmpty ? "" : "  " + states)")
+      let unit = sl.unit.label(of: (try? store.postCount(videoId: sl.videoId, version: sl.versionNo, settings: s)) ?? 1)
+      print("  \(label)  \(short(sl.id))  \(pad((v?.tag ?? sl.videoId) + " (\(score))", 34))\(pad(unit, 12))\(PostAtCommand.mark(sl, s))\(states.isEmpty ? "" : "  " + states)")
     }
   }
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at", "trim"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "post-count", "posts-per-version", "post-spacing", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at", "trim"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -315,8 +322,12 @@ func run() throws -> Int32 {
     let list = try queue.ordered(platform: p)
     print("Queue\(p.map { " · \($0.displayName)" } ?? "") · \(settings.sortDirection(for: p).displayName) · ties: older session first")
     if list.isEmpty { print("  (empty — score clips and finish them in Edit)") }
+    // Round 31: each clip's version posts still waiting for a day (every version posts its count).
+    let book = p == nil ? try UnitBook(store: store, settings: settings, videos: list) : nil
     for (i, v) in list.enumerated() {
-      print("  \(pad(String(i + 1), 3)) \(short(v.id))  \(pad(String(v.score ?? 0), 4))\(pad(v.tag, 36)) part \(v.part ?? 0) @ \(Int(v.start ?? 0))s")
+      let waiting = book.map { b in b.pending(v.id).map { b.label(v.id, $0) } } ?? []
+      print("  \(pad(String(i + 1), 3)) \(short(v.id))  \(pad(String(v.score ?? 0), 4))\(pad(v.tag, 36)) part \(v.part ?? 0) @ \(Int(v.start ?? 0))s"
+            + (waiting.isEmpty ? "" : "  waiting: " + waiting.joined(separator: ", ")))
     }
     let ts = try queue.toScore().count, ne = try queue.needsEdit().count
     let scheduled = try store.videos(where: "type='short-form' AND state IN ('planned','posting')").count
@@ -364,7 +375,10 @@ func run() throws -> Int32 {
     wrote = !dry && (r.scheduled > 0 || r.relaid > 0)
     if json { try printJSON(r); return 0 }
     print("\(dry ? "[dry run] " : "")\(r.summary) · Queue \(r.waiting) waiting")
-    for c in r.clips { print("  \(fmt(dm.date(c.date), settings, "EEE d MMM"))  #\(c.position + 1)  \(tagOf(store, c.videoId))") }
+    for c in r.clips {
+      let unit = c.unit.label(of: try store.postCount(videoId: c.videoId, version: c.versionNo, settings: settings))
+      print("  \(fmt(dm.date(c.date), settings, "EEE d MMM"))  #\(c.position + 1)  \(pad(tagOf(store, c.videoId), 36)) \(unit)")
+    }
 
   case "videos":
     let state = option("--state")
@@ -417,6 +431,11 @@ func run() throws -> Int32 {
       let shared = d.captions[Platform.tiktok.rawValue] ?? d.captions.values.first ?? ""
       for line in shared.split(separator: "\n", omittingEmptySubsequences: false) { print("    \(line)") }
       for (p, c) in d.captions.sorted(by: { $0.key < $1.key }) where c != shared { print("  caption for \(p): \(Captions.oneLine(c))") }
+    }
+    if !d.post_units.isEmpty {
+      print("  posts  " + d.post_units.map { u in
+        "\(u.label) " + (u.status == "waiting" ? "waiting" : u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "done")
+      }.joined(separator: " · "))
     }
     for i in d.issues { print("  issue  \(i.message)") }
 
@@ -855,6 +874,60 @@ func run() throws -> Int32 {
     try store.setExcluded(v.id, cmd == "exclude")
     wrote = true
     print("\(v.tag) \(cmd)d")
+  case "post-count":
+    let v = try resolveVideo(store, try arg(0, "video id"))
+    let n = try option("--version").map { try intArg($0, "--version", 1...99) } ?? 1
+    var positional: [String] = []
+    var i = 1
+    while i < args.count {
+      if args[i] == "--version" { i += 2; continue }
+      if !args[i].hasPrefix("--") { positional.append(args[i]) }
+      i += 1
+    }
+    if let raw = positional.first {
+      let count: Int? = raw == "default" ? nil : try intArg(raw, "count", 0...PostUnits.maxCount)
+      wrote = try store.setPostCount(videoId: v.id, number: n, count)
+    }
+    let units = try AgentAPI.units(v.id, store: store, settings: settings)
+    if flag("--json") { try printJSON(units); return 0 }
+    print("\(v.tag) v\(n) posts \(try store.postCount(videoId: v.id, version: n, settings: settings)) time(s) on each platform")
+    for u in units {
+      print("  \(pad(u.label, 12)) \(pad(u.status, 10)) \(u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "")"
+            + (u.platforms_done.isEmpty ? "" : "  has it: " + u.platforms_done.joined(separator: ", ")))
+    }
+
+  case "posts-per-version":
+    guard let raw = args.first(where: { !$0.hasPrefix("--") }) else {
+      print(settings.postsPerVersion)
+      break
+    }
+    let n = try intArg(raw, "posts-per-version", 1...PostUnits.maxCount)
+    guard n != settings.postsPerVersion else {
+      print("posts per version is already \(n)")
+      break
+    }
+    var s = settings
+    let before = s.postsPerVersion
+    s.postsPerVersion = n
+    if flag("--dry-run") { print("[dry run] posts per version \(before) → \(n)"); break }
+    let r = try BulkActions(store: store).record("posts-per-version", settings: true) { try store.save(s) }
+    wrote = true
+    print("posts per version \(before) → \(n) · undo: djq bulk undo \((r.batchId ?? "").prefix(8))")
+
+  case "post-spacing":
+    var s = settings
+    if let c = option("--clip") { s.sameClipGapDays = try intArg(c, "--clip", 1...30) }
+    if let v = option("--version") { s.sameVersionGapDays = try intArg(v, "--version", 1...60) }
+    let line = "one clip at least \(s.sameClipGapDays) day(s) apart · the same version at least \(s.sameVersionGapDays) day(s) apart"
+    guard s.sameClipGapDays != settings.sameClipGapDays || s.sameVersionGapDays != settings.sameVersionGapDays else {
+      print(line)
+      break
+    }
+    if flag("--dry-run") { print("[dry run] " + line); break }
+    let r = try BulkActions(store: store).record("post-spacing", settings: true) { try store.save(s) }
+    wrote = true
+    print(line + " · undo: djq bulk undo \((r.batchId ?? "").prefix(8))")
+
   case "posts-per-day":
     guard let raw = args.first(where: { !$0.hasPrefix("--") }) else {
       print(settings.postsPerDay)

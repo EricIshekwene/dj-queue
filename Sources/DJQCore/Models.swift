@@ -512,6 +512,10 @@ public struct Version: Codable, Sendable, Hashable {
   /// how the clip looks or posts (no render, preview or caption reads it), and never moves the clip between stages.
   /// nil/false = not ready. `RepostReady` reads it.
   public var repostReady: Bool?
+  /// Round 31: how many times this version posts on each platform; nil = `Settings.postsPerVersion`. Per version, never
+  /// carried forward or copied, never part of how the clip looks (no render, preview or caption reads it). 0 = this
+  /// version doesn't post.
+  public var postCount: Int?
   /// Round 20: this version keeps its own caption. Caption fields (caption, templates, hashtag groups, extras, YouTube
   /// title, per-platform captions) don't carry forward into it from earlier versions; what it doesn't set follows the
   /// defaults. Set by a bulk caption change on v1, after copying in what the version showed, so the change stays on v1.
@@ -689,11 +693,34 @@ public struct PlanSlot: Codable, Sendable, Identifiable, Hashable {
   /// never takes one of the day's regular positions and the scheduler never fills, moves or re-lays it.
   public var exactAt: Date? = nil
 
+  /// Round 31: which post of the clip this slot is, its version and that version's post number ("v2 · 2 of 2"). Stored as
+  /// nil for 1, so a slot (and a journal snapshot of one) from before round 31 reads v1 · post 1 exactly as it was.
+  public var versionNumber: Int? = nil
+  public var postNumber: Int? = nil
+
   /// Positions from here up belong to set-time slots (the regular positions are 0..<postsPerDay).
   public static let exactBase = 100
   public var isExact: Bool { exactAt != nil }
 
-  public init(id: String, date: String, position: Int, videoId: String, pinned: Bool, weekStart: String, exactAt: Date? = nil) {
+  /// The version this slot posts (1 when nothing says otherwise).
+  public var versionNo: Int {
+    get { versionNumber ?? 1 }
+    set { versionNumber = newValue == 1 ? nil : newValue }
+  }
+
+  /// Which post of its version this is, from 1.
+  public var postNo: Int {
+    get { postNumber ?? 1 }
+    set { postNumber = newValue == 1 ? nil : newValue }
+  }
+
+  public var unit: PostUnit {
+    get { PostUnit(version: versionNo, post: postNo) }
+    set { versionNo = newValue.version; postNo = newValue.post }
+  }
+
+  public init(id: String, date: String, position: Int, videoId: String, pinned: Bool, weekStart: String, exactAt: Date? = nil,
+              unit: PostUnit = .first) {
     self.id = id
     self.date = date
     self.position = position
@@ -701,7 +728,29 @@ public struct PlanSlot: Codable, Sendable, Identifiable, Hashable {
     self.pinned = pinned
     self.weekStart = weekStart
     self.exactAt = exactAt
+    self.unit = unit
   }
+}
+
+/// Round 31: one post of one version of a clip, the thing the planner schedules: "v2 · post 1". Every version posts
+/// `Settings.postsPerVersion` times on each platform (a version can set its own count, `Version.postCount`).
+public struct PostUnit: Codable, Sendable, Hashable, Comparable, CustomStringConvertible {
+  public var version: Int
+  public var post: Int
+
+  public init(version: Int, post: Int) { self.version = version; self.post = post }
+
+  public static let first = PostUnit(version: 1, post: 1)
+
+  /// Planning order inside one clip: every version's first post before any repeat, older versions first.
+  public static func < (a: PostUnit, b: PostUnit) -> Bool { (a.post, a.version) < (b.post, b.version) }
+
+  /// "v2 · 1 of 2" (`of` = that version's post count); "v2" when the version posts once.
+  public func label(of count: Int) -> String {
+    count > 1 || post > 1 ? "v\(version) · \(post) of \(max(count, post))" : "v\(version)"
+  }
+
+  public var description: String { "v\(version)p\(post)" }
 }
 
 public struct Week: Codable, Sendable, Hashable {
@@ -747,6 +796,16 @@ public struct PlatformPost: Codable, Sendable, Identifiable, Hashable {
   public var metrics: PostMetrics?
   public var createdAt: Date
   public var updatedAt: Date
+  /// Round 31: which post of its version this is (`PostUnit.post`). nil = 1, so every post from before round 31 (and a
+  /// journal snapshot of one) reads as its version's first post.
+  public var postNumber: Int? = nil
+
+  public var postNo: Int {
+    get { postNumber ?? 1 }
+    set { postNumber = newValue == 1 ? nil : newValue }
+  }
+
+  public var unit: PostUnit { PostUnit(version: versionNo, post: postNo) }
 
   public init(id: String, videoId: String, platform: Platform, versionNo: Int, attemptNo: Int, kind: PostKind, planSlotId: String?, scheduledAt: Date, renderId: String?, state: PostState, publisher: String, externalId: String?, url: String?, postedAt: Date?, errorType: ErrorType?, errorMessage: String?, rawResponse: String?, resolution: String?, metrics: PostMetrics?, createdAt: Date, updatedAt: Date) {
     self.id = id
@@ -879,6 +938,13 @@ public struct Settings: Codable, Sendable, Hashable {
   public var approvalReminderWeekday: Int = 1  // retired in round 13: nothing reads it (kept so stored rows decode as before)
   public var approvalReminderMinutes: Int = 18 * 60  // retired in round 13, same
   public var repostCooldownDays: Int = 14
+  /// Round 31: how many times each version posts on each platform (Eric: 2). A version can set its own
+  /// (`Version.postCount`). Long-form is never reposted.
+  public var postsPerVersion: Int = 2
+  /// Round 31 (DECISIONS-R31): two posts of one clip, any versions, are at least this many days apart.
+  public var sameClipGapDays: Int = 2
+  /// Round 31: a version posts again at least this many days after its previous post.
+  public var sameVersionGapDays: Int = 7
   public var lateGraceHours: Double = 6
   public var retryStaggerHours: Double = 3
   public var avoidOverlap: Bool = false

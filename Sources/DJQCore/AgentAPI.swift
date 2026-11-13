@@ -105,6 +105,24 @@ public enum AgentAPI {
     public var url: String?
     public var error_type: String?
     public var error_message: String?
+    /// Round 31: which post of its version this is (1 = the first).
+    public var post_number: Int = 1
+  }
+
+  /// Round 31: one version post of a clip and where it stands (`djq video --json` → `post_units`).
+  public struct UnitOut: Codable, Sendable, Hashable {
+    public var version: Int
+    public var post_number: Int
+    /// That version's post count on each platform.
+    public var of: Int
+    /// "v2 · 1 of 2".
+    public var label: String
+    /// The day it has (nil = waiting for one, or done without a slot).
+    public var date: String?
+    /// Platforms that already have it (posted, on the way, failed with a retry, or skipped).
+    public var platforms_done: [String]
+    /// waiting · scheduled · done
+    public var status: String
   }
 
   /// Round 16: one text on the video (`djq overlay list --json`, `overlays` in `djq video --json`). `number` is what
@@ -184,6 +202,8 @@ public enum AgentAPI {
     public var overlays: [OverlayOut] = []
     /// Round 30: each version's trim as it renders and posts (its own, else the clip's).
     public var version_trims: [VersionTrimOut] = []
+    /// Round 31: every version post (each version posts its count on each platform), in planning order.
+    public var post_units: [UnitOut] = []
   }
 
   /// Round 30: one version's trim. `own` = the version's own trim (`djq trim --version`); false = it follows the clip's
@@ -227,6 +247,10 @@ public enum AgentAPI {
       public var posts: [PostOut]
       /// Round 21: the moment of a set-time slot (its `position` is then 100 or above). Absent on a regular slot.
       public var exact_at: Date?
+      /// Round 31: the version post this day carries.
+      public var version: Int = 1
+      public var post_number: Int = 1
+      public var label: String = "v1"
     }
     public var week_start: String
     public var state: String
@@ -266,7 +290,22 @@ public enum AgentAPI {
   public static func post(_ p: PlatformPost) -> PostOut {
     PostOut(id: p.id, video_id: p.videoId, platform: p.platform.rawValue, version: p.versionNo, attempt: p.attemptNo,
             kind: p.kind.rawValue, state: p.state.rawValue, scheduled_at: p.scheduledAt, posted_at: p.postedAt, url: p.url,
-            error_type: p.errorType?.rawValue, error_message: p.errorMessage)
+            error_type: p.errorType?.rawValue, error_message: p.errorMessage, post_number: p.postNo)
+  }
+
+  /// Every version post of a short clip, in planning order (round 31).
+  public static func units(_ id: String, store: Store, settings: Settings) throws -> [UnitOut] {
+    guard let v = try store.video(id: id), v.type == .short else { return [] }
+    let book = try UnitBook(store: store, settings: settings, videos: [v])
+    guard let c = book[id] else { return [] }
+    let slots = try store.planSlots(where: "video_id=?", [id])
+    let pending = Set(c.pending(settings.activePlatforms))
+    return c.all.map { u in
+      let slot = slots.filter { $0.unit == u }.map(\.date).max()
+      let done = Platform.allCases.filter { c.taken[$0]?.contains(u) ?? false }.map(\.rawValue)
+      return UnitOut(version: u.version, post_number: u.post, of: c.counts[u.version] ?? 1, label: book.label(id, u), date: slot,
+                     platforms_done: done, status: pending.contains(u) ? "waiting" : slot != nil ? "scheduled" : "done")
+    }
   }
 
   /// `djq videos --json [--state S] [--stage S]` (state also accepts the BulkActions filters: unscored, scored,
@@ -311,21 +350,25 @@ public enum AgentAPI {
       issues: v.type == .short ? try Validation.issues(video: v, store: store) : [],
       plan: try store.planSlots(where: "video_id=?", [id]), posts: try store.posts(where: "video_id=?", [id]).map(post),
       overlays: r1.map { overlays($0, trimDuration: trim.duration) } ?? [],
-      version_trims: try versionTrims(id, store: store, settings: settings))
+      version_trims: try versionTrims(id, store: store, settings: settings),
+      post_units: try units(id, store: store, settings: settings))
   }
 
   /// `djq week --json [date]`
   public static func week(_ weekStart: String, store: Store) throws -> WeekOut {
     let planner = Planner(store: store)
     let w = try planner.week(weekStart)
-    let dm = try store.dayMath()
+    let settings = try store.settings()
+    let dm = DayMath(settings: settings)
     let slots = try planner.slots(week: weekStart)
     let days = try dm.weekDays(weekStart).map { day in
       WeekOut.Day(date: day, slots: try slots.filter { $0.date == day }.map { s in
         let v = try store.video(id: s.videoId)
         return WeekOut.SlotOut(slot_id: s.id, position: s.position, pinned: s.pinned, video_id: s.videoId,
                                display_name: v?.displayName ?? s.videoId, score: v?.score,
-                               posts: try store.posts(where: "plan_slot_id=?", [s.id]).map(post), exact_at: s.exactAt)
+                               posts: try store.posts(where: "plan_slot_id=?", [s.id]).map(post), exact_at: s.exactAt,
+                               version: s.versionNo, post_number: s.postNo,
+                               label: s.unit.label(of: try store.postCount(videoId: s.videoId, version: s.versionNo, settings: settings)))
       })
     }
     return WeekOut(week_start: weekStart, state: w.state.rawValue, approved_at: w.approvedAt, days: days)

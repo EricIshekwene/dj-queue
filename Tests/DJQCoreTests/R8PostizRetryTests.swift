@@ -362,7 +362,9 @@ import Testing
   }
 
   /// A repost carries the clip's published original: `fixed` would put it on the original's lineage.
-  @Test func aRepostOfAClipPostizPublishedStaysFailed() throws {
+  /// Round 31 (DECISIONS-R31, narrowing R8 §9): every version posts its count on purpose, so a repost failing after the
+  /// clip's first post went out retries by itself like any post; only its own version post being out stops it.
+  @Test func aRepostOfAClipPostizPublishedRetriesByItself() throws {
     let (rig, yt) = try ytRig()
     let j = try #require(try rig.job(yt))
     rig.fake.publish(j.postizId!)
@@ -379,11 +381,10 @@ import Testing
     #expect(try rig.job(current) != nil)
     try fail(rig, current)
     rig.tick(3)
-    #expect(try attempts(rig, yt).count == 2)
-    #expect(try problems(rig) == [repost.id])
-    // No promise that can't be kept, in the message or the alert.
-    #expect(try rig.store.post(id: repost.id)?.errorMessage == Self.quota + Self.noRetry)
-    #expect(rig.notifier.delivered.first { $0.key == "problem:\(repost.id)" }?.body.contains("retries tomorrow") == false)
+    let all = try attempts(rig, yt)
+    #expect(all.count == 3 && all.last?.kind == .repost && all.last?.unit == repost.unit)
+    #expect(try problems(rig).isEmpty)
+    #expect(try PostizJob.lineage(#require(all.last)) == PostizJob.lineage(repost))
   }
 
   /// Eric's Fixed on that repost is sent: its own job, and only that job's result marks it posted.

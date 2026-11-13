@@ -99,6 +99,7 @@ import Testing
     try makeReady(f, "clip-0")
     var s = Settings()
     s.enabledPlatforms = [.tiktok]
+    s.postsPerVersion = 1
     try f.store.save(s)
     let now = f.clock.now
     func post(_ id: String, _ kind: PostKind, _ attempt: Int, _ state: PostState) -> PlatformPost {

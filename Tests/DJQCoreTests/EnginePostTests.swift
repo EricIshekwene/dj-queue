@@ -99,7 +99,10 @@ import Testing
     let a = PostActions(store: f.store)
     let tt = try #require(try f.post(.tiktok, day: "2026-11-02"))
     try a.markPosted(postId: tt.id, url: Fixture.postURLs[.tiktok]!)
-    #expect(throws: EngineError("Add v2 first")) { try a.repost(videoId: "clip-0", platform: .tiktok) }
+    // Round 31: with one post per version (this fixture), v1 has had its post; a new version is the next one.
+    #expect(throws: EngineError("Every version of song0 x mix0 has posted its count on TikTok — add a version or raise its count (djq post-count)")) {
+      try a.repost(videoId: "clip-0", platform: .tiktok)
+    }
     var v2 = Version(number: 2)
     v2.text = "Second hook"
     try f.store.save(v2, videoId: "clip-0")

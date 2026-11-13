@@ -214,7 +214,10 @@ public final class Doctor: @unchecked Sendable {
     let planner = Planner(store: store)
     let waiting = try planner.schedulable(settings)
     guard !waiting.isEmpty else { return [] }
-    let open = try planner.openPositions(now: store.clock.now, settings: settings, dm: dm).prefix(waiting.count)
+    // Round 31: the spacing rules leave days open on purpose (DECISIONS-R31); only what a pass would place is stuck.
+    let placeable = try planner.fillPreview()
+    guard placeable > 0 else { return [] }
+    let open = try planner.openPositions(now: store.clock.now, settings: settings, dm: dm).prefix(placeable)
     guard !open.isEmpty else { return [] }
     var seen = Set<String>()
     let days = open.map(\.date).filter { seen.insert($0).inserted }

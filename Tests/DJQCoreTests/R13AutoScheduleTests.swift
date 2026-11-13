@@ -363,6 +363,7 @@ import Testing
     let f = try Fixture(clips: (0..<20).map { (tag: "song\($0) x mix\($0)", duration: 20.0) })
     try f.paths.ensure()
     let a = try Store(paths: f.paths, clock: f.clock), b = try Store(paths: f.paths, clock: f.clock)
+    try Fixture.onePostEach(a)
     _ = try Intake(store: a).run()
     for i in 0..<20 {
       var e = Edit()

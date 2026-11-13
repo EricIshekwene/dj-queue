@@ -205,7 +205,7 @@ import Testing
       try s.db.exec("PRAGMA user_version = 10")
     }
     let s = try Store(paths: paths, clock: FixedClock(Fixture.monday9am), path: file.path)
-    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 11)
+    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 12)
     let raw = try s.versions(videoId: "a")
     #expect(raw.filter { $0.number > 1 }.allSatisfy { $0.standalone == true })
     #expect(raw.first { $0.number == 1 }?.standalone == nil)
@@ -262,7 +262,7 @@ import Testing
     let paths = Paths(root: dir.appendingPathComponent("DJ Video"), appSupport: dir.appendingPathComponent("support"),
                       logs: dir.appendingPathComponent("logs"), launchAgents: dir.appendingPathComponent("LaunchAgents"))
     let s = try Store(paths: paths, clock: SystemClock(), path: path)
-    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 11)
+    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 12)
     let settings = try s.settings()
     var versionsChecked = 0, multi = 0
     for (id, vs) in before {
