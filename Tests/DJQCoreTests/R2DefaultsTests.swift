@@ -149,7 +149,7 @@ import Testing
   @Test func settingsDefaultsDecodeLeniently() throws {
     let f = try Fixture()
     // Older/partial nested JSON: missing keys keep their defaults; round-1 top-level keys seed `defaults`.
-    try f.store.db.run("INSERT INTO kv(key,json) VALUES('settings', ?)",
+    try f.store.db.run("INSERT OR REPLACE INTO kv(key,json) VALUES('settings', ?)",
                        [#"{"postsPerDay":2,"defaultStyle":"outline","defaultTextSize":80,"defaultHashtagSetIds":["afrobeats"]}"#])
     var s = try f.store.settings()
     #expect(s.postsPerDay == 2 && s.defaults.textStyle == .outline && s.defaults.textSize == 80)

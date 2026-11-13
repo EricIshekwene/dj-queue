@@ -99,12 +99,17 @@ public struct PostizJob: Codable, Sendable, Hashable, Identifiable {
   public static let unconfirmed = "UNCONFIRMED"
   public var isUnconfirmed: Bool { isOpen && phase == .creating && remoteState == Self.unconfirmed }
 
-  /// "video#platform#main" for regular posts and retries (one live post per clip and platform, ever), and
-  /// "video#platform#v<N>" for a repost of version N.
-  public static func lineage(videoId: String, platform: Platform, kind: PostKind, versionNo: Int) -> String {
-    "\(videoId)#\(platform.rawValue)#\(kind == .repost ? "v\(versionNo)" : "main")"
+  /// One version post on one platform, the never-double-post unit (round 31: each version posts its count, and each of
+  /// those posts is its own lineage). "video#platform#main" for v1 · post 1 (regular posts and retries; unchanged since
+  /// round 6), "video#platform#v<N>" for the first post of version N (what a repost of version N always was), and
+  /// "video#platform#v<N>p<K>" for its post K.
+  public static func lineage(videoId: String, platform: Platform, kind: PostKind, versionNo: Int, postNo: Int = 1) -> String {
+    let unit = versionNo == 1 && postNo == 1 && kind != .repost ? "main" : "v\(versionNo)" + (postNo > 1 ? "p\(postNo)" : "")
+    return "\(videoId)#\(platform.rawValue)#\(unit)"
   }
-  public static func lineage(_ p: PlatformPost) -> String { lineage(videoId: p.videoId, platform: p.platform, kind: p.kind, versionNo: p.versionNo) }
+  public static func lineage(_ p: PlatformPost) -> String {
+    lineage(videoId: p.videoId, platform: p.platform, kind: p.kind, versionNo: p.versionNo, postNo: p.postNo)
+  }
 
   public init(id: String = newId(), postId: String, kind: String = "post", videoId: String?, platform: Platform,
               integrationId: String, phase: PostizJobPhase = .creating, postizId: String? = nil, postizGroup: String? = nil,

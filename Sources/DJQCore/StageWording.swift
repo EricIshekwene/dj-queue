@@ -169,6 +169,11 @@ public enum StageWording {
   public static let setTimeTooSoon = "Pick a time at least \(Int(Planner.exactLead / 60)) minutes from now"
   /// Why a swap, Post today or Skip next leaves a set-time item alone.
   public static let hasSetTime = "It has a set time — change the time instead"
+
+  /// Round 31: every version of the clip already has its posts (or is off everywhere).
+  public static func nothingLeftToPost(_ tag: String) -> String {
+    "\(tag) has nothing left to post: every version has its posts on every platform it's on"
+  }
   /// Why Shift plan leaves a missed set-time post alone: it has no slot to go to.
   public static let setTimeNoShift = "It has a set time — post it now or pick a new time"
   public static let noSetTime = "It has no set time"

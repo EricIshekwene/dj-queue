@@ -381,10 +381,13 @@ import Testing
     func dump(_ db: SQLite) throws -> [String: [String]] {
       var out: [String: [String]] = [:]
       for t in try db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").compactMap({ $0.string("name") }) {
-        let cols = try db.query("PRAGMA table_info(\(t))").compactMap { $0.string("name") }.filter { !(t == "videos" && $0 == "still") }
+        // Round 31 (schema 12) adds three nullable unit columns, the finished-clips row and its event: not this test's.
+        let added: Set<String> = ["plan_slots.version_no", "plan_slots.post_no", "platform_posts.post_no"]
+        let cols = try db.query("PRAGMA table_info(\(t))").compactMap { $0.string("name") }
+          .filter { !(t == "videos" && $0 == "still") && !added.contains("\(t).\($0)") }
         out[t] = try db.query("SELECT \(cols.map { "\"\($0)\"" }.joined(separator: ",")) FROM \(t) ORDER BY rowid").map { r in
           cols.map { r.string($0) ?? r.double($0).map { String($0) } ?? "-" }.joined(separator: "|")
-        }
+        }.filter { !$0.hasPrefix(PostUnits.finishedKey) && !$0.contains("Every version now posts") }
       }
       return out
     }
@@ -421,7 +424,7 @@ import Testing
       before = try dump(s.db)
     }
     let s = try Store(paths: paths, clock: FixedClock(Fixture.monday9am), path: file.path)
-    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 11 && Store.schemaVersion == 11)
+    #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 12 && Store.schemaVersion == 12)
     #expect(try s.db.query("PRAGMA table_info(videos)").contains { $0.string("name") == "still" })
     let after = try dump(s.db)
     #expect(after == before, "every table's rows are what they were")

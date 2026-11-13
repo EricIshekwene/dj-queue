@@ -7,7 +7,7 @@ public final class Store: @unchecked Sendable {
   public let paths: Paths
   public let clock: Clock
 
-  public static let schemaVersion = 11
+  public static let schemaVersion = 12
   /// Schema step that adds `videos.sent_to_queue` (`migrateSentToQueue`). `schemaVersion` stays a literal: build-app.sh
   /// reads the number from that line into the bundle, and `djq autoupdate rollback` relies on it.
   static let sentToQueueVersion = 8
@@ -97,6 +97,7 @@ public final class Store: @unchecked Sendable {
     if v < 9 { try migrateToV9(from: v) }
     if v < 10 { try migrateToV10(from: v) }
     if v < 11 { try migrateToV11(from: v) }
+    if v < 12 { try migrateToV12(from: v) }
     // Idempotent additions to v2 (dev databases created before they existed).
     let bcols = Set(try db.query("PRAGMA table_info(batches)").compactMap { $0.string("name") })
     if !bcols.contains("restored") { try db.exec("ALTER TABLE batches ADD COLUMN restored TEXT NOT NULL DEFAULT '[]'") }
@@ -325,6 +326,40 @@ public final class Store: @unchecked Sendable {
     }
     let r = try VersionSeparationMigration.run(self)
     Log.shared.info("schema 11: separate versions — \(r.versions) version(s) on \(r.clips.count) clip(s) stand alone, \(r.leftAsIs.count) clip(s) left as they were, batch \(r.batchId ?? "none")")
+  }
+
+  /// Round 31, every version posts its count: `plan_slots.version_no` / `post_no` (which post of the clip a day is) and
+  /// `platform_posts.post_no`. Additive and lossless: three nullable columns (NULL reads as 1, so every slot and post
+  /// stays v1 · post 1 exactly as it was) and one kv row: the clips that had already finished posting (`posted`,
+  /// `partial`) keep one post of v1 (`PostUnits.finishedKey`), so the update never sends Eric's back catalogue out again
+  /// by itself. A file database with data is copied to `<app support>/backups/` first.
+  private func migrateToV12(from v: Int) throws {
+    if v >= 1, db.path != ":memory:", (try db.one("SELECT COUNT(*) AS n FROM videos")?.int("n") ?? 0) > 0 {
+      let dir = paths.appSupport.appendingPathComponent("backups")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd-HHmmss"
+      try db.backup(to: dir.appendingPathComponent("queue-before-schema12-\(f.string(from: Date())).sqlite").path)
+    }
+    try db.transaction {
+      for (table, column) in [("plan_slots", "version_no"), ("plan_slots", "post_no"), ("platform_posts", "post_no")] {
+        let cols = Set(try db.query("PRAGMA table_info(\(table))").compactMap { $0.string("name") })
+        if !cols.contains(column) { try db.exec("ALTER TABLE \(table) ADD COLUMN \(column) INTEGER") }
+      }
+      if v >= 1 {
+        var done: [String: Int] = [:]
+        for r in try db.query("""
+          SELECT v.id AS id, MAX(COALESCE(x.number, 1)) AS top FROM videos v LEFT JOIN versions x ON x.video_id=v.id
+          WHERE v.type='short-form' AND v.state IN ('posted','partial') GROUP BY v.id
+          """) {
+          if let id = r.string("id") { done[id] = r.int("top") ?? 1 }
+        }
+        try setKV(PostUnits.finishedKey, done)
+        try logEvent("plan", "Every version now posts \(Settings().postsPerVersion) times; \(done.count) clip\(done.count == 1 ? "" : "s") that had finished posting keep one post")
+      }
+      try db.exec("PRAGMA user_version = 12")
+    }
   }
 
   private func seedDefaults() throws {
@@ -686,13 +721,13 @@ public final class Store: @unchecked Sendable {
     try db.query("SELECT * FROM plan_slots WHERE \(clause) ORDER BY date, position", binds).map {
       PlanSlot(id: $0.string("id")!, date: $0.string("date")!, position: $0.int("position")!,
                videoId: $0.string("video_id")!, pinned: $0.bool("pinned"), weekStart: $0.string("week_start")!,
-               exactAt: $0.date("exact_at"))
+               exactAt: $0.date("exact_at"), unit: PostUnit(version: $0.int("version_no") ?? 1, post: $0.int("post_no") ?? 1))
     }
   }
 
   public func save(_ s: PlanSlot) throws {
-    try db.run("INSERT INTO plan_slots(id,date,position,video_id,pinned,week_start,exact_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET date=excluded.date, position=excluded.position, video_id=excluded.video_id, pinned=excluded.pinned, week_start=excluded.week_start, exact_at=excluded.exact_at",
-               [s.id, s.date, s.position, s.videoId, s.pinned, s.weekStart, s.exactAt])
+    try db.run("INSERT INTO plan_slots(id,date,position,video_id,pinned,week_start,exact_at,version_no,post_no) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET date=excluded.date, position=excluded.position, video_id=excluded.video_id, pinned=excluded.pinned, week_start=excluded.week_start, exact_at=excluded.exact_at, version_no=excluded.version_no, post_no=excluded.post_no",
+               [s.id, s.date, s.position, s.videoId, s.pinned, s.weekStart, s.exactAt, s.versionNumber, s.postNumber])
   }
 
   public func deletePlanSlot(_ id: String) throws { try db.run("DELETE FROM plan_slots WHERE id=?", [id]) }
@@ -714,9 +749,9 @@ public final class Store: @unchecked Sendable {
     p.updatedAt = now
     try db.run("""
       INSERT INTO platform_posts(id,video_id,platform,version_no,attempt_no,kind,plan_slot_id,scheduled_at,render_id,
-        state,publisher,external_id,url,posted_at,error_type,error_message,raw_response,resolution,metrics,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET version_no=excluded.version_no, attempt_no=excluded.attempt_no, kind=excluded.kind,
+        state,publisher,external_id,url,posted_at,error_type,error_message,raw_response,resolution,metrics,created_at,updated_at,post_no)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET version_no=excluded.version_no, post_no=excluded.post_no, attempt_no=excluded.attempt_no, kind=excluded.kind,
         plan_slot_id=excluded.plan_slot_id, scheduled_at=excluded.scheduled_at, render_id=excluded.render_id,
         state=excluded.state, publisher=excluded.publisher, external_id=excluded.external_id, url=excluded.url,
         posted_at=excluded.posted_at, error_type=excluded.error_type, error_message=excluded.error_message,
@@ -725,7 +760,7 @@ public final class Store: @unchecked Sendable {
       """, [p.id, p.videoId, p.platform.rawValue, p.versionNo, p.attemptNo, p.kind.rawValue, p.planSlotId,
             p.scheduledAt, p.renderId, p.state.rawValue, p.publisher, p.externalId, p.url, p.postedAt,
             p.errorType?.rawValue, p.errorMessage, p.rawResponse, p.resolution,
-            p.metrics.map { JSONCoding.string($0) }, p.createdAt, p.updatedAt])
+            p.metrics.map { JSONCoding.string($0) }, p.createdAt, p.updatedAt, p.postNumber])
     if old?.state != p.state || note != nil {
       try db.run("INSERT INTO post_history(post_id,at,from_state,to_state,note) VALUES(?,?,?,?,?)",
                  [p.id, now, old?.state.rawValue, p.state.rawValue, note])
@@ -745,7 +780,7 @@ public final class Store: @unchecked Sendable {
   }
 
   static func post(_ r: Row) -> PlatformPost {
-    PlatformPost(id: r.string("id")!, videoId: r.string("video_id")!, platform: Platform(rawValue: r.string("platform")!)!,
+    var p = PlatformPost(id: r.string("id")!, videoId: r.string("video_id")!, platform: Platform(rawValue: r.string("platform")!)!,
                  versionNo: r.int("version_no")!, attemptNo: r.int("attempt_no")!,
                  kind: PostKind(rawValue: r.string("kind")!) ?? .regular, planSlotId: r.string("plan_slot_id"),
                  scheduledAt: r.date("scheduled_at")!, renderId: r.string("render_id"),
@@ -754,6 +789,8 @@ public final class Store: @unchecked Sendable {
                  errorType: r.string("error_type").flatMap(ErrorType.init), errorMessage: r.string("error_message"),
                  rawResponse: r.string("raw_response"), resolution: r.string("resolution"), metrics: r.json("metrics"),
                  createdAt: r.date("created_at")!, updatedAt: r.date("updated_at")!)
+    p.postNo = r.int("post_no") ?? 1
+    return p
   }
 
   // MARK: Renders
@@ -909,15 +946,20 @@ public final class Store: @unchecked Sendable {
   /// The state that comes from posts (posted / partial / posting / planned) or an approved-week slot (planned);
   /// nil when the clip is in neither.
   func planOrPostState(_ v: Video, settings: Settings? = nil) throws -> VideoState? {
-    // Latest attempt per platform; a retry (fix) supersedes the failed regular post. Reposts don't change state.
-    let posts = try self.posts(where: "video_id=? AND kind IN ('regular','retry')", [v.id])
+    // Latest attempt per post of a version on a platform (round 31: a version posts its count, each post its own chain;
+    // a retry or fix supersedes the failed post of its chain). Reposts are posts of their version too.
+    let posts = try self.posts(where: "video_id=? AND kind IN ('regular','retry','repost')", [v.id])
     if !posts.isEmpty {
       let st = try settings ?? self.settings()
       let active = Set(st.activePlatforms)
-      let latest = Dictionary(grouping: posts, by: \.platform).compactMapValues { $0.max { $0.attemptNo < $1.attemptNo } }
-      let relevant = latest.filter { active.contains($0.key) }.map(\.value)
+      let latest = Dictionary(grouping: posts, by: { "\($0.platform.rawValue)#\($0.unit)" })
+        .compactMapValues { $0.max { $0.attemptNo < $1.attemptNo } }
+      let relevant = latest.values.filter { active.contains($0.platform) }
+      // Posts still to make (a later version, the next post of one) keep it going: it isn't finished between them.
+      let more = v.type == .short ? try !UnitBook(store: self, settings: st, videos: [v]).pending(v.id).isEmpty : false
       // A failure with a retry coming isn't finished, whatever its row says.
       if !relevant.isEmpty, try relevant.allSatisfy({ try $0.state.isTerminal && !retryIsComing($0) }) {
+        if more { return .posting }
         return relevant.allSatisfy { $0.state == .posted || $0.state == .skipped } ? .posted : .partial
       }
       if relevant.contains(where: { $0.state == .posted || $0.state == .due || $0.state == .overdue }) { return .posting }

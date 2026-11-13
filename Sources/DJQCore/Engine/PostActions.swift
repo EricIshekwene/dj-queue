@@ -40,8 +40,8 @@ public final class PostActions: @unchecked Sendable {
     try store.save(p, note: "marked posted")
     // Posted by hand from a failed row: its retry must not go out too (the publish step deletes it from Postiz).
     if wasFailed {
-      for var a in try store.posts(where: "video_id=? AND platform=? AND version_no=? AND attempt_no>?",
-                                   [p.videoId, p.platform.rawValue, p.versionNo, p.attemptNo]) where !a.state.isTerminal {
+      for var a in try store.posts(where: "video_id=? AND platform=? AND version_no=? AND COALESCE(post_no,1)=? AND attempt_no>?",
+                                   [p.videoId, p.platform.rawValue, p.versionNo, p.postNo, p.attemptNo]) where !a.state.isTerminal {
         a.state = .skipped
         try store.save(a, note: "attempt \(p.attemptNo) was marked posted")
       }
@@ -132,8 +132,10 @@ public final class PostActions: @unchecked Sendable {
   }
 
   /// Another post of this version on the platform is posted, still live, or was published by Postiz (even if not synced).
+  /// Round 31: re-uploading the same version only looks at that post's own chain (its other posts are other posts).
   func versionIsOut(_ v: Int, of p: PlatformPost) throws -> Bool {
-    try store.posts(where: "video_id=? AND platform=? AND version_no=? AND id<>?", [p.videoId, p.platform.rawValue, v, p.id]).contains { o in
+    try store.posts(where: "video_id=? AND platform=? AND version_no=? AND id<>?", [p.videoId, p.platform.rawValue, v, p.id])
+      .filter { v != p.versionNo || $0.postNo == p.postNo }.contains { o in
       if o.state == .posted || !o.state.isTerminal { return true }
       return try store.postizJobs(postId: o.id).contains { [.published, .inbox].contains($0.closeReason) || $0.remoteState == "PUBLISHED" }
     }
@@ -278,7 +280,9 @@ public final class PostActions: @unchecked Sendable {
 
   // MARK: Reposts, metrics, long-form
 
-  /// Next version on a platform, ≥ cooldown days after the platform's last post of the video, staggered.
+  /// The clip's next version post the platform doesn't have yet (round 31: planning order, within each version's count),
+  /// ≥ cooldown days after the platform's last post of the video, staggered. The planner then gives that version post a
+  /// day for the platforms still without it.
   @discardableResult
   public func repost(videoId: String, platform: Platform) throws -> PlatformPost {
     let settings = try store.settings()
@@ -290,18 +294,25 @@ public final class PostActions: @unchecked Sendable {
     guard let last = prior.max(by: { ($0.postedAt ?? $0.scheduledAt) < ($1.postedAt ?? $1.scheduledAt) }) else {
       throw EngineError("\(v.tag) hasn't been on \(platform.displayName) yet — plan it instead")
     }
-    let next = (prior.map(\.versionNo).max() ?? 1) + 1
-    guard try store.versions(videoId: videoId).contains(where: { $0.number == next }) else { throw EngineError("Add v\(next) first") }
+    let book = try UnitBook(store: store, settings: settings, videos: [v])
+    let had = Set(prior.map(\.unit))
+    guard let unit = book[videoId]?.all.first(where: { !had.contains($0) }) else {
+      throw EngineError("Every version of \(v.tag) has posted its count on \(platform.displayName) — add a version or raise its count")
+    }
+    let next = unit.version
     let lastDay = dm.key(last.postedAt ?? last.scheduledAt)
     let day = max(dm.addDays(store.today(dm), 1), dm.addDays(lastDay, settings.repostCooldownDays))
     let at = try Sched.staggered(store: store, platform: platform, day: day, settings: settings, dm: dm)
-    let p = PlatformPost(
+    var p = PlatformPost(
       id: newId(), videoId: videoId, platform: platform, versionNo: next,
       attemptNo: try store.nextAttemptNo(videoId: videoId, platform: platform), kind: .repost, planSlotId: nil,
       scheduledAt: at, renderId: nil, state: .planned, publisher: last.publisher, externalId: nil, url: nil, postedAt: nil,
       errorType: nil, errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now)
-    try store.save(p, note: "repost v\(next)")
-    try store.logEvent("repost", "Repost v\(next) on \(platform.displayName) \(Sched.shortTime(at, settings))", videoId: videoId, postId: p.id)
+    p.postNo = unit.post
+    let label = book.label(videoId, unit)
+    try store.save(p, note: "repost \(label)")
+    try store.logEvent("repost", "Repost \(label) on \(platform.displayName) \(Sched.shortTime(at, settings))", videoId: videoId, postId: p.id)
+    try store.refreshState(videoId: videoId)
     return p
   }
 
@@ -388,12 +399,19 @@ public final class PostActions: @unchecked Sendable {
     } else {
       at = try Sched.staggered(store: store, platform: p.platform, day: dm.addDays(today, 1), settings: settings, dm: dm)
     }
-    let n = PlatformPost(
+    var n = PlatformPost(
       id: newId(), videoId: p.videoId, platform: p.platform, versionNo: versionNo,
       attemptNo: try store.nextAttemptNo(videoId: p.videoId, platform: p.platform), kind: p.kind == .repost ? .repost : kind,
       planSlotId: p.planSlotId,
       scheduledAt: at, renderId: nil, state: .planned, publisher: p.publisher, externalId: nil, url: nil, postedAt: nil,
       errorType: nil, errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now)
+    // Round 31: an attempt is the same version post again. A re-upload as another version is that version's next post.
+    if versionNo == p.versionNo {
+      n.postNo = p.postNo
+    } else {
+      n.postNo = (try store.posts(where: "video_id=? AND platform=? AND version_no=?", [p.videoId, p.platform.rawValue, versionNo])
+        .map(\.postNo).max() ?? 0) + 1
+    }
     try store.save(n, note: note)
     try store.logEvent("retry", "\(p.platform.displayName) attempt \(n.attemptNo) \(Sched.shortTime(at, settings))", videoId: p.videoId, postId: n.id)
     return n

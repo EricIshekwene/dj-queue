@@ -37,12 +37,25 @@ extension Planner {
     public var videoId: String
     public var date: String
     public var position: Int
+    /// Round 31: the version post that day carries.
+    public var versionNo: Int = 1
+    public var postNo: Int = 1
+
+    public init(videoId: String, date: String, position: Int, unit: PostUnit = .first) {
+      self.videoId = videoId
+      self.date = date
+      self.position = position
+      versionNo = unit.version
+      postNo = unit.post
+    }
+
+    public var unit: PostUnit { PostUnit(version: versionNo, post: postNo) }
   }
 
   public struct AutoScheduleReport: Codable, Sendable, Equatable {
-    /// Clips that got a day they didn't have (new from the Queue, or a draft slot that got its posts).
+    /// Version posts that got a day they didn't have (new from the Queue, or a draft slot that got its posts).
     public var scheduled = 0
-    /// Clips the relay took off the calendar and laid again.
+    /// Version posts the relay took off the calendar and laid again.
     public var relaid = 0
     /// Why nothing was scheduled ("paused", "no platforms on", "Queue empty", "no open day", or clips with nowhere left to
     /// post); nil when something was.
@@ -117,7 +130,7 @@ extension Planner {
     var dm: DayMath
     var picker: PlatformPicker
     var placer: Placer?
-    /// Clip → the day it had before the relay took it off.
+    /// Clip version post (`UnitPicker.key`) → the day it had before the relay took it off.
     var previousDay: [String: String] = [:]
   }
 
@@ -153,7 +166,9 @@ extension Planner {
 
   /// The Queue in posting order, without clips that have nowhere left to post: they would take a day and post nothing.
   public func schedulable(_ settings: Settings) throws -> [Video] {
-    try queue.ordered().filter { v in try settings.activePlatforms.contains { try usable(v.id, on: $0) } }
+    let all = try queue.ordered()
+    let book = try UnitBook(store: store, settings: settings, videos: all)
+    return all.filter { !book.pending($0.id).isEmpty }  // round 31: a version post still waiting for a day
   }
 
   /// Draft-week slots from today on become real, the same way approving a week did (not-ready clips drop first; pinned
@@ -180,8 +195,8 @@ extension Planner {
         continue
       }
       r.scheduled += 1
-      r.clips.append(ScheduledClip(videoId: s.videoId, date: s.date, position: s.position))
-      try logScheduled(s.videoId, s.date, c)
+      r.clips.append(ScheduledClip(videoId: s.videoId, date: s.date, position: s.position, unit: s.unit))
+      try logScheduled(s.videoId, s.unit, s.date, c)
     }
     for w in Set(slots.map(\.weekStart)) { try approve(week: w, at: c.now) }
     c.placer = placer
@@ -192,14 +207,18 @@ extension Planner {
     if try store.week(week)?.state != .approved { try store.save(Week(weekStart: week, state: .approved, approvedAt: now)) }
   }
 
-  private func logScheduled(_ videoId: String, _ day: String, _ c: Pass) throws {
-    try store.logEvent("plan", StageWording.scheduledFor(BulkActions.day(day, c.dm, c.settings)), videoId: videoId)
+  private func logScheduled(_ videoId: String, _ unit: PostUnit, _ day: String, _ c: Pass) throws {
+    let count = try store.postCount(videoId: videoId, version: unit.version, settings: c.settings)
+    // A clip that posts once says it as before; otherwise which version post took the day.
+    let label = unit == .first && count == 1 ? "" : " (\(UnitBook.label(unit, count: count)))"
+    try store.logEvent("plan", StageWording.scheduledFor(BulkActions.day(day, c.dm, c.settings)) + label, videoId: videoId)
   }
 
   /// Runs once when posts/day or the Queue sort changed, and the first run only records the layout (installing never
   /// reshuffles what's there). Returns the order to fill in: the cleared clips in their old order after a posts/day
   /// change, nil (plain Queue order) after a sort change.
   private func relayIfDue(_ c: inout Pass, _ r: inout AutoScheduleReport) throws -> [String]? {
+    func key(_ id: String, _ u: PostUnit) -> String { UnitPicker.key(id, u) }
     let sig = LayoutSig(c.settings)
     let stored: LayoutSig? = try store.kv(Self.layoutKey)
     guard stored != sig else { return nil }
@@ -210,13 +229,13 @@ extension Planner {
       try clearSlot(s)
       try store.deletePlanSlot(s.id)
       try store.refreshState(videoId: s.videoId)
-      c.previousDay[s.videoId] = s.date
+      c.previousDay[key(s.videoId, s.unit)] = s.date
     }
     c.placer = nil  // the posts it counted are gone
     r.relaid = cleared.count
-    r.scheduled -= r.clips.filter { c.previousDay[$0.videoId] != nil }.count  // adopted a moment ago: counted by the relay
-    r.clips.removeAll { c.previousDay[$0.videoId] != nil }
-    if !cleared.isEmpty { try store.logEvent("plan", "Re-laid \(cleared.count) clip\(cleared.count == 1 ? "" : "s"): posts per day or the Queue order changed") }
+    r.scheduled -= r.clips.filter { c.previousDay[key($0.videoId, $0.unit)] != nil }.count  // adopted a moment ago: counted by the relay
+    r.clips.removeAll { c.previousDay[key($0.videoId, $0.unit)] != nil }
+    if !cleared.isEmpty { try store.logEvent("plan", "Re-laid \(cleared.count) post\(cleared.count == 1 ? "" : "s"): posts per day or the Queue order changed") }
     return stored.sort == sig.sort ? cleared.map(\.videoId) : nil
   }
 
@@ -244,38 +263,58 @@ extension Planner {
       }
   }
 
-  /// Open positions in calendar order take the next clip, keeping the overlap rule. `first` puts those clips ahead of the
-  /// rest of the Queue, in that order.
+  /// Open positions in calendar order take the next version post (`UnitPicker`: the round-31 spacing and round-robin rules),
+  /// keeping the overlap rule. `first` puts those clips ahead of the rest of the Queue on a tie, in that order.
   private func fill(_ c: inout Pass, first: [String]?, _ r: inout AutoScheduleReport) throws {
     let open = try openPositions(now: c.now, settings: c.settings, dm: c.dm)
     guard !open.isEmpty else { return }
     var backlog = try schedulable(c.settings)
     guard !backlog.isEmpty else { return }
     if let first {
-      let rank = Dictionary(first.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { a, _ in a })
+      var seen = Set<String>()
+      let ordered = first.filter { seen.insert($0).inserted }
+      let rank = Dictionary(ordered.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { a, _ in a })
       backlog = backlog.filter { rank[$0.id] != nil }.sorted { rank[$0.id]! < rank[$1.id]! } + backlog.filter { rank[$0.id] == nil }
     }
+    let byId = Dictionary(backlog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    var picker = UnitPicker(book: try UnitBook(store: store, settings: c.settings, videos: backlog), order: backlog.map(\.id), dm: c.dm)
     var placer = try c.placer ?? Placer(store: store, dm: c.dm)
     for (day, pos) in open {
-      guard !backlog.isEmpty else { break }
-      guard let i = try pickIndex(backlog, for: day, settings: c.settings, dm: c.dm) else { continue }
-      let v = backlog.remove(at: i)
-      let week = c.dm.weekStart(of: c.dm.date(day))
-      try approve(week: week, at: c.now)
-      let s = PlanSlot(id: newId(), date: day, position: pos, videoId: v.id, pinned: false, weekStart: week)
-      try store.save(s)
-      try createPosts(s, settings: c.settings, dm: c.dm, picker: &c.picker, placer: &placer, note: "auto-scheduled",
-                      notBefore: c.now.addingTimeInterval(Self.autoScheduleLead), pullForHistory: false)
-      guard try !store.slotPosts(s.id).isEmpty else {  // a slot with no posts would hold its clip on Scheduled for good
-        try store.deletePlanSlot(s.id)
-        try store.refreshState(videoId: v.id)
-        backlog.insert(v, at: i)
-        continue
+      let near = try overlapNeighbours(day, c.settings, c.dm)
+      while let (id, unit) = picker.pick(day: day, allowed: { id in
+        guard let v = byId[id] else { return false }
+        return !near.contains { Queue.overlaps($0, v) }
+      }) {
+        let week = c.dm.weekStart(of: c.dm.date(day))
+        try approve(week: week, at: c.now)
+        let s = PlanSlot(id: newId(), date: day, position: pos, videoId: id, pinned: false, weekStart: week, unit: unit)
+        try store.save(s)
+        try createPosts(s, settings: c.settings, dm: c.dm, picker: &c.picker, placer: &placer, note: "auto-scheduled",
+                        notBefore: c.now.addingTimeInterval(Self.autoScheduleLead), pullForHistory: false)
+        guard try !store.slotPosts(s.id).isEmpty else {  // a slot with no posts would hold its clip on Scheduled for good
+          try store.deletePlanSlot(s.id)
+          try store.refreshState(videoId: id)
+          picker.block(id, unit)
+          continue
+        }
+        picker.placed(id, unit, day: day)
+        r.clips.append(ScheduledClip(videoId: id, date: day, position: pos, unit: unit))
+        let k = UnitPicker.key(id, unit)
+        if c.previousDay[k] == nil { r.scheduled += 1 }
+        if c.previousDay[k] != day { try logScheduled(id, unit, day, c) }
+        break
       }
-      r.clips.append(ScheduledClip(videoId: v.id, date: day, position: pos))
-      if c.previousDay[v.id] == nil { r.scheduled += 1 }
-      if c.previousDay[v.id] != day { try logScheduled(v.id, day, c) }
     }
     c.placer = placer
+  }
+
+  /// The clips the overlap rule keeps `day` apart from (Settings → avoid overlap; empty when it's off).
+  private func overlapNeighbours(_ day: String, _ settings: Settings, _ dm: DayMath) throws -> [Video] {
+    guard settings.avoidOverlap else { return [] }
+    let n = settings.avoidOverlapDays
+    let near = try store.planSlots(where: "date>=? AND date<=?", [dm.addDays(day, -n), dm.addDays(day, n)])
+    let since = dm.date(dm.addDays(day, -n))
+    let posted = try store.posts(where: "state='posted' AND posted_at>=?", [since]).map(\.videoId)
+    return try Set(near.map(\.videoId) + posted).compactMap { try store.video(id: $0) }
   }
 }

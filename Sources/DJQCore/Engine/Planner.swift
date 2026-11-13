@@ -50,7 +50,8 @@ public final class Planner: @unchecked Sendable {
         for pos in 0..<max(1, settings.postsPerDay) where !used.contains(pos) {
           guard let i = try pickIndex(backlog, for: day, settings: settings, dm: dm) else { break }
           let v = backlog.remove(at: i)
-          try store.save(PlanSlot(id: newId(), date: day, position: pos, videoId: v.id, pinned: false, weekStart: week))
+          guard let u = try nextUnit(v.id, settings: settings) else { continue }
+          try store.save(PlanSlot(id: newId(), date: day, position: pos, videoId: v.id, pinned: false, weekStart: week, unit: u))
           try store.refreshState(videoId: v.id)
         }
       }
@@ -120,7 +121,8 @@ public final class Planner: @unchecked Sendable {
         try store.logEvent("plan", "Taken off \(s.date): not in the Queue any more", videoId: s.videoId)
         guard let i = try pickIndex(backlog, for: s.date, settings: settings, dm: dm) else { continue }
         let v = backlog.remove(at: i)
-        try store.save(PlanSlot(id: newId(), date: s.date, position: s.position, videoId: v.id, pinned: false, weekStart: s.weekStart))
+        guard let u = try nextUnit(v.id, settings: settings) else { continue }
+        try store.save(PlanSlot(id: newId(), date: s.date, position: s.position, videoId: v.id, pinned: false, weekStart: s.weekStart, unit: u))
         try store.refreshState(videoId: v.id)
         try store.logEvent("plan", "Took \(s.date) (a day freed by a clip that went back to Edit)", videoId: v.id)
       }
@@ -166,13 +168,15 @@ public final class Planner: @unchecked Sendable {
         try store.save(s)
         return
       }
-      let v = try readyVideo(videoId)
+      let v = try readyVideo(videoId, scheduled: try store.video(id: videoId)?.state == .posting)
+      // Round 31: a clip pinned to a day posts its next version post there.
+      guard let unit = try nextUnit(v.id, settings: settings) else { throw EngineError(StageWording.nothingLeftToPost(v.tag)) }
       let week = dm.weekStart(of: dm.date(date))
       if try store.week(week) == nil { try store.save(Week(weekStart: week, state: .draft, approvedAt: nil)) }
       let here = try store.planSlots(where: "date=?", [date]).filter { !$0.isExact }  // a set-time slot takes no regular position
       let used = Set(here.map(\.position))
       if let pos = (0..<max(1, settings.postsPerDay)).first(where: { !used.contains($0) }) {
-        let s = PlanSlot(id: newId(), date: date, position: pos, videoId: v.id, pinned: true, weekStart: week)
+        let s = PlanSlot(id: newId(), date: date, position: pos, videoId: v.id, pinned: true, weekStart: week, unit: unit)
         try store.save(s)
         try regenerateMany([(s, false)], settings: settings, dm: dm)
       } else if var s = here.first(where: { !$0.pinned }) {
@@ -181,6 +185,7 @@ public final class Planner: @unchecked Sendable {
         let was = try isApproved(s)
         let old = s.videoId
         s.videoId = v.id
+        s.unit = unit
         s.pinned = true
         try store.save(s)
         try regenerateMany([(s, was)], settings: settings, dm: dm)
@@ -332,7 +337,11 @@ public final class Planner: @unchecked Sendable {
       try ensureNothingPosted(e)
       try ensureNothingFinal(e)
     } else {
-      _ = try readyVideo(videoId)
+      _ = try readyVideo(videoId, scheduled: try store.video(id: videoId)?.state == .posting)
+    }
+    // Round 31: the day it moves keeps its version post; a clip without one takes its next.
+    guard let unit = try existing?.unit ?? nextUnit(videoId, settings: settings) else {
+      throw EngineError(StageWording.nothingLeftToPost(try store.video(id: videoId)?.tag ?? videoId))
     }
     try store.db.transaction {
       var until: String?
@@ -355,7 +364,7 @@ public final class Planner: @unchecked Sendable {
         throw EngineError("Today's slots are pinned or already posted — unpin one first")
       }
       let s = PlanSlot(id: existing?.id ?? newId(), date: today, position: position, videoId: videoId, pinned: true,
-                       weekStart: dm.weekStart(of: dm.date(today)))
+                       weekStart: dm.weekStart(of: dm.date(today)), unit: unit)
       try store.save(s)
       try regenerateMany([(s, true)], settings: settings, dm: dm)
       try store.refreshState(videoId: videoId)
@@ -417,37 +426,51 @@ public final class Planner: @unchecked Sendable {
     if s.isExact { return try createExactPosts(s, settings: settings, notBefore: max(notBefore ?? now, now)) }
     let existing = Set(try store.slotPosts(s.id).filter { $0.kind == .regular }.map(\.platform))
     var touched: Set<String> = [s.videoId]
+    // Another clip is only ever pulled onto a clip's first post (v1 · 1): a platform's own order and an approved week's
+    // refill are about which clip goes first. A later version post a platform already has just gets no post there.
+    let firstPost = s.unit == .first
     for p in settings.activePlatforms where !existing.contains(p) {
       var videoId: String? = s.videoId
-      if try store.edit(videoId: s.videoId).isSkipped(p, defaults: settings.defaults), !picker.hasOverride(p) { continue }
-      if picker.hasOverride(p) {
-        videoId = try picker.next(p)?.id ?? (try usable(s.videoId, on: p) ? s.videoId : nil)
-      } else if try !usable(s.videoId, on: p) {
-        guard pullForHistory else { continue }
+      if try store.edit(videoId: s.videoId).isSkipped(p, defaults: settings.defaults), !(firstPost && picker.hasOverride(p)) { continue }
+      if firstPost && picker.hasOverride(p) {
+        videoId = try picker.next(p)?.id ?? (try usable(s.videoId, s.unit, on: p) ? s.videoId : nil)
+      } else if try !usable(s.videoId, s.unit, on: p) {
+        guard pullForHistory, firstPost else { continue }
         videoId = try picker.next(p)?.id
       }
       guard let vid = videoId else { continue }
+      let unit = vid == s.videoId ? s.unit : .first
       let day = placer.place(p, position: s.position, from: s.date)
       let at = Sched.slotTime(settings, dm, date: day, position: s.position, platform: p)
       if let notBefore, at < notBefore { continue }
       picker.used[p, default: []].insert(vid)
       touched.insert(vid)
-      try store.save(PlatformPost(
-        id: newId(), videoId: vid, platform: p, versionNo: 1, attemptNo: try store.nextAttemptNo(videoId: vid, platform: p),
+      var post = PlatformPost(
+        id: newId(), videoId: vid, platform: p, versionNo: unit.version, attemptNo: try store.nextAttemptNo(videoId: vid, platform: p),
         kind: .regular, planSlotId: s.id, scheduledAt: at,
         renderId: nil, state: .planned, publisher: "manual", externalId: nil, url: nil, postedAt: nil, errorType: nil,
-        errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now),
-        note: day == s.date ? note : "\(note) (platform plan shifted to \(day))")
+        errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now)
+      post.postNo = unit.post
+      try store.save(post, note: day == s.date ? note : "\(note) (platform plan shifted to \(day))")
     }
     for v in touched { try store.refreshState(videoId: v) }
   }
 
-  /// Not skipped in the editor for p, and never planned/posted on p.
-  func usable(_ videoId: String, on p: Platform) throws -> Bool {
+  /// Not skipped in the editor for p, and p doesn't have version post `unit` yet (any post of it there, in any state; v1 ·
+  /// post 1 also when the clip was posted on p by hand before). `usable(_:on:)` asks about the clip's first post.
+  func usable(_ videoId: String, _ unit: PostUnit, on p: Platform) throws -> Bool {
     guard let v = try store.video(id: videoId) else { return false }
-    if v.alreadyPostedOn.contains(p) { return false }
+    if unit == .first, v.alreadyPostedOn.contains(p) { return false }
     if try store.edit(videoId: videoId).isSkipped(p, defaults: try store.settings().defaults) { return false }
-    return try store.platformHistory(videoId: videoId, platform: p).isEmpty
+    return try store.posts(where: "video_id=? AND platform=? AND version_no=? AND COALESCE(post_no,1)=?",
+                           [videoId, p.rawValue, unit.version, unit.post]).isEmpty
+  }
+
+  func usable(_ videoId: String, on p: Platform) throws -> Bool { try usable(videoId, .first, on: p) }
+
+  /// The clip's next version post still waiting for a day (planning order, no spacing: Eric's own pin or Post today).
+  func nextUnit(_ videoId: String, settings: Settings) throws -> PostUnit? {
+    try store.pendingUnits(videoId: videoId, settings: settings).first
   }
 
   /// Un-posted regular posts of the slot are deleted; everything else (failed/skipped history, pending retries and

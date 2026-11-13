@@ -252,8 +252,10 @@ extension Planner {
     let day = dm.key(at)
     let week = dm.weekStart(of: dm.date(day))
     try approve(week: week, at: store.clock.now)
+    // Round 31: the set time is the clip's next version post (nothing of it posted yet, so its first one).
+    let unit = try nextUnit(videoId, settings: settings) ?? old.first?.unit ?? .first
     let slot = PlanSlot(id: old.first?.id ?? newId(), date: day, position: try freeExactPosition(on: day), videoId: videoId,
-                        pinned: true, weekStart: week, exactAt: at)
+                        pinned: true, weekStart: week, exactAt: at, unit: unit)
     try store.save(slot)
     let waiting = try carryRetries(to: slot)
     try createExactPosts(slot, settings: settings)
@@ -374,15 +376,17 @@ extension Planner {
     let existing = Set(try store.slotPosts(s.id).filter { $0.kind == .regular }.map(\.platform))
     let now = store.clock.now
     for p in settings.activePlatforms where !existing.contains(p) {
-      guard try usable(s.videoId, on: p) else { continue }
+      guard try usable(s.videoId, s.unit, on: p) else { continue }
       let at = YouTubeWindow.clear(exact, p)
       if let notBefore, at < notBefore { continue }
-      try store.save(PlatformPost(
-        id: newId(), videoId: s.videoId, platform: p, versionNo: 1, attemptNo: try store.nextAttemptNo(videoId: s.videoId, platform: p),
+      var post = PlatformPost(
+        id: newId(), videoId: s.videoId, platform: p, versionNo: s.versionNo,
+        attemptNo: try store.nextAttemptNo(videoId: s.videoId, platform: p),
         kind: .regular, planSlotId: s.id, scheduledAt: at,
         renderId: nil, state: .planned, publisher: "manual", externalId: nil, url: nil, postedAt: nil, errorType: nil,
-        errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now),
-        note: at == exact ? "set time" : "set time (YouTube's quiet window: 07:30 UTC)")
+        errorMessage: nil, rawResponse: nil, resolution: nil, metrics: nil, createdAt: now, updatedAt: now)
+      post.postNo = s.postNo
+      try store.save(post, note: at == exact ? "set time" : "set time (YouTube's quiet window: 07:30 UTC)")
     }
     try store.refreshState(videoId: s.videoId)
   }

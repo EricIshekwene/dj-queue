@@ -170,8 +170,8 @@ extension Store {
     for a in try posts(where: "video_id=? AND kind<>'regular'", [videoId]) where !a.state.isTerminal {
       var r = try autoRetries(a)
       guard r.lastPostId == a.id, try finalPostizJob(postId: a.id) == nil else { continue }
-      let failures = try posts(where: "video_id=? AND platform=? AND version_no=? AND state='failed' AND resolution='retried' AND attempt_no<?",
-                               [videoId, a.platform.rawValue, a.versionNo, a.attemptNo])
+      let failures = try posts(where: "video_id=? AND platform=? AND version_no=? AND COALESCE(post_no,1)=? AND state='failed' AND resolution='retried' AND attempt_no<?",
+                               [videoId, a.platform.rawValue, a.versionNo, a.postNo, a.attemptNo])
       guard var f = failures.max(by: { $0.attemptNo < $1.attemptNo }) else { continue }
       f.resolution = nil
       try save(f, note: "retry waits: sent back to Edit")
@@ -350,7 +350,7 @@ extension PostizService {
 
   /// The version is in the key, so a repost counts apart from the clip's regular post.
   static func autoRetryKey(_ p: PlatformPost) -> String {
-    "\(autoRetryPrefix)\(p.videoId)#\(p.platform.rawValue)#v\(p.versionNo)"
+    "\(autoRetryPrefix)\(p.videoId)#\(p.platform.rawValue)#v\(p.versionNo)" + (p.postNo > 1 ? "p\(p.postNo)" : "")
   }
 
   func autoRetries(_ p: PlatformPost) throws -> PostizAutoRetries { try store.autoRetries(p) }

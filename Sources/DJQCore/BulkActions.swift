@@ -950,10 +950,11 @@ public final class BulkActions: @unchecked Sendable {
     return c == b
   }
 
-  /// A version's JSON without `repostReady` (unreadable JSON is left as it is).
+  /// A version's JSON without `repostReady` or its post count (round 31; unreadable JSON is left as it is).
   static func withoutReady(_ json: String) -> String {
-    guard var v = try? JSONCoding.decoder.decode(Version.self, from: Data(json.utf8)), v.repostReady != nil else { return json }
+    guard var v = try? JSONCoding.decoder.decode(Version.self, from: Data(json.utf8)), v.repostReady != nil || v.postCount != nil else { return json }
     v.repostReady = nil
+    v.postCount = nil
     return JSONCoding.string(v)
   }
 

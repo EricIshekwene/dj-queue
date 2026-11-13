@@ -28,6 +28,7 @@ public enum VersionCopy {
     if shown.isDefault("text") { v.text = shown.text; v.noText = shown.noText }
     v.number = number
     v.repostReady = nil
+    v.postCount = nil  // round 31: a copy posts the default number of times
     v.captionsOwn = nil
     v.standalone = true
     if newIds, let more = v.moreText { v.moreText = more.map { var l = $0; l.id = TextLayer.newId(); return l } }

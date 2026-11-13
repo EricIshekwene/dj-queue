@@ -32,7 +32,16 @@ final class Fixture {
     try fm.createDirectory(at: paths.sessions.appendingPathComponent("_Template – copy me"), withIntermediateDirectories: true)
     clock = FixedClock(Fixture.monday9am)
     store = try Store(memoryWith: paths, clock: clock)
+    // Round 31: tests written before versions posted their count keep the one-post rule they test; R31 tests set it.
+    try Fixture.onePostEach(store)
     try writeManifest(clips: clips, longform: longform, sessionName: sessionName)
+  }
+
+  /// Round 31: the one-post-per-version rule the tests from before round 31 were written for.
+  static func onePostEach(_ store: Store) throws {
+    var s = try store.settings()
+    s.postsPerVersion = 1
+    try store.save(s)
   }
 
   static let defaultClips: [(tag: String, duration: Double)] = [

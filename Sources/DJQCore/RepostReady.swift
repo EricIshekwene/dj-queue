@@ -85,6 +85,7 @@ public enum VersionMerge {
     var out = v
     func keep<T: Equatable>(_ kp: WritableKeyPath<Version, T>) { if v[keyPath: kp] == base[keyPath: kp] { out[keyPath: kp] = stored[keyPath: kp] } }
     keep(\.repostReady)
+    keep(\.postCount)  // round 31: `djq post-count` while the editor is open
     if stored.captionsOwn == true, base.captionsOwn != true {
       keep(\.captionsOwn); keep(\.caption); keep(\.captionTemplateId); keep(\.hashtagSetIds); keep(\.extraHashtags)
       keep(\.youtubeTitle); keep(\.platformCaptions); keep(\.youtubeTitleTemplateId)
