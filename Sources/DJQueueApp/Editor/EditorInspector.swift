@@ -26,6 +26,11 @@ struct EditorInspector: View {
                 EditorRepostReadyRow(model: model)
                 DSSeparator()
               }
+              // Round 31: how many times this version posts (short-form only; long-form is never reposted).
+              if model.video?.type == .short {
+                EditorPostCountRow(model: model)
+                DSSeparator()
+              }
               // Fields go off section by section, not on this column: the collapsible rows must still open on a read-only clip.
               EditorTitleSection(model: model).disabled(model.fieldsOff)
               DSSeparator()
@@ -182,6 +187,54 @@ struct EditorVersionList: View {
     .contentShape(Rectangle())
     .onTapGesture { model.selectVersion(n) }
     .dsTooltip(selected ? nil : "Edit v\(n)'s text and caption")
+  }
+}
+
+/// Round 31: how many times the version being edited posts on each platform. One compact row: the count with − and +,
+/// what it means underneath, and "Use default" once the version has a count of its own. Only the count is written
+/// (`Store.setPostCount`): no preview or render changes.
+struct EditorPostCountRow: View {
+  @ObservedObject var model: EditorModel
+
+  var body: some View {
+    let n = model.versionNo
+    let own = model.ownPostCount(n)
+    let fallback = model.defaultPostCount(n)
+    VStack(alignment: .leading, spacing: 2) {
+      HStack(spacing: DS.space.sm) {
+        Text("Posts").font(DS.type.body).foregroundStyle(model.postCountOff == nil ? DS.color.text : DS.color.textDisabled)
+        Spacer(minLength: DS.space.xs)
+        DSXStepper(label: "Posts of v\(n)", int: Binding(get: { model.postCount(n) }, set: { model.setPostCount(n, $0) }),
+                   range: 0...PostUnits.maxCount, less: "Post v\(n) fewer times", more: "Post v\(n) more times",
+                   format: Self.times)
+          .disabled(model.postCountOff != nil)
+          .background(ScriptAnchor("Post count"))
+      }
+      HStack(spacing: DS.space.xs) {
+        Text(model.postCountOff ?? Self.note(n, own: own, fallback: fallback))
+          .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 0)
+        if own != nil, model.postCountOff == nil {
+          DSButton("Use default", variant: .ghost, size: .sm,
+                   tooltip: "Back to the default: \(Self.times(fallback).lowercased()) (Settings › Schedule)") { model.setPostCount(n, nil) }
+            .background(ScriptAnchor("Post count default"))
+        }
+      }
+    }
+    .padding(.horizontal, DS.space.md).padding(.vertical, DS.space.sm)
+    .dsTooltip(model.postCountOff == nil ? "Each post of a version is its own post in the plan, spaced from the clip's other posts" : nil)
+  }
+
+  static func times(_ n: Int) -> String { n == 0 ? "Never" : n == 1 ? "Once" : "\(n) times" }
+
+  /// "v2 posts 2 times on each platform (the default)." · "v2's own count; the default is 2 times."
+  static func note(_ n: Int, own: Int?, fallback: Int) -> String {
+    if let own {
+      return own == 0 ? "v\(n) doesn't post. The default is \(times(fallback).lowercased())."
+        : "v\(n)'s own count, on each platform. The default is \(times(fallback).lowercased())."
+    }
+    return fallback == 0 ? "v\(n) doesn't post (it went out before reposts were counted)."
+      : "v\(n) posts \(times(fallback).lowercased()) on each platform (the default)."
   }
 }
 

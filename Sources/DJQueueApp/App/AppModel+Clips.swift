@@ -42,7 +42,12 @@ extension AppModel {
       c.suggestions = (suggestionsByVideo[v.id] ?? []).prefix(3).map { DSTitleSuggestion(text: $0.text, detail: Self.tracksText($0.tracks)) }
     }
     if screen != .score && screen != .edit { c.platforms = platformStates(v.id) }
-    if screen == .queue { c.dateText = dateText(v) }
+    if screen == .queue {
+      c.dateText = dateText(v)
+      // Round 31: one card per clip, saying which version post goes out next and where the others stand.
+      c.dateUnit = nextUnitLabel(v.id)
+      c.units = unitTags(v.id)
+    }
     return c
   }
 

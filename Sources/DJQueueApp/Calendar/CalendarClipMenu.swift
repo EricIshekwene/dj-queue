@@ -99,7 +99,9 @@ struct ExtraPostChip: View {
     .contextMenu { PostContextMenu(model: model, post: post) }
   }
 
-  private var help: String {
+  private var help: String { what + " · " + model.unitLabel(post) }
+
+  private var what: String {
     let name = model.video(post.videoId).map(model.displayName) ?? "a clip"
     switch post.kind {
     case .repost: return "Repost of \(name) (new version)"

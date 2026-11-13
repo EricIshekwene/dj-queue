@@ -56,7 +56,7 @@ struct QueueView: View {
           c.position = positions[v.id]
           // Grid tiles have no date chip of their own: the day rides as a tag.
           if mode == .grid, let d = c.dateText {
-            c.tags.append(DSClipTag(text: d, style: .outline, icon: c.isPinned ? "pin.fill" : "calendar",
+            c.tags.append(DSClipTag(text: UnitLines.dateText(d, unit: c.dateUnit), style: .outline, icon: c.isPinned ? "pin.fill" : "calendar",
                                     tooltip: c.isPinned ? "Pinned to this day; the rest flows around it" : "The day it goes out"))
           }
           return c
@@ -91,8 +91,9 @@ struct QueueView: View {
     let n = scope.filter(isScheduled).count
     return DSStatusChips(options: [
       DSStatusChipOption(id: "scheduled", title: "Has a day", count: n,
-                         tooltip: "Clips with a day on the Calendar"),
-      DSStatusChipOption(id: "unscheduled", title: "No day yet", count: scope.count - n, tooltip: "Clips still waiting for a day"),
+                         tooltip: "Clips with a day on the Calendar, even when more of their version posts still wait"),
+      DSStatusChipOption(id: "unscheduled", title: "No day yet", count: scope.count - n,
+                         tooltip: "Clips whose next post is still waiting for a day"),
     ], selection: prefs.statusBinding(.queue), allCount: scope.count, allTooltip: "Every clip in the Queue")
   }
 

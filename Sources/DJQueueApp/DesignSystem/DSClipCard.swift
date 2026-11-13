@@ -10,6 +10,8 @@ struct DSClipTag: Identifiable, Hashable {
   var icon: String? = nil
   /// What the tag means (hover). Every tag on a card should explain itself.
   var tooltip: String? = nil
+  /// `.sm` for the Queue's version-post tags (round 31), which sit several to a row.
+  var size: DSBadgeSize = .md
   var id: String { text }
 }
 
@@ -43,7 +45,8 @@ struct DSClipPhotos {
 }
 
 /// Everything a clip card can show. All optional except id/title; the card hides what's nil/empty.
-/// Never put the version here (DESIGN-v2 §4: no versions on cards).
+/// DESIGN-v2 §4 kept versions off cards; round 31 makes each version post its own post in the plan, so the Queue card says
+/// which one goes out next (`dateUnit`) and where the others stand (`units`). Nothing else on a card names a version.
 struct DSClip: Identifiable {
   var id: String
   /// Title, or the raw tag when there's no Title.
@@ -86,6 +89,10 @@ struct DSClip: Identifiable {
   var platforms: [DSClipPlatform] = []
   /// "Thu 5 Nov" / "Not scheduled". nil hides the chip.
   var dateText: String? = nil
+  /// Round 31: the version post going out on `dateText`'s day ("v1 · 1 of 2"), shown in the date chip after the day.
+  var dateUnit: String? = nil
+  /// Round 31: the clip's other version posts (small tags after the chips, Cards and Single only).
+  var units: [DSClipTag] = []
   var isPinned = false
   /// File missing: danger chip "File missing · Relink" and no autoplay.
   var isMissing = false
@@ -179,7 +186,7 @@ struct DSClipCard<Actions: View>: View {
     var parts = [clip.title]
     if let s = clip.score { parts.append("score \(s)") }
     if let st = clip.status?.text { parts.append(st) }
-    if let d = clip.dateText { parts.append(d) }
+    if let d = clip.dateText { parts.append(UnitLines.dateText(d, unit: clip.dateUnit)) }
     if let ph = clip.photos { parts.append(ph.label) }
     if clip.isMissing { parts.append("file missing") }
     if clip.isUpdatingPreview && !clip.isMissing { parts.append("updating preview") }
@@ -268,20 +275,22 @@ struct DSClipCard<Actions: View>: View {
         let none = d == "Not scheduled"
         HStack(spacing: 5) {
           Image(systemName: clip.isPinned ? "pin.fill" : "calendar").font(.system(size: 10.5, weight: .medium))
-          Text(d).font(DS.type.captionMedium)
+          Text(UnitLines.dateText(d, unit: clip.dateUnit)).font(DS.type.captionMedium).lineLimit(1)
         }
         .foregroundStyle(none ? DS.color.textTertiary : DS.color.text)
         .padding(.horizontal, 10).frame(height: 26)
         .overlay(Capsule().strokeBorder(none ? DS.color.border : DS.color.borderStrong))
         .fixedSize()
-        .dsTooltip(clip.isPinned ? "Pinned to this day — the plan works around it" : none ? "No day yet" : "Next planned post")
+        .dsTooltip((clip.isPinned ? "Pinned to this day — the plan works around it" : none ? "No day yet" : "Next planned post")
+                   + (clip.dateUnit.map { "\n\($0): the version post going out that day" } ?? ""))
+        .background(ScriptAnchor("Date chip \(clip.id)"))
       }
     }
   }
 
   /// Chip row: blocks (danger) · missing (warning) · suggestions (outlined, click to accept) · state · tags.
-  @ViewBuilder private func chips(limit: Int? = nil) -> some View {
-    let all = chipItems
+  @ViewBuilder private func chips(limit: Int? = nil, units: Bool = true) -> some View {
+    let all = chipItems + (units ? unitItems : [])
     ForEach(Array((limit.map { Array(all.prefix($0)) } ?? all).enumerated()), id: \.offset) { _, item in item }
   }
 
@@ -296,8 +305,16 @@ struct DSClipCard<Actions: View>: View {
       AnyView(DSSuggestionChip(suggestion: s) { onAcceptSuggestion?(s) })
     }
     if let st = clip.status { out.append(AnyView(DSBadge(st.text, style: st.style, icon: st.icon, help: st.tooltip))) }
-    out += clip.tags.map { t in AnyView(DSBadge(t.text, style: t.style, icon: t.icon, help: t.tooltip)) }
+    out += clip.tags.map { t in AnyView(DSBadge(t.text, style: t.style, icon: t.icon, size: t.size, help: t.tooltip)) }
     return out
+  }
+
+  /// Round 31: the clip's other version posts, after every other chip.
+  private var unitItems: [AnyView] {
+    clip.units.map { t in
+      AnyView(DSBadge(t.text, style: t.style, icon: t.icon, size: t.size, help: t.tooltip)
+        .background(ScriptAnchor("Unit tag \(clip.id) \(t.text)")))
+    }
   }
 
   private var platformsRow: some View {
@@ -387,7 +404,7 @@ struct DSClipCard<Actions: View>: View {
       VStack(alignment: .leading, spacing: 4) {
         Text(clip.title).font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).lineLimit(1)
         if !clip.meta.isEmpty { Text(clip.meta).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).lineLimit(1) }
-        DSFlowLayout(spacing: 4, lineSpacing: 4) { chips(limit: 2) }.padding(.top, 2).frame(maxWidth: .infinity, alignment: .leading).clipped()
+        DSFlowLayout(spacing: 4, lineSpacing: 4) { chips(limit: 2, units: false) }.padding(.top, 2).frame(maxWidth: .infinity, alignment: .leading).clipped()
       }
       .padding(.horizontal, 2)
     }

@@ -209,9 +209,10 @@ struct PostGroupRow: View {
       Text(post.state == .posted ? "Posted \(PostText.date(post, model: model))" : AppModel.clockText(post.scheduledAt, tz: model.tz))
         .font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
         .lineLimit(1)
-      if post.versionNo != 1 {
-        Text("v\(post.versionNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
-          .dsTooltip("Version \(post.versionNo)")
+      // Round 31: which version post this is ("v2 · 1 of 2"); a clip that posts once as v1 says nothing.
+      if model.unitLabel(post) != "v1" {
+        Text(model.unitLabel(post)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary).lineLimit(1).fixedSize()
+          .dsTooltip(model.unitHelp(post.videoId, post.unit))
       }
       if post.attemptNo != 1 {
         Text("#\(post.attemptNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)

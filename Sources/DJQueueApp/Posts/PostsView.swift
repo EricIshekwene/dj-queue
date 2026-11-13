@@ -249,7 +249,7 @@ struct PostListHeader: View {
       Color.clear.frame(width: 24, height: 1)
       Text("Clip").frame(maxWidth: .infinity, alignment: .leading)
       Text(compact ? "" : "Platform").frame(width: compact ? 24 : 130, alignment: .leading)
-      Text("Ver.").frame(width: 30, alignment: .leading)
+      Text("Version").frame(width: 76, alignment: .leading)
       if !compact { Text("Try").frame(width: 36, alignment: .leading) }
       Text("State").frame(width: 96, alignment: .leading)
       Text("Date").frame(width: 104, alignment: .leading)
@@ -287,9 +287,10 @@ struct PostRowView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       DSPlatformIcon(platform: post.platform, size: 22, showsLabel: !compact)
         .frame(width: compact ? 24 : 130, alignment: .leading)
-      Text("v\(post.versionNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
-        .frame(width: 30, alignment: .leading)
-        .dsTooltip("Version \(post.versionNo)")
+      Text(model.unitLabel(post)).font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
+        .lineLimit(1)
+        .frame(width: 76, alignment: .leading)
+        .dsTooltip(model.unitHelp(post.videoId, post.unit))
       if !compact {
         Text("#\(post.attemptNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textSecondary)
           .frame(width: 36, alignment: .leading)
