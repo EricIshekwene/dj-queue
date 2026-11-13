@@ -70,8 +70,8 @@ struct PostProblemCard: View {
           HStack(spacing: 6) {
             DSBadge(model.postizState(post) == .unconfirmed ? "Unconfirmed in Postiz" : PostText.problemType(post), style: .soft(tone), icon: post.state.isCopyright ? "c.circle" : nil,
                     help: post.state.isCopyright ? "The platform flagged the audio — copyright blocks are never retried automatically" : "What went wrong — the actions on the right fix it")
-            if post.versionNo != 1 || post.attemptNo != 1 || post.kind != .regular {
-              Text("v\(post.versionNo) · \(PostText.attempt(post))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+            if post.unit != .first || model.unitLabel(post) != "v1" || post.attemptNo != 1 || post.kind != .regular {
+              Text("\(model.unitLabel(post)) · \(PostText.attempt(post))").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
             }
             if let pz = model.postizState(post) {
               switch pz {

@@ -274,6 +274,21 @@ struct CalendarPhotoMark: View {
   }
 }
 
+/// Round 31: which version post this is ("v2 · 1 of 2"), a small outlined tag under a card's title. Every slot is one
+/// version post, so every card says which.
+struct CalendarUnitMark: View {
+  @Bindable var model: AppModel
+  let videoId: String
+  let unit: PostUnit
+
+  var body: some View {
+    DSBadge(model.unitLabel(videoId, unit), style: .outline, size: .sm, help: model.unitHelp(videoId, unit))
+      .lineLimit(1)
+      .fixedSize()
+      .background(ScriptAnchor("Unit mark \(videoId) \(unit)"))
+  }
+}
+
 /// The set-time mark beside a card's time: a small clock and the exact minute ("3:15 PM"), with what it means on hover.
 struct CalendarSetTimeMark: View {
   @Bindable var model: AppModel
@@ -390,6 +405,7 @@ struct CalendarWeekCard: View {
           .font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
           .lineLimit(2).fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)
+        CalendarUnitMark(model: model, videoId: clip.video.id, unit: clip.slot.unit)
         if clip.slot.isExact {
           CalendarSetTimeMark(model: model, slot: clip.slot)
         } else {
@@ -445,6 +461,7 @@ struct CalendarThreeDayCard: View {
           .font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
           .lineLimit(2).fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)
+        CalendarUnitMark(model: model, videoId: clip.video.id, unit: clip.slot.unit)
         if clip.slot.isExact { CalendarSetTimeMark(model: model, slot: clip.slot).padding(.leading, DS.space.xxs) }
         VStack(spacing: 2) {
           ForEach(clip.platforms, id: \.self) { p in chip(p) }

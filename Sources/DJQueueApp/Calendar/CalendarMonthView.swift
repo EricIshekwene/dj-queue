@@ -162,6 +162,12 @@ struct CalendarMonthChip: View {
               .accessibilityLabel(label)
               .background(ScriptAnchor("Photo mark \(clip.video.id)"))
           }
+          // Round 31: the version post, short ("v2 1/2"); the tooltip has the full words.
+          Text(model.unitShortLabel(clip.slot)).font(.system(size: 9, weight: .medium).monospacedDigit())
+            .foregroundStyle(DS.color.textSecondary).lineLimit(1).fixedSize()
+            .padding(.leading, 1)
+            .dsTooltip(model.unitHelp(clip.slot))
+            .background(ScriptAnchor("Unit mark \(clip.video.id) \(clip.slot.unit)"))
         }
       }
       Spacer(minLength: 0)

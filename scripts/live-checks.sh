@@ -73,10 +73,11 @@ checks=(
   photo-audio    "DJQ_PHOTO_AUDIO_SCRIPT=1"
   text-fields    "DJQ_SNAPSHOT_EDITOR=1 DJQ_TEXT_FIELDS_SCRIPT=@"
   deselect       "DJQ_SNAPSHOT_EDITOR=1 DJQ_DESELECT_SCRIPT=@"
+  version-posts  "DJQ_SNAPSHOT_EDITOR=1 DJQ_VERSION_POSTS_SCRIPT=@"
 )
 # The editor scripts take one look per run; these are the same checks in dark.
 for name in text-layers bulk-caption bulk-crop editor-group editor-caption editor-template editor-defaults settings-group editor-keys trim-markers version-trim repost-ready \
-            photo-import photo-editor post-at photo-audio text-fields deselect; do
+            photo-import photo-editor post-at photo-audio text-fields deselect version-posts; do
   checks[$name-dark]="${checks[$name]} DJQ_EDITOR_LIVE_APPEARANCE=dark"
 done
 order=(guard screens gallery editor editor-selftest editor-live tooltip tooltip-pass hover search send-to-queue text-layers
@@ -84,7 +85,7 @@ order=(guard screens gallery editor editor-selftest editor-live tooltip tooltip-
        text-layers-dark bulk-caption-dark bulk-crop-dark editor-group-dark editor-caption-dark editor-template-dark editor-defaults-dark settings-group-dark
        editor-keys-dark trim-markers-dark version-trim-dark repost-ready-dark
        photo-import photo-editor post-at photo-import-dark photo-editor-dark post-at-dark
-       photo-audio photo-audio-dark text-fields text-fields-dark deselect deselect-dark)
+       photo-audio photo-audio-dark text-fields text-fields-dark deselect deselect-dark version-posts version-posts-dark)
 (( $# )) && order=("$@")
 
 failed=0

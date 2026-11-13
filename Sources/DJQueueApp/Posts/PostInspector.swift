@@ -72,7 +72,7 @@ struct PostInspector: View {
               PostStatePill(post: post, model: model)
             }
             if model.isTestRun(post) { TestRunBadge() }
-            Text("v\(post.versionNo) · #\(post.attemptNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
+            Text("\(model.unitLabel(post)) · #\(post.attemptNo)").font(DS.type.caption.monospacedDigit()).foregroundStyle(DS.color.textTertiary)
           }
         }
         Spacer(minLength: 0)
@@ -103,7 +103,7 @@ struct PostInspector: View {
     VStack(alignment: .leading, spacing: 2) {
       row("Scheduled") { Text(Fmt.day(post.scheduledAt, tz: model.tz, style: "EEE d MMM, h:mm a")) }
       if let at = post.postedAt { row("Posted") { Text(Fmt.day(at, tz: model.tz, style: "EEE d MMM, h:mm a")) } }
-      row("Version") { Text("v\(post.versionNo)") }
+      row("Version") { Text(model.unitLabel(post)).dsTooltip(model.unitHelp(post.videoId, post.unit)) }
       row("Attempt") { Text(PostText.attempt(post)) }
       row("Publisher") { Text(publisherText) }
       row("Link") {
@@ -220,7 +220,7 @@ struct PostInspector: View {
       ForEach(all) { a in
         HStack(spacing: DS.space.xs) {
           Text("#\(a.attemptNo)").font(DS.type.captionMedium.monospacedDigit()).foregroundStyle(DS.color.text).frame(width: 24, alignment: .leading)
-          Text("v\(a.versionNo)\(a.kind == .regular ? "" : " · \(a.kind.rawValue)")").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+          Text("\(model.unitLabel(a))\(a.kind == .regular ? "" : " · \(a.kind.rawValue)")").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
           Spacer(minLength: 4)
           PostStatePill(post: a, model: model)
           Text(Fmt.day(a.scheduledAt, tz: model.tz, style: "d MMM")).font(DS.type.caption.monospacedDigit())

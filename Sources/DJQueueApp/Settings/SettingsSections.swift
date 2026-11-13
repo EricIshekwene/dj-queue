@@ -210,9 +210,28 @@ struct ScheduleSettings: View {
                  range: 1...8, less: "Retry failed posts sooner after the slot", more: "Retry failed posts later after the slot",
                  format: SettingsFmt.hours)
     }
-    SettingsRow("Repost cooldown", description: "Days before the same clip can post again on a platform.") {
+    SettingsRow("Repost cooldown", description: "Only for a Repost you start: days after the clip's last post on a platform before it can post there again.") {
       DSXStepper(label: "Repost cooldown", int: model.binding(\.repostCooldownDays) { "Repost cooldown set to \(SettingsFmt.days($0))" },
-                 range: 1...90, format: SettingsFmt.days)
+                 range: 1...90, less: "Let a Repost you start go out sooner", more: "Make a Repost you start wait longer",
+                 format: SettingsFmt.days)
+    }
+
+    // Round 31 (DECISIONS-R31.md): every version is its own post in the plan, and posts this many times, spaced.
+    SettingsGroupHeader("Versions", description: "Each version of a clip is its own post. Reposts go by count, never by views.")
+    SettingsRow("Posts per version", description: "How many times each version posts on each platform. A version can set its own in the editor.") {
+      DSXStepper(label: "Posts per version", int: model.binding(\.postsPerVersion) { "Posts per version set to \($0)" },
+                 range: 1...PostUnits.maxCount, less: "Post each version fewer times", more: "Post each version more times") {
+        $0 == 1 ? "Once" : "\($0) times"
+      }
+      .background(ScriptAnchor("Posts per version"))
+    }
+    SettingsRow("Days between posts of one clip", description: "Any two posts of a clip, whatever the version, are at least this far apart.") {
+      DSXStepper(label: "Days between posts of one clip", int: model.binding(\.sameClipGapDays) { "Posts of one clip at least \(SettingsFmt.days($0)) apart" },
+                 range: 1...30, less: "Let a clip post again sooner", more: "Keep a clip's posts further apart", format: SettingsFmt.days)
+    }
+    SettingsRow("Days before a version posts again", description: "The same version waits at least this long before its next post.") {
+      DSXStepper(label: "Days before a version posts again", int: model.binding(\.sameVersionGapDays) { "A version posts again after \(SettingsFmt.days($0))" },
+                 range: 1...60, less: "Let a version post again sooner", more: "Wait longer before a version posts again", format: SettingsFmt.days)
     }
   }
 

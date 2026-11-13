@@ -207,6 +207,9 @@ final class EditorModel: ObservableObject {
   @Published var titleDraft: String?
   /// Round 23: why the Audio row's actions are off (nil = they work). Cached with the item, never read while drawing.
   @Published var audioBlocker: String?
+  /// Round 31: the highest version of this clip that had finished posting before round 31 (`PostUnits.finishedKey`):
+  /// those keep the one post they had unless a count is set. nil for every other clip.
+  @Published private(set) var finishedPostsUpTo: Int?
   /// True while a trim handle is being dragged (expensive derived work waits for the drag end).
   @Published private(set) var trimDragging = false
   /// Round 24: the part of the clip file the timeline shows (nil before a clip loads, which reads as the whole file).
@@ -269,6 +272,7 @@ final class EditorModel: ObservableObject {
     var textSuggestions: [TitleSuggestion] = []
     var edit = Edit(), versions: [Version] = [], posts: [PlatformPost] = [], issues: [ValidationIssue] = []
     var audioBlocker: String?
+    var finishedPostsUpTo: Int?
     var error: String?, readOnly = false
   }
 
@@ -297,6 +301,7 @@ final class EditorModel: ObservableObject {
       l.posts = try store.posts(where: "video_id=?", [id])
       l.issues = try Validation.issues(video: v, store: store)
       l.audioBlocker = Self.audioBlocker(store, v)
+      l.finishedPostsUpTo = (try? store.kv(PostUnits.finishedKey, as: [String: Int].self))?[id]
     } catch {
       l.error = l.readOnly ? "This \(l.video?.isPhoto == true ? "post" : "clip")'s saved edit can't be read, so editing is off to protect it. Run Doctor."
         : "Couldn't load: \(error)"
@@ -359,6 +364,7 @@ final class EditorModel: ObservableObject {
     suggestions = l.suggestions; textSuggestions = l.textSuggestions; edit = l.edit; versions = l.versions; syncedVersions = l.versions; posts = l.posts; issues = l.issues
     readOnly = l.readOnly; loadError = l.error
     audioBlocker = l.audioBlocker
+    finishedPostsUpTo = l.finishedPostsUpTo
     fieldRevision &+= 1
     viewportRaw = l.video?.isPhoto == true ? nil : TimelineViewport.initial(duration: duration, trim: trim)
     if let v = l.video, let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
@@ -1267,7 +1273,9 @@ final class EditorModel: ObservableObject {
       guard let fresh = try? store.hashtagSets(), let saved = try? store.versions(videoId: id),
             let st = try? store.settings(), let tpl = try? store.captionTemplates() else { return }
       DispatchQueue.main.async {
-        guard let self, self.videoId == id, fresh != self.sets || st != self.settings || tpl != self.templates else { return }
+        guard let self, self.videoId == id else { return }
+        self.syncPostCounts(saved)
+        guard fresh != self.sets || st != self.settings || tpl != self.templates else { return }
         self.commitCaptionDraft()
         self.sets = fresh
         self.settings = st
@@ -1582,6 +1590,78 @@ final class EditorModel: ObservableObject {
     }
   }
 
+  // MARK: Posts per version (round 31)
+
+  /// Why version `n`'s post count can't change here (nil = it can). Long-form is never reposted.
+  var postCountOff: String? {
+    if readOnly { return EditorView.readOnlyReason }
+    if video?.type == .long { return "Long-form is never reposted" }
+    return nil
+  }
+
+  /// Version `n`'s own count (nil = it follows the default).
+  func ownPostCount(_ n: Int) -> Int? { versions.first { $0.number == n }?.postCount }
+
+  /// What version `n` posts without a count of its own: Settings → Schedule, or the one post a clip finished before
+  /// round 31 keeps (`PostUnits.count`).
+  func defaultPostCount(_ n: Int) -> Int { PostUnits.count(n, own: nil, settings: settings, finishedUpTo: finishedPostsUpTo) }
+
+  /// How many times version `n` posts on each platform.
+  func postCount(_ n: Int) -> Int { PostUnits.count(n, own: ownPostCount(n), settings: settings, finishedUpTo: finishedPostsUpTo) }
+
+  /// Sets version `n`'s own post count (nil = back to the default). Only the count: it changes no pixels, so nothing
+  /// is re-saved or re-rendered (`Store.setPostCount`), and like Ready to repost on bulk undo it isn't an editor undo
+  /// step either (⌘Z never brings an old count back with an older edit). The plan picks it up on the next tick.
+  func setPostCount(_ n: Int, _ count: Int?) {
+    guard postCountOff == nil, video != nil else { return }
+    let count = count.map { min(max(0, $0), PostUnits.maxCount) }
+    guard ownPostCount(n) != count else { return }
+    commitCaptionDraft()
+    var all = versions
+    if !all.contains(where: { $0.number == 1 }) { all.insert(Version(number: 1), at: 0) }
+    guard let i = all.firstIndex(where: { $0.number == n }) else { return }
+    all[i].postCount = count
+    versions = all.sorted { $0.number < $1.number }
+    writePostCount(n, count)
+    let c = postCount(n)
+    show(count == nil ? "v\(n) posts the default number of times (\(c))"
+           : c == 0 ? "v\(n) won't post" : "v\(n) posts \(c == 1 ? "once" : "\(c) times") on each platform")
+  }
+
+  /// Round 31: a count set outside the editor (`djq post-count`) while it's open reaches the Posts row and its stepper.
+  /// A count changed here and not yet written stays as it is.
+  private func syncPostCounts(_ saved: [Version]) {
+    for s in saved {
+      guard let i = versions.firstIndex(where: { $0.number == s.number }) else { continue }
+      let base = syncedVersions.first { $0.number == s.number }?.postCount
+      guard versions[i].postCount == base, versions[i].postCount != s.postCount else { continue }
+      versions[i].postCount = s.postCount
+      if let j = syncedVersions.firstIndex(where: { $0.number == s.number }) { syncedVersions[j].postCount = s.postCount }
+    }
+  }
+
+  /// Writes only the count and records it as saved, so the next save of that version carries it unchanged.
+  private func writePostCount(_ n: Int, _ count: Int?) {
+    // A version that isn't saved yet (just made, its save pending) gets the count with that save.
+    if pendingVersions.contains(n) || (n != 1 && !syncedVersions.contains { $0.number == n }) { return }
+    if let i = syncedVersions.firstIndex(where: { $0.number == n }) {
+      syncedVersions[i].postCount = count
+    } else if n == 1 {
+      var v1 = Version(number: 1)
+      v1.postCount = count
+      syncedVersions.append(v1)
+    }
+    let store = store, id = videoId
+    Self.saveQueue.async {
+      do {
+        try store.setPostCount(videoId: id, number: n, count)
+        ChangeSignal.post()
+      } catch {
+        Log.shared.error("editor post-count failed: \(error)")
+      }
+    }
+  }
+
   func deleteVersion(_ n: Int) {
     guard n > 1, !readOnly else { return }
     commitTimeDraft()
@@ -1677,6 +1757,13 @@ final class EditorModel: ObservableObject {
   }
 
   private func restoreUndo(_ s: UndoState) {
+    // Round 31: a version's post count isn't part of the editor's history: every version keeps the count it has now.
+    var s = s
+    s.versions = s.versions.map { v in
+      var v = v
+      if let now = versions.first(where: { $0.number == v.number }) { v.postCount = now.postCount }
+      return v
+    }
     restoringUndo = true
     defer {
       restoringUndo = false

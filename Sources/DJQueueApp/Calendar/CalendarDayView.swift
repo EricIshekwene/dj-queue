@@ -104,6 +104,9 @@ struct CalendarDayClip: View {
               .dsTooltip(CalendarWords.pinned)
           }
           Text(Fmt.day(model.dm.date(day), tz: model.tz, style: "EEE d MMM")).font(DS.type.callout).foregroundStyle(DS.color.textSecondary)
+          if let unit = group.slot?.unit ?? group.posts.first?.unit {
+            CalendarUnitMark(model: model, videoId: group.videoId, unit: unit).padding(.leading, 2)
+          }
           if let v = group.video, let label = v.photoLabel {
             DSBadge(label, style: .outline, icon: v.isCarousel ? "square.on.square" : "photo", size: .sm,
                     help: v.isCarousel ? "A carousel of \(v.photoCount) photos — the first is the cover" : "A photo post")
@@ -188,7 +191,7 @@ struct NextUpCard: View {
     default: when = post.scheduledAt > model.now ? "in \(AppModel.countdown(to: post.scheduledAt, now: model.now))" : "due now"
     }
     let day = model.dm.key(post.scheduledAt) == model.todayKey ? "" : "\(Fmt.day(post.scheduledAt, tz: model.tz, style: "EEE")) "
-    return "Next: \(post.platform.displayName) · \(day)\(time) · \(when)" + (model.hasSetTime(post) ? " · set time" : "")
+    return "Next: \(post.platform.displayName) · \(day)\(time) · \(when) · \(model.unitLabel(post))" + (model.hasSetTime(post) ? " · set time" : "")
   }
 }
 

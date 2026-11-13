@@ -48,6 +48,14 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![Dragging v3's trim end; v1 keeps the shared trim](docs/media/version-trim.gif) | ![Trim switch on All versions, dark](docs/media/version-trim-dark.jpg) |
 
+**Every version posts twice (v0.24.0).** Each version of a clip is its own post in the plan, and every version posts twice on each platform: v1 · 1 of 2, v2 · 1 of 2, then v1 · 2 of 2 and v2 · 2 of 2. Reposts go by count, never by views. Two posts of one clip are at least 2 days apart and a version waits a week before it posts again, so the Calendar goes round the clips and nothing posts back to back. Every Calendar card says which version post it is; the Queue keeps one card per clip, with the next version post on its date chip and the others as small tags with their day or *waiting*. Settings › Schedule has *Posts per version* and both gaps, and the editor's *Posts* row gives the version you're editing its own count (0 leaves it out). Long-form is never reposted. Agents use `djq post-count`, `djq posts-per-version` and `djq post-spacing`.
+
+| Posts per version in Settings, a version's own count in the editor, then the Queue and the Calendar | The Queue: the next version post on the date chip, the rest waiting |
+|---|---|
+| ![Posts per version in Settings › Schedule, v2 set to 3 in the editor, the Queue card with its version posts, the Calendar week](docs/media/version-posts.gif) | ![Queue cards with Today · v1 · 1 of 2 and a v1 · 2 of 2 · waiting tag](docs/media/version-posts-queue.jpg) |
+| **The Calendar week** — every card says its version post, repeats included | **Month** — the short form, "v1 2/2" |
+| ![Calendar week with v1 · 1 of 2 and v1 · 2 of 2 under the titles](docs/media/version-posts-calendar.jpg) | ![Calendar month in dark with v1 1/2 and v1 2/2 on the chips](docs/media/version-posts-month.jpg) |
+
 **Photo posts and set-time posts (v0.15.0).** A photo, or a carousel of several, goes through the same life as a clip: add it, edit it (shape, a crop per photo, texts on the photos you pick, caption, hashtag groups), send it to the Queue with no score, and track it on the Calendar. YouTube Shorts is skipped because it takes video only, and a carousel longer than a platform allows sends its first photos there and says so. Any Queue item, photo or clip, can also go out at an exact day and minute, outside the regular schedule, without moving anything else.
 
 | Add photos — pick or drop them, one carousel or a post per photo | The photo editor — crop each photo, put a text on photos 2–3, reorder, platform notes |
