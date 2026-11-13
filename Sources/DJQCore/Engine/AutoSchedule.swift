@@ -292,6 +292,12 @@ extension Planner {
     var n = 0
     for s in slots {
       guard let c = book[s.videoId], s.postNo > (c.counts[s.versionNo] ?? 0), try isMovable(s, now: now) else { continue }
+      // Like `remove(slotId:)`: its automatic retries go too, and so does any other attempt of it still waiting.
+      try store.dropAutoRetries(slot: s)
+      for p in try store.posts(where: "video_id=? AND version_no=? AND COALESCE(post_no,1)=? AND kind<>'regular' AND state IN ('planned','rendering','rendered')",
+                               [s.videoId, s.versionNo, s.postNo]) where try store.finalPostizJob(postId: p.id) == nil {
+        try store.deletePost(p.id)
+      }
       try clearSlot(s)
       try store.deletePlanSlot(s.id)
       try store.refreshState(videoId: s.videoId)
@@ -313,8 +319,13 @@ extension Planner {
     var picker = UnitPicker(book: try UnitBook(store: store, settings: settings, videos: backlog), order: backlog.map(\.id), dm: dm,
                             repeatLimit: dm.addDays(dm.key(now), Self.repeatHorizonDays))
     var n = 0
+    let byId = Dictionary(backlog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     for (day, _) in try openPositions(now: now, settings: settings, dm: dm) {
-      guard let (id, unit) = try picker.pick(day: day) else { continue }
+      let near = try overlapNeighbours(day, settings, dm)
+      guard let (id, unit) = picker.pick(day: day, allowed: { id in
+        guard let v = byId[id] else { return false }
+        return !near.contains { Queue.overlaps($0, v) }
+      }) else { continue }
       picker.placed(id, unit, day: day)
       n += 1
     }
