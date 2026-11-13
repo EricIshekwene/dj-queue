@@ -129,19 +129,25 @@ public struct UnitBook: Sendable {
 /// 2. among the clips that fit, the one that went longest without a post goes next (a clip with none yet first), so the
 ///    calendar goes round the clips; a tie goes to the Queue order (the clip's score, Settings → Queue sort);
 /// 3. inside the clip, every version's first post comes before any repeat, older versions first.
+/// 4. a clip's first post takes any open day up to the horizon (30 days); a clip that already has a day or a post
+///    (its repeats and later versions) only takes days up to `repeatLimit` (a week ahead), so reposts never fill the
+///    month ahead and a clip Eric sends to the Queue always finds a day within a week of what's already planned.
 /// Nothing fits → the position stays open, and the next pass fills it when something does.
 struct UnitPicker {
   var book: UnitBook
   /// Clip ids in the order ties go (the Queue order, or the relay's old order first).
   let order: [String]
   let dm: DayMath
+  /// The last day a clip with a day or a post already may take (nil = no limit).
+  let repeatLimit: String?
   /// Units that couldn't take a day in this pass (every platform was inside the lead or already done).
   var blocked: Set<String> = []
 
-  init(book: UnitBook, order: [String], dm: DayMath) {
+  init(book: UnitBook, order: [String], dm: DayMath, repeatLimit: String? = nil) {
     self.book = book
     self.order = order
     self.dm = dm
+    self.repeatLimit = repeatLimit
   }
 
   static func key(_ id: String, _ u: PostUnit) -> String { "\(id)#\(u)" }
@@ -153,6 +159,7 @@ struct UnitPicker {
     var best: (last: String, rank: Int, id: String, unit: PostUnit)?
     for (rank, id) in order.enumerated() {
       guard let c = book[id] else { continue }
+      if let repeatLimit, day > repeatLimit, !c.days.isEmpty { continue }
       if c.days.contains(where: { abs(dm.days(from: $0.day, to: day)) < clipGap }) { continue }
       let unit = c.pending(s.activePlatforms).first { u in
         !blocked.contains(Self.key(id, u))

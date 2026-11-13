@@ -15,6 +15,8 @@ import Foundation
 extension Planner {
   /// How far ahead the calendar is filled (days after today, no setting).
   public static let autoScheduleHorizonDays = 30
+  /// Round 31: how far ahead a clip that already has a day or a post gets its next version post (DECISIONS-R31.md).
+  public static let repeatHorizonDays = 7
   /// A position is open only when its earliest platform time is at least this far away.
   public static let autoScheduleLead: TimeInterval = 30 * 60
   /// A relay leaves a slot alone when one of its live posts goes out sooner than this.
@@ -277,7 +279,8 @@ extension Planner {
       backlog = backlog.filter { rank[$0.id] != nil }.sorted { rank[$0.id]! < rank[$1.id]! } + backlog.filter { rank[$0.id] == nil }
     }
     let byId = Dictionary(backlog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-    var picker = UnitPicker(book: try UnitBook(store: store, settings: c.settings, videos: backlog), order: backlog.map(\.id), dm: c.dm)
+    var picker = UnitPicker(book: try UnitBook(store: store, settings: c.settings, videos: backlog), order: backlog.map(\.id), dm: c.dm,
+                            repeatLimit: c.dm.addDays(c.today, Self.repeatHorizonDays))
     var placer = try c.placer ?? Placer(store: store, dm: c.dm)
     for (day, pos) in open {
       let near = try overlapNeighbours(day, c.settings, c.dm)

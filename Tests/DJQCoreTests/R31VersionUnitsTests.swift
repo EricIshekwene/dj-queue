@@ -23,6 +23,14 @@ import Testing
     try f.store.save(v, videoId: id)
   }
 
+  /// The engine's daily passes over the next `days` days (the clock at 08:00 each day).
+  func runDays(_ f: Fixture, _ days: Int = 21) throws {
+    for d in 1...days {
+      f.setTime(f.dm.addDays("2026-11-02", d), "08:00")
+      try Planner(store: f.store).autoSchedule()
+    }
+  }
+
   func slots(_ f: Fixture, _ id: String? = nil) throws -> [PlanSlot] {
     try f.store.planSlots().filter { id == nil || $0.videoId == id }.sorted { ($0.date, $0.position) < ($1.date, $1.position) }
   }
@@ -31,8 +39,16 @@ import Testing
     let f = try setup(3)
     try addVersion(f, "clip-0", 2)
     let r = try Planner(store: f.store).autoSchedule()
+    // First posts take any day; a clip that already has one gets its next version post up to a week ahead only.
+    #expect(r.clips.prefix(3).allSatisfy { $0.unit == .first })
+    #expect(r.clips.allSatisfy { $0.unit == .first || $0.date <= f.dm.addDays("2026-11-02", Planner.repeatHorizonDays) })
+    // The engine runs every day: as the week rolls on, the rest get their days.
+    for d in 1...21 {
+      f.setTime(f.dm.addDays("2026-11-02", d), "08:00")
+      try Planner(store: f.store).autoSchedule()
+    }
     // clip-0: v1 and v2 twice each; clip-1 and clip-2: v1 twice. Eight version posts, each one day.
-    #expect(r.scheduled == 8 && r.waiting == 0)
+    #expect(try Planner(store: f.store).schedulable(f.store.settings()).isEmpty)
     let all = try slots(f)
     #expect(all.count == 8)
     #expect(Set(all.map { "\($0.videoId)#\($0.unit)" }).count == 8, "each version post has one day")
@@ -68,6 +84,22 @@ import Testing
     #expect(try f.posts(.youtube).allSatisfy { YouTubeWindow.clear($0.scheduledAt, .youtube) == $0.scheduledAt })
     // A second pass has nothing to add.
     #expect(try Planner(store: f.store).autoSchedule().scheduled == 0)
+  }
+
+  @Test func aNewClipIsNeverStuckBehindAMonthOfReposts() throws {
+    let f = try setup(6, perDay: 1)
+    for i in 0..<6 { try addVersion(f, "clip-\(i)", 2) }
+    try f.store.setSentToQueue("clip-5", false)
+    try f.store.refreshState(videoId: "clip-5")
+    try Planner(store: f.store).autoSchedule()
+    // Five clips × 4 version posts, one a day: only the week ahead holds repeats, the month isn't filled with them.
+    let last = try #require(try slots(f).map(\.date).max())
+    #expect(last <= f.dm.addDays("2026-11-02", Planner.repeatHorizonDays))
+    try f.store.setSentToQueue("clip-5", true)
+    try f.store.refreshState(videoId: "clip-5")
+    try Planner(store: f.store).autoSchedule()
+    let new = try #require(try slots(f, "clip-5").first)
+    #expect(new.unit == .first && new.date <= f.dm.addDays("2026-11-02", Planner.repeatHorizonDays + 1))
   }
 
   @Test func aClipStaysInProgressUntilEveryVersionPostIsOut() throws {
@@ -210,6 +242,7 @@ import Testing
     try planner.pin(videoId: "clip-0", date: "2026-11-05")
     #expect(try slots(f, "clip-0").map(\.unit) == [.first])
     try planner.autoSchedule()
+    try runDays(f)
     let units = try slots(f, "clip-0").map(\.unit)
     #expect(units.count == 4 && Set(units).count == 4)
   }
@@ -221,6 +254,7 @@ import Testing
     #expect(units.map(\.label) == ["v1 · 1 of 2", "v2 · 1 of 2", "v1 · 2 of 2", "v2 · 2 of 2"])
     #expect(units.allSatisfy { $0.status == "waiting" })
     try Planner(store: f.store).autoSchedule()
+    try runDays(f)
     #expect(try AgentAPI.units("clip-1", store: f.store, settings: f.store.settings()).allSatisfy { $0.status == "scheduled" && $0.date != nil })
   }
 }
