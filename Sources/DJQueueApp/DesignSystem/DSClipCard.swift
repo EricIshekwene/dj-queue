@@ -91,7 +91,8 @@ struct DSClip: Identifiable {
   var dateText: String? = nil
   /// Round 31: the version post going out on `dateText`'s day ("v1 · 1 of 2"), shown in the date chip after the day.
   var dateUnit: String? = nil
-  /// Round 31: the clip's other version posts (small tags after the chips, Cards and Single only).
+  /// Round 31: the clip's other version posts, in planning order. Cards show as many as fit on one line (at most
+  /// `UnitLines.cap`) and "+N" for the rest; Single shows them all.
   var units: [DSClipTag] = []
   var isPinned = false
   /// File missing: danger chip "File missing · Relink" and no autoplay.
@@ -310,10 +311,31 @@ struct DSClipCard<Actions: View>: View {
   }
 
   /// Round 31: the clip's other version posts, after every other chip.
-  private var unitItems: [AnyView] {
-    clip.units.map { t in
-      AnyView(DSBadge(t.text, style: t.style, icon: t.icon, size: t.size, help: t.tooltip)
-        .background(ScriptAnchor("Unit tag \(clip.id) \(t.text)")))
+  private var unitItems: [AnyView] { clip.units.map { AnyView(unitBadge($0)) } }
+
+  private func unitBadge(_ t: DSClipTag) -> some View {
+    DSBadge(t.text, style: t.style, icon: t.icon, size: t.size, help: t.tooltip)
+      .background(ScriptAnchor("Unit tag \(clip.id) \(t.text)"))
+  }
+
+  /// Round 31, Cards: one line of version-post tags (the card's height is fixed), as many as fit, then "+N" with the
+  /// rest on hover.
+  @ViewBuilder private var unitRow: some View {
+    let all = clip.units
+    if !all.isEmpty {
+      ViewThatFits(in: .horizontal) {
+        ForEach(Array(stride(from: min(all.count, UnitLines.cap), through: 0, by: -1)), id: \.self) { k in
+          HStack(spacing: 6) {
+            ForEach(all.prefix(k)) { unitBadge($0) }
+            if all.count > k {
+              DSBadge("+\(all.count - k)", style: .outline, size: .sm,
+                      help: all.dropFirst(k).map(\.text).joined(separator: "\n"))
+                .background(ScriptAnchor("Unit tag \(clip.id) +\(all.count - k)"))
+            }
+          }
+          .fixedSize()
+        }
+      }
     }
   }
 
@@ -340,30 +362,37 @@ struct DSClipCard<Actions: View>: View {
       }
       media(radius: DS.radius.sm, active: autoplay, mute: true, muteAlignment: .bottomTrailing, updating: .icon)
         .frame(width: 63, height: 112)
+      // Round 31: the version-post tags take their own line under the title and the right-hand facts, the card's full
+      // width, so they never squeeze the title or wrap past the card's fixed height.
       VStack(alignment: .leading, spacing: 8) {
-        VStack(alignment: .leading, spacing: 3) {
-          HStack(spacing: 6) {
-            Text(clip.title).font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(1)
-            if clip.isPinned && clip.dateText == nil {
-              Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(DS.color.textTertiary)
-                .dsTooltip("Pinned to a day")
+        HStack(spacing: DS.space.sm) {
+          VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+              HStack(spacing: 6) {
+                Text(clip.title).font(DS.type.headline).foregroundStyle(DS.color.text).lineLimit(1)
+                if clip.isPinned && clip.dateText == nil {
+                  Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(DS.color.textTertiary)
+                    .dsTooltip("Pinned to a day")
+                }
+              }
+              if let ph = clip.photos {
+                photoMark(ph)
+              } else if !clip.meta.isEmpty {
+                Text(clip.meta).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+              }
             }
+            if !chipItems.isEmpty { DSFlowLayout(spacing: 6) { chips(units: false) } }
           }
-          if let ph = clip.photos {
-            photoMark(ph)
-          } else if !clip.meta.isEmpty {
-            Text(clip.meta).font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1)
+          .frame(minWidth: 176, maxWidth: .infinity, alignment: .leading)
+          HStack(spacing: DS.space.md) {
+            platformsRow
+            dateChip
+            // Its own width: a row squeezed by platforms and a date must not push "No score" over the date chip.
+            scoreText.frame(minWidth: 34, alignment: .trailing).fixedSize()
+            HStack(spacing: 2) { actions }
           }
         }
-        DSFlowLayout(spacing: 6) { chips() }
-      }
-      .frame(minWidth: 176, maxWidth: .infinity, alignment: .leading)
-      HStack(spacing: DS.space.md) {
-        platformsRow
-        dateChip
-        // Its own width: a row squeezed by platforms and a date must not push "No score" over the date chip.
-        scoreText.frame(minWidth: 34, alignment: .trailing).fixedSize()
-        HStack(spacing: 2) { actions }
+        unitRow
       }
     }
     .padding(DS.space.sm)

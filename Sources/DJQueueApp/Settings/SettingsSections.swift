@@ -219,8 +219,8 @@ struct ScheduleSettings: View {
     SettingsGroupHeader("Versions", description: "Each version of a clip is its own post. Reposts go by count, never by views.")
     SettingsRow("Posts per version", description: "How many times each version posts on each platform. A version can set its own in the editor.") {
       DSXStepper(label: "Posts per version", int: model.binding(\.postsPerVersion) { "Posts per version set to \($0)" },
-                 range: 0...PostUnits.maxCount, less: "Post each version fewer times", more: "Post each version more times") {
-        $0 == 0 ? "Never" : $0 == 1 ? "Once" : "\($0) times"
+                 range: 1...PostUnits.maxCount, less: "Post each version fewer times", more: "Post each version more times") {
+        $0 == 1 ? "Once" : "\($0) times"
       }
       .background(ScriptAnchor("Posts per version"))
     }

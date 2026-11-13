@@ -45,8 +45,8 @@ extension UnitBook {
 /// The Queue card's words for a clip's version posts (round 31): the next one rides on the date chip, the others are
 /// small tags in planning order with their day, "waiting" or "done".
 public enum UnitLines {
-  /// Tags shown on a Queue card before "+N".
-  public static let cap = 3
+  /// The most tags a Queue card shows before "+N" (fewer when the line is narrower).
+  public static let cap = 4
 
   /// Every line but `next` (the one on the date chip), at most `cap`, and how many are left out.
   public static func others(_ lines: [UnitLine], next: PostUnit?, cap: Int = cap) -> (shown: [UnitLine], more: Int) {
@@ -66,7 +66,7 @@ public enum UnitLines {
 
   /// What a tag means on hover.
   public static func tagHelp(_ l: UnitLine, day: (String) -> String) -> String {
-    let what = help(l.unit, label: l.label)
+    let what = meaning(l.unit, label: l.label)
     switch l.state {
     case .day(let d): return "\(what) goes out \(day(d))"
     case .waiting: return "\(what) is waiting for a day: it gets one by itself, spaced from this clip's other posts"
@@ -75,7 +75,7 @@ public enum UnitLines {
   }
 
   /// "Version 2, post 1 of 2" (the post count is per platform).
-  public static func help(_ u: PostUnit, label: String) -> String {
+  public static func meaning(_ u: PostUnit, label: String) -> String {
     label.contains(" of ") ? "Version \(u.version), post \(u.post) of \(label.split(separator: " ").last ?? "1")" : "Version \(u.version)"
   }
 

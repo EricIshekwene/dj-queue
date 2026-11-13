@@ -16,7 +16,7 @@ extension AppModel {
   /// "Version 2, post 1 of 2 on each platform" (hover).
   func unitHelp(_ videoId: String, _ u: PostUnit) -> String {
     let label = unitLabel(videoId, u)
-    return UnitLines.help(u, label: label) + (label.contains(" of ") ? " on each platform" : "")
+    return UnitLines.meaning(u, label: label) + (label.contains(" of ") ? " on each platform" : "")
   }
 
   func unitHelp(_ slot: PlanSlot) -> String { unitHelp(slot.videoId, slot.unit) }
@@ -27,21 +27,14 @@ extension AppModel {
   /// "Sat 16" for a version post's tag; "Today" for today.
   func unitDayText(_ day: String) -> String { day == todayKey ? "Today" : Fmt.day(dm.date(day), tz: tz, style: "EEE d") }
 
-  /// The Queue card's other version posts (the next one rides on the date chip): small tags in planning order, at most
-  /// `UnitLines.cap`, then "+N". None when the clip has only the one post.
+  /// The Queue card's other version posts (the next one rides on the date chip): small tags in planning order. The card
+  /// shows as many as fit and "+N" (`DSClipCard`). None when the clip has only the one post.
   func unitTags(_ videoId: String) -> [DSClipTag] {
     let lines = unitLines[videoId] ?? []
     guard lines.count > 1 else { return [] }
-    let (shown, more) = UnitLines.others(lines, next: nextSlotByVideo[videoId]?.unit)
-    var tags = shown.map { l in
+    return UnitLines.others(lines, next: nextSlotByVideo[videoId]?.unit, cap: .max).shown.map { l in
       DSClipTag(text: UnitLines.tagText(l, day: unitDayText), style: l.state == .done ? .soft(.neutral) : .outline,
                 tooltip: UnitLines.tagHelp(l, day: unitDayText), size: .sm)
     }
-    if more > 0 {
-      let rest = UnitLines.others(lines, next: nextSlotByVideo[videoId]?.unit, cap: .max).shown.dropFirst(shown.count)
-      tags.append(DSClipTag(text: "+\(more)", style: .outline,
-                            tooltip: rest.map { UnitLines.tagText($0, day: unitDayText) }.joined(separator: "\n"), size: .sm))
-    }
-    return tags
   }
 }

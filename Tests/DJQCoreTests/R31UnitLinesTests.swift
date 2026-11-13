@@ -12,7 +12,7 @@ import Testing
   @Test func tagsLeaveOutTheNextPostAndCapTheRest() {
     let lines = [line(1, 1, .day("2026-11-14")), line(2, 1, .day("2026-11-17")), line(3, 1, .waiting),
                  line(1, 2, .waiting), line(2, 2, .waiting), line(3, 2, .waiting)]
-    let (shown, more) = UnitLines.others(lines, next: .first)
+    let (shown, more) = UnitLines.others(lines, next: .first, cap: 3)
     #expect(shown.map(\.unit) == [PostUnit(version: 2, post: 1), PostUnit(version: 3, post: 1), PostUnit(version: 1, post: 2)])
     #expect(more == 2)
     // Nothing on the date chip (no day yet): every post is a tag.
@@ -27,8 +27,8 @@ import Testing
     #expect(UnitLines.tagText(line(1, 1, .done), day: day) == "v1 · 1 of 2 · done")
     #expect(UnitLines.dateText("Thu 14 Nov", unit: "v1 · 1 of 2") == "Thu 14 Nov · v1 · 1 of 2")
     #expect(UnitLines.dateText("Not scheduled", unit: nil) == "Not scheduled")
-    #expect(UnitLines.help(PostUnit(version: 2, post: 1), label: "v2 · 1 of 3") == "Version 2, post 1 of 3")
-    #expect(UnitLines.help(PostUnit(version: 2, post: 1), label: "v2") == "Version 2")
+    #expect(UnitLines.meaning(PostUnit(version: 2, post: 1), label: "v2 · 1 of 3") == "Version 2, post 1 of 3")
+    #expect(UnitLines.meaning(PostUnit(version: 2, post: 1), label: "v2") == "Version 2")
     #expect(UnitLines.tagHelp(line(1, 2, .waiting), day: day).hasPrefix("Version 1, post 2 of 2 is waiting"))
   }
 
