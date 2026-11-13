@@ -295,9 +295,10 @@ public final class PostActions: @unchecked Sendable {
       throw EngineError("\(v.tag) hasn't been on \(platform.displayName) yet — plan it instead")
     }
     let book = try UnitBook(store: store, settings: settings, videos: [v])
-    let had = Set(prior.map(\.unit))
+    if book[videoId]?.skipped.contains(platform) == true { throw EngineError("\(v.tag) is turned off for \(platform.displayName) in the editor") }
+    let had = Set(prior.map(\.unit)).union(book[videoId]?.taken[platform] ?? [])
     guard let unit = book[videoId]?.all.first(where: { !had.contains($0) }) else {
-      throw EngineError("Every version of \(v.tag) has posted its count on \(platform.displayName) — add a version or raise its count")
+      throw EngineError("Every version of \(v.tag) has posted its count on \(platform.displayName) — add a version or raise its count (djq post-count)")
     }
     let next = unit.version
     let lastDay = dm.key(last.postedAt ?? last.scheduledAt)

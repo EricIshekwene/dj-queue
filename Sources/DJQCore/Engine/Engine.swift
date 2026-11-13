@@ -422,7 +422,9 @@ public final class Engine: @unchecked Sendable {
     }
     for var p in try store.posts(where: "state='failed' AND error_type='too_long' AND resolution IS NULL") {
       guard let (v, edit, issues) = try info(p.videoId, p.versionNo), active.contains(p.platform), try !store.isHeld(v) else { continue }
-      let newer = try store.posts(where: "video_id=? AND platform=? AND attempt_no>?", [p.videoId, p.platform.rawValue, p.attemptNo])
+      // Round 31: a newer attempt of this version post, not a later version post of the clip.
+      let newer = try store.posts(where: "video_id=? AND platform=? AND attempt_no>? AND version_no=? AND COALESCE(post_no,1)=?",
+                                  [p.videoId, p.platform.rawValue, p.attemptNo, p.versionNo, p.postNo])
       guard newer.isEmpty else { continue }
       let snapshot: String? = try store.kv("tooLong.\(p.id)")
       let changed = snapshot != nil && snapshot != PostActions.trimSignature(edit, p.platform)

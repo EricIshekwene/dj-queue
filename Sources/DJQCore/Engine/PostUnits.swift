@@ -21,7 +21,7 @@ public enum PostUnits {
   public static func count(_ number: Int, own: Int?, settings: Settings, finishedUpTo: Int?) -> Int {
     if let own { return min(max(0, own), maxCount) }
     if let top = finishedUpTo, number <= top { return number == 1 ? 1 : 0 }
-    return min(max(0, settings.postsPerVersion), maxCount)
+    return min(max(1, settings.postsPerVersion), maxCount)
   }
 }
 
@@ -224,6 +224,8 @@ extension Store {
         try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,0)", [videoId, 1, JSONCoding.string(ver)])
       }
       changed = true
+      // A lower count takes its extra version posts off the calendar at once (the engine's pass does it too).
+      try Planner(store: self).dropUnitsBeyondCount(videoId: videoId)
       try logEvent("version", count.map { "v\(number) posts \($0) time\($0 == 1 ? "" : "s") on each platform" }
                      ?? "v\(number) posts the default number of times", videoId: videoId)
       try refreshState(videoId: videoId)

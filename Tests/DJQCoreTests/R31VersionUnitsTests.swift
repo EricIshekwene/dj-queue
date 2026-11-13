@@ -257,4 +257,121 @@ import Testing
     try runDays(f)
     #expect(try AgentAPI.units("clip-1", store: f.store, settings: f.store.settings()).allSatisfy { $0.status == "scheduled" && $0.date != nil })
   }
+
+  // MARK: Review fixes
+
+  func tiktokOnly(_ f: Fixture) throws {
+    try f.updateSettings { $0.enabledPlatforms = [.tiktok] }
+  }
+
+  func job(_ p: PlatformPost, closed: PostizCloseReason?, now: Date) -> PostizJob {
+    var j = PostizJob(postId: p.id, videoId: p.videoId, platform: p.platform, integrationId: "cid-tt", phase: closed == nil ? .live : .closed,
+                      postizId: "pz-\(p.id)", renderId: nil, contentHash: "h", scheduledAt: p.scheduledAt, remoteDate: p.scheduledAt,
+                      testMode: false, postType: "now", closedAt: closed == nil ? nil : now, closeReason: closed, createdAt: now, updatedAt: now)
+    j.lineage = PostizJob.lineage(p)
+    return j
+  }
+
+  /// A repeat that fails in Postiz still retries by itself after the clip's first post went out on that platform.
+  @Test func aRepeatStillRetriesAfterTheFirstPostWentOut() throws {
+    let f = try setup(1)
+    try tiktokOnly(f)
+    try Planner(store: f.store).autoSchedule()
+    try runDays(f)
+    let ps = try f.store.posts().sorted { $0.scheduledAt < $1.scheduledAt }
+    #expect(ps.map(\.unit) == [.first, PostUnit(version: 1, post: 2)])
+    var first = ps[0], second = ps[1]
+    first.state = .posted
+    first.postedAt = first.scheduledAt
+    try f.store.save(first)
+    try f.store.save(job(first, closed: .published, now: f.clock.now))
+    second.state = .failed
+    try f.store.save(second)
+    let service = PostizService(store: f.store)
+    #expect(try !service.retryRuledOut(second), "another version post having gone out is no reason")
+    #expect(try !service.retryMustWait(second))
+    // The same version post published is still final, and copyright anywhere on the clip still stops it.
+    try f.store.save(job(second, closed: .published, now: f.clock.now))
+    #expect(try service.retryRuledOut(second))
+    var c = first
+    c.id = "other"
+    c.state = .copyrightBlocked
+    try f.store.save(c)
+    #expect(try service.retryRuledOut(second))
+  }
+
+  @Test func aSwapKeepsEachClipsOwnVersionPost() throws {
+    let f = try setup(2, perDay: 1)
+    try addVersion(f, "clip-0", 2)
+    try Planner(store: f.store).autoSchedule()
+    try runDays(f, 6)
+    let a = try #require(try slots(f, "clip-0").first { $0.unit != .first && $0.date >= "2026-11-08" })
+    let b = try #require(try slots(f, "clip-1").last)
+    let (ua, ub) = (a.unit, b.unit)
+    try Planner(store: f.store).swap(a.id, b.id)
+    #expect(try f.store.planSlot(id: a.id)?.videoId == "clip-1" && f.store.planSlot(id: a.id)?.unit == ub)
+    #expect(try f.store.planSlot(id: b.id)?.videoId == "clip-0" && f.store.planSlot(id: b.id)?.unit == ua)
+    #expect(try f.store.slotPosts(a.id).allSatisfy { $0.videoId == "clip-1" && $0.unit == ub })
+    #expect(try !f.store.slotPosts(b.id).isEmpty && f.store.slotPosts(b.id).allSatisfy { $0.unit == ua })
+  }
+
+  @Test func aLowerCountTakesItsExtraPostsOffTheCalendar() throws {
+    let f = try setup(1)
+    try tiktokOnly(f)
+    try Planner(store: f.store).autoSchedule()
+    try runDays(f)
+    #expect(try slots(f).count == 2)
+    f.setTime("2026-11-02", "08:00")
+    try f.store.setPostCount(videoId: "clip-0", number: 1, 1)
+    #expect(try slots(f).map(\.unit) == [.first])
+    #expect(try f.store.posts().map(\.unit) == [.first])
+    // The default going down does the same on the next pass.
+    try f.store.setPostCount(videoId: "clip-0", number: 1, nil)
+    try runDays(f)
+    #expect(try slots(f).count == 2)
+    f.setTime("2026-11-02", "08:00")
+    try f.updateSettings { $0.postsPerVersion = 1 }
+    try Planner(store: f.store).autoSchedule()
+    #expect(try slots(f).map(\.unit) == [.first])
+  }
+
+  @Test func doctorDoesntCallTheSpacingAFault() throws {
+    let f = try setup(2, perDay: 2)
+    try f.updateSettings { $0.sameVersionGapDays = 10 }
+    try Planner(store: f.store).autoSchedule()
+    // Repeats wait for their gap and the week ahead: days stay open with clips "waiting", by design.
+    #expect(try !Planner(store: f.store).schedulable(f.store.settings()).isEmpty)
+    #expect(try Planner(store: f.store).fillPreview() == 0)
+    #expect(try Doctor(store: f.store).planGaps().isEmpty)
+  }
+
+  @Test func aTooLongFixReQueuesThatVersionPostOnly() throws {
+    let f = try setup(1)
+    try tiktokOnly(f)
+    try Planner(store: f.store).autoSchedule()
+    try runDays(f)
+    let ps = try f.store.posts().sorted { $0.scheduledAt < $1.scheduledAt }
+    var first = ps[0]
+    first.state = .failed
+    first.errorType = .tooLong
+    try f.store.save(first)
+    // A later version post of the clip (higher attempt number) isn't a newer attempt of this one.
+    let newer = try f.store.posts(where: "video_id=? AND platform=? AND attempt_no>? AND version_no=? AND COALESCE(post_no,1)=?",
+                                  [first.videoId, first.platform.rawValue, first.attemptNo, first.versionNo, first.postNo])
+    #expect(newer.isEmpty && ps[1].attemptNo > first.attemptNo)
+  }
+
+  @Test func repostRefusesAnOffPlatformAndCountsHandPosted() throws {
+    let f = try setup(1)
+    try tiktokOnly(f)
+    try f.updateSettings { $0.sameVersionGapDays = 10 }  // v1 · 2 waits past the week ahead: repost takes it
+    try Planner(store: f.store).autoSchedule()
+    let a = PostActions(store: f.store)
+    let p = try #require(try f.store.posts().first)
+    f.clock.set(p.scheduledAt.addingTimeInterval(60))
+    try a.markPosted(postId: p.id, url: Fixture.postURLs[.tiktok]!)
+    let r = try a.repost(videoId: "clip-0", platform: .tiktok)
+    #expect(r.unit == PostUnit(version: 1, post: 2) && PostizJob.lineage(r) == "clip-0#tiktok#v1p2")
+    #expect(throws: EngineError.self) { try a.repost(videoId: "clip-0", platform: .tiktok) }
+  }
 }

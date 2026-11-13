@@ -356,6 +356,8 @@ public final class Store: @unchecked Sendable {
           if let id = r.string("id") { done[id] = r.int("top") ?? 1 }
         }
         try setKV(PostUnits.finishedKey, done)
+        // A copyright re-upload as another version stayed in the clip's main Postiz lineage: post 0 keeps it there.
+        try db.run("UPDATE platform_posts SET post_no=0 WHERE kind='retry' AND version_no<>1")
         try logEvent("plan", "Every version now posts \(Settings().postsPerVersion) times; \(done.count) clip\(done.count == 1 ? "" : "s") that had finished posting keep one post")
       }
       try db.exec("PRAGMA user_version = 12")
@@ -954,9 +956,15 @@ public final class Store: @unchecked Sendable {
       let active = Set(st.activePlatforms)
       let latest = Dictionary(grouping: posts, by: { "\($0.platform.rawValue)#\($0.unit)" })
         .compactMapValues { $0.max { $0.attemptNo < $1.attemptNo } }
-      let relevant = latest.values.filter { active.contains($0.platform) }
-      // Posts still to make (a later version, the next post of one) keep it going: it isn't finished between them.
-      let more = v.type == .short ? try !UnitBook(store: self, settings: st, videos: [v]).pending(v.id).isEmpty : false
+      // A chain re-uploaded elsewhere is superseded by its re-upload, and a repost that didn't go out doesn't make the clip
+      // partial: reposts never decided a clip's state before round 31.
+      let relevant = latest.values.filter { p in
+        active.contains(p.platform) && p.resolution != "reuploaded" && (p.kind != .repost || p.state == .posted || !p.state.isTerminal)
+      }
+      // Posts still to make (a later version, the next post of one) keep it going: it isn't finished between them. Only
+      // while the clip can still get a day (scored or a photo, its file there, not excluded).
+      let plannable = v.type == .short && !v.missing && !v.excluded && (v.score != nil || v.needsNoScore)
+      let more = plannable ? try !UnitBook(store: self, settings: st, videos: [v]).pending(v.id).isEmpty : false
       // A failure with a retry coming isn't finished, whatever its row says.
       if !relevant.isEmpty, try relevant.allSatisfy({ try $0.state.isTerminal && !retryIsComing($0) }) {
         if more { return .posting }

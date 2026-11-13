@@ -104,7 +104,9 @@ public struct PostizJob: Codable, Sendable, Hashable, Identifiable {
   /// round 6), "video#platform#v<N>" for the first post of version N (what a repost of version N always was), and
   /// "video#platform#v<N>p<K>" for its post K.
   public static func lineage(videoId: String, platform: Platform, kind: PostKind, versionNo: Int, postNo: Int = 1) -> String {
-    let unit = versionNo == 1 && postNo == 1 && kind != .repost ? "main" : "v\(versionNo)" + (postNo > 1 ? "p\(postNo)" : "")
+    // post 0: a re-upload as another version from before round 31 (schema 12 marks them), which stayed in the main lineage.
+    let main = (versionNo == 1 && postNo == 1 && kind != .repost) || postNo == 0
+    let unit = main ? "main" : "v\(versionNo)" + (postNo > 1 ? "p\(postNo)" : "")
     return "\(videoId)#\(platform.rawValue)#\(unit)"
   }
   public static func lineage(_ p: PlatformPost) -> String {
