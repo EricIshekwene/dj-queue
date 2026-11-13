@@ -193,4 +193,13 @@ gif version-trim $T/vtrim-01-v3-before-light $T/vtrim-02-v3-own-trim-light $T/vt
 still version-trim $T/vtrim-02-v3-own-trim-light
 still version-trim-dark $T-dark/vtrim-04-all-versions-dark
 
+V=version-posts
+# Round 31: every version is its own post and posts twice. Settings › Schedule's Posts per version, a version's own count
+# in the editor, then the Queue (next version post on the date chip, the others as tags) and the Calendar week.
+gif version-posts $V/version-posts-01-settings-posts-per-version-light $V/version-posts-02-editor-v2-default-light \
+                  $V/version-posts-03-editor-v2-own-count-light $V/version-posts-05-queue-two-versions-light \
+                  $V/version-posts-04-queue-version-posts-light $V/version-posts-06-calendar-week-version-posts-light
+still version-posts-queue $V/version-posts-04-queue-version-posts-light
+still version-posts-calendar $V-dark/version-posts-06-calendar-week-version-posts-dark
+
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }
