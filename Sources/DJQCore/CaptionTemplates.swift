@@ -14,7 +14,7 @@ public enum CaptionTemplates {
   public static let defaultsAction = "new-clip-defaults"
 
   /// Journaled changes that write clips on their own: an open editor session moves past them (`rebasedOntoGroupChanges`).
-  static let batchActions = [setDefaultAction, editAction, deleteAction, linkAction, capAction, defaultsAction, HashtagGroups.moveAction]
+  static let batchActions = [setDefaultAction, editAction, deleteAction, linkAction, capAction, defaultsAction, CaptionDefaults.action, HashtagGroups.moveAction]
 
   /// What the editor's form and Settings say beside a template.
   public static let hashtagHint = "You can type hashtags here too; {hashtags} adds the clip's groups"

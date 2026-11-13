@@ -178,4 +178,11 @@ gif trim-markers $T/timeline-01-handles-light $T/timeline-02-end-selected-light 
                  $T/timeline-08-zoomed-light
 still trim-markers-dark $T-dark/timeline-05-markers-dark
 
+D=editor-defaults
+# Round 29: Make default for new clips, from the editor's Caption section. Inspector only (the player isn't the point).
+CROP=iw*0.26:ih*0.9:iw*0.74:ih*0.1 gif caption-defaults $D/def-02-form-open-light $D/def-03-form-extra-off-light \
+                 $D/def-04-saved-toast-light $D/def-06-form-platforms-update-light $D/def-07-saved-platforms-light
+still caption-defaults-form $D/def-02-form-open-light
+still caption-defaults-dark $D-dark/def-06-form-platforms-update-dark
+
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }
