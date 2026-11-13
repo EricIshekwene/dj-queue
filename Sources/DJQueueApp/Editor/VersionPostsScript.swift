@@ -193,6 +193,8 @@ enum VersionPostsScript {
       check("click + → posts per version \(before) → \(before + 1) in the store", settings().postsPerVersion == before + 1)
       check("…and a v1 that has no count of its own follows it", ownCount(id, 1) != nil || count(id, 1) == before + 1)
       await shot("settings-posts-per-version")
+      // The stepper counts from what the app shows: let the save land in the app first, as a person's next click would.
+      for _ in 0..<20 where a.settings.postsPerVersion != before + 1 { await wait(250) }
       await click("Posts per version", at: .leading)
       check("click − → back to \(before)", settings().postsPerVersion == before)
       a.showSettings = false
@@ -245,7 +247,12 @@ enum VersionPostsScript {
       check("Queue card: the other version posts are tags (\(card.units.map(\.text).joined(separator: ", ")))",
             !card.units.isEmpty && lines.count == units(id).count)
       check("Queue card: v2's posts read “of \(v2 + 1)”", lines.filter { $0.unit.version == 2 }.allSatisfy { $0.label.hasSuffix("of \(v2 + 1)") })
-      let tags = marks("Unit tag ")
+      var tags = marks("Unit tag ")
+      for _ in 0..<12 where tags.isEmpty {
+        await wait(500)
+        tags = marks("Unit tag ")
+      }
+      if tags.isEmpty && screenLocked { note("screen locked: the Queue's cards may not be drawn, so their tags can't be found") }
       check("the Queue draws version-post tags (\(tags.count))", !tags.isEmpty)
       check("the Queue draws date chips with a version post",
             a.queueList.prefix(4).contains { a.nextUnitLabel($0.id) != nil } && !marks("Date chip ").isEmpty)
