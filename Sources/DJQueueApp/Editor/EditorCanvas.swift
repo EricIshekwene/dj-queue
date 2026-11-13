@@ -93,7 +93,7 @@ struct EditorOutputMedia: View {
           || (moving && t.fadesWhenHidden && !model.textImages.contains { $0.layerId == t.layerId && $0.shows(at: playback.time) })
         Image(decorative: t.image, scale: 1).resizable()
           .offset(moving ? textOffset : .zero)
-          .opacity(on ? 1 : (dimHiddenText && t.layerId == model.selectedText && t.fadesWhenHidden ? 0.45 : 0))
+          .opacity(on ? 1 : (dimHiddenText && t.layerId == model.shownText && t.fadesWhenHidden ? 0.45 : 0))
       }
     }
     .clipped()
@@ -398,7 +398,7 @@ struct EditorZonesCanvas: View {
           let on = model.textImages.filter { $0.shows(at: playback.time) }
           let showing = Set(on.map(\.layerId))
           let dimmed = model.isPhoto ? [] : model.textImages.filter {
-            !$0.shows(at: playback.time) && $0.fadesWhenHidden && !showing.contains($0.layerId) && ($0.layerId == model.selectedText || $0.layerId == drag?.id)
+            !$0.shows(at: playback.time) && $0.fadesWhenHidden && !showing.contains($0.layerId) && ($0.layerId == model.shownText || $0.layerId == drag?.id)
           }
           // One handle a text: a countdown's handle stays the same view as its numbers change, so a drag survives them.
           var seen = Set<String>()
@@ -417,7 +417,7 @@ struct EditorZonesCanvas: View {
     let shift = moving ? textDrag : .zero
     let hit = CGRect(x: r.minX + b.minX * r.width + shift.width, y: r.minY + b.minY * r.height + shift.height,
                      width: b.width * r.width, height: b.height * r.height)
-    let chosen = model.texts.count > 1 && t.layerId == model.selectedText
+    let chosen = model.texts.count > 1 && t.layerId == model.shownText
     return RoundedRectangle(cornerRadius: 4)
       .strokeBorder(Color.white.opacity(moving ? 0.95 : chosen ? 0.75 : hovered == t.layerId ? 0.6 : 0.0), style: StrokeStyle(lineWidth: 1, dash: chosen && !moving ? [] : [4, 3]))
       .contentShape(Rectangle())

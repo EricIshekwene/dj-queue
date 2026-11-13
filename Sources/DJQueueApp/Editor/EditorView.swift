@@ -47,6 +47,7 @@ struct EditorView: View {
   var body: some View {
     VStack(spacing: 0) {
       EditorHeader(model: model, videoIds: videoIds, done: done, accessory: headerAccessory)
+        .background(clickAway(.header))
       DSSeparator()
       HStack(alignment: .top, spacing: 0) {
         VStack(spacing: DS.space.sm) {
@@ -54,12 +55,12 @@ struct EditorView: View {
             DSAttentionCard(title: e, tone: .danger).padding(.horizontal, DS.space.md).padding(.top, DS.space.sm)
           }
           EditorCanvas(model: model, playback: model.playback)
-            .background(EditorClickAway(isCovered: { model.isCovered?() == true }))
+            .background(clickAway(.canvas))
             .allowsHitTesting(!model.readOnly)
             // Read-only canvas ignores the pointer; this layer only says why on hover.
             .overlay { if model.readOnly { Color.clear.contentShape(Rectangle()).dsTooltip(nil, disabledReason: Self.readOnlyReason) } }
           EditorTimeline(model: model, playback: model.playback)
-            .background(EditorClickAway(isCovered: { model.isCovered?() == true }))
+            .background(clickAway(.timeline))
             // A photo post's strip stays usable while a photo file is missing: taking that photo out is the fix.
             .disabled((model.fileMissing && !model.isPhoto) || model.video == nil || model.readOnly)
             .dsTooltip(nil, disabledReason: timelineOff)
@@ -69,6 +70,7 @@ struct EditorView: View {
             .padding(.leading, DS.space.sm).padding(.bottom, DS.space.sm)
         }
         EditorInspector(model: model)
+          .background(clickAway(.inspector))
           .padding(DS.space.sm)
       }
       .background(DS.color.canvas)
@@ -102,6 +104,11 @@ struct EditorView: View {
   }
 
   static let readOnlyReason = "Editing is off: the saved edit can't be read (run Doctor)"
+
+  /// Round 28: a press anywhere in `zone` lets go of what was holding on (`EditorClickRelease`).
+  private func clickAway(_ zone: EditorClickRelease.Zone) -> EditorClickAway {
+    EditorClickAway(zone: zone, isCovered: { model.isCovered?() == true }, onRelease: { model.apply($0) })
+  }
 
   /// Why the timeline is disabled (shown on hover), nil when it works.
   private var timelineOff: String? {
@@ -191,6 +198,13 @@ enum EditorFocus {
   /// Ends typing in `window` (the field commits as it does on any blur). Leaves non-text focus alone.
   static func leaveText(in window: NSWindow?) {
     guard let w = window, w.firstResponder is NSTextView else { return }
+    w.makeFirstResponder(nil)
+  }
+
+  /// Round 28: a click away from a field or a list takes the keyboard back to the editor (Space plays, ↑ / ↓ change
+  /// clips). Anything else keeps it.
+  static func leave(in window: NSWindow?) {
+    guard let w = window, of(w) != .none else { return }
     w.makeFirstResponder(nil)
   }
 }
@@ -391,15 +405,22 @@ extension EditorHeader {
 
 // MARK: - Keyboard
 
-/// Put behind the picture and the timeline: a click there takes the cursor out of any text field first (round 19),
-/// so Space plays right after typing a title or caption. Clicks on a text field itself (an inline editor) keep it.
+/// A press anywhere in its zone lets go of what the editor was holding on to (round 19: a text field; round 28: a
+/// selected trim handle, the selected text's outline, a list's arrow keys). A local mouse-down monitor sees the press
+/// before the view under it does, so whatever the press lands on selects itself again after the release (a trim
+/// handle, a text). A press on a text field, text view or list keeps the keyboard. It takes no clicks itself.
 struct EditorClickAway: NSViewRepresentable {
+  var zone: EditorClickRelease.Zone
   /// True while an overlay (Settings, ⌘K) is over the editor: its clicks are its own.
   var isCovered: () -> Bool = { false }
-  func makeNSView(context: Context) -> ZoneView { let v = ZoneView(); v.isCovered = isCovered; return v }
-  func updateNSView(_ v: ZoneView, context: Context) { v.isCovered = isCovered }
+  var onRelease: (EditorClickRelease.Release) -> Void = { _ in }
+  func makeNSView(context: Context) -> ZoneView { let v = ZoneView(); update(v); return v }
+  func updateNSView(_ v: ZoneView, context: Context) { update(v) }
+  private func update(_ v: ZoneView) { v.zone = zone; v.isCovered = isCovered; v.onRelease = onRelease }
   final class ZoneView: NSView {
+    var zone = EditorClickRelease.Zone.canvas
     var isCovered: () -> Bool = { false }
+    var onRelease: (EditorClickRelease.Release) -> Void = { _ in }
     private var monitor: Any?
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
@@ -411,22 +432,39 @@ struct EditorClickAway: NSViewRepresentable {
       }
     }
     private func mouseDownAnywhere(_ e: NSEvent) {
-      guard let w = window, e.window === w, w.firstResponder is NSTextView, !isHiddenOrHasHiddenAncestor, !isCovered(),
+      guard let w = window, e.window === w, !isHiddenOrHasHiddenAncestor, !isCovered(),
             bounds.contains(convert(e.locationInWindow, from: nil)) else { return }
       // hitTest takes the point in the superview's coordinates: the frame view's are the window's.
-      if let hit = w.contentView?.hitTest(e.locationInWindow), Self.isText(hit) { return }
-      EditorFocus.leaveText(in: w)
+      let hit = w.contentView?.hitTest(e.locationInWindow)
+      let r = EditorClickRelease.release(zone: zone, onInput: hit.map(Self.isInput) ?? false,
+                                         onEmpty: hit is EditorEmptyBackdrop.Backdrop)
+      if r.leaveField { EditorFocus.leave(in: w) }
+      onRelease(r)
     }
-    static func isText(_ v: NSView) -> Bool {
+    /// A text field, a text view or a list (or something inside one).
+    static func isInput(_ v: NSView) -> Bool {
       var cur: NSView? = v
       while let c = cur {
-        if c is NSText || c is NSTextField { return true }
+        if c is NSText || c is NSTextField || c is NSTableView || c is NSOutlineView || c is NSCollectionView || c is NSBrowser {
+          return true
+        }
         cur = c.superview
       }
       return false
     }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     deinit { if let m = monitor { NSEvent.removeMonitor(m) } }
+  }
+}
+
+/// Round 28: drawn behind the inspector's column, so a press that reaches it landed on nothing else: an empty spot
+/// (`EditorClickAway` asks the window what's under the press). It swallows the press and does nothing with it.
+struct EditorEmptyBackdrop: NSViewRepresentable {
+  func makeNSView(context: Context) -> Backdrop { Backdrop() }
+  func updateNSView(_ v: Backdrop, context: Context) {}
+  final class Backdrop: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func mouseDown(with event: NSEvent) {}
   }
 }
 

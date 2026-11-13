@@ -16,41 +16,48 @@ struct EditorInspector: View {
       }
       .padding(.horizontal, DS.space.xs).padding(.vertical, DS.space.xs)
       DSSeparator()
-      ScrollViewReader { proxy in
-        ScrollView {
-          // Full-width hairlines between sections (the Framer / Webflow / Figma inspector pattern) so each section
-          // reads as its own block.
-          VStack(alignment: .leading, spacing: 0) {
-            if !model.isPhoto, model.versionNumbers.count > 1 || model.isRepostReady(model.versionNo) {
-              EditorRepostReadyRow(model: model)
+      GeometryReader { viewport in
+        ScrollViewReader { proxy in
+          ScrollView {
+            // Full-width hairlines between sections (the Framer / Webflow / Figma inspector pattern) so each section
+            // reads as its own block.
+            VStack(alignment: .leading, spacing: 0) {
+              if !model.isPhoto, model.versionNumbers.count > 1 || model.isRepostReady(model.versionNo) {
+                EditorRepostReadyRow(model: model)
+                DSSeparator()
+              }
+              // Fields go off section by section, not on this column: the collapsible rows must still open on a read-only clip.
+              EditorTitleSection(model: model).disabled(model.fieldsOff)
               DSSeparator()
-            }
-            // Fields go off section by section, not on this column: the collapsible rows must still open on a read-only clip.
-            EditorTitleSection(model: model).disabled(model.fieldsOff)
-            DSSeparator()
-            EditorFrameSection(model: model)
-            DSSeparator()
-            EditorTextSection(model: model)
-            DSSeparator()
-            EditorCaptionSection(model: model).disabled(model.fieldsOff)
-            DSSeparator()
-            // Round 21 (D15): a photo post has no Cover section; the strip marks its first photo as the cover.
-            if !model.isPhoto {
-              EditorCoverSection(model: model)
+              EditorFrameSection(model: model)
               DSSeparator()
+              EditorTextSection(model: model)
+              DSSeparator()
+              EditorCaptionSection(model: model).disabled(model.fieldsOff)
+              DSSeparator()
+              // Round 21 (D15): a photo post has no Cover section; the strip marks its first photo as the cover.
+              if !model.isPhoto {
+                EditorCoverSection(model: model)
+                DSSeparator()
+              }
+              EditorPlatformsSection(model: model).disabled(model.fieldsOff)
             }
-            EditorPlatformsSection(model: model).disabled(model.fieldsOff)
+            .padding(.bottom, DS.space.xxl)
+            // Round 28: a press on the column's background (beside, between and below the sections, not on a control)
+            // lets go of the selected text, a trim handle and a field's cursor (`EditorClickAway`). Below a short
+            // column the background still reaches the bottom, so that space counts as empty too.
+            .frame(maxWidth: .infinity, minHeight: viewport.size.height, alignment: .topLeading)
+            .background(EditorEmptyBackdrop())
+            .dsTooltip(nil, disabledReason: model.readOnly ? EditorView.readOnlyReason : nil)
           }
-          .padding(.bottom, DS.space.xxl)
-          .dsTooltip(nil, disabledReason: model.readOnly ? EditorView.readOnlyReason : nil)
-        }
-        .scrollIndicators(.automatic)
-        .onAppear { if let t = model.scrollTarget { jump(proxy, t, animated: false) } }
-        .onChange(of: model.scrollTarget) { _, t in if let t { jump(proxy, t, animated: true) } }
-        // The group form can open below the fold when New group sits at the bottom edge.
-        .onChange(of: model.groupForm == nil) { _, closed in
-          guard !closed else { return }
-          DispatchQueue.main.async { dsWithAnimation { proxy.scrollTo(Self.groupFormAnchor, anchor: .bottom) } }
+          .scrollIndicators(.automatic)
+          .onAppear { if let t = model.scrollTarget { jump(proxy, t, animated: false) } }
+          .onChange(of: model.scrollTarget) { _, t in if let t { jump(proxy, t, animated: true) } }
+          // The group form can open below the fold when New group sits at the bottom edge.
+          .onChange(of: model.groupForm == nil) { _, closed in
+            guard !closed else { return }
+            DispatchQueue.main.async { dsWithAnimation { proxy.scrollTo(Self.groupFormAnchor, anchor: .bottom) } }
+          }
         }
       }
     }

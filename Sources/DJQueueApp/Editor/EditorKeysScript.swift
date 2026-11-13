@@ -101,8 +101,8 @@ enum EditorKeysScript {
     await space()
     check("Space types while the Title has the cursor", !pb.isPlaying && typing())
     await shot("typing-title")
-    // The picture: the tallest click-away zone (the other one is the timeline).
-    if let canvas = zones(in: host).max(by: { $0.bounds.height < $1.bounds.height }) {
+    // The picture: the canvas click-away zone (round 28 added the header and the inspector).
+    if let canvas = zones(in: host).first(where: { ($0 as? EditorClickAway.ZoneView)?.zone == .canvas }) {
       await click(canvas)
     } else {
       check("picture found", false)

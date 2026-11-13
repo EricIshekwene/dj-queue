@@ -325,7 +325,7 @@ private struct PhotoTextBar: View {
 
   var body: some View {
     let a = metrics.x(first - 1), b = metrics.x(last) - EditorPhotoTimeline.tileGap
-    let selected = bar.draggable && bar.id == model.selectedText
+    let selected = bar.draggable && bar.id == model.shownText
     ZStack(alignment: .leading) {
       fill(selected: selected)
         .frame(width: max(14, b - a), height: h)

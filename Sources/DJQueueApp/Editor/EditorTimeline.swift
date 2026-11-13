@@ -189,7 +189,7 @@ struct EditorTransport: View {
         if let e = model.trimEdge {
           DSBadge("\(e.title) selected · ← → move it · Esc", style: .soft(.neutral), size: .sm)
             .background(ScriptAnchor("Trim edge selected"))
-            .dsTooltip("← / → move the \(e == .start ? "start" : "end") by your arrow step, ⇧ by one frame. Esc or a click on the film lets it go")
+            .dsTooltip("← / → move the \(e == .start ? "start" : "end") by your arrow step, ⇧ by one frame. Esc or a click on an empty spot lets it go")
         } else if !model.trimIsDefault {
           DSBadge("Custom", style: .soft(.neutral), size: .sm)
             .dsTooltip(model.video?.markerIn != nil ? "Trim changed from your markers" : "Trim changed from the whole file")
@@ -792,7 +792,7 @@ private struct EditorTextBar: View {
     let a = m.x(tr.start + bar.span.start), b = m.x(tr.start + bar.span.end)
     // Zoomed in, a bar can run far past the track: draw (and take the mouse on) only its visible part.
     let ca = max(a, -16), cb = min(b, width + 16)
-    let selected = bar.draggable && bar.id == model.selectedText
+    let selected = bar.draggable && bar.id == model.shownText
     ZStack(alignment: .leading) {
       // A bar or grip being dragged stays, even past the edge, so the drag never drops.
       if (cb > -2 && ca < width + 2) || origin != nil {

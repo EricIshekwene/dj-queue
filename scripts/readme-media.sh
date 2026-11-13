@@ -55,6 +55,11 @@ still thirty-two-texts $T/text-30-thirty-two-texts-four-lanes-light
 still countdown        $T/text-27-countdown-shows-2-light
 gif   countdown        $T/text-26-countdown-shows-3-light $T/text-27-countdown-shows-2-light $T/text-28-countdown-shows-1-light $T/text-29-countdown-with-words-light
 
+# Round 28: click an empty spot to let go (deselect check)
+X=deselect
+gif   deselect      $X/deselect-01-text-selected-light $X/deselect-02-canvas-click-deselects-light $X/deselect-03-trim-selected-light $X/deselect-04-trim-released-light
+still deselect-dark deselect-dark/deselect-05-all-released-dark
+
 S=screens
 still queue          $S/18-queue-cards-light
 still queue-dark     $S/18-queue-cards-dark
