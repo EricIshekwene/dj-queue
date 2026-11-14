@@ -98,6 +98,8 @@ final class AppModel {
   var queueList: [Video] = []
   /// Round 32: clips moved one place later (`Queue.skipOnce`), applied after the Queue screen's score order.
   var queueSkips: [String] = []
+  /// Round 32: clips holding a plan slot, past ones too (the engine ignores a skip on them).
+  var queueSlotted: Set<String> = []
   /// Title suggestions per short clip, best first (metadata only — never generated in the app).
   var suggestionsByVideo: [String: [TitleSuggestion]] = [:]
   /// Needs-edit clips with a chosen cover frame (Edit's "Cover" badge).
@@ -349,6 +351,8 @@ final class AppModel {
     var ordered: [Video] = []
     /// Round 32: "Move one place later" ids (`Queue.skipOnce`), so the Queue screen's score order shows the move.
     var queueSkips: [String] = []
+    /// Clips holding a plan slot, past ones too (`Queue.slottedVideoIds`): a skip on one of them does nothing.
+    var queueSlotted: Set<String> = []
     var toScore: [Video] = []
     var needsEdit: [Video] = []
     var upcomingSlots: [PlanSlot] = []
@@ -396,6 +400,7 @@ final class AppModel {
       l.videos = try store.videos()
       l.ordered = try queue.ordered()
       l.queueSkips = (try? store.kv("queue.skipNext", as: [String].self)) ?? []
+      l.queueSlotted = try queue.slottedVideoIds(l.settings)
       l.toScore = try queue.toScore()
       l.needsEdit = try queue.needsEdit()
       l.upcomingSlots = try store.planSlots(where: "date>=?", [dm.key(now)])
@@ -467,6 +472,7 @@ final class AppModel {
     videoById = Dictionary(uniqueKeysWithValues: videos.map { ($0.id, $0) })
     ordered = l.ordered
     queueSkips = l.queueSkips
+    queueSlotted = l.queueSlotted
     suggestionsByVideo = l.suggestions
     issuesByVideo = l.issues
     needsTitleHelp = l.needsTitleHelp

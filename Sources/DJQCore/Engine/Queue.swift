@@ -124,7 +124,7 @@ public final class Queue: @unchecked Sendable {
 
   /// Clips that hold a plan slot. A past day of a draft week that never got posts doesn't count (round 6, F5): it
   /// can't post any more, so its clip is back in the queue (the engine's plan step deletes such slots).
-  func slottedVideoIds(_ settings: Settings) throws -> Set<String> {
+  public func slottedVideoIds(_ settings: Settings) throws -> Set<String> {
     let stale = Set(try store.stalePastDraftSlots(today: store.today(DayMath(settings: settings))).map(\.id))
     return Set(try store.planSlots().filter { !stale.contains($0.id) }.map(\.videoId))
   }

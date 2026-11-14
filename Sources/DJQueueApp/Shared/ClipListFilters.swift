@@ -256,7 +256,7 @@ extension AppModel {
     guard !queueShowsPostingOrder else { return vs }
     let dates = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0.date ?? "9999") })
     let sorted = Queue.scoreOrder(vs, direction: settings.sort, sessionDates: dates)
-    return Queue.applySkips(sorted, skipIds: queueSkips, slotted: Set(vs.lazy.map(\.id).filter { self.nextSlotByVideo[$0] != nil }))
+    return Queue.applySkips(sorted, skipIds: queueSkips, slotted: queueSlotted)
   }
 
   // MARK: Actions

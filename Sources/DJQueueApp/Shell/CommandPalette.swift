@@ -757,7 +757,9 @@ struct ScorePromptSheet: View {
   private var value: Int? { Int(text.trimmingCharacters(in: .whitespaces)).flatMap { (0...100).contains($0) ? $0 : nil } }
 
   var body: some View {
-    DSDialog("Score “\(model.displayName(video))”", description: "0 to 100. \(model.settings.sort == .worstFirst ? "Lower" : "Higher") scores post sooner (Queue sort: \(model.settings.sort.displayName)).", icon: "number", width: 400,
+    let sooner = model.settings.sort == .worstFirst ? "Lower" : "Higher"
+    DSDialog("Score “\(model.displayName(video))”",
+             description: "0 to 100. \(sooner) scores post sooner (Queue sort: \(model.settings.sort.displayName)).", icon: "number", width: 400,
              onClose: { dismiss() }) {
       DSTextField(placeholder: "0–100", text: $text, error: !text.isEmpty && value == nil ? "Type a whole number from 0 to 100" : nil,
                   size: .lg, onSubmit: save)
