@@ -101,7 +101,8 @@ enum ListSortScript {
     await shot("queue-worst-cards")
     // "Move one place later" on a clip with no day: it shows one place later under the score order too.
     let before = shown(.queue).map(\.id)
-    if let i = before.indices.dropLast().first(where: { model.nextSlotByVideo[before[$0]] == nil }) {
+    // A clip holding no plan slot at all: the engine ignores a skip on one with a day, past days included.
+    if let i = before.indices.dropLast().first(where: { !model.queueSlotted.contains(before[$0]) }) {
       let id = before[i]
       model.skipNext(id)
       model.refreshNow()
