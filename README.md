@@ -56,6 +56,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | **The Calendar week** — every card says its version post, repeats included | **Month** — the short form, "v1 2/2" |
 | ![Calendar week with v1 · 1 of 2 and v1 · 2 of 2 under the titles](docs/media/version-posts-calendar.jpg) | ![Calendar month in dark with v1 1/2 and v1 2/2 on the chips](docs/media/version-posts-month.jpg) |
 
+**The sort you pick is the order you see (v0.24.1).** On the Queue, *Worst → best* and *Best → worst* now order every clip by score, whether it already has a day or not, in all four layouts and under any search, filter or *Has a day · No day yet* chip. Unscored photos still come first, and ties go older set, part, then start time. Before, clips with a day stayed in calendar order, so since every version got its own day the sort barely showed. *Next post first* is the old view: posting order with each clip's place number. Every other list was checked too: Score's *Set order* now keeps each set together, and Edit, Library, Posts, the Calendar's platform filter and ⌘K already applied theirs.
+
+| Next post first, then Worst → best and Best → worst, then *Has a day* | Best → worst in List, dark |
+|---|---|
+| ![The Queue in posting order, then sorted worst to best and best to worst](docs/media/queue-sort.gif) | ![The Queue list sorted best to worst in dark mode](docs/media/queue-sort-dark.jpg) |
+
 **Photo posts and set-time posts (v0.15.0).** A photo, or a carousel of several, goes through the same life as a clip: add it, edit it (shape, a crop per photo, texts on the photos you pick, caption, hashtag groups), send it to the Queue with no score, and track it on the Calendar. YouTube Shorts is skipped because it takes video only, and a carousel longer than a platform allows sends its first photos there and says so. Any Queue item, photo or clip, can also go out at an exact day and minute, outside the regular schedule, without moving anything else.
 
 | Add photos — pick or drop them, one carousel or a post per photo | The photo editor — crop each photo, put a text on photos 2–3, reorder, platform notes |

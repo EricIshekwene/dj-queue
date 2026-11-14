@@ -204,4 +204,11 @@ still version-posts-queue $V/version-posts-04-queue-version-posts-light
 still version-posts-calendar $V/version-posts-07-calendar-week-later-posts-light
 still version-posts-month $V-dark/version-posts-10-calendar-month-later-posts-dark
 
+L=list-sort
+# Round 32: the Queue's sort wins. Next post first (posting order, scores mixed), then Worst → best and Best → worst in
+# Grid, then Has a day still worst first.
+gif queue-sort $L/queue-next-post-first $L/queue-worst-grid $L/queue-best-grid $L/queue-worst-has-a-day
+still queue-sort $L/queue-worst-grid
+still queue-sort-dark $L-dark/queue-best-list
+
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }
