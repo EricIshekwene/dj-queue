@@ -169,9 +169,14 @@ public final class Queue: @unchecked Sendable {
 
   private func applySkips(_ list: [Video], slotted: Set<String>) throws -> [Video] {
     // Read-only (Doctor calls this): planned ids are ignored here and pruned in skipOnce.
-    let ids: [String] = try store.kv("queue.skipNext") ?? []
-    guard !ids.isEmpty else { return list }
-    let live = ids.filter { !slotted.contains($0) }
+    Self.applySkips(list, skipIds: try store.kv("queue.skipNext") ?? [], slotted: slotted)
+  }
+
+  /// "Move one place later" (`skipOnce`): each skipped clip with no slot swaps with the one after it. Shared with the
+  /// Queue screen (round 32), which applies it after its score order so the move shows there too.
+  public static func applySkips(_ list: [Video], skipIds: [String], slotted: Set<String>) -> [Video] {
+    let live = skipIds.filter { !slotted.contains($0) }
+    guard !live.isEmpty else { return list }
     var out = list
     for id in live {
       guard let i = out.firstIndex(where: { $0.id == id }), i + 1 < out.count else { continue }

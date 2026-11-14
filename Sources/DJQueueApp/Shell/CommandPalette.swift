@@ -757,14 +757,14 @@ struct ScorePromptSheet: View {
   private var value: Int? { Int(text.trimmingCharacters(in: .whitespaces)).flatMap { (0...100).contains($0) ? $0 : nil } }
 
   var body: some View {
-    DSDialog("Score “\(model.displayName(video))”", description: "0 to 100. Higher scores post sooner.", icon: "number", width: 400,
+    DSDialog("Score “\(model.displayName(video))”", description: "0 to 100. \(model.settings.sort == .worstFirst ? "Lower" : "Higher") scores post sooner (Queue sort: \(model.settings.sort.displayName)).", icon: "number", width: 400,
              onClose: { dismiss() }) {
       DSTextField(placeholder: "0–100", text: $text, error: !text.isEmpty && value == nil ? "Type a whole number from 0 to 100" : nil,
                   size: .lg, onSubmit: save)
     } footer: {
       DSButton("Cancel", variant: .ghost, shortcut: "esc") { dismiss() }.keyboardShortcut(.cancelAction)
       DSButton("Save", variant: .primary, disabledReason: value == nil ? "Type a score from 0 to 100" : nil,
-               tooltip: "Save score; higher posts sooner", shortcut: "↩", action: save)
+               tooltip: "Save score; \(model.settings.sort == .worstFirst ? "lower" : "higher") posts sooner", shortcut: "↩", action: save)
         .keyboardShortcut(.defaultAction)
     }
     .background(DS.color.surfaceRaised)

@@ -1,17 +1,19 @@
 import DJQCore
 import SwiftUI
 
-/// Queue (DESIGN-v2 §6.3, ref R2.QUEUE Hootsuite cards) — job: keep complete clips in posting order.
+/// Queue (DESIGN-v2 §6.3, ref R2.QUEUE Hootsuite cards) — job: hold complete clips and the order they get days in.
 ///
 /// Shared list header (round 4 S3): "Queue 41 · next Thu 5 Nov" · search (⌘F) · view toggle · runway chip ·
 /// status chips `All · Has a day · No day yet` · Filters (Session · Kind · Score) · sort ("Worst → best ▾",
 /// tie rule inside). No filled primary: the primary act is direct manipulation.
 /// Order (round 32): the sort wins. Worst → best / Best → worst show every clip by score, with a day or not (and write
 /// `Settings.sort`, the order clips get their days); "Next post first" shows posting order (the Calendar's date order,
-/// then the clips waiting) with each clip's place number. Search and filters narrow it without renumbering. A clip here schedules itself: being in the Queue is Eric's approval. Cards: position · ⋮⋮ on hover ·
-/// thumb · title + meta · score · date chip · platform icons only when scheduled/posted · pin glyph. Hover actions:
-/// ‹ Back to Edit, Post today, Pin to date…, ⋯. Drag a card onto a clip with a day to take that day (pinned); the rest
-/// follows the sort. Bulk: Post today · More · **Pin to days…**. Hidden: Score/Edit clips, excluded clips, versions.
+/// then the clips waiting) with each clip's place number. Search and filters narrow it without renumbering.
+/// A clip here schedules itself: being in the Queue is Eric's approval. Cards: position and ⋮⋮ on hover (Next post
+/// first only) · thumb · title + meta · score · date chip · platform icons only when scheduled/posted · pin glyph.
+/// Hover actions: ‹ Back to Edit, Post today, Pin to date…, ⋯. Drag a card onto a clip with a day to take that day
+/// (pinned); the rest follows the sort. Bulk: Post today · More · **Pin to days…**. Hidden: Score/Edit clips, excluded
+/// clips, versions.
 struct QueueView: View {
   @Bindable var model: AppModel
   @State private var pinTarget: [String]?

@@ -68,13 +68,18 @@ enum ListSortScript {
       }
     }
     // Under a filter and a status chip, the sort still wins.
+    model.update { $0.sort = .worstFirst }
+    model.refreshNow()
     model.setViewMode(.grid, for: .queue)
     prefs.setStatus(.queue, "scheduled")
     await shot("queue-worst-has-a-day")
     let withDay = shown(.queue)
-    check("Queue › Has a day: only clips with a day, in score order",
-          withDay.count == scheduled.count && withDay.allSatisfy { model.nextSlotByVideo[$0.id] != nil } && inScoreOrder(withDay, worstFirst: false))
+    check("Queue › Has a day: only clips with a day, worst first",
+          withDay.count == scheduled.count && withDay.allSatisfy { model.nextSlotByVideo[$0.id] != nil }
+            && inScoreOrder(withDay, worstFirst: true))
     prefs.setStatus(.queue, nil)
+    model.update { $0.sort = .bestFirst }
+    model.refreshNow()
     if let kind = all.first(where: { !$0.isPhoto && !$0.isStill })?.kind {
       prefs.setFilter(.queue, ListFilterKey.kind, kind.rawValue)
       await shot("queue-best-kind-filter")
@@ -94,11 +99,34 @@ enum ListSortScript {
     model.refreshNow()
     model.setViewMode(.wide, for: .queue)
     await shot("queue-worst-cards")
+    // "Move one place later" on a clip with no day: it shows one place later under the score order too.
+    let before = shown(.queue).map(\.id)
+    if let i = before.indices.dropLast().first(where: { model.nextSlotByVideo[before[$0]] == nil }) {
+      let id = before[i]
+      model.skipNext(id)
+      model.refreshNow()
+      await shot("queue-worst-moved-later")
+      let after = shown(.queue).map(\.id)
+      check("Queue › Move one place later (no day yet): one place later in the shown order",
+            after.firstIndex(of: id) == i + 1 && after[i] == before[i + 1])
+    } else {
+      print("list-sort: no clip without a day to move later in this data")
+    }
 
     // MARK: Edit, Library, Score
 
     for page in [ListPage.edit, .library, .score] {
       let screen: Screen = page == .edit ? .edit : page == .library ? .library : .score
+      if page == .score && model.scoreList.isEmpty {
+        // Nothing waits for a score in this copy: take the scores off a few clips from two sets (scratch copy only),
+        // so Set order has sets to keep apart.
+        let bySet = Dictionary(grouping: model.libraryAll.filter { $0.type == .short && !$0.needsNoScore && $0.score != nil },
+                               by: \.sessionId)
+        for (_, vs) in bySet.sorted(by: { $0.key < $1.key }).prefix(2) {
+          for v in vs.prefix(3) { try? store.setScore(v.id, nil) }
+        }
+        model.refreshNow()
+      }
       let source = page == .edit ? model.editList : page == .library ? model.libraryAll : model.scoreList
       guard !source.isEmpty else { print("list-sort: \(page.rawValue) is empty in this data, nothing to order"); continue }
       model.screen = screen
@@ -117,7 +145,12 @@ enum ListSortScript {
           zip(vs, vs.dropFirst()).allSatisfy {
             (model.sessionById[$0.sessionId]?.date ?? "") >= (model.sessionById[$1.sessionId]?.date ?? "")
           }
-        case .natural: vs.map(\.id) == model.listSorted(page, model.listScope(page, page == .score ? model.scoreList : vs)).filter { $0.type == .short }.map(\.id)
+        case .natural:
+          // Score's Set order: each set together, newest set first, then part and start within it.
+          zip(vs, vs.dropFirst()).allSatisfy { a, b in
+            let da = model.sessionById[a.sessionId]?.date ?? "", db = model.sessionById[b.sessionId]?.date ?? ""
+            return a.sessionId == b.sessionId ? (a.part ?? 0, a.start ?? 0) <= (b.part ?? 0, b.start ?? 0) : da >= db
+          } && Set(vs.map(\.sessionId)).count == vs.map(\.sessionId).reduce(into: [String]()) { if $0.last != $1 { $0.append($1) } }.count
         }
         print("list-sort: \(page.rawValue) \(page.title(sort)): \(vs.count) shown · \(scores(vs))")
         check("\(page.rawValue.capitalized) › \(page.title(sort)): shown in that order", !vs.isEmpty && ok)
@@ -128,14 +161,20 @@ enum ListSortScript {
     // MARK: Posts
 
     model.screen = .posts
-    for sort in ["newest", "oldest"] {
-      prefs.setStatus(.posts, "posted")
-      prefs.setSort(.posts, sort)
-      await shot("posts-posted-\(sort)")
+    for tab in ["posted", "scheduled"] {
+      for sort in ["newest", "oldest"] {
+        prefs.setStatus(.posts, tab)
+        prefs.setSort(.posts, sort)
+        await shot("posts-\(tab)-\(sort)")
+        let ps = (model.visibleIds[.posts] ?? []).compactMap { model.postById[$0] }
+        let at: (PlatformPost) -> Date = { tab == "posted" ? ($0.postedAt ?? $0.scheduledAt) : $0.scheduledAt }
+        let ok = zip(ps, ps.dropFirst()).allSatisfy { sort == "newest" ? at($0) >= at($1) : at($0) <= at($1) }
+        print("list-sort: Posts \(tab) \(sort): \(ps.count) shown")
+        check("Posts › \(tab.capitalized), \(sort == "newest" ? "Newest" : "Oldest") first: shown by date", !ps.isEmpty && ok)
+      }
     }
     prefs.setSort(.posts, nil)
     prefs.setStatus(.posts, nil)
-    print("list-sort: Posts captured (newest/oldest); its rows aren't registered, so the capture is the evidence")
 
     print("list-sort: \(failures == 0 ? "all passed" : "\(failures) failed")")
     return failures == 0 ? 0 : 1

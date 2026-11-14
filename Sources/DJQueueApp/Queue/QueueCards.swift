@@ -1,9 +1,10 @@
 import DJQCore
 import SwiftUI
 
-/// Queue → Cards (DESIGN-v2 §4 Cards + §6.3): the horizontal cards in posting order, drawn here instead of in
-/// ClipCollection because Queue needs two things the shared collection doesn't offer: drag to reorder, and
-/// actions that appear only while the card is hovered. Selection, posters, proxies and ⌘A work as everywhere.
+/// Queue → Cards (DESIGN-v2 §4 Cards + §6.3): the horizontal cards in the Queue's chosen order (round 32), drawn here
+/// instead of in ClipCollection because Queue needs two things the shared collection doesn't offer: drop a card on
+/// another to take its day, and actions that appear only while the card is hovered. The ⋮⋮ handle shows only in Next
+/// post first, where a drop changes the order you see; under a score order it changes the date chip. Selection, posters, proxies and ⌘A work as everywhere.
 ///
 /// Drag (core has no free reorder API — DECISIONS): drop a card on a **planned** clip → it takes that day,
 /// pinned (BulkActions.pinConsecutive, undoable; the other clip moves). Clips waiting for a day follow the sort, so
@@ -46,7 +47,7 @@ struct QueueCardList: View {
     cfg.autoplay = !v.isPhoto && PreviewPlayback.plays(p, layout: .cards, hovered: hovered == v.id, focused: false)
     cfg.unmuteOnHover = p.hoverSound
     cfg.selectionMode = !sel.isEmpty
-    cfg.showsDragHandle = true
+    cfg.showsDragHandle = model.queueShowsPostingOrder
     let hot = actionsShown == v.id || SnapshotHover.id == v.id
     return DSClipCard(c, mode: .wide, isSelected: sel.contains(v.id), isFocused: dropTarget == v.id, config: cfg,
                       onToggleSelect: { model.toggleSelection(v.id, screen: .queue) },
