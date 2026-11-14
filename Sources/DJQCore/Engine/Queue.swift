@@ -124,7 +124,7 @@ public final class Queue: @unchecked Sendable {
 
   /// Clips that hold a plan slot. A past day of a draft week that never got posts doesn't count (round 6, F5): it
   /// can't post any more, so its clip is back in the queue (the engine's plan step deletes such slots).
-  func slottedVideoIds(_ settings: Settings) throws -> Set<String> {
+  public func slottedVideoIds(_ settings: Settings) throws -> Set<String> {
     let stale = Set(try store.stalePastDraftSlots(today: store.today(DayMath(settings: settings))).map(\.id))
     return Set(try store.planSlots().filter { !stale.contains($0.id) }.map(\.videoId))
   }
@@ -144,6 +144,13 @@ public final class Queue: @unchecked Sendable {
   }
 
   func sort(_ vids: [Video], direction: SortDirection, sessionDates: [String: String]) -> [Video] {
+    Self.scoreOrder(vids, direction: direction, sessionDates: sessionDates)
+  }
+
+  /// The Queue's score order (`Settings.sort`), shared by the engine and the Queue screen (round 32: the screen shows
+  /// every clip in it, days or not, so the chosen sort is what you see). Unscored photo posts and videos made from a
+  /// photo first (oldest import first), then score, then older set, part, start, id.
+  public static func scoreOrder(_ vids: [Video], direction: SortDirection, sessionDates: [String: String]) -> [Video] {
     vids.sorted { a, b in
       // Round 21 (D4): unscored photo posts go ahead of everything scored, oldest import first. Round 23 (D6): videos
       // made from a photo sort with them.
@@ -162,9 +169,14 @@ public final class Queue: @unchecked Sendable {
 
   private func applySkips(_ list: [Video], slotted: Set<String>) throws -> [Video] {
     // Read-only (Doctor calls this): planned ids are ignored here and pruned in skipOnce.
-    let ids: [String] = try store.kv("queue.skipNext") ?? []
-    guard !ids.isEmpty else { return list }
-    let live = ids.filter { !slotted.contains($0) }
+    Self.applySkips(list, skipIds: try store.kv("queue.skipNext") ?? [], slotted: slotted)
+  }
+
+  /// "Move one place later" (`skipOnce`): each skipped clip with no slot swaps with the one after it. Shared with the
+  /// Queue screen (round 32), which applies it after its score order so the move shows there too.
+  public static func applySkips(_ list: [Video], skipIds: [String], slotted: Set<String>) -> [Video] {
+    let live = skipIds.filter { !slotted.contains($0) }
+    guard !live.isEmpty else { return list }
     var out = list
     for id in live {
       guard let i = out.firstIndex(where: { $0.id == id }), i + 1 < out.count else { continue }

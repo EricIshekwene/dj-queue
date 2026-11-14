@@ -37,6 +37,12 @@ enum RepostFilter: String, CaseIterable {
   }
 }
 
+/// Round 32: the Queue's sort menu choice that isn't a score order (stored in `ListPrefs[.queue].sort`; the score
+/// orders are `Settings.sort`).
+enum QueueOrder {
+  static let postingOrder = "posting"
+}
+
 /// Clip orders offered by the sort menus. `natural` is the page's own order (Score: set order; Edit: score, worst
 /// first).
 enum ClipSort: String, CaseIterable {
@@ -54,7 +60,8 @@ extension ListPage {
     }
   }
 
-  /// Sort choices (Queue's order is Settings › Queue sort, Posts sorts by date: both have their own menus).
+  /// Sort choices (Queue's order is Settings › Queue sort or posting order, Posts sorts by date: both have their own
+  /// menus).
   var sorts: [ClipSort] {
     switch self {
     case .score: [.natural, .newest, .title]
@@ -216,6 +223,14 @@ extension AppModel {
   /// `vs` in the page's chosen order (`natural` keeps the order given).
   func listSorted(_ page: ListPage, _ vs: [Video]) -> [Video] {
     switch ListPrefs.shared.sort(page) {
+    case .natural where page == .score:
+      // "Set order" (round 32): one set after another, newest first like the set chips, each in its own order.
+      // `toScore` alone orders by part and start only, which mixed sets together under All.
+      return vs.sorted { a, b in
+        let sa = sessionById[a.sessionId]?.date ?? "", sb = sessionById[b.sessionId]?.date ?? ""
+        if (sa, a.sessionId) != (sb, b.sessionId) { return (sb, b.sessionId) < (sa, a.sessionId) }
+        return (a.part ?? 0, a.start ?? 0, a.name) < (b.part ?? 0, b.start ?? 0, b.name)
+      }
     case .natural: return vs
     case .session:
       return vs.sorted { a, b in
@@ -227,6 +242,21 @@ extension AppModel {
     case .scoreLow: return vs.sorted { ($0.score ?? 101, $0.id) < ($1.score ?? 101, $1.id) }
     case .title: return vs.sorted { displayName($0).localizedCaseInsensitiveCompare(displayName($1)) == .orderedAscending }
     }
+  }
+
+  // MARK: Queue order (round 32)
+
+  /// The Queue screen shows posting order ("Next post first": clips with a day in date order, then the ones waiting)
+  /// only when picked; otherwise every clip, with a day or not, in the score order of Settings › Queue sort.
+  var queueShowsPostingOrder: Bool { ListPrefs.shared[.queue].sort == QueueOrder.postingOrder }
+
+  /// `vs` (in posting order, as `queueClips` gives them) in the Queue screen's chosen order. A clip with no day that
+  /// was moved one place later swaps with the one after it, as the engine does, so the move shows.
+  func queueSorted(_ vs: [Video]) -> [Video] {
+    guard !queueShowsPostingOrder else { return vs }
+    let dates = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0.date ?? "9999") })
+    let sorted = Queue.scoreOrder(vs, direction: settings.sort, sessionDates: dates)
+    return Queue.applySkips(sorted, skipIds: queueSkips, slotted: queueSlotted)
   }
 
   // MARK: Actions

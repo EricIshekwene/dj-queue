@@ -1,16 +1,19 @@
 import DJQCore
 import SwiftUI
 
-/// Queue (DESIGN-v2 §6.3, ref R2.QUEUE Hootsuite cards) — job: keep complete clips in posting order.
+/// Queue (DESIGN-v2 §6.3, ref R2.QUEUE Hootsuite cards) — job: hold complete clips and the order they get days in.
 ///
 /// Shared list header (round 4 S3): "Queue 41 · next Thu 5 Nov" · search (⌘F) · view toggle · runway chip ·
 /// status chips `All · Has a day · No day yet` · Filters (Session · Kind · Score) · sort ("Worst → best ▾",
-/// tie rule inside, writes `Settings.sort`). No filled primary: the primary act is direct manipulation.
-/// Order = the Calendar (date order) then the clips waiting, in sort order; search and filters narrow it without
-/// renumbering. A clip here schedules itself: being in the Queue is Eric's approval. Cards: position · ⋮⋮ on hover ·
-/// thumb · title + meta · score · date chip · platform icons only when scheduled/posted · pin glyph. Hover actions:
-/// ‹ Back to Edit, Post today, Pin to date…, ⋯. Drag a card onto a clip with a day to take that day (pinned); the rest
-/// follows the sort. Bulk: Post today · More · **Pin to days…**. Hidden: Score/Edit clips, excluded clips, versions.
+/// tie rule inside). No filled primary: the primary act is direct manipulation.
+/// Order (round 32): the sort wins. Worst → best / Best → worst show every clip by score, with a day or not (and write
+/// `Settings.sort`, the order clips get their days); "Next post first" shows posting order (the Calendar's date order,
+/// then the clips waiting) with each clip's place number. Search and filters narrow it without renumbering.
+/// A clip here schedules itself: being in the Queue is Eric's approval. Cards: position and ⋮⋮ on hover (Next post
+/// first only) · thumb · title + meta · score · date chip · platform icons only when scheduled/posted · pin glyph.
+/// Hover actions: ‹ Back to Edit, Post today, Pin to date…, ⋯. Drag a card onto a clip with a day to take that day
+/// (pinned); the rest follows the sort. Bulk: Post today · More · **Pin to days…**. Hidden: Score/Edit clips, excluded
+/// clips, versions.
 struct QueueView: View {
   @Bindable var model: AppModel
   @State private var pinTarget: [String]?
@@ -20,11 +23,13 @@ struct QueueView: View {
     let all = model.queueClips
     let scope = model.listScope(.queue, all)
     let status = prefs[.queue].status.flatMap { ["scheduled", "unscheduled"].contains($0) ? $0 : nil }
-    let list = scope.filter { status == nil || isScheduled($0) == (status == "scheduled") }
+    let list = model.queueSorted(scope.filter { status == nil || isScheduled($0) == (status == "scheduled") })
     let ids = list.map(\.id)
     let mode = model.viewMode(.queue)
     let sel = model.selectedIds(.queue)
-    let positions = Dictionary(uniqueKeysWithValues: all.enumerated().map { ($1.id, $0 + 1) })
+    // Place numbers belong to posting order: under a score order they'd read as a jumbled count, and the date chip
+    // already says when each one goes out.
+    let positions = model.queueShowsPostingOrder ? Dictionary(uniqueKeysWithValues: all.enumerated().map { ($1.id, $0 + 1) }) : [:]
     let column = mode == .wide || mode == .list
     ScreenScaffold(model: model, screen: .queue, readingColumn: column) {
       ListHeader(page: .queue, title: "Queue", count: all.isEmpty ? nil : list.count, total: all.count, detail: nextText,
@@ -105,21 +110,28 @@ struct QueueView: View {
   }
 }
 
-/// The Queue's sort (Settings › Queue sort: the order clips get their days) with the tie rule explained inside.
+/// The Queue's sort with the tie rule explained inside. The score orders are Settings › Queue sort (the order clips
+/// get their days); "Next post first" (round 32) only changes what the screen shows.
 struct QueueSortMenu: View {
   @Bindable var model: AppModel
 
   var body: some View {
-    DSSortMenu(options: SortDirection.allCases.map { DSSortOption(id: $0.rawValue, title: $0.displayName) },
-               selection: Binding(get: { model.settings.sort.rawValue }, set: { new in
+    let prefs = ListPrefs.shared
+    DSSortMenu(options: SortDirection.allCases.map { DSSortOption(id: $0.rawValue, title: $0.displayName) }
+                 + [DSSortOption(id: QueueOrder.postingOrder, title: "Next post first")],
+               selection: Binding(get: { model.queueShowsPostingOrder ? QueueOrder.postingOrder : model.settings.sort.rawValue },
+                                  set: { new in
+                 if new == QueueOrder.postingOrder { prefs.setSort(.queue, new); return }
+                 prefs.setSort(.queue, nil)
                  if let d = SortDirection(rawValue: new), d != model.settings.sort { model.update { $0.sort = d } }
                }),
-               tooltip: "Order the Queue by score",
+               tooltip: "Order the Queue by score, or by when each clip posts next",
                // Round 21 (D4): a photo needs no score and goes ahead of scored clips. Said only when there is one.
                // Round 23 (D6): the same for a video made from a photo.
                notes: (model.queueClips.contains { $0.needsNoScore && $0.score == nil } ? ["Photos, with audio or not, need no score and take the next open day, ahead of scored clips"] : [])
                  + ["Ties: the older set first, then part, then start time",
-                    "Re-lays the calendar; pinned days stay"])
+                    "A score order also re-lays the calendar; pinned days stay",
+                    "Next post first: by day on the Calendar, then the clips waiting"])
   }
 }
 

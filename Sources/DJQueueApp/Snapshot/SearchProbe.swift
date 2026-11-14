@@ -395,7 +395,10 @@ final class SearchProbe {
   /// Session by name, narrowed with the Sessions chip by Tab: opens Library filtered to it.
   private func sessionFlow() async {
     await start("session")
-    guard let s = model.sessions.first(where: { x in model.videos.contains { $0.sessionId == x.id } }) else { return check(false, "a session with clips") }
+    // A session with short clips: Library registers those (`visibleIds`); a long-form-only set shows in its own section.
+    guard let s = model.sessions.first(where: { x in model.videos.contains { $0.sessionId == x.id && $0.type == .short } }) else {
+      return check(false, "a session with short clips")
+    }
     let text = Captions.setName(s.name)
     setupNote("a Library search, status chip and Kind filter that would hide the session's clips")
     prefs.setSearch(.library, "nothing-matches-this")
