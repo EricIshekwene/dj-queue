@@ -144,6 +144,13 @@ public final class Queue: @unchecked Sendable {
   }
 
   func sort(_ vids: [Video], direction: SortDirection, sessionDates: [String: String]) -> [Video] {
+    Self.scoreOrder(vids, direction: direction, sessionDates: sessionDates)
+  }
+
+  /// The Queue's score order (`Settings.sort`), shared by the engine and the Queue screen (round 32: the screen shows
+  /// every clip in it, days or not, so the chosen sort is what you see). Unscored photo posts and videos made from a
+  /// photo first (oldest import first), then score, then older set, part, start, id.
+  public static func scoreOrder(_ vids: [Video], direction: SortDirection, sessionDates: [String: String]) -> [Video] {
     vids.sorted { a, b in
       // Round 21 (D4): unscored photo posts go ahead of everything scored, oldest import first. Round 23 (D6): videos
       // made from a photo sort with them.
