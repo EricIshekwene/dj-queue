@@ -393,7 +393,7 @@ public final class Planner: @unchecked Sendable {
     } catch is TodayIsFull {
       // The savepoint rolled back: the plan is as it was. Today has nothing to give, so it goes out now on its own.
       // A clip that has posted before can't take a set time (its next version post keeps its count), so it takes an
-      // extra position on today instead: platforms whose time has passed go at once, the rest at their times today.
+      // extra position on today instead, its posts at the next minute (see postTodayOnASlot).
       if try store.posts(where: "video_id=? AND kind IN ('regular','retry') AND state='posted'", [videoId], order: "id").isEmpty {
         try postNowOnItsOwn(videoId: videoId)
         return

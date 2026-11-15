@@ -390,7 +390,7 @@ extension AppModel {
       return
     }
     // Round 33: a today with no room left posts it now on its own, so it always asks first.
-    if day == todayKey, todayIsFull(videoId) {
+    if day == todayKey, nextSlotByVideo[videoId]?.date != day, todayIsFull(videoId) {
       askPostToday(videoId, done: "Posting now") { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
       return
     }
