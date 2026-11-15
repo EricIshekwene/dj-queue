@@ -124,7 +124,13 @@ import Testing
     v2.text = "Second"
     try f.store.save(v2, videoId: "clip-2")
     try f.store.setRepostReady(videoId: "clip-2", number: 2, true)
+    // Round 37: the filter is "repostable" now (the old name still works); a version's mark alone doesn't make a clip
+    // repostable, Mark repostable does.
+    #expect(try BulkActions(store: f.store).ids(filter: "repost-ready").isEmpty)
+    try f.updateSettings { $0.postsPerVersion = 2 }
+    try f.store.setRepost(videoId: "clip-2", true)
     #expect(try BulkActions(store: f.store).ids(filter: "repost-ready") == ["clip-2"])
+    #expect(try BulkActions(store: f.store).ids(filter: "repostable") == ["clip-2"])
     #expect(try f.store.repostReadyVersions() == ["clip-2": [2]])
     let list = try AgentAPI.videos(store: f.store)
     #expect(list.first { $0.id == "clip-2" }?.repost_ready_versions == [2])
@@ -132,10 +138,10 @@ import Testing
     #expect(try AgentAPI.video("clip-2", store: f.store).versions.first { $0.number == 2 }?.repostReady == true)
     let s = try f.store.settings(), videos = try f.store.videos()
     let text = try f.store.searchClipText(videos: videos, settings: s, sets: try f.store.hashtagSets())
-    #expect(text["clip-2"]?.repostReady == [2])
+    #expect(text["clip-2"]?.repostReady == [2] && text["clip-2"]?.repostable == true)
     let index = SearchCorpus.index(SearchInput(settings: s, sessions: try f.store.sessions(), videos: videos, posts: [], weekStates: [:],
                                                weekClips: [:], clipText: text, hashtagSets: [], captionTemplates: [], now: f.clock.now))
-    let hits = index.search(SearchQuery("ready to repost")).filter { $0.kind == .clip }.map(\.id)
+    let hits = index.search(SearchQuery("repostable")).filter { $0.kind == .clip }.map(\.id)
     #expect(hits == [SearchId.clip("clip-2")])
   }
 

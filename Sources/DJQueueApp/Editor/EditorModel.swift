@@ -674,8 +674,11 @@ final class EditorModel: ObservableObject {
       let slots = (try? store.planSlots(where: "video_id=?", [id])) ?? []
       let pending = (try? store.pendingUnits(videoId: id, settings: settings)) ?? []
       let order = (try? store.versionOrder(videoId: id)) ?? [1]
+      let repost = (try? store.repostOn(videoId: id)) ?? false
       DispatchQueue.main.async {
         guard let self, token == self.loadToken else { return }
+        // Round 37: Mark repostable from the Queue or Edit while the editor is open reaches its Posts row.
+        if self.repostOn != repost { self.repostOn = repost }
         if self.posts != posts { self.posts = posts }
         if self.slots != slots { self.slots = slots }
         if self.pendingUnits != pending { self.pendingUnits = pending }
@@ -1709,25 +1712,6 @@ final class EditorModel: ObservableObject {
   /// How many times version `n` posts on each platform.
   func postCount(_ n: Int) -> Int {
     PostUnits.count(n, own: ownPostCount(n), settings: settings, finishedUpTo: finishedPostsUpTo, repost: repostOn)
-  }
-
-  /// Round 36: turns Repost on or off for the clip (every version). Planning data only: nothing is re-saved or
-  /// re-rendered, and it isn't an editor undo step (one click turns it back). Off takes its planned repeats off at once.
-  func setRepost(_ on: Bool) {
-    guard postCountOff == nil, video != nil, repostOn != on else { return }
-    repostOn = on
-    let store = store, id = videoId
-    Self.saveQueue.async { [weak self] in
-      do {
-        try store.setRepost(videoId: id, on)
-        ChangeSignal.post()
-      } catch {
-        Log.shared.error("editor repost failed: \(error)")
-        DispatchQueue.main.async { self?.repostOn = !on }  // the switch shows what's stored
-      }
-    }
-    show(on ? "Repost on: each version posts \(settings.postsPerVersion == 1 ? "once" : "\(settings.postsPerVersion) times") (its own count where set)"
-            : "Repost off: each version posts once. Planned reposts come off.")
   }
 
   /// Sets version `n`'s own post count (nil = back to the default). Only the count: it changes no pixels, so nothing

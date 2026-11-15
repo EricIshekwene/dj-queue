@@ -91,7 +91,7 @@ public enum SettingsSearchRegistry {
     // round 31: every version posts its count, spaced
     .group(.schedule, "Versions", description: "Each version of a clip is its own post. Reposts go by count, never by views."),
     .row(.schedule, "Posts per version", group: "Versions",
-         description: "How many times each version posts on each platform when a clip's Repost is on (it's off by default: each version posts once). A version can set its own in the editor."),
+         description: "How many times each version of a repostable clip posts (Mark repostable on the Queue or Edit). Other clips post each version once. A version's own Posts in the editor wins."),
     .row(.schedule, "Days between posts of one clip", group: "Versions",
          description: "Any two posts of a clip, whatever the version, are at least this far apart."),
     .row(.schedule, "Days before a version posts again", group: "Versions",

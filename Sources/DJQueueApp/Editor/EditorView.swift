@@ -322,15 +322,11 @@ struct EditorHeader: View {
     Button { if making == nil { showVersions.toggle() } } label: {
       HStack(spacing: 4) {
         Text("v\(model.versionNo)").font(DS.type.calloutSemibold)
-        if model.isRepostReady(model.versionNo) {
-          Image(systemName: "checkmark.circle.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(DS.color.success)
-        }
         Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).opacity(0.7)
       }
     }
     .buttonStyle(DSButtonStyle(variant: .outline, size: .sm, softDisabled: making != nil))
-    .dsTooltip(model.isRepostReady(model.versionNo) ? "Switch or add text versions for reposts · v\(model.versionNo) is ready to repost"
-                                                     : "Switch or add text versions for reposts", disabledReason: making)
+    .dsTooltip("Switch or add text versions, set how many times each posts", disabledReason: making)
     .dsAccessibilityDisabled(making)
     .background(ScriptAnchor("Versions"))
     .popover(isPresented: $showVersions, arrowEdge: .bottom) {

@@ -661,6 +661,8 @@ struct VideoContextMenu: View {
     } else {
       StageMenuItems(model: model, video: video, targets: targets)
     }
+    // Round 37: the clip-wide repost action, as on the Queue, Edit and Calendar.
+    if !video.isPhoto { RepostMenuItems(model: model, targets: targets) }
     // Round 23: audio on a photo post, or another audio (or none) on a video made from one.
     if !many, video.isPhoto || video.isStill {
       Divider()

@@ -20,19 +20,20 @@ enum ListFilterKey {
   static let stillKind = "photo-audio"
 }
 
-/// Round 20: the Filters popover's Reposts section. Only filters: it never moves or schedules a clip.
+/// Round 20 / 37: the Filters popover's Reposts section. Only filters: it never moves or schedules a clip. The raw values
+/// stay ("ready", "none") so saved filters keep working.
 enum RepostFilter: String, CaseIterable {
   case ready, none
   var title: String {
     switch self {
-    case .ready: "Ready to repost"
-    case .none: "No version ready"
+    case .ready: "Repostable"
+    case .none: "Posts once"
     }
   }
   var help: String {
     switch self {
-    case .ready: "Has a version you marked ready to repost"
-    case .none: "No version is marked ready to repost yet"
+    case .ready: "Some version posts more than once (Mark repostable, or its Posts)"
+    case .none: "Each version posts once"
     }
   }
 }
@@ -127,7 +128,7 @@ extension AppModel {
       value == ListFilterKey.photoKind ? v.isPhoto : value == ListFilterKey.stillKind ? v.isStill : !v.isPhoto && !v.isStill && v.kind.rawValue == value
     case ListFilterKey.score: v.type == .short && (LibraryScoreFilter(rawValue: value)?.matches(v.score) ?? true)
     case ListFilterKey.stage: ClipStage.of(v)?.rawValue == value
-    case ListFilterKey.repost: v.type == .short && (repostReady[v.id] != nil) == (value == RepostFilter.ready.rawValue)
+    case ListFilterKey.repost: v.type == .short && repostable.contains(v.id) == (value == RepostFilter.ready.rawValue)
     default: true
     }
   }
@@ -185,7 +186,7 @@ extension AppModel {
         title = "Reposts"
         options = RepostFilter.allCases.map { f in
           DSFilterOption(id: f.rawValue, title: f.title,
-                         count: n { $0.type == .short && (repostReady[$0.id] != nil) == (f == .ready) },
+                         count: n { $0.type == .short && repostable.contains($0.id) == (f == .ready) },
                          tooltip: f.help)
         }
       case ListFilterKey.platform:

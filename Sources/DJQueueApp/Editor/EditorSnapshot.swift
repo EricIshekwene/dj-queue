@@ -21,7 +21,7 @@ import SwiftUI
 ///   `DJQ_EDITOR_TEMPLATE_SCRIPT=<dir>` drives the template actions and part chips (`EditorTemplateScript`);
 ///   `DJQ_EDITOR_DEFAULTS_SCRIPT=<dir>` drives "Make default for new clips…" (`EditorDefaultsScript`, round 29);
 ///   `DJQ_TEXT_LAYERS_SCRIPT=<dir>` drives timed texts end to end, export included (`TextLayersScript`);
-///   `DJQ_REPOST_READY_SCRIPT=<dir>` drives Ready to repost and bulk edits on versions (`RepostReadyScript`);
+///   `DJQ_REPOSTABLE_SCRIPT=<dir>` drives Posts, bulk Mark repostable and bulk edits on versions (`RepostableScript`);
 ///   `DJQ_TEXT_FIELDS_SCRIPT=<dir>` clicks and types in every kind of multi-line box (`TextFieldsScript`, round 25);
 ///   `DJQ_DESELECT_SCRIPT=<dir>` clicks empty spots to let go of a text, a trim handle and a field (`DeselectScript`, round 28);
 ///   `DJQ_VERSION_POSTS_SCRIPT=<dir>` drives posts per version in Settings and the editor, then the Queue and Calendar labels
@@ -101,8 +101,8 @@ enum EditorSnapshot {
         try SampleData.addPhotoPosts(store: store, now: store.clock.now, scratch: tmp.appendingPathComponent("photo-samples"))
         return await PhotoEditorScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
       }
-      if let dir = env["DJQ_REPOST_READY_SCRIPT"] {
-        return await RepostReadyScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
+      if let dir = env["DJQ_REPOSTABLE_SCRIPT"] {
+        return await RepostableScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
       }
       if let dir = env["DJQ_LIST_SORT_SCRIPT"] {
         // Round 32: every list's sort on a copy of real data (where version posts give most clips a day).

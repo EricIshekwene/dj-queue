@@ -275,6 +275,16 @@ public final class BulkActions: @unchecked Sendable {
     }
   }
 
+  /// Round 37: Mark repostable (every version posts `postsPerVersion` times, or its own Posts) or not repostable (every
+  /// version posts once). Journaled with the plan, so undo also brings back the days the reposts had.
+  @discardableResult
+  public func setRepostable(_ ids: [String], _ on: Bool, dryRun: Bool = false) throws -> BulkResult {
+    try run(on ? "repostable" : "not-repostable", ids: ids, dryRun: dryRun, plan: true, repost: true) { _, v, _ in
+      guard v.type == .short else { return .skipped("long-form is never reposted") }
+      return try store.setRepost(videoId: v.id, on) ? .changed : .unchanged
+    }
+  }
+
   @discardableResult
   public func setExcluded(_ ids: [String], _ excluded: Bool, dryRun: Bool = false) throws -> BulkResult {
     try run(excluded ? "exclude" : "include", ids: ids, dryRun: dryRun) { _, v, _ in
@@ -820,7 +830,7 @@ public final class BulkActions: @unchecked Sendable {
         var planTied = false
         var locked = 0  // skipped because the item is scheduled or posted, which force doesn't lift
         for b in before.clips where !restored.contains(b.id) {
-          let cur = try clipSnapshot(b.id, renders: b.renders != nil)
+          let cur = try clipSnapshot(b.id, renders: b.renders != nil, repost: b.repost != nil)
           // Round 23 (D9): what the item is (photo post or video, which audio, which fit) never changes under a day or a
           // post, by any undo, forced or not.
           if let why = try stillUndoLock(restoring: b, current: cur) {
@@ -960,14 +970,14 @@ public final class BulkActions: @unchecked Sendable {
     case "unscored", "to-score": clause = "\(base) AND excluded=0 AND missing=0 AND score IS NULL AND NOT \(Store.noScoreSQL)"
     case "scored": clause = "\(base) AND score IS NOT NULL"
     case "needs-edit": clause = "\(base) AND excluded=0 AND missing=0 AND (score IS NOT NULL OR \(Store.noScoreSQL)) AND state='needs_edit'"
-    case "repost-ready":
-      // Round 20: clips with a version Eric marked ready to repost.
-      let ids = Set(try store.repostReadyVersions().keys)
+    case "repost-ready", "repostable":
+      // Round 37: repostable clips (Ready to repost became Mark repostable; a version's Posts above once counts too).
+      let ids = try store.repostableClips()
       return try store.videos(where: base).filter { ids.contains($0.id) }
         .sorted { ($0.part ?? 0, $0.start ?? 0, $0.name) < ($1.part ?? 0, $1.start ?? 0, $1.name) }.map(\.id)
     default:
       guard let s = VideoState(rawValue: filter) else {
-        throw EngineError("Unknown filter \(filter) — use all, unscored, scored, needs-edit, repost-ready or a state (\(VideoState.allCases.map(\.rawValue).joined(separator: ", ")))")
+        throw EngineError("Unknown filter \(filter) — use all, unscored, scored, needs-edit, repostable or a state (\(VideoState.allCases.map(\.rawValue).joined(separator: ", ")))")
       }
       clause = "\(base) AND state='\(s.rawValue)'"
     }
@@ -1003,6 +1013,9 @@ public final class BulkActions: @unchecked Sendable {
     /// Round 23: a made video's media (`StillSnap`: what it was made from and its file). nil for every other clip, and
     /// in every older journal, so those compare and restore exactly as before.
     var still: String? = nil
+    /// Round 37: the clip's repostable mark (kv `plan.repost`), journaled only by Mark repostable / not repostable. nil
+    /// in every other batch, so a later mark never blocks their undo and their undo never changes it.
+    var repost: Bool? = nil
   }
 
   /// `cur` is still what snapshot `a` recorded. A sent flag that went from on to off isn't Eric's later work: the engine
@@ -1010,6 +1023,7 @@ public final class BulkActions: @unchecked Sendable {
   static func same(_ cur: ClipSnap, _ a: ClipSnap) -> Bool {
     var c = cur
     if a.sent != false { c.sent = a.sent }
+    if a.repost == nil { c.repost = nil }
     // Round 20: Ready to repost isn't part of an edit: marking a version after a batch doesn't block its undo.
     c.versions = c.versions.mapValues(withoutReady)
     var b = a
@@ -1066,7 +1080,8 @@ public final class BulkActions: @unchecked Sendable {
   }
 
   func run(_ action: String, ids raw: [String], params: [String: String] = [:], dryRun: Bool, plan: Bool = false,
-                   renders: Bool = false, reportsAll: Bool = false, _ body: (Int, Video, Settings) throws -> Outcome) throws -> BulkResult {
+                   renders: Bool = false, reportsAll: Bool = false, repost: Bool = false,
+                   _ body: (Int, Video, Settings) throws -> Outcome) throws -> BulkResult {
     var seen = Set<String>()
     let ids = raw.filter { !$0.isEmpty && seen.insert($0).inserted }
     var result = BulkResult(batchId: nil, action: action, dryRun: dryRun, videoIds: ids, changed: [], skipped: [:],
@@ -1076,7 +1091,7 @@ public final class BulkActions: @unchecked Sendable {
       try store.db.transaction {
         let existing = try ids.filter { try store.video(id: $0) != nil }
         for id in ids where !existing.contains(id) { result.skipped[id] = "no such video" }
-        let before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
+        let before = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders, repost: repost) },
                               plan: plan ? try planSnapshot() : nil)
         for (i, id) in existing.enumerated() {
           guard let v = try store.video(id: id) else { continue }
@@ -1111,7 +1126,7 @@ public final class BulkActions: @unchecked Sendable {
         if dryRun { throw DryRun(result: result) }
         guard !result.changed.isEmpty else { return }
         let batchId = newId()
-        let after = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders) },
+        let after = Snapshot(clips: try existing.map { try clipSnapshot($0, renders: renders, repost: repost) },
                              plan: plan ? try planSnapshot() : nil)
         try store.db.run("""
           INSERT INTO batches(id,action,params,video_ids,before,after,summary,created_at) VALUES(?,?,?,?,?,?,?,?)
@@ -1209,7 +1224,7 @@ public final class BulkActions: @unchecked Sendable {
     return s
   }
 
-  func clipSnapshot(_ id: String, renders: Bool) throws -> ClipSnap {
+  func clipSnapshot(_ id: String, renders: Bool, repost: Bool = false) throws -> ClipSnap {
     let r = try store.db.one("SELECT score, kind, excluded, title, title_tracks, title_source, held_in_edit, sent_to_queue, photos FROM videos WHERE id=?", [id])
     let edit = try store.db.one("SELECT json FROM edits WHERE video_id=?", [id])?.string("json")
     var versions: [String: String] = [:]
@@ -1224,7 +1239,7 @@ public final class BulkActions: @unchecked Sendable {
                     excluded: r?.bool("excluded") ?? false, title: r?.string("title"), titleTracks: r?.string("title_tracks"),
                     titleSource: r?.string("title_source"), edit: edit, versions: versions, renders: rs,
                     held: r?.bool("held_in_edit") == true ? true : nil, sent: r?.bool("sent_to_queue") ?? false,
-                    photos: r?.string("photos"), still: try stillSnapshot(id))
+                    photos: r?.string("photos"), still: try stillSnapshot(id), repost: repost ? try store.repostOn(videoId: id) : nil)
   }
 
   /// `separating`: round 27, restored v2+ that still follow an earlier version stand alone again (`VersionCopy`),
@@ -1241,6 +1256,12 @@ public final class BulkActions: @unchecked Sendable {
     }
     // Round 23: a photo post that became a video (or a video that became a photo post again) goes back to what it was.
     try restoreStill(c)
+    // Round 37: the repostable mark, when this batch set it (the plan and version counts come back with the rest).
+    if let on = c.repost, try store.repostOn(videoId: c.id) != on {
+      var all = try store.repostClips()
+      if on { all.insert(c.id) } else { all.remove(c.id) }
+      try store.setKV(RepostSwitch.key, all.sorted())
+    }
     if let e = c.edit {
       try db.run("INSERT INTO edits(video_id,json,updated_at) VALUES(?,?,?) ON CONFLICT(video_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",
                  [c.id, e, store.clock.now])

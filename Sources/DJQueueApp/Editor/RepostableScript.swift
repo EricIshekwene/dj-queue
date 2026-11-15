@@ -2,25 +2,22 @@ import AppKit
 import DJQCore
 import SwiftUI
 
-/// `DJQ_REPOST_READY_SCRIPT=<dir>` (with `DJQ_SNAPSHOT_EDITOR=1 … --snapshot <dir>`): round 20 "Ready to repost" end to
-/// end in the REAL main window with the REAL `AppModel`, on a throwaway copy of the database. Clicks and ⌘Z are events sent
-/// to that window only; every check reads the store. It proves marking a version ready never moves, queues or schedules
-/// the clip, then shows the Reposts filter and ⌘K finding it.
-///
-/// The version list is a native popover, which macOS would pull onto a display, so the script shows the same
-/// `EditorVersionList` in a second backstage window (a stand-in, said so in the log). Events don't reach a second
-/// backstage window, so its switches are pressed through their action; the real click is the inspector row's.
-/// New version is made through the model for the same reason. Exits 1 on a FAIL.
+/// `DJQ_REPOSTABLE_SCRIPT=<dir>` (with `DJQ_SNAPSHOT_EDITOR=1 … --snapshot <dir>`): round 37's one repost control end to end
+/// in the REAL main window with the REAL `AppModel`, on a throwaway copy of the database. The editor has only Posts (no
+/// "Ready to repost", no Repost switch); a real click on Posts + makes a version post twice; the bulk Mark repostable /
+/// not repostable asks first (its sheet drawn in the window), changes the plan, and Undo brings it back; Filters › Reposts
+/// and ⌘K "repostable" find the clips. Native menus can't run off screen, so the menu item's call is the stand-in (said so
+/// in the log). Exits 1 on a FAIL.
 @MainActor
-enum RepostReadyScript {
+enum RepostableScript {
   static func run(store: Store, dir: String, appearance: String) async -> Int32 {
     let out = URL(fileURLWithPath: dir)
     try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
     let script = Runner(store: store, out: out, appearance: appearance)
     await script.main()
-    try? script.log.joined(separator: "\n").write(to: out.appendingPathComponent("repost-checks-\(appearance).txt"),
+    try? script.log.joined(separator: "\n").write(to: out.appendingPathComponent("repostable-checks-\(appearance).txt"),
                                                   atomically: true, encoding: .utf8)
-    print("repost-script: \(script.failed) failed, \(script.passed) passed")
+    print("repostable-script: \(script.failed) failed, \(script.passed) passed")
     return script.failed == 0 ? 0 : 1
   }
 
@@ -45,7 +42,7 @@ enum RepostReadyScript {
 
     init(store: Store, out: URL, appearance: String) { self.store = store; self.out = out; self.appearance = appearance }
 
-    func note(_ s: String) { print("repost-script: \(s)"); log.append(s) }
+    func note(_ s: String) { print("repostable-script: \(s)"); log.append(s) }
     func check(_ name: String, _ ok: Bool) {
       if ok { passed += 1 } else { failed += 1 }
       note("\(ok ? "PASS" : "FAIL") \(name)")
@@ -117,7 +114,7 @@ enum RepostReadyScript {
     func shot(_ name: String, _ w: NSWindow? = nil) async {
       await wait(450)
       step += 1
-      let file = out.appendingPathComponent(String(format: "repost-%02d-%@-%@.png", step, name, appearance))
+      let file = out.appendingPathComponent(String(format: "repostable-%02d-%@-%@.png", step, name, appearance))
       guard let data = await capture(w ?? window), (try? data.write(to: file)) != nil else { check("captured \(name)", false); return }
       note("shot \(file.lastPathComponent)")
     }
@@ -134,10 +131,6 @@ enum RepostReadyScript {
 
     // MARK: Store
 
-    func ready() -> [Int] {
-      EditorModel.flushLiveAndWait()
-      return (try? store.repostReadyVersions(videoId: clip)) ?? []
-    }
 
     /// The clip's preview identity over every version (what lists redraw on).
     func stamp() -> String {
@@ -160,6 +153,23 @@ enum RepostReadyScript {
 
     // MARK: The run
 
+    func count(_ id: String, _ n: Int) -> Int { (try? store.postCount(videoId: id, version: n)) ?? -1 }
+    func repostable(_ id: String) -> Bool { (try? store.isRepostable(videoId: id)) ?? false }
+    func slots(_ id: String) -> [PlanSlot] { (try? store.planSlots(where: "video_id=?", [id])) ?? [] }
+
+    /// Opens the bulk sheet through the menu item's own call, checks it, shoots it and confirms it.
+    func markRepostable(_ ids: [String], _ on: Bool, _ name: String) async {
+      guard let a = app else { return }
+      note("stand-in: “Mark \(on ? "" : "not ")repostable” through the menu item's call (native menus can't run off screen)")
+      a.markRepostable(ids, on)
+      await wait(1500)
+      check("the bulk sheet asks first (\(a.pendingBulk?.request.title ?? "none"))", a.pendingBulk?.request.title.contains(on ? "repostable?" : "not repostable?") == true)
+      await shot(name)
+      a.confirmPendingBulk()
+      await wait(2500)
+      EditorModel.flushLiveAndWait()
+    }
+
     func main() async {
       let a = AppModel(store: store)
       app = a
@@ -167,19 +177,10 @@ enum RepostReadyScript {
       a.loaded = true
       a.screen = .edit
       let shorts = a.editList.filter { $0.type == .short && !$0.missing }
-      // A clip with one version (the seed may give some Edit clips a v2 already), and any other Edit clip.
-      let single = shorts.filter { ((try? store.versions(videoId: $0.id)) ?? []).allSatisfy { $0.number == 1 } }
-      if single.isEmpty, let first = shorts.first {
-        // Every Edit clip in this seed has a v2 already: this scratch copy's first one goes back to v1 only.
-        for n in ((try? store.versions(videoId: first.id)) ?? []).map(\.number) where n > 1 { try? store.deleteVersion(videoId: first.id, number: n) }
-        note("every Edit clip had a v2: \(first.id.prefix(8))'s later versions were removed in this scratch copy")
-        a.refreshNow()
-      }
-      let ones = a.editList.filter { $0.type == .short && !$0.missing && ((try? store.versions(videoId: $0.id)) ?? []).allSatisfy { $0.number == 1 } }
-      guard let v = ones.first, let other = shorts.first(where: { $0.id != v.id }) else { check("an Edit clip with one version, and another", false); return }
+      guard let v = shorts.first, let other = shorts.first(where: { $0.id != v.id }) else { check("two Edit clips", false); return }
       clip = v.id
       note("clip \(v.id.prefix(8)) “\(a.displayName(v))”")
-      check("the clip starts with no version ready", ready().isEmpty)
+      check("the clip starts posting each version once", !repostable(clip) && count(clip, 1) == 1)
       EditorDisclosures.shared.closeAll()
       baseline = now()
 
@@ -190,118 +191,92 @@ enum RepostReadyScript {
       Backstage.show(w)
       defer { w.orderOut(nil); w.close() }
 
+      // 1. The editor: Posts is the one repost control.
       a.openEditor(clip, in: [clip, other.id])
       await wait(3500)
       guard let e = editor, e.videoId == clip else { check("the real editor is open", false); return }
       e.zonePlatforms = []
       e.canvasMode = .zones
       await wait(800)
-
-      // 1. One version: no row in the inspector (the version list still has the switch).
-      check("one version: no Ready to repost row in the inspector", !has("Repost ready"))
-      await shot("one-version")
-
-      // 1b. Undo of a mark on a clip whose v1 was never saved clears it again (review r2).
-      if ((try? store.versions(videoId: clip)) ?? []).isEmpty {
-        e.setRepostReady(1, true)
-        await wait(500)
-        check("v1 with no saved row: marked", ready() == [1])
-        await commandZ()
-        check("…⌘Z clears it in the store and the editor", ready().isEmpty && !e.isRepostReady(1))
-      } else {
-        note("clip already has a saved v1: the never-saved-v1 undo case isn't driven on this clip")
+      if e.versionNumbers.count < 2 {
+        note("stand-in: New version through the model (the version list is a native popover)")
+        e.newVersion(copying: 1)
+        e.updateVersion(coalesce: false) { $0.text = "Repost hook v2" }
+        await wait(900)
       }
-
-      // 2. A second version (stand-in: the model's New version; the list is a popover) shows the row, off.
-      note("stand-in: New version through the model (the version list is a native popover)")
-      e.newVersion(copying: 1)
-      e.updateVersion(coalesce: false) { $0.text = "Repost hook v2" }
-      await wait(900)
-      check("two versions: the row shows for v2, off", e.versionNo == 2 && has("Repost ready") && !e.isRepostReady(2))
-      await shot("v2-row-off")
-
-      // 3. A real click turns v2 on: stored on v2 only; nothing else about the clip moves, and list previews don't redraw.
+      check("no Ready to repost row and no Repost switch, only Posts", !has("Repost ready") && !has("Repost switch") && has("Post count"))
+      await shot("editor-posts-only")
       let stampBefore = stamp()
-      await click("Repost ready")
-      check("click → v2 ready to repost in the store", ready() == [2])
-      check("v1 isn't marked by v2's switch", !e.isRepostReady(1))
-      check("the clip's preview stamp didn't move (no preview redraw)", stamp() == stampBefore)
-      stageHolds("after marking v2")
-      await shot("v2-ready")
-
-      // 4. v1 too, then off again, and ⌘Z brings it back.
-      e.selectVersion(1)
+      // The + end of the stepper (a real click).
+      if let root = w.contentView, let anchorView = anchor(root, ScriptAnchor.prefix + "Post count") {
+        let f = anchorView.convert(anchorView.bounds, to: nil)
+        let p = NSPoint(x: f.maxX - 12, y: f.midY)
+        mouse(.leftMouseDown, p, in: w); await wait(40); mouse(.leftMouseUp, p, in: w); await wait(900)
+      }
+      let n = e.versionNo
+      check("click + on Posts → v\(n) posts twice (its own count)", count(clip, n) == 2 && e.ownPostCount(n) == 2)
+      check("…the clip now reads repostable", repostable(clip))
+      check("…and how it looks didn't change (preview stamp)", stamp() == stampBefore)
+      stageHolds("after Posts +")
+      await shot("editor-posts-twice")
+      e.setPostCount(n, nil)
       await wait(700)
-      await click("Repost ready")
-      check("click on v1's row → v1 and v2 ready", ready() == [1, 2])
-      await click("Repost ready")
-      check("click again → v1 off, v2 still ready", ready() == [2])
-      let stampMid = stamp()
-      await commandZ()
-      check("⌘Z → v1 ready again", ready() == [1, 2])
-      check("…and the undo didn't re-save the versions (preview stamp unchanged)", stamp() == stampMid)
-      stageHolds("after v1 on, off and undo")
-      e.selectVersion(2)
-      await wait(600)
-      await shot("header-check-v2")
-
-      // 5. The version list (stand-in window for the popover): each row has its own switch.
-      let list = SnapshotWindow.make(NSRect(x: 0, y: 0, width: 340, height: 300), [.titled, .fullSizeContentView])
-      list.titlebarAppearsTransparent = true
-      list.appearance = w.appearance
-      list.isReleasedWhenClosed = false
-      let hc = NSHostingController(rootView: EditorVersionList(model: e) { _ in })
-      hc.sceneBridgingOptions = []
-      list.contentViewController = hc
-      list.setContentSize(NSSize(width: 340, height: 300))
-      Backstage.show(list)
-      defer { list.orderOut(nil); list.close() }
-      note("stand-in: the version list in its own backstage window (the real one is a native popover)")
-      await wait(1500)
-      await shot("version-list-both-ready", list)
-      // A second backstage window gets no events here, so the row switches are pressed through the call their button
-      // makes (the same `setRepostReady` the inspector row's real click went through above).
-      note("stand-in: version-list switches pressed through their action (events don't reach a second backstage window)")
-      e.setRepostReady(1, false)
-      await wait(700)
-      check("version list: v1's switch → v1 off, the row says so", ready() == [2] && !e.isRepostReady(1))
-      await shot("version-list-v1-off", list)
-      e.setRepostReady(1, true)
-      await wait(700)
-      check("version list: v1's switch again → v1 on", ready() == [1, 2])
-      stageHolds("after the version list")
-
-      // 6. The Reposts filter and ⌘K find the clip, and nothing put it in Queue.
+      check("back to once", count(clip, n) == 1 && !repostable(clip))
       e.flushAndWait()
       a.closeEditor()
-      await wait(800)
+      await wait(900)
+
+      // 2. Edit: Mark repostable on two clips (asks first), then Undo.
       a.refreshNow()
       await wait(600)
-      check("the app knows v1 and v2 are ready", a.repostReady[clip] == [1, 2])
-      a.screen = .library
-      ListPrefs.shared.setFilter(.library, ListFilterKey.repost, RepostFilter.ready.rawValue)
-      await wait(900)
-      let shown = a.listScope(.library, a.libraryAll).map(\.id)
-      check("Library › Reposts: Ready to repost → only this clip", shown == [clip])
-      await shot("library-filter-ready")
-      ListPrefs.shared.setFilter(.library, ListFilterKey.repost, RepostFilter.none.rawValue)
-      await wait(400)
-      check("Reposts: No version ready → everything else", !a.listScope(.library, a.libraryAll).contains { $0.id == clip })
-      ListPrefs.shared.setFilter(.library, ListFilterKey.repost, nil)
-      a.screen = .edit
-      ListPrefs.shared.setFilter(.edit, ListFilterKey.repost, RepostFilter.ready.rawValue)
+      let both = [clip, other.id]
+      await markRepostable(both, true, "edit-mark-repostable-sheet")
+      let times = max(1, (try? store.settings().postsPerVersion) ?? 2)
+      check("both clips repostable, every version \(times) times", both.allSatisfy { repostable($0) && count($0, 1) == times })
+      stageHolds("after Mark repostable (an Edit clip stays in Edit)")
+      a.refreshNow()
       await wait(700)
-      check("Edit › Reposts: the clip is still in Edit", a.listScope(.edit, a.editList).map(\.id) == [clip])
-      await shot("edit-filter-ready")
+      ListPrefs.shared.setFilter(.edit, ListFilterKey.repost, RepostFilter.ready.rawValue)
+      await wait(900)
+      check("Edit › Filters › Reposts: Repostable → the two clips", Set(a.listScope(.edit, a.editList).map(\.id)) == Set(both))
+      await shot("edit-filter-repostable")
       ListPrefs.shared.setFilter(.edit, ListFilterKey.repost, nil)
-      let hits = a.searchIndex.search(SearchQuery("ready to repost")).filter { $0.kind == .clip }.map(\.id)
-      check("⌘K “ready to repost” finds the clip", hits == [SearchId.clip(clip)])
-      a.openSearch("ready to repost")
+      let hits = Set(a.searchIndex.search(SearchQuery("repostable")).filter { $0.kind == .clip }.map(\.id))
+      check("⌘K “repostable” finds both", Set(both.map { SearchId.clip($0) }).isSubset(of: hits))
+      a.openSearch("repostable")
       await wait(1200)
-      await shot("search-ready-to-repost")
-      stageHolds("after filters and search")
-      ListPrefs.shared.reset()
+      await shot("search-repostable")
       a.closePalette()
+      await wait(500)
+      a.undoLast()
+      await wait(2500)
+      check("Undo → neither clip is repostable again", both.allSatisfy { !repostable($0) && count($0, 1) == 1 })
+
+      // 3. Queue: Mark repostable gives the reposts days; not repostable takes them off.
+      a.screen = .queue
+      await wait(1200)
+      let queued = a.queueClips.filter { $0.type == .short && !$0.missing }.prefix(2).map(\.id)
+      if queued.count == 2 {
+        _ = try? Planner(store: store).autoSchedule()
+        let before = queued.map { slots($0).count }
+        await markRepostable(Array(queued), true, "queue-mark-repostable-sheet")
+        _ = try? Planner(store: store).autoSchedule()
+        a.refreshNow()
+        await wait(1200)
+        let after = queued.map { slots($0).count }
+        check("Queue: the reposts got days (\(before) → \(after) days)", zip(before, after).allSatisfy { $1 > $0 })
+        await shot("queue-repostable")
+        await markRepostable(Array(queued), false, "queue-not-repostable-sheet")
+        _ = try? Planner(store: store).autoSchedule()
+        a.refreshNow()
+        await wait(900)
+        check("Not repostable → back to one day per version (\(queued.map { slots($0).count }))",
+              queued.map { slots($0).count } == before)
+      } else {
+        note("this copy has fewer than two Queue clips: the Queue part is skipped")
+      }
+      ListPrefs.shared.reset()
+      a.screen = .edit
       await wait(600)
       await bulk(other.id)
     }
@@ -317,6 +292,7 @@ enum RepostReadyScript {
       a.refreshNow()
       await wait(600)
       guard let before = resolved(2) else { check("v2 readable", false); return }
+      let v2Text = before.text
       let face = BulkActions.CaptionFace(before)
       let shown = { (r: ResolvedVersion) -> String in
         guard let v = (try? self.store.video(id: self.clip)) ?? nil else { return "" }
@@ -342,7 +318,7 @@ enum RepostReadyScript {
       EditorModel.flushLiveAndWait()
       check("bulk caption template → v1 uses “\(other.name)”", resolved(1)?.captionTemplateId == other.id)
       check("…and v2's caption is exactly as it was", resolved(2).map { BulkActions.CaptionFace($0) == face && shown($0) == captionBefore } == true)
-      check("…and v2 still has its own text", resolved(2)?.text == "Repost hook v2")
+      check("…and v2 still has its own text", resolved(2)?.text == v2Text)
 
       // Reset to defaults (Text + Caption) asks first and says what reaches every version.
       a.pipelineBulk("Apply defaults (text, caption) to 2 clips?", verb: "Apply defaults", ids: ids,
@@ -357,10 +333,9 @@ enum RepostReadyScript {
       await wait(2000)
       EditorModel.flushLiveAndWait()
       check("reset → v2's text look is back to the default", raw(2)?.style == nil && raw(2)?.size == nil)
-      check("reset → v2 keeps its words", resolved(2)?.text == "Repost hook v2")
+      check("reset → v2 keeps its words", resolved(2)?.text == v2Text)
       check("reset → v2's caption is still exactly as it was", resolved(2).map { BulkActions.CaptionFace($0) == face && shown($0) == captionBefore } == true)
       check("reset → v1's caption follows the defaults", resolved(1)?.captionTemplateId == nil)
-      check("v1 and v2 are still ready to repost", ready() == [1, 2])
       check("the clip is still in Edit (no bulk edit sends it to Queue)", now()?.stage == .edit && now()?.sent == false)
       await shot("after-bulk")
     }

@@ -316,6 +316,7 @@ struct EditClipMenu: View {
       }
     }
     EditApplyDefaultsMenu(model: model, ids: targets)
+    RepostMenuItems(model: model, targets: targets)
     Divider()
     Button(targets.count == 1 ? "Exclude" : "Exclude \(n)", systemImage: "minus.circle") {
       model.pipelineBulk("Exclude \(n)?", verb: "Exclude", ids: targets,

@@ -38,6 +38,8 @@ public enum AgentAPI {
     public var text_suggestion_count: Int = 0
     /// Round 20: the versions Eric marked ready to repost, in order (empty = none).
     public var repost_ready_versions: [Int] = []
+    /// Round 37: some version posts more than once (Mark repostable, or a version's own Posts above once).
+    public var repostable: Bool = false
     /// Round 21: "video", or "photo" for a photo post (one photo or a carousel). A photo post has `duration` 0, needs
     /// no score and never posts to YouTube Shorts.
     public var media: String = "video"
@@ -270,7 +272,7 @@ public enum AgentAPI {
   }
 
   public static func summary(_ v: Video, store: Store, sessions: [String: Session]? = nil,
-                             context: ValidationContext? = nil) throws -> VideoSummary {
+                             context: ValidationContext? = nil, repostable: Set<String>? = nil) throws -> VideoSummary {
     let sugg = try store.titleSuggestions(videoId: v.id)
     let s = try sessions?[v.sessionId] ?? store.session(id: v.sessionId)
     let issues = v.type == .short ? ((try? Validation.issues(video: v, store: store, context: context)) ?? []) : []
@@ -284,6 +286,7 @@ public enum AgentAPI {
       reasons: ClipStage.of(v) == .edit ? issues.sorted { $0.kind.chipOrder < $1.kind.chipOrder }.map(\.chipText) : [],
       text_suggestion_count: try store.suggestionCount(.text, videoId: v.id),
       repost_ready_versions: v.type == .short ? ((try? store.repostReadyVersions(videoId: v.id)) ?? []) : [],
+      repostable: v.type == .short ? (try repostable.map { $0.contains(v.id) } ?? store.isRepostable(videoId: v.id)) : false,
       media: v.isPhoto ? "photo" : "video", photos: photos(v), still: still(v))
   }
 
@@ -325,7 +328,8 @@ public enum AgentAPI {
       vids = try store.videos().sorted { ($0.sessionId, $0.part ?? 0, $0.start ?? 0, $0.name) < ($1.sessionId, $1.part ?? 0, $1.start ?? 0, $1.name) }
     }
     if let stage { vids = vids.filter { ClipStage.of($0) == stage } }
-    return try vids.map { try summary($0, store: store, sessions: sessions, context: ctx) }
+    let repostable = try store.repostableClips()
+    return try vids.map { try summary($0, store: store, sessions: sessions, context: ctx, repostable: repostable) }
   }
 
   /// `djq video <id> --json`
@@ -357,7 +361,7 @@ public enum AgentAPI {
       version_trims: try versionTrims(id, store: store, settings: settings),
       post_units: try units(id, store: store, settings: settings),
       version_order: v.type == .short ? try store.versionOrder(videoId: id) : [],
-      repost: v.type == .short ? try store.repostOn(videoId: id) : false)
+      repost: v.type == .short ? try store.isRepostable(videoId: id) : false)
   }
 
   /// `djq week --json [date]`

@@ -35,6 +35,7 @@ struct CalendarClipMenu: View {
     Button("Post today" + AppModel.menuReason(todayWhy), systemImage: "bolt") { model.postTodayAsking([video.id]) }
       .disabled(todayWhy != nil)
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }
+    RepostMenuItems(model: model, targets: [video.id])
     Divider()
     let timeWhy = model.postAtBlocker(video)
     Button((timed ? "Change set time…" : "Post at a set time…") + AppModel.menuReason(timeWhy), systemImage: "clock") { model.askPostAt([video.id]) }
