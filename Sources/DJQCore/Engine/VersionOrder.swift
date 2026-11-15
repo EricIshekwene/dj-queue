@@ -165,7 +165,7 @@ extension Planner {
                         notBefore: now.addingTimeInterval(Self.autoScheduleLead), pullForHistory: false)
         // Like the fill: a day that ended up with no post (every platform already has that version post) comes off, or
         // it would hold the clip on Scheduled for good. The next pass gives its unit a day if one still needs it.
-        if try store.slotPosts(s.id).isEmpty {
+        if !s.pinned, try store.slotPosts(s.id).isEmpty {
           try store.deletePlanSlot(s.id)
           try store.logEvent("plan", "\(BulkActions.day(s.date, dm, settings)): \(book.label(videoId, s.unit)) has nothing left to post there, taken off", videoId: videoId)
         }

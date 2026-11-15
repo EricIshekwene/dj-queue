@@ -645,15 +645,19 @@ final class EditorModel: ObservableObject {
     versionOrder = order
     let store = store, id = videoId
     Self.saveQueue.async { [weak self] in
+      var failure: String?
       do {
         try store.setVersionOrder(videoId: id, order)
         ChangeSignal.post()
       } catch {
+        failure = "\(error)"
         Log.shared.error("editor version order failed: \(error)")
       }
-      DispatchQueue.main.async { self?.reloadPlan() }
+      DispatchQueue.main.async {
+        self?.show(failure.map { "Couldn't change the order: \($0)" } ?? "Posts \(VersionOrder.text(order))")
+        self?.reloadPlan()
+      }
     }
-    show("Posts \(VersionOrder.text(order))")
   }
 
   /// Reads the clip's posts, days, waiting version posts and posting order again (off the main thread).
