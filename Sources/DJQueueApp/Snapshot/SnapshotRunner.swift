@@ -108,6 +108,9 @@ enum SnapshotRunner {
       if ProcessInfo.processInfo.environment["DJQ_PHOTO_AUDIO_SCRIPT"] != nil {
         return await PhotoAudioScript.run(model: model, store: store, out: out, scratch: tmp.appendingPathComponent("photo-audio"))
       }
+      if ProcessInfo.processInfo.environment["DJQ_POST_TODAY_SCRIPT"] != nil {
+        return await PostTodayScript.run(model: model, store: store, clock: clock, out: out)
+      }
       if ProcessInfo.processInfo.environment["DJQ_POST_AT_SCRIPT"] != nil {
         return await PostAtScript.run(model: model, store: store, clock: clock, out: out)
       }

@@ -134,6 +134,20 @@ extension Planner {
     }
   }
 
+  /// Round 33: Post today when today has no regular position left (or the item has a set time): the item goes out at
+  /// the next minute on every platform it goes to, as a set time, so nothing else moves and posts per day doesn't stop
+  /// it. YouTube's quiet window still moves YouTube (Postiz's shared quota), and the preview says so.
+  @discardableResult
+  public func postNowOnItsOwn(videoId: String) throws -> PlanSlot {
+    try store.db.transaction {
+      let settings = try store.settings()
+      let at = Self.exactMinute(store.clock.now).addingTimeInterval(60)
+      let r = try replaceWithExact(videoId: videoId, at: at, settings: settings, now: true)
+      try store.logEvent("plan", StageWording.postTodayNow, videoId: videoId)
+      return r.slot
+    }
+  }
+
   /// "Use the regular schedule": takes the set time off. The item is back in the Queue and the next `autoSchedule` gives
   /// it the next open day. Refused once something posted, or while Postiz holds a copy about to go out.
   public func clearExact(videoId: String) throws {
@@ -232,12 +246,14 @@ extension Planner {
   // MARK: Internals
 
   /// The core of `postAt`, inside the caller's transaction. No event: the preview runs it too.
-  private func replaceWithExact(videoId: String, at raw: Date, settings: Settings) throws -> (slot: PlanSlot, replaced: [PlanSlot], changed: Bool) {
+  /// `now`: Post today's "goes out now on its own" (round 33). The set time is the next minute, so the lead a typed time
+  /// needs doesn't apply; everything Postiz needs (a copy about to go out, a post removed there) still does.
+  private func replaceWithExact(videoId: String, at raw: Date, settings: Settings, now: Bool = false) throws -> (slot: PlanSlot, replaced: [PlanSlot], changed: Bool) {
     let dm = DayMath(settings: settings)
     let at = Self.exactMinute(raw)
     let old = try unplanTargets(videoId: videoId, dm: dm).slots.sorted { ($0.date, $0.position) < ($1.date, $1.position) }
     if old.count == 1, old[0].exactAt == at, try !store.slotPosts(old[0].id).isEmpty { return (old[0], [], false) }
-    if let why = exactTimeProblem(at) { throw EngineError(why) }
+    if !now, let why = exactTimeProblem(at) { throw EngineError(why) }
     if let p = try store.posts(where: "video_id=? AND kind IN ('regular','retry') AND state='posted'", [videoId], order: "posted_at").first {
       throw EngineError("Already posted on \(p.platform.displayName) — it can't take a set time")
     }

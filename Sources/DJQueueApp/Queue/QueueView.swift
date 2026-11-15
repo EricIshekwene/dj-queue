@@ -251,7 +251,7 @@ struct QueuePinDialog: View {
       return
     }
     model.pipelineBulk("Pin \(AppModel.pipelineClips(ids.count)) to \(first) – \(last)?", verb: "Pin", ids: ids,
-                       changes: [.init(field: "Days", value: "\(first) – \(last), one a day")] + model.goesOutRow(model.platformsTooSoon(ids[0], day: day))) { b, dry in
+                       changes: [.init(field: "Days", value: "\(first) – \(last), one a day")]) { b, dry in
       try b.pinConsecutive(ids, from: day, dryRun: dry)
     }
   }

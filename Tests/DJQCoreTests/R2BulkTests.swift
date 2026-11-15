@@ -186,7 +186,8 @@ import Testing
     try b.undo(r.batchId!)
     #expect(try f.store.planSlots() == before)
     let t = try b.postToday(["clip-4", "clip-5"])
-    #expect(t.changed == ["clip-4"] && t.skipped["clip-5"] != nil)  // one post a day
+    // One post a day: clip-4 takes today's slot; round 33: clip-5 isn't refused, it goes out now on its own.
+    #expect(t.changed == ["clip-4", "clip-5"] && t.skipped.isEmpty && t.onItsOwn == ["clip-5"])
     #expect(try f.store.planSlots(where: "date='2026-11-02' AND video_id='clip-4'").count == 1)
     #expect(try !f.store.posts(where: "video_id='clip-4'").isEmpty)
     try b.undo(t.batchId!)

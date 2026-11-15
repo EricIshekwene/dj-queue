@@ -67,7 +67,8 @@ extension BulkActions {
   /// post it would delete or re-time has a copy going out within `Planner.exactLead` (`Planner.tooLate`, the test
   /// `postAt`, `clearExact` and a move use). nil = the undo can go ahead.
   func tooLateToUndo(_ action: String, before: PlanSnap, current: PlanSnap) throws -> String? {
-    guard [Self.postAtAction, Self.clearExactAction].contains(action) else { return nil }
+    // Round 33: Post today (and a pin onto today) can send a clip out within the minute too.
+    guard [Self.postAtAction, Self.clearExactAction, "post-today", "pin-consecutive"].contains(action) else { return nil }
     let planner = Planner(store: store)
     let was = Dictionary(before.posts.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     for p in current.posts where was[p.id]?.scheduledAt != p.scheduledAt {

@@ -15,7 +15,10 @@ struct BulkConfirmSheet: View {
              width: pending.preview?.outlook?.needTitle.isEmpty == false ? 560 : 480,
              onClose: { model.cancelPendingBulk() }) {
       VStack(alignment: .leading, spacing: DS.space.sm) {
-        if !r.changes.isEmpty { DSChangeList(changes: r.changes) }
+        // Round 33: a clip that goes out on its own swaps or replaces nothing, so the up-front rows don't apply.
+        let alone = pending.preview?.onItsOwn?.isEmpty == false
+        if !r.changes.isEmpty, !alone { DSChangeList(changes: r.changes) }
+        if let p = pending.preview, let goes = p.goesOut, !goes.isEmpty { GoesOutSection(model: model, result: p) }
         if let scope = r.versionScope { BulkVersionNote(model: model, ids: r.ids, scope: scope, keepsWords: r.keepsWords) }
         if let p = pending.preview, let lines = r.previewLines?(p), !lines.isEmpty { previewList(r.previewTitle, lines, icon: r.previewIcon) }
         preview
@@ -35,6 +38,7 @@ struct BulkConfirmSheet: View {
   private var disabledReason: String? {
     if pending.error != nil { return "The check failed — see the message above" }
     guard let p = pending.preview else { return "Checking what will change…" }
+    if p.changed.isEmpty, p.videoIds.count == 1, let why = p.skipped.values.first { return why }
     return p.changed.isEmpty ? "Nothing would change" : nil
   }
 
@@ -43,6 +47,15 @@ struct BulkConfirmSheet: View {
       Label(e, systemImage: DSTone.danger.symbol).font(DS.type.callout).foregroundStyle(DS.color.danger)
     } else if let p = pending.preview {
       let same = p.videoIds.count - p.changed.count - p.skipped.count
+      // Round 33: one clip it can't do: the reason is the message, in plain view, never behind "Why skipped".
+      if p.videoIds.count == 1, p.changed.isEmpty, let why = p.skipped.values.first {
+        Label(why, systemImage: DSTone.warning.symbol).font(DS.type.callout).foregroundStyle(DS.color.text)
+          .fixedSize(horizontal: false, vertical: true)
+          .padding(DS.space.sm)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+          .background(ScriptAnchor("Bulk refusal"))
+      } else {
       VStack(alignment: .leading, spacing: DS.space.xs) {
         if let o = p.outlook { outlook(o) }
         HStack(spacing: DS.space.xs) {
@@ -69,6 +82,7 @@ struct BulkConfirmSheet: View {
           .frame(maxWidth: .infinity, alignment: .leading)
           .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
         }
+      }
       }
     } else {
       HStack(spacing: DS.space.xs) {
@@ -152,5 +166,46 @@ struct BulkVersionNote: View {
       .background(ScriptAnchor("Bulk versions note"))
       .accessibilityElement(children: .combine)
     }
+  }
+}
+
+/// Round 33: Post today's "Goes out" list, from Core's dry run: one row per platform with when it goes out ("Right away",
+/// "9:30 PM"), and, in plain view under the rows, why a platform waits when Postiz is the reason and what happens next
+/// (Square's publish dialog: the notice sits in the dialog, not behind a disclosure). Several clips: one row each.
+struct GoesOutSection: View {
+  let model: AppModel
+  let result: BulkResult
+
+  var body: some View {
+    let ids = result.changed.filter { result.goesOut?[$0] != nil }
+    let single = ids.count == 1 ? result.goesOut?[ids[0]] ?? [] : []
+    let alone = Set(result.onItsOwn ?? [])
+    VStack(alignment: .leading, spacing: DS.space.xs) {
+      Text(alone.isEmpty ? (result.action == "post-today" ? StageWording.takesTodayNote : "When it goes out")
+           : alone.count < ids.count ? "Today's slots are taken, so \(alone.count) of these go out now on their own."
+           : StageWording.onItsOwnNote)
+        .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
+      if ids.count == 1 {
+        DSChangeList(changes: single.map {
+          .init(field: $0.platform.displayName, value: StageWording.goesOutWhen($0, now: model.now, settings: model.settings))
+        })
+        ForEach(single.filter { $0.wait != nil }, id: \.platform) { g in
+          Label("\(g.platform.displayName) \(g.wait ?? "")", systemImage: "clock")
+            .font(DS.type.callout).foregroundStyle(DS.color.text).fixedSize(horizontal: false, vertical: true)
+            .padding(DS.space.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
+        }
+      } else {
+        DSChangeList(changes: ids.prefix(8).map { id in
+          let g = result.goesOut?[id] ?? []
+          let now = g.filter(\.now).count
+          let later = g.count - now
+          let value = [now > 0 ? "\(now) right away" : nil, later > 0 ? "\(later) later" : nil].compactMap { $0 }.joined(separator: " · ")
+          return .init(field: model.video(id).map(model.displayName) ?? id, value: value.isEmpty ? "Today" : value)
+        })
+      }
+    }
+    .background(ScriptAnchor("Post today goes out"))
   }
 }

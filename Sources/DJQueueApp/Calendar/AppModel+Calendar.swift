@@ -340,6 +340,11 @@ extension AppModel {
         try planner.move(slotId: slot, to: day)
       }
     }
+    // Round 33: today has no room left (every slot posted or pinned): it goes out now on its own, after asking.
+    if day == todayKey, todayIsFull(s.videoId) {
+      askPostToday(s.videoId, done: "Posting now") { [videoId = s.videoId] b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
+      return true
+    }
     let here = upcomingSlots.filter { $0.date == day && $0.id != s.id && !$0.isExact }
     let perDay = max(1, settings.postsPerDay)
     var other: PlanSlot?
@@ -359,7 +364,7 @@ extension AppModel {
     let soon = platformsTooSoon(videoId, day: day, position: position)
     if !soon.isEmpty {
       let swap = otherName.map { DSChangeList.Change(field: "Swaps with", value: "“\($0)”, which moves to \(Fmt.day(dm.date(s.date), tz: tz))") }
-      askPostToday(videoId, platforms: soon, extra: swap, done: toast) { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
+      askPostToday(videoId, extra: swap, done: toast) { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
       return true
     }
     return undoable(toast, "move", ids: [videoId] + (other.map { [$0.videoId] } ?? []), plan: true) {
@@ -384,6 +389,11 @@ extension AppModel {
       calendarMove(slotId: s.id, to: day, done: done)
       return
     }
+    // Round 33: a today with no room left posts it now on its own, so it always asks first.
+    if day == todayKey, todayIsFull(videoId) {
+      askPostToday(videoId, done: "Posting now") { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
+      return
+    }
     let soon = nextSlotByVideo[videoId] == nil ? platformsTooSoon(videoId, day: day) : []
     if soon.isEmpty {
       undoable("\(done) to \(label)", "pin", ids: [videoId], plan: true) { try planner.pin(videoId: videoId, date: day) }
@@ -392,18 +402,18 @@ extension AppModel {
     let here = upcomingSlots.filter { $0.date == day && !$0.isExact }
     let replaced = here.count >= max(1, settings.postsPerDay) ? here.first { !$0.pinned }.flatMap { video($0.videoId) } : nil
     let row = replaced.map { DSChangeList.Change(field: "Replaces", value: "“\(displayName($0))”, which goes back to waiting") }
-    askPostToday(videoId, platforms: soon, extra: row, done: "\(done) to \(label)") { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
+    askPostToday(videoId, extra: row, done: "\(done) to \(label)") { b, dry in try b.pinConsecutive([videoId], from: day, dryRun: dry) }
   }
 
   /// Post today, from anywhere: always asks, and names what goes out at once.
   func postTodayAsking(_ ids: [String]) {
-    guard let first = ids.first else { return }
+    guard !ids.isEmpty else { return }
     let b = bulk
     let n = AppModel.pipelineClips(ids.count)
-    let changes = [DSChangeList.Change(field: "Day", value: "Today · the rest of the Calendar moves a day later")]
-      + goesOutRow(platformsTooSoon(first, day: todayKey))
-    requestBulk(BulkRequest(title: ids.count == 1 ? "Post today?" : "Post \(n) today?", verb: "Post today", ids: ids, changes: changes,
-                            doneMessage: ids.count == 1 ? "Posting today" : nil, alwaysConfirm: true) { dry in try b.postToday(ids, dryRun: dry) })
+    // Round 33: when each platform goes out comes from Core's dry run (the sheet's "Goes out" list), not a guess here,
+    // so an evening Post today that goes out on its own says so instead of a day it won't take.
+    requestBulk(BulkRequest(title: ids.count == 1 ? "Post today?" : "Post \(n) today?", verb: "Post today", ids: ids,
+                            alwaysConfirm: true, doneText: { r in AppModel.postTodayDone(r) }) { dry in try b.postToday(ids, dryRun: dry) })
   }
 
   /// Platforms that would go out inside the lead if this clip landed on `day`: only ever today. Its own platforms when
@@ -427,18 +437,27 @@ extension AppModel {
     return (0..<max(1, settings.postsPerDay)).first { p in !here.contains { $0.position == p } } ?? here.first { !$0.pinned }?.position ?? 0
   }
 
-  /// The confirmation's "Goes out right away: Facebook, Threads" row; nothing when nothing does.
-  func goesOutRow(_ platforms: [Platform]) -> [DSChangeList.Change] {
-    platforms.isEmpty ? [] : [.init(field: "Goes out right away", value: platforms.map(\.displayName).joined(separator: ", "))]
+  /// Round 33: every regular slot of today is held by another clip that can't give it up (Core's test).
+  func todayIsFull(_ videoId: String) -> Bool { (try? planner.todayHasNoRoom(for: videoId)) == true }
+
+  /// Round 33: the toast after Post today, from what Core did: "Posting now on 5 · YouTube at 3:30 AM".
+  static func postTodayDone(_ r: BulkResult) -> (String, String?) {
+    let all = r.changed.flatMap { r.goesOut?[$0] ?? [] }
+    let now = all.filter(\.now).count
+    let n = r.changed.count
+    let msg = n == 1 ? (now > 0 ? "Posting now on \(now) platform\(now == 1 ? "" : "s")" : "Posting today")
+      : "\(n) clips posting today"
+    let waits = n == 1 ? all.filter { $0.wait != nil }.map { "\($0.platform.displayName) waits" } : []
+    return (msg, waits.isEmpty ? nil : waits.joined(separator: " · "))
   }
 
   /// The Post today confirmation, so Eric can still say no.
-  private func askPostToday(_ videoId: String, platforms: [Platform], extra: DSChangeList.Change? = nil, done: String,
+  private func askPostToday(_ videoId: String, extra: DSChangeList.Change? = nil, done: String,
                             _ body: @escaping @Sendable (BulkActions, Bool) throws -> BulkResult) {
     let b = bulk
-    requestBulk(BulkRequest(title: "Post today?", verb: "Post today", ids: [videoId],
-                            changes: goesOutRow(platforms) + (extra.map { [$0] } ?? []),
-                            doneMessage: done, alwaysConfirm: true) { dry in try body(b, dry) })
+    requestBulk(BulkRequest(title: "Post today?", verb: "Post today", ids: [videoId], changes: extra.map { [$0] } ?? [],
+                            doneMessage: done, alwaysConfirm: true,
+                            doneText: { r in r.goesOut?.isEmpty == false ? AppModel.postTodayDone(r) : (done, nil) }) { dry in try body(b, dry) })
   }
 
   /// False for a post just past midnight: its time runs over from the slot's own day, and nothing moved it. A set-time

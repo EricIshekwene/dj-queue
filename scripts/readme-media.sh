@@ -211,4 +211,12 @@ gif queue-sort $L/queue-next-post-first $L/queue-worst-grid $L/queue-best-grid $
 still queue-sort $L/queue-worst-grid
 still queue-sort-dark $L-dark/queue-best-list
 
+P=post-today
+# Round 33: Post today on an evening when today's slots are taken: it goes out now on its own, YouTube waits for Postiz's
+# quota and says why; a drag onto that full today asks the same; the one refusal left reads in the dialog.
+gif post-today $P/post-today-01-sheet-on-its-own-light $P/post-today-02-posted-light $P/post-today-03-drag-onto-full-today-light \
+               $P/post-today-04-refusal-in-view-light
+still post-today $P/post-today-01-sheet-on-its-own-light
+still post-today-dark $P-dark/post-today-01-sheet-on-its-own-dark
+
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }

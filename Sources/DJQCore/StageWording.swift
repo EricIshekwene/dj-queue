@@ -170,6 +170,31 @@ public enum StageWording {
   /// Why a swap, Post today or Skip next leaves a set-time item alone.
   public static let hasSetTime = "It has a set time — change the time instead"
 
+  /// Round 33: Post today when today's slots have all gone out (or are pinned): it goes out now on its own.
+  public static let postTodayNow = "Post today: goes out now on its own (today's slots are taken)"
+  /// Round 33: why YouTube waits on a Post today: Postiz's one shared YouTube upload quota (docs/postiz.md).
+  public static func youtubeQuotaWait(_ at: Date, settings s: Settings) -> String {
+    "waits until \(clockTime(at, s)): Postiz's shared YouTube upload limit runs out at night and resets at midnight Pacific. It goes by itself then."
+  }
+  /// Round 33: a Post today row's "when": "Right away", "9:30 PM", or "Mon 16 Nov 3:30 AM" past today.
+  public static func goesOutWhen(_ g: GoesOut, now: Date, settings s: Settings) -> String {
+    if g.now { return "Right away" }
+    let dm = DayMath(settings: s)
+    return dm.key(g.at) == dm.key(now) ? clockTime(g.at, s) : Sched.shortTime(g.at, s)
+  }
+  /// Round 33: the line the Post today sheet shows when today had no slot left to give.
+  public static let onItsOwnNote = "Today's slots are all taken (posted or pinned), so this goes out now on its own. Nothing else on the Calendar moves."
+  /// Round 33: the regular Post today line.
+  public static let takesTodayNote = "It takes today's next slot; the rest of the Calendar moves a day later."
+  /// Round 33: a platform whose Postiz channel needs signing in again.
+  public static func waitsForSignIn(_ p: Platform) -> String {
+    "waits for you to reconnect it in Postiz, then goes by itself"
+  }
+  /// Round 33: Post today on a clip whose post already went out today.
+  public static func alreadyGoingOutToday(_ p: Platform) -> String {
+    "It's already going out today: \(p.displayName) has posted, and the rest go at their times"
+  }
+
   /// Round 31: every version of the clip already has its posts (or is off everywhere).
   public static func nothingLeftToPost(_ tag: String) -> String {
     "\(tag) has nothing left to post: every version has its posts on every platform it's on"
