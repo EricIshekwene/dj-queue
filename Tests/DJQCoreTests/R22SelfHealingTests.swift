@@ -125,7 +125,9 @@ import Testing
       #expect(PostizService.classify(threads, on: p) == .stays, "\(p.rawValue)")
       #expect(!PostizService.retriesByItself(threads, on: p))
     }
-    for m in ["Invalid file format", "Threads could not process the media: it was already published",
+    for m in ["Invalid file format", "Threads could not process the media: unsupported codec",
+              "Threads could not process the media, please check the media format and try again: file exceeds 1GB",
+              "Threads could not process the media: it was already published",
               "Threads could not process the media: it violates our Community Guidelines"] {
       #expect(PostizService.classify(m, on: .threads) == .stays, "\(m)")
       #expect(!PostizService.retriesByItself(m, on: .threads))

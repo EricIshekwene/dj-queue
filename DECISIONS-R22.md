@@ -115,6 +115,9 @@ Postiz" test is the settings alone, so it needs no Keychain read. `djq post-now`
 **D27 (F1). Size, length, type and format veto before the media reading** (`sizeOrFormat`), and "invalid" or
 "unavailable" alone is no longer a "gone" word (only an invalid url or link). *Why:* "Invalid file format" or "file
 exceeds 4GB" would otherwise retry and re-upload forever behind a calm chip; they are Eric's.
+*Amended 2026-11-15:* on Threads, Meta's generic "Threads could not process the media, please check the media format and
+try again" reads as media (it came on a render every other platform and 27 earlier Threads posts took; no Threads post
+exists after it). The generic sentence is cut out first, so a size or format word in the rest, or a policy word, still stays.
 
 **D28 (F2). On YouTube only the upload quota and Postiz failing to fetch the source media retry.** A media reading needs
 media, file or url wording and nothing about status, processing, a response, the upload having happened, insert or

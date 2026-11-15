@@ -217,7 +217,10 @@ a rate or a quota.
 
 Round 22 reads two kinds before the veto (`PostizService.classify`), unless a policy word is there too:
 
-- first, a size, length, type or format word (too large, exceeds, duration, format, codec, file type, …) always stays;
+- first, a size, length, type or format word (too large, exceeds, duration, format, codec, file type, …) always stays,
+  with one exception: on Threads, Meta's generic "Threads could not process the media, please check the media format
+  and try again" (its own processing hiccup, no post made) reads as **media**, unless what's left of the message has a
+  size or format word of its own or a policy word;
 - **media** (a media word: media, file, url, upload, download, fetch; and a "gone" word: expired, not found, 404, an
   invalid url or link, couldn't be retrieved/fetched): Postiz couldn't get the file. It retries on every platform on the
   usual backoff, and the retry uploads the media again. On YouTube only wording about fetching the source media counts,

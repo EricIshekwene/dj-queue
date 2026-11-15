@@ -267,7 +267,9 @@ extension PostizService {
     + #"(need|needs|have|has) to (log|sign) ?in|scopes? not authori[sz]ed|refresh ?needed|channel (is |was )?disabled)\b"#
   /// Threads' generic text when its own processing of the video container fails. It says "check the media format", but
   /// the same render posts fine elsewhere and on a later try: no Threads post exists, so it retries with fresh media.
+  /// The whole generic sentence is matched so it can be cut out: a size or format word in what's left still stays.
   static let threadsCouldNotProcess = #"\bthreads could ?n[o'’]?t process the media\b"#
+    + #"([,.;:]? ?(please )?check the media format( and try again)?\b)?"#
   /// On YouTube these may come after the video exists (the thumbnail step, "we uploaded your video but …").
   static let youTubeMayExist = #"\b(thumbnails?|uploaded (your |the )?video|video (was |has been )?uploaded)\b"#
 
@@ -334,7 +336,10 @@ extension PostizService {
     func has(_ re: String) -> Bool { m.range(of: re, options: .regularExpression) != nil }
     if has(alreadyThere) { return .stays }
     let policy = has(policyWords)
-    if platform == .threads, has(threadsCouldNotProcess), !policy { return .media }
+    if platform == .threads, has(threadsCouldNotProcess), !policy {
+      let rest = m.replacingOccurrences(of: threadsCouldNotProcess, with: " ", options: .regularExpression)
+      if rest.range(of: sizeOrFormat, options: .regularExpression) == nil { return .media }
+    }
     if has(sizeOrFormat) { return .stays }
     let mayExist = platform == .youtube && (has(youTubeMayExist) || has(youTubeAfterUpload))
     if !policy, platform == .youtube ? isYouTubeSourceMediaProblem(message) : isMediaProblem(message) { return .media }
