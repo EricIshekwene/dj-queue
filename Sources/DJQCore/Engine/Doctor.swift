@@ -154,11 +154,23 @@ public final class Doctor: @unchecked Sendable {
   }
 
   func missingFiles() throws -> [DoctorFinding] {
-    let vids = try store.videos(where: "missing=1 AND photos IS NULL AND still IS NULL")  // those two are `photos.missing`
-    guard !vids.isEmpty else { return [] }
-    let w = try vids.map { "\($0.id) · \($0.name) · \(try store.fileURL(for: $0)?.path ?? $0.file)\($0.inManifest ? "" : " (removed from videos.json)")" }
-    return [.init(id: "files.missing", severity: .error, title: "\(vids.count) video file(s) missing", detail: "Missing videos can't render or post. Records are kept.",
-                  where_: w, fix: "Put the file back (or rename it back) and run `djq intake` — intake relinks by fingerprint anywhere in the session folders. If it was deleted on purpose, exclude the video (`djq exclude <id>`).")]
+    let all = try store.videos(where: "missing=1 AND photos IS NULL AND still IS NULL")  // those two are `photos.missing`
+    // Round 35: a clip removed from videos.json and excluded was thrown away on purpose (`Video.isDiscarded`): its file
+    // being gone is expected, so it's a note, not an error.
+    let vids = all.filter { !$0.isDiscarded }, removed = all.filter(\.isDiscarded)
+    var out: [DoctorFinding] = []
+    if !vids.isEmpty {
+      let w = try vids.map { "\($0.id) · \($0.name) · \(try store.fileURL(for: $0)?.path ?? $0.file)\($0.inManifest ? "" : " (removed from videos.json)")" }
+      out.append(.init(id: "files.missing", severity: .error, title: "\(vids.count) video file(s) missing", detail: "Missing videos can't render or post. Records are kept.",
+                       where_: w, fix: "Put the file back (or rename it back) and run `djq intake` — intake relinks by fingerprint anywhere in the session folders. If it was deleted on purpose, exclude the video (`djq exclude <id>`)."))
+    }
+    if !removed.isEmpty {
+      out.append(.init(id: "files.removed", severity: .info, title: "\(removed.count) removed clip(s) kept in the Library",
+                       detail: "Removed from videos.json and excluded, so they never post; their files were deleted on purpose. Records are kept.",
+                       where_: removed.map { "\($0.id) · \($0.name)" },
+                       fix: "Nothing to do. To bring one back: put its file back, add it to videos.json, run `djq intake` and `djq include <id>`."))
+    }
+    return out
   }
 
   func relinked() throws -> [DoctorFinding] {

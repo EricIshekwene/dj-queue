@@ -354,6 +354,11 @@ public struct Video: Codable, Sendable, Identifiable, Hashable {
   /// A video made from a photo and an audio file (round 23). A clip in every way but the four `StillVideo` lists.
   public var isStill: Bool { still != nil }
 
+  /// Round 35: removed on purpose. The clip is gone from its session's videos.json AND excluded, so it never posts and its
+  /// file being gone is expected (e.g. a duplicate clip that was made and then thrown away). Library lists it as
+  /// "Removed", not "File missing", and Doctor doesn't call it an error. The record is kept (never deleted by the app).
+  public var isDiscarded: Bool { excluded && !inManifest && !isPhoto && !isStill }
+
   /// Round 23: the one test for "this item skips Score": a photo post, or a video made from a photo. Stage and Queue
   /// rules ask this; nothing else about a made video is photo-like.
   public var needsNoScore: Bool { isPhoto || isStill }

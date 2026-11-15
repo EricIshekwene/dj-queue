@@ -26,7 +26,9 @@ import SwiftUI
 ///   `DJQ_DESELECT_SCRIPT=<dir>` clicks empty spots to let go of a text, a trim handle and a field (`DeselectScript`, round 28);
 ///   `DJQ_VERSION_POSTS_SCRIPT=<dir>` drives posts per version in Settings and the editor, then the Queue and Calendar labels
 ///   (`VersionPostsScript`, round 31);
-///   `DJQ_LIST_SORT_SCRIPT=<dir>` checks every list shows its chosen sort (`ListSortScript`, round 32).
+///   `DJQ_LIST_SORT_SCRIPT=<dir>` checks every list shows its chosen sort (`ListSortScript`, round 32);
+///   `DJQ_VERSION_ORDER_SCRIPT=<dir>` drives the version list's posting order and its "Planned to post" lines, then the
+///   Queue card and Library's Removed clips (`VersionOrderScript`, round 35).
 @MainActor
 enum EditorSnapshot {
   static func run(outputDir: String) async -> Int32 {
@@ -110,6 +112,9 @@ enum EditorSnapshot {
         a.loaded = true
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         return await ListSortScript.run(model: a, store: store, out: URL(fileURLWithPath: dir))
+      }
+      if let dir = env["DJQ_VERSION_ORDER_SCRIPT"] {
+        return await VersionOrderScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")
       }
       if let dir = env["DJQ_VERSION_POSTS_SCRIPT"] {
         return await VersionPostsScript.run(store: store, dir: dir, appearance: env["DJQ_EDITOR_LIVE_APPEARANCE"] ?? "light")

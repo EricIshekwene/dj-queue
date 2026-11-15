@@ -136,6 +136,10 @@ final class EditorModel: ObservableObject {
   /// The template form under the Template field (nil = closed).
   @Published var templateForm: EditorTemplateForm?
   @Published private(set) var posts: [PlatformPost] = []
+  /// Round 35: the clip's days on the calendar, its version posts still waiting for one, and its versions' posting order.
+  @Published private(set) var slots: [PlanSlot] = []
+  @Published private(set) var pendingUnits: [PostUnit] = []
+  @Published private(set) var versionOrder: [Int] = [1]
   @Published private(set) var issues: [ValidationIssue] = []
   @Published private(set) var suggestions: [TitleSuggestion] = []
   /// On-video text suggestions (`text_suggestions`), best first.
@@ -254,7 +258,10 @@ final class EditorModel: ObservableObject {
     // Groups changed elsewhere (Settings over the editor, `djq`, Undo on a delete toast) show up in the chips.
     if !snapshotMode {
       groupObserver = ChangeSignal.observe { [weak self] in
-        MainActor.assumeIsolated { self?.reloadGroups() }
+        MainActor.assumeIsolated {
+          self?.reloadGroups()
+          self?.reloadPlan()  // round 35: the engine planning a version, or `djq version-order`, reaches the version list
+        }
       }
     }
   }
@@ -271,6 +278,7 @@ final class EditorModel: ObservableObject {
     var video: Video?, sessionName = "", fileURL: URL?, fileMissing = false, suggestions: [TitleSuggestion] = []
     var textSuggestions: [TitleSuggestion] = []
     var edit = Edit(), versions: [Version] = [], posts: [PlatformPost] = [], issues: [ValidationIssue] = []
+    var slots: [PlanSlot] = [], pendingUnits: [PostUnit] = [], versionOrder: [Int] = [1]
     var audioBlocker: String?
     var finishedPostsUpTo: Int?
     var error: String?, readOnly = false
@@ -299,6 +307,9 @@ final class EditorModel: ObservableObject {
         throw error
       }
       l.posts = try store.posts(where: "video_id=?", [id])
+      l.slots = try store.planSlots(where: "video_id=?", [id])
+      l.pendingUnits = (try? store.pendingUnits(videoId: id, settings: l.settings)) ?? []
+      l.versionOrder = (try? store.versionOrder(videoId: id)) ?? [1]
       l.issues = try Validation.issues(video: v, store: store)
       l.audioBlocker = Self.audioBlocker(store, v)
       l.finishedPostsUpTo = (try? store.kv(PostUnits.finishedKey, as: [String: Int].self))?[id]
@@ -326,6 +337,9 @@ final class EditorModel: ObservableObject {
     edit = Edit()
     versions = []
     posts = []
+    slots = []
+    pendingUnits = []
+    versionOrder = [1]
     issues = []
     suggestions = []
     textSuggestions = []
@@ -362,6 +376,7 @@ final class EditorModel: ObservableObject {
     settings = l.settings; sets = l.sets; templates = l.templates; lastCrop = l.lastCrop
     video = l.video; sessionName = l.sessionName; fileURL = l.fileURL; fileMissing = l.fileMissing
     suggestions = l.suggestions; textSuggestions = l.textSuggestions; edit = l.edit; versions = l.versions; syncedVersions = l.versions; posts = l.posts; issues = l.issues
+    slots = l.slots; pendingUnits = l.pendingUnits; versionOrder = l.versionOrder
     readOnly = l.readOnly; loadError = l.error
     audioBlocker = l.audioBlocker
     finishedPostsUpTo = l.finishedPostsUpTo
@@ -584,6 +599,84 @@ final class EditorModel: ObservableObject {
     let mine = posts.filter { $0.versionNo == number }
     return (mine.filter { $0.state == .posted }.map(\.platform).sorted(),
             mine.filter { !$0.state.isTerminal }.map(\.platform).sorted())
+  }
+
+  // MARK: Version plan and posting order (round 35)
+
+  /// "Planned to post Thu 26 Nov 11:00 AM", or why version `n` has no time yet (`VersionPlanLine`).
+  func planLine(of n: Int) -> String {
+    VersionPlanLine.text(number: n, posts: posts, slots: slots, pending: pendingUnits, count: postCount(n),
+                         inQueue: video?.sentToQueue ?? false, now: Date(), settings: settings)
+  }
+
+  /// The versions in the order they post (`VersionOrder`): the list shows them this way.
+  var orderedVersionNumbers: [Int] { VersionOrder.normalized(versionOrder, versions: versionNumbers) }
+
+  /// 1 for the version that posts first.
+  func orderPosition(_ n: Int) -> Int { (orderedVersionNumbers.firstIndex(of: n) ?? 0) + 1 }
+
+  /// Why the posting order can't change here (nil = it can).
+  var versionOrderOff: String? {
+    if readOnly { return EditorView.readOnlyReason }
+    if video?.type == .long { return "Long-form has one version" }
+    if video?.isPhoto == true { return "A photo post has one version" }
+    return nil
+  }
+
+  /// Moves version `n` `delta` places in the posting order (-1 = earlier), or to the front with `first`.
+  func moveVersion(_ n: Int, by delta: Int = 0, first: Bool = false) {
+    guard versionOrderOff == nil, video != nil else { return }
+    var order = orderedVersionNumbers
+    guard let i = order.firstIndex(of: n) else { return }
+    let j = first ? 0 : min(max(0, i + delta), order.count - 1)
+    guard j != i else { return }
+    order.remove(at: i)
+    order.insert(n, at: j)
+    setVersionOrder(order)
+  }
+
+  /// Writes the clip's posting order (`Store.setVersionOrder`: days already planned swap which version they carry), then
+  /// reads the plan again so every row's "Planned to post" follows. Not an editor undo step: like the post count it
+  /// changes no pixels, and moving a version back is one click.
+  func setVersionOrder(_ order: [Int]) {
+    guard versionOrderOff == nil else { return }
+    commitCaptionDraft()
+    flush()  // a version made a moment ago is saved before its number is used
+    versionOrder = order
+    let store = store, id = videoId
+    Self.saveQueue.async { [weak self] in
+      var failure: String?
+      do {
+        try store.setVersionOrder(videoId: id, order)
+        ChangeSignal.post()
+      } catch {
+        failure = "\(error)"
+        Log.shared.error("editor version order failed: \(error)")
+      }
+      DispatchQueue.main.async {
+        self?.show(failure.map { "Couldn't change the order: \($0)" } ?? "Posts \(VersionOrder.text(order))")
+        self?.reloadPlan()
+      }
+    }
+  }
+
+  /// Reads the clip's posts, days, waiting version posts and posting order again (off the main thread).
+  func reloadPlan() {
+    guard video != nil, !snapshotMode else { return }
+    let store = store, id = videoId, token = loadToken, settings = settings
+    Self.saveQueue.async { [weak self] in
+      let posts = (try? store.posts(where: "video_id=?", [id])) ?? []
+      let slots = (try? store.planSlots(where: "video_id=?", [id])) ?? []
+      let pending = (try? store.pendingUnits(videoId: id, settings: settings)) ?? []
+      let order = (try? store.versionOrder(videoId: id)) ?? [1]
+      DispatchQueue.main.async {
+        guard let self, token == self.loadToken else { return }
+        if self.posts != posts { self.posts = posts }
+        if self.slots != slots { self.slots = slots }
+        if self.pendingUnits != pending { self.pendingUnits = pending }
+        if self.versionOrder != order { self.versionOrder = order }
+      }
+    }
   }
 
   // MARK: Derived — title

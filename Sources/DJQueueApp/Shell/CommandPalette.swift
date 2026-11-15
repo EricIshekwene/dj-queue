@@ -148,7 +148,7 @@ extension AppModel {
 
   /// A clip as a palette row: opens its action page.
   func paletteClipRow(_ v: Video, title: String? = nil) -> PaletteCommand {
-    let chip = libraryIsMissing(v) ? "File missing" : libraryStateChip(v).text
+    let chip = libraryShowsMissing(v) ? "File missing" : libraryStateChip(v).text
     // A photo post says "Photo" / "Carousel · 5" where a clip names its night (D18).
     let meta = [clipContext(v), v.type == .long ? "Long-form" : v.score.map { "Score \($0)" }, chip].compactMap { $0 }.filter { !$0.isEmpty }
     let symbol = v.isPhoto ? (v.isCarousel ? "photo.stack" : "photo") : v.type == .long ? "rectangle" : "rectangle.portrait"

@@ -223,4 +223,14 @@ gif post-today $P/post-today-01-sheet-on-its-own-light $P/post-today-02-posted-l
 still post-today $P/post-today-01-sheet-on-its-own-light
 still post-today-dark $P-dark/post-today-01-sheet-on-its-own-dark
 
+O=version-order
+# Round 35: the order a clip's versions post in. The version list says when each version posts (one line, no platforms),
+# ↑ on v2 makes it post first (the clip's first day now carries v2), ↓/↑ on v1; then Library: clips removed on purpose
+# leave All and read Removed under Excluded.
+gif version-order $O/version-order-01-version-list-number-order-light $O/version-order-02-version-list-v2-first-light \
+                  $O/version-order-03-version-list-v1-later-light
+still version-order $O/version-order-02-version-list-v2-first-light
+still version-order-dark $O-dark/version-order-02-version-list-v2-first-dark
+still library-removed $O/version-order-06-library-removed-light
+
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }

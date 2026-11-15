@@ -130,10 +130,11 @@ struct EditorVersionList: View {
     VStack(alignment: .leading, spacing: 2) {
       Text("Versions").font(DS.type.headline).foregroundStyle(DS.color.text)
         .padding(.horizontal, DS.space.sm).padding(.top, DS.space.sm).padding(.bottom, DS.space.xxs)
-      Text("Each version is its own copy for a repost: editing one never changes another. The clip's Title, crop, cover, size, markers and platforms are shared by every version, and so is the trim unless a version has its own. Turn on each version that's ready to repost.")
+      Text("Each version is its own copy for a repost: editing one never changes another. The clip's Title, crop, cover, size, markers and platforms are shared by every version, and so is the trim unless a version has its own. Turn on each version that's ready to repost. Versions post in the order listed: the arrows change it.")
         .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, DS.space.sm).padding(.bottom, DS.space.xs)
-      ForEach(model.versionNumbers, id: \.self) { n in row(n) }
+      // Round 35: listed in the order they post (1st, 2nd, …); the arrows change it.
+      ForEach(model.orderedVersionNumbers, id: \.self) { n in row(n) }
       DSSeparator().padding(.vertical, DS.space.xxs)
       DSButton("New version from v\(model.versionNo)", icon: "plus", variant: .ghost, size: .sm,
                disabledReason: model.readOnly ? "Editing is off for this clip" : nil,
@@ -141,19 +142,29 @@ struct EditorVersionList: View {
         .padding(.horizontal, DS.space.xxs).padding(.bottom, DS.space.xs)
     }
     .padding(DS.space.xxs)
-    .frame(width: 340)
+    .frame(width: 380)
     .background(DS.color.surfaceRaised)
   }
 
   private func row(_ n: Int) -> some View {
     let u = model.usage(of: n)
     let selected = n == model.versionNo
+    let pos = model.orderPosition(n), count = model.orderedVersionNumbers.count
     return HStack(spacing: DS.space.xs) {
-      Text("v\(n)").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text).frame(width: 26, alignment: .leading)
+      if count > 1 { orderArrows(n, pos: pos, count: count) }
       VStack(alignment: .leading, spacing: 1) {
+        HStack(spacing: 6) {
+          Text("v\(n)").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
+          if count > 1 {
+            DSBadge(VersionOrder.ordinal(pos), style: pos == 1 ? .soft(.info) : .outline, size: .sm,
+                    help: pos == 1 ? "v\(n) posts first" : "v\(n) posts \(VersionOrder.ordinal(pos)) of \(count) versions")
+              .background(ScriptAnchor("Version order v\(n)"))
+          }
+        }
+        // Round 35: when it posts, in one line (no platform list).
+        Text(model.planLine(of: n)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+          .background(ScriptAnchor("Version plan v\(n)"))
         if !u.posted.isEmpty { Text("Posted on " + u.posted.map(\.displayName).joined(separator: ", ")) }
-        if !u.planned.isEmpty { Text("Planned on " + u.planned.map(\.displayName).joined(separator: ", ")) }
-        if u.posted.isEmpty && u.planned.isEmpty { Text(n == 1 ? "Not posted yet" : "Not used yet") }
         if model.isRepostReady(n) {
           Label("Ready to repost", systemImage: "checkmark.circle.fill").foregroundStyle(DS.color.success)
         }
@@ -176,17 +187,34 @@ struct EditorVersionList: View {
                    disabledReason: model.repostReadyOff)
         .background(ScriptAnchor("Repost ready v\(n)"))
       Menu {
+        if count > 1 && pos > 1 && model.versionOrderOff == nil { Button("Post v\(n) first") { model.moveVersion(n, first: true) } }
         Button("Duplicate as a separate version") { model.newVersion(copying: n) }
         if n > 1 { Button("Delete v\(n)…", role: .destructive) { requestDelete(n) } }
       } label: { Image(systemName: "ellipsis").foregroundStyle(DS.color.textSecondary) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .dsTooltip("More actions for v\(n)")
     }
-    .padding(.horizontal, DS.space.sm).frame(minHeight: 40).padding(.vertical, model.isRepostReady(n) ? 3 : 0)
+    .padding(.horizontal, DS.space.sm).frame(minHeight: 48).padding(.vertical, 3)
     .background(selected ? DS.color.selected : .clear, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
     .contentShape(Rectangle())
     .onTapGesture { model.selectVersion(n) }
     .dsTooltip(selected ? nil : "Edit v\(n)'s text and caption")
+  }
+}
+
+extension EditorVersionList {
+  /// Round 35: move a version earlier or later in the posting order (Eric: "easily change that priority").
+  fileprivate func orderArrows(_ n: Int, pos: Int, count: Int) -> some View {
+    let off = model.versionOrderOff
+    return VStack(spacing: 0) {
+      DSIconButton("chevron.up", tooltip: "Post v\(n) earlier", size: .sm,
+                   disabledReason: off ?? (pos == 1 ? "v\(n) already posts first" : nil)) { model.moveVersion(n, by: -1) }
+        .background(ScriptAnchor("Version earlier v\(n)"))
+      DSIconButton("chevron.down", tooltip: "Post v\(n) later", size: .sm,
+                   disabledReason: off ?? (pos == count ? "v\(n) already posts last" : nil)) { model.moveVersion(n, by: 1) }
+        .background(ScriptAnchor("Version later v\(n)"))
+    }
+    .frame(width: 24)
   }
 }
 
