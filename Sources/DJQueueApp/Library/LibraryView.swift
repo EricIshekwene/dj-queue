@@ -68,10 +68,11 @@ struct LibraryView: View {
 
   private func matches(_ v: Video, _ f: LibraryFilter) -> Bool {
     switch f {
-    case .all: true
+    // Round 35: All leaves out clips removed on purpose (`Video.isDiscarded`); Excluded still lists them, as Removed.
+    case .all: !v.isDiscarded
     case .posted: v.state == .posted || v.state == .partial || (v.type == .long && v.longformURL != nil)
     case .excluded: v.excluded
-    case .missing: model.libraryIsMissing(v) || model.libraryIsRemoved(v)
+    case .missing: model.libraryShowsMissing(v) || model.libraryIsRemoved(v)
     case .longform: v.type == .long
     }
   }
@@ -85,15 +86,15 @@ struct LibraryView: View {
       return DSStatusChipOption(id: f.rawValue, title: f.title, count: n, tone: f == .missing && n > 0 ? .danger : nil,
                                 tooltip: tooltip(f))
     }
-    return DSStatusChips(options: pills, selection: prefs.statusBinding(.library), allCount: scope.count,
+    return DSStatusChips(options: pills, selection: prefs.statusBinding(.library), allCount: scope.filter { matches($0, .all) }.count,
                          allTooltip: tooltip(.all))
   }
 
   private func tooltip(_ f: LibraryFilter) -> String {
     switch f {
-    case .all: "Every clip in every state"
+    case .all: "Every clip in every state (clips removed on purpose are under Excluded)"
     case .posted: "Posted on at least one platform (long-form: on YouTube)"
-    case .excluded: "Clips you excluded from posting"
+    case .excluded: "Clips you excluded from posting, and clips removed on purpose"
     case .missing: "File missing, or removed from videos.json"
     case .longform: "Long-form parts for YouTube"
     }
@@ -149,7 +150,7 @@ struct LibraryView: View {
     var c = model.dsClip(v, for: .library)
     c.issues = []
     c.blocks = []
-    c.isMissing = model.libraryIsMissing(v)
+    c.isMissing = model.libraryShowsMissing(v)
     c.status = c.isMissing ? nil : model.libraryStateChip(v)
     c.dateText = model.nextDateLabel(v)
     if mode == .list && !c.isMissing {
@@ -369,9 +370,12 @@ enum LibraryClipState: Equatable {
 }
 
 extension AppModel {
-  /// File missing on disk (danger chip "File missing · Relink", no autoplay). Round 35: not for a clip removed on purpose
-  /// (`Video.isDiscarded`: out of videos.json and excluded), whose file is meant to be gone: that one reads "Removed".
-  func libraryIsMissing(_ v: Video) -> Bool { (v.missing || v.state == .missingFile) && !v.isDiscarded }
+  /// File missing on disk (no autoplay, no editor, no re-render). Round 35: a clip removed on purpose
+  /// (`Video.isDiscarded`) still counts here for what it can do, but reads "Removed", not "File missing"
+  /// (`libraryShowsMissing`).
+  func libraryIsMissing(_ v: Video) -> Bool { v.missing || v.state == .missingFile }
+  /// The danger chip "File missing · Relink" and the Missing filter: not for a clip removed on purpose.
+  func libraryShowsMissing(_ v: Video) -> Bool { libraryIsMissing(v) && !v.isDiscarded }
   /// Gone from videos.json and not kept by Eric (L.S5: Keep / Exclude).
   /// Never a photo post: photos are added in the app and were never in a videos.json (round 21).
   /// (A photo post and a video made from a photo were never in a videos.json.)

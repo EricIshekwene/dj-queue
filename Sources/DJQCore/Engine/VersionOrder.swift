@@ -100,26 +100,25 @@ extension Planner {
     let book = try UnitBook(store: store, settings: settings, videos: [v])
     guard let clip = book[videoId] else { return 0 }
     let today = dm.key(now)
-    let cutoff = now.addingTimeInterval(Self.relayLead)
     let slots = try store.planSlots(where: "video_id=?", [videoId]).sorted { ($0.date, $0.position) < ($1.date, $1.position) }
+    // A day that can still change: after today, no set time, every post only of this clip, and movable by the relay's
+    // own rule (`isMovable`: nothing posted, every live post untouched, an hour or more away and not final in Postiz).
+    // A day another clip shares (a platform's own sort order put it there) stays as it is.
     func free(_ s: PlanSlot) throws -> Bool {
-      guard s.date >= today, !s.isExact else { return false }
-      for p in try store.slotPosts(s.id) {
-        guard [.planned, .rendering, .rendered].contains(p.state), p.scheduledAt >= cutoff else { return false }
-        if try !store.postizJobs(postId: p.id).isEmpty { return false }
-      }
-      return true
+      guard s.date > today, !s.isExact else { return false }
+      guard try store.slotPosts(s.id).allSatisfy({ $0.videoId == videoId }) else { return false }
+      return try isMovable(s, now: now)
     }
     var movable: [PlanSlot] = []
     var fixed: [PlanSlot] = []
     for s in slots { if try free(s) { movable.append(s) } else { fixed.append(s) } }
     guard !movable.isEmpty else { return 0 }
     let movableIds = Set(movable.map(\.id))
-    // Units that stay where they are: on fixed days, or with a post somewhere else (posted, skipped, failed, …).
-    var held = Set(fixed.map(\.unit))
+    // Units that stay where they are: the fixed days'. A unit with a post somewhere else (a repost with no day, say) can
+    // still take a movable day; `createPosts` skips the platforms that already have it.
+    let held = Set(fixed.map(\.unit))
     var days: [(version: Int, day: String)] = fixed.map { ($0.versionNo, $0.date) }
-    for p in try store.posts(where: "video_id=?", [videoId]) where !movableIds.contains(p.planSlotId ?? "") {
-      held.insert(p.unit)
+    for p in try store.posts(where: "video_id=?", [videoId]) where !movableIds.contains(p.planSlotId ?? "") && p.planSlotId == nil {
       if p.state == .posted || !p.state.isTerminal { days.append((p.versionNo, dm.key(p.postedAt ?? p.scheduledAt))) }
     }
     // The units the movable days carry now are exactly the ones to share out again, plus any the clip still needs.
@@ -132,8 +131,13 @@ extension Planner {
     for var s in movable {
       // The first unit in the new order that keeps its version far enough from its other posts.
       let fits = remaining.firstIndex { u in !days.contains { $0.version == u.version && abs(dm.days(from: $0.day, to: s.date)) < gap } }
-      // A day Eric pinned keeps its place: it takes the next unit even when that's a little close to its other post.
-      guard let i = fits ?? (s.pinned && !remaining.isEmpty ? 0 : nil) else {
+      // A day Eric pinned keeps its place: it takes the next unit even when that's a little close to its other post, and
+      // keeps what it has when nothing is left to give it.
+      if s.pinned && remaining.isEmpty {
+        days.append((s.versionNo, s.date))
+        continue
+      }
+      guard let i = fits ?? (s.pinned ? 0 : nil) else {
         // Nothing fits this day: it comes off, and the next pass gives the unit it carried a day that fits.
         try clearSlot(s)
         try store.deletePlanSlot(s.id)
@@ -157,8 +161,14 @@ extension Planner {
       var picker = PlatformPicker(queue: queue, settings: settings)
       var placer = try Placer(store: store, dm: dm)
       for s in toRegenerate {
-        try createPosts(s, settings: settings, dm: dm, picker: &picker, placer: &placer, note: "posting order", notBefore: now,
-                        pullForHistory: false)
+        try createPosts(s, settings: settings, dm: dm, picker: &picker, placer: &placer, note: "posting order",
+                        notBefore: now.addingTimeInterval(Self.autoScheduleLead), pullForHistory: false)
+        // Like the fill: a day that ended up with no post (every platform already has that version post) comes off, or
+        // it would hold the clip on Scheduled for good. The next pass gives its unit a day if one still needs it.
+        if try store.slotPosts(s.id).isEmpty {
+          try store.deletePlanSlot(s.id)
+          try store.logEvent("plan", "\(BulkActions.day(s.date, dm, settings)): \(book.label(videoId, s.unit)) has nothing left to post there, taken off", videoId: videoId)
+        }
       }
     }
     try store.refreshState(videoId: videoId)

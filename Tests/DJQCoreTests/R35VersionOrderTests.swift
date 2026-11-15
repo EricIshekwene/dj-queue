@@ -71,6 +71,7 @@ import Testing
     let before = try slots(f, "clip-0")
     #expect(before.first?.unit == .first)
     let firstDay = try #require(before.first)
+    f.setTime(f.dm.addDays(firstDay.date, -1), "09:00")  // the day before: a day that's today never changes
     try f.store.setVersionOrder(videoId: "clip-0", [2, 1, 3])
     let after = try slots(f, "clip-0")
     // Same day and position, now v2 · 1 with its posts made again for v2; nothing else moved.
@@ -117,6 +118,7 @@ import Testing
     try Planner(store: f.store).autoSchedule()
     let first = try #require(try slots(f, "clip-0").first)
     try f.store.db.run("UPDATE plan_slots SET pinned=1 WHERE id=?", [first.id])
+    f.setTime(f.dm.addDays(first.date, -1), "09:00")
     try f.store.setVersionOrder(videoId: "clip-0", [2, 1])
     let s = try #require(try f.store.planSlots(where: "id=?", [first.id]).first)
     #expect(s.pinned && s.date == first.date && s.unit == PostUnit(version: 2, post: 1))
@@ -147,6 +149,55 @@ import Testing
     let bare = PlanSlot(id: "s", date: f.dm.addDays(f.dm.key(f.clock.now), 3), position: 0, videoId: "clip-0", pinned: false,
                         weekStart: "2026-11-02", unit: PostUnit(version: 2, post: 1))
     #expect(line(2, slots: [bare]).hasPrefix("Planned to post "))
+  }
+
+  @Test func todaySetTimeAndSharedDaysKeepTheirVersion() throws {
+    let f = try setup(2)
+    try addVersion(f, "clip-0", 2)
+    try Planner(store: f.store).autoSchedule()
+    let mine = try slots(f, "clip-0")
+    let first = try #require(mine.first)
+    // Today (even hours away): stays.
+    f.clock.set(f.dm.at(first.date, minutes: 0))
+    try f.store.setVersionOrder(videoId: "clip-0", [2, 1])
+    #expect(try f.store.planSlots(where: "id=?", [first.id]).first?.unit == .first, "a day that's today keeps its version")
+    try f.store.setVersionOrder(videoId: "clip-0", nil)
+    // A day another clip shares (a platform's own order put it there): stays.
+    f.setTime(f.dm.addDays(first.date, -1), "09:00")  // from here on the day is tomorrow, so only the rule under test holds it
+    let post = try #require(try f.store.slotPosts(first.id).first)
+    try f.store.db.run("UPDATE platform_posts SET video_id='clip-1' WHERE id=?", [post.id])
+    try f.store.setVersionOrder(videoId: "clip-0", [2, 1])
+    #expect(try f.store.planSlots(where: "id=?", [first.id]).first?.unit == .first, "a shared day keeps its version")
+    #expect(try f.store.post(id: post.id) != nil, "the other clip's post is untouched")
+    try f.store.db.run("UPDATE platform_posts SET video_id='clip-0' WHERE id=?", [post.id])
+    try f.store.setVersionOrder(videoId: "clip-0", nil)
+    // A set-time day: stays.
+    try f.store.db.run("UPDATE plan_slots SET exact_at=? WHERE id=?", [f.dm.at(first.date, minutes: 20 * 60).timeIntervalSince1970, first.id])
+    try f.store.setVersionOrder(videoId: "clip-0", [2, 1])
+    #expect(try f.store.planSlots(where: "id=?", [first.id]).first?.unit == .first, "a set-time day keeps its version")
+    // Control: the same day without a set time does change.
+    try f.store.setVersionOrder(videoId: "clip-0", nil)
+    try f.store.db.run("UPDATE plan_slots SET exact_at=NULL WHERE id=?", [first.id])
+    try f.store.setVersionOrder(videoId: "clip-0", [2, 1])
+    #expect(try f.store.planSlots(where: "id=?", [first.id]).first?.unit == PostUnit(version: 2, post: 1))
+  }
+
+  @Test func aDayTooCloseToTheSameVersionComesOffAndThePassRefillsIt() throws {
+    let f = try setup(1, perDay: 1)
+    try addVersion(f, "clip-0", 2)
+    // Two days 2 days apart carrying v1 · 1 and v2 · 1; v2 already went out (by hand, no day) the day before the first.
+    try Planner(store: f.store).autoSchedule()
+    let mine = try slots(f, "clip-0")
+    #expect(mine.count >= 1)
+    let gap = try f.store.settings().sameVersionGapDays
+    #expect(gap >= 2)
+    try f.store.setVersionOrder(videoId: "clip-0", [2, 1])
+    let after = try slots(f, "clip-0")
+    for (i, a) in after.enumerated() {
+      for b in after[(i + 1)...] where a.versionNo == b.versionNo { #expect(f.dm.days(from: a.date, to: b.date) >= gap) }
+    }
+    try Planner(store: f.store).autoSchedule()
+    #expect(try f.doublePosts().isEmpty)
   }
 
   @Test func aClipThrownAwayOnPurposeIsRemovedNotMissing() throws {

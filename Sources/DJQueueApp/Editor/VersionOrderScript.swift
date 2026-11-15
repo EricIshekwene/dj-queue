@@ -251,10 +251,17 @@ enum VersionOrderScript {
       if discarded.isEmpty {
         note("this copy has no clip removed from videos.json and excluded; the Library part is skipped")
       } else {
-        check("none of them reads File missing", discarded.allSatisfy { !a.libraryIsMissing($0) })
+        check("none of them reads File missing", discarded.allSatisfy { !a.libraryShowsMissing($0) })
         check("each one's chip is Removed", discarded.allSatisfy { a.libraryStateChip($0).text == "Removed" })
-        check("Missing doesn't count them", discarded.allSatisfy { !a.libraryIsMissing($0) && !a.libraryIsRemoved($0) })
+        check("Missing doesn't count them", discarded.allSatisfy { !a.libraryShowsMissing($0) && !a.libraryIsRemoved($0) })
+        // Library › All with the set's name: the removed quiz clips aren't among the tiles (look at the shot).
         a.screen = .library
+        ListPrefs.shared.reset()
+        ListPrefs.shared.setSearch(.library, "Mix Session")
+        await wait(2500)
+        await shot("library-all-mix-session", w)
+        a.screen = .library
+        ListPrefs.shared.setStatus(.library, LibraryFilter.excluded.rawValue)
         ListPrefs.shared.setSearch(.library, "quiz")
         await wait(2500)
         await shot("library-removed", w)

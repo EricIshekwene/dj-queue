@@ -35,8 +35,9 @@ versions he made.
   ones; a deleted one is skipped. Order only decides which version goes next: every version's first post still comes
   before any repeat, and the spacing rules are unchanged.
 - **D3. Days already on the calendar keep their dates and swap which version they carry** (the clip's first day becomes
-  v2 · 1). A day stays as it is when it's today or earlier, has a set time, has anything posted, is in Postiz, or posts
-  within the hour. A day whose new version would sit closer than "same version gap" to another post of it comes off and
+  v2 · 1). A day stays as it is when it's today or earlier, has a set time, holds another clip's post, or can't move by
+  the relay's own rule (`isMovable`: anything posted, a post touched, final in Postiz, or within the hour). A rebuilt
+  day that ends up with no post comes off, like the fill does. A day whose new version would sit closer than "same version gap" to another post of it comes off and
   the next pass gives it a fitting day; a pinned day never comes off.
 - **D4. The control:** the version list shows versions in posting order with a 1st/2nd/3rd badge and ↑/↓ arrows on each
   row, plus "Post vN first" in the row's ⋯ menu (Mobbin: Upwork reorder highlights, incident.io alert priorities, Square
@@ -50,7 +51,11 @@ versions he made.
   on every platform, which can't be undone. Offered to Eric instead; restoring is one step from batch 2cdb75ca's
   snapshot.
 - **D7. A clip out of videos.json and excluded reads "Removed"** (`Video.isDiscarded`), not "File missing": it never posts
-  and its file being gone is expected. Library doesn't count it under Missing, Doctor lists it as info `files.removed`
+  and its file being gone is expected. Library › All leaves it out (Eric's screenshot: three empty "File missing" tiles between his clips), Excluded still
+  lists it as Removed, Missing doesn't count it, and Doctor lists it as info `files.removed`
   instead of the `files.missing` error. The records stay (the app never deletes them); the files are in the Trash.
 - **D8. Every version gets a day** is round 34's fix (repeat horizon). This round checks it on the five clips once both
   are installed.
+- **D9. Known limit, not changed here:** `Planner.createPosts` still treats v1 · 1 as the clip's first post when a
+  platform has its own sort order (Settings › per-platform order). Eric has none set, so nothing changes for him; it's
+  round 34's file (Planner.swift), noted as a follow-up.
