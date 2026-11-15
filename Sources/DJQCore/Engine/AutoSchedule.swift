@@ -26,6 +26,8 @@ extension Planner {
   public static let relayLead: TimeInterval = 60 * 60
   /// kv key of the layout the plan was last laid out for.
   static let layoutKey = "plan.layoutSig"
+  /// Round 36: kv flag set when repeats came off outside a pass (Repost turned off); the next pass closes the gaps.
+  static let compactKey = "plan.compactDue"
 
   /// What the plan is laid out for. The sort is one canonical string, because a Swift dictionary encodes in hash order.
   struct LayoutSig: Codable, Equatable {
@@ -113,9 +115,12 @@ extension Planner {
     try store.dropStalePastDraftSlots(today: today)
     var ctx = Pass(now: now, today: today, settings: settings, dm: dm, picker: PlatformPicker(queue: queue, settings: settings))
     try adoptDraftSlots(&ctx, &r)
-    // Round 31: a lowered count takes its extra version posts off before anything is filled.
-    if try dropUnitsBeyondCount(now: now) > 0 { ctx.placer = nil }
-    let first = try relayIfDue(&ctx, &r)
+    // Round 31: a lowered count takes its extra version posts off before anything is filled. Round 36: and the
+    // calendar closes the gaps they leave (a relay in the same order), as it does after Repost is turned off.
+    let dropped = try dropUnitsBeyondCount(now: now)
+    if dropped > 0 { ctx.placer = nil }
+    let compact = dropped > 0 || ((try? store.kv(Self.compactKey, as: Bool.self)) ?? false)
+    let first = try relayIfDue(&ctx, &r, compact: compact)
     try fill(&ctx, first: first, &r)
     // A count or posts per version that changed can finish a clip that has nothing left to post (or reopen one).
     for v in try store.videos(where: "type='short-form' AND state IN ('planned','posting','posted','partial')") {
@@ -227,14 +232,22 @@ extension Planner {
 
   /// Runs once when posts/day or the Queue sort changed, and the first run only records the layout (installing never
   /// reshuffles what's there). Returns the order to fill in: the cleared clips in their old order after a posts/day
-  /// change, nil (plain Queue order) after a sort change.
-  private func relayIfDue(_ c: inout Pass, _ r: inout AutoScheduleReport) throws -> [String]? {
+  /// change, nil (plain Queue order) after a sort change. Round 36: `compact` (posts came off: Repost off, a lower count)
+  /// re-lays the same way in the old order, so the days left empty close up.
+  private func relayIfDue(_ c: inout Pass, _ r: inout AutoScheduleReport, compact: Bool = false) throws -> [String]? {
     func key(_ id: String, _ u: PostUnit) -> String { UnitPicker.key(id, u) }
     let sig = LayoutSig(c.settings)
-    let stored: LayoutSig? = try store.kv(Self.layoutKey)
-    guard stored != sig else { return nil }
-    try store.setKV(Self.layoutKey, sig)
-    guard let stored else { return nil }
+    let saved: LayoutSig? = try store.kv(Self.layoutKey)
+    if compact { try store.setKV(Self.compactKey, false) }
+    let stored: LayoutSig
+    if saved != sig {
+      try store.setKV(Self.layoutKey, sig)
+      guard let saved else { return nil }
+      stored = saved
+    } else {
+      guard compact else { return nil }
+      stored = sig
+    }
     let cleared = try movableSlots(c)
     for s in cleared {
       try clearSlot(s)
@@ -246,7 +259,10 @@ extension Planner {
     r.relaid = cleared.count
     r.scheduled -= r.clips.filter { c.previousDay[key($0.videoId, $0.unit)] != nil }.count  // adopted a moment ago: counted by the relay
     r.clips.removeAll { c.previousDay[key($0.videoId, $0.unit)] != nil }
-    if !cleared.isEmpty { try store.logEvent("plan", "Re-laid \(cleared.count) post\(cleared.count == 1 ? "" : "s"): posts per day or the Queue order changed") }
+    if !cleared.isEmpty {
+      let why = saved != sig ? "posts per day or the Queue order changed" : "posts came off, so the days close up"
+      try store.logEvent("plan", "Re-laid \(cleared.count) post\(cleared.count == 1 ? "" : "s"): \(why)")
+    }
     return stored.sort == sig.sort ? cleared.map(\.videoId) : nil
   }
 
@@ -293,8 +309,41 @@ extension Planner {
     let vids = try Set(slots.map(\.videoId)).compactMap { try store.video(id: $0) }
     let book = try UnitBook(store: store, settings: settings, videos: vids)
     var n = 0
-    for s in slots {
-      guard let c = book[s.videoId], s.postNo > (c.counts[s.versionNo] ?? 0), try isMovable(s, now: now) else { continue }
+    // Round 36: a day also comes off when no platform needs it any more: on every active platform the clip posts to,
+    // the version's other posts already make its count (Repost off on a clip whose "2 of 2" went out before its
+    // "1 of 2"). The same per-platform rule as `ClipUnits.needsPost`, so the fill never puts it back. Latest day first.
+    var taken: [String: [Platform: Set<PostUnit>]] = book.clips.mapValues(\.taken)
+    let active = settings.activePlatforms
+    for s in slots.sorted(by: { ($0.date, $0.position) > ($1.date, $1.position) }) {
+      guard let c = book[s.videoId] else { continue }
+      let count = c.counts[s.versionNo] ?? 0
+      let needed = active.contains { p in
+        !c.skipped.contains(p)
+          && ((taken[s.videoId]?[p] ?? []).filter { $0.version == s.versionNo && $0 != s.unit }).count < count
+      }
+      guard s.postNo > count || !needed, try isMovable(s, now: now) else {
+        // The day stays for the platforms that need it; a post on a platform that already has its count of this
+        // version comes off when nothing has touched it yet (planned or rendered, an hour or more away, nothing in
+        // Postiz), so the same video isn't posted there again.
+        if s.postNo <= count {
+          var removed = 0
+          for p in try store.slotPosts(s.id) where p.kind == .regular && [.planned, .rendered].contains(p.state) {
+            let others = ((taken[s.videoId]?[p.platform] ?? []).filter { $0.version == s.versionNo && $0 != s.unit }).count
+            guard others >= count, p.scheduledAt >= now.addingTimeInterval(Self.relayLead),
+                  try store.livePostizJob(postId: p.id) == nil, try store.finalPostizJob(postId: p.id) == nil,
+                  try store.publishedPostizJob(lineage: PostizJob.lineage(p)) == nil else { continue }
+            try store.deletePost(p.id)
+            try store.logEvent("plan", "\(BulkActions.day(s.date, dm, settings)): \(p.platform.displayName) already has v\(s.versionNo)'s post, so \(book.label(s.videoId, s.unit)) won't post there", videoId: s.videoId)
+            removed += 1
+          }
+          guard removed > 0 else { continue }
+          n += 1
+          // A day left with no post would hold the clip on Scheduled for good (like the fill).
+          if try store.slotPosts(s.id).isEmpty && !s.pinned { try store.deletePlanSlot(s.id) }
+          try store.refreshState(videoId: s.videoId)
+        }
+        continue
+      }
       // Like `remove(slotId:)`: its automatic retries go too, and so does any other attempt of it still waiting.
       try store.dropAutoRetries(slot: s)
       for p in try store.posts(where: "video_id=? AND version_no=? AND COALESCE(post_no,1)=? AND kind<>'regular' AND state IN ('planned','rendering','rendered')",
@@ -304,7 +353,10 @@ extension Planner {
       try clearSlot(s)
       try store.deletePlanSlot(s.id)
       try store.refreshState(videoId: s.videoId)
-      try store.logEvent("plan", "\(BulkActions.day(s.date, dm, settings)): \(book.label(s.videoId, s.unit)) taken off, v\(s.versionNo) posts \(c.counts[s.versionNo] ?? 0) time\((c.counts[s.versionNo] ?? 0) == 1 ? "" : "s") now", videoId: s.videoId)
+      // Each platform keeps the unit only where a row of it stays (posted, failed or skipped history).
+      let left = Set(try store.posts(where: "video_id=? AND version_no=? AND COALESCE(post_no,1)=?", [s.videoId, s.versionNo, s.postNo]).map(\.platform))
+      for p in Platform.allCases where !left.contains(p) { taken[s.videoId]?[p]?.remove(s.unit) }
+      try store.logEvent("plan", "\(BulkActions.day(s.date, dm, settings)): \(book.label(s.videoId, s.unit)) taken off, v\(s.versionNo) posts \(count) time\(count == 1 ? "" : "s") now", videoId: s.videoId)
       n += 1
     }
     return n

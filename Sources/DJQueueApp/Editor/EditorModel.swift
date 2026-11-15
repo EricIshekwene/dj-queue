@@ -214,6 +214,8 @@ final class EditorModel: ObservableObject {
   /// Round 31: the highest version of this clip that had finished posting before round 31 (`PostUnits.finishedKey`):
   /// those keep the one post they had unless a count is set. nil for every other clip.
   @Published private(set) var finishedPostsUpTo: Int?
+  /// Round 36: Repost for this clip (`Store.setRepost`). Off (the default): each version posts once.
+  @Published private(set) var repostOn = false
   /// True while a trim handle is being dragged (expensive derived work waits for the drag end).
   @Published private(set) var trimDragging = false
   /// Round 24: the part of the clip file the timeline shows (nil before a clip loads, which reads as the whole file).
@@ -281,6 +283,7 @@ final class EditorModel: ObservableObject {
     var slots: [PlanSlot] = [], pendingUnits: [PostUnit] = [], versionOrder: [Int] = [1]
     var audioBlocker: String?
     var finishedPostsUpTo: Int?
+    var repostOn = false
     var error: String?, readOnly = false
   }
 
@@ -313,6 +316,7 @@ final class EditorModel: ObservableObject {
       l.issues = try Validation.issues(video: v, store: store)
       l.audioBlocker = Self.audioBlocker(store, v)
       l.finishedPostsUpTo = (try? store.kv(PostUnits.finishedKey, as: [String: Int].self))?[id]
+      l.repostOn = (try? store.repostOn(videoId: id)) ?? false
     } catch {
       l.error = l.readOnly ? "This \(l.video?.isPhoto == true ? "post" : "clip")'s saved edit can't be read, so editing is off to protect it. Run Doctor."
         : "Couldn't load: \(error)"
@@ -380,6 +384,7 @@ final class EditorModel: ObservableObject {
     readOnly = l.readOnly; loadError = l.error
     audioBlocker = l.audioBlocker
     finishedPostsUpTo = l.finishedPostsUpTo
+    repostOn = l.repostOn
     fieldRevision &+= 1
     viewportRaw = l.video?.isPhoto == true ? nil : TimelineViewport.initial(duration: duration, trim: trim)
     if let v = l.video, let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
@@ -1697,10 +1702,33 @@ final class EditorModel: ObservableObject {
 
   /// What version `n` posts without a count of its own: Settings → Schedule, or the one post a clip finished before
   /// round 31 keeps (`PostUnits.count`).
-  func defaultPostCount(_ n: Int) -> Int { PostUnits.count(n, own: nil, settings: settings, finishedUpTo: finishedPostsUpTo) }
+  func defaultPostCount(_ n: Int) -> Int {
+    PostUnits.count(n, own: nil, settings: settings, finishedUpTo: finishedPostsUpTo, repost: repostOn)
+  }
 
   /// How many times version `n` posts on each platform.
-  func postCount(_ n: Int) -> Int { PostUnits.count(n, own: ownPostCount(n), settings: settings, finishedUpTo: finishedPostsUpTo) }
+  func postCount(_ n: Int) -> Int {
+    PostUnits.count(n, own: ownPostCount(n), settings: settings, finishedUpTo: finishedPostsUpTo, repost: repostOn)
+  }
+
+  /// Round 36: turns Repost on or off for the clip (every version). Planning data only: nothing is re-saved or
+  /// re-rendered, and it isn't an editor undo step (one click turns it back). Off takes its planned repeats off at once.
+  func setRepost(_ on: Bool) {
+    guard postCountOff == nil, video != nil, repostOn != on else { return }
+    repostOn = on
+    let store = store, id = videoId
+    Self.saveQueue.async { [weak self] in
+      do {
+        try store.setRepost(videoId: id, on)
+        ChangeSignal.post()
+      } catch {
+        Log.shared.error("editor repost failed: \(error)")
+        DispatchQueue.main.async { self?.repostOn = !on }  // the switch shows what's stored
+      }
+    }
+    show(on ? "Repost on: each version posts \(settings.postsPerVersion == 1 ? "once" : "\(settings.postsPerVersion) times") (its own count where set)"
+            : "Repost off: each version posts once. Planned reposts come off.")
+  }
 
   /// Sets version `n`'s own post count (nil = back to the default). Only the count: it changes no pixels, so nothing
   /// is re-saved or re-rendered (`Store.setPostCount`), and like Ready to repost on bulk undo it isn't an editor undo

@@ -62,7 +62,12 @@ extension AppModel {
   /// `previewChanged`) don't demote the screen's other visible clips.
   func requestProxies(_ visibleIds: [String], prefetch: [String] = [], keepOthersVisible: Bool = false) {
     let range = playback.loop
-    func eligible(_ ids: [String]) -> [String] { ids.filter { id in videoById[id].map { $0.type == .short && !$0.missing && !$0.isPhoto } ?? false } }
+    // Each clip once: a Calendar week or 3-day view can show one clip on two days (a version post and its repeat), and
+    // `gens` below needs unique ids (round 36: a crash in the hidden version-posts check).
+    func eligible(_ ids: [String]) -> [String] {
+      var seen = Set<String>()
+      return ids.filter { id in seen.insert(id).inserted && (videoById[id].map { $0.type == .short && !$0.missing && !$0.isPhoto } ?? false) }
+    }
     let now = eligible(visibleIds), later = eligible(prefetch).filter { !now.contains($0) }
     for id in now {
       if let i = recentProxyIds.firstIndex(of: id) { recentProxyIds.remove(at: i) }

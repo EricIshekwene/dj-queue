@@ -196,17 +196,17 @@ still version-trim-dark $T-dark/vtrim-04-all-versions-dark
 V=version-posts
 # Round 31: every version is its own post and posts twice. Settings › Schedule's Posts per version, a version's own count
 # in the editor, then the Queue (next version post on the date chip, the others as tags) and the Calendar week.
-gif version-posts $V/version-posts-01-settings-posts-per-version-light $V/version-posts-02-editor-v2-default-light \
-                  $V/version-posts-03-editor-v2-own-count-light $V/version-posts-05-queue-two-versions-light \
-                  $V/version-posts-04-queue-version-posts-light $V/version-posts-07-calendar-week-later-posts-light \
-                  $V/version-posts-10-calendar-month-later-posts-light
-still version-posts-queue $V/version-posts-04-queue-version-posts-light
-still version-posts-calendar $V/version-posts-07-calendar-week-later-posts-light
-still version-posts-month $V-dark/version-posts-10-calendar-month-later-posts-dark
+gif version-posts $V/version-posts-01-settings-posts-per-version-light $V/version-posts-04-editor-v2-default-light \
+                  $V/version-posts-05-editor-v2-own-count-light $V/version-posts-07-queue-two-versions-light \
+                  $V/version-posts-06-queue-version-posts-light $V/version-posts-09-calendar-week-later-posts-light \
+                  $V/version-posts-12-calendar-month-later-posts-light
+still version-posts-queue $V/version-posts-06-queue-version-posts-light
+still version-posts-calendar $V/version-posts-09-calendar-week-later-posts-light
+still version-posts-month $V-dark/version-posts-12-calendar-month-later-posts-dark
 
 # Round 34: every post in the Queue has a day (No day yet 0, every card dated), and the month filled with them.
-still queue-every-day $V/version-posts-04-queue-version-posts-light
-still queue-every-day-month $V-dark/version-posts-10-calendar-month-later-posts-dark
+still queue-every-day $V/version-posts-06-queue-version-posts-light
+still queue-every-day-month $V-dark/version-posts-12-calendar-month-later-posts-dark
 
 L=list-sort
 # Round 32: the Queue's sort wins. Next post first (posting order, scores mixed), then Worst → best and Best → worst in
@@ -231,6 +231,9 @@ gif version-order $O/version-order-01-version-list-number-order-light $O/version
                   $O/version-order-03-version-list-v1-later-light
 still version-order $O/version-order-02-version-list-v2-first-light
 still version-order-dark $O-dark/version-order-02-version-list-v2-first-dark
-still library-removed $O/version-order-06-library-removed-light
+still library-removed $O/version-order-07-library-removed-light
+# Round 36: Repost per clip (off by default) in the editor, and each version's Posts in the versions list.
+still repost-switch $V/version-posts-03-editor-repost-on-light
+still version-posts-list $O/version-order-04-version-list-v2-posts-light
 
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }

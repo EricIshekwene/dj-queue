@@ -173,3 +173,10 @@ extension Fixture {
 /// CPU seconds this thread has used. Timing tests read this rather than a wall clock, which measures the machine's
 /// load: the update gate runs the suite while other work is going on. Synchronous code only (a thread hop loses it).
 func threadCPUSeconds() -> Double { Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)) / 1_000_000_000 }
+
+extension Fixture {
+  /// Round 36: Repost on for every short clip (it's off by default: each version posts once).
+  func repostAll() throws {
+    for id in try store.videos(where: "type='short-form'").map(\.id) { try store.setRepost(videoId: id, true) }
+  }
+}

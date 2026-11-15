@@ -191,7 +191,10 @@ enum VersionPostsScript {
       check("Settings › Schedule shows Posts per version", has("Posts per version"))
       await click("Posts per version", at: .trailing)
       check("click + → posts per version \(before) → \(before + 1) in the store", settings().postsPerVersion == before + 1)
-      check("…and a v1 that has no count of its own follows it", ownCount(id, 1) != nil || count(id, 1) == before + 1)
+      // Round 36: the default reaches a v1 with no count of its own only on a clip with Repost on (off: once).
+      let repostOn = (try? store.repostOn(videoId: id)) ?? false
+      check("…and a v1 that has no count of its own follows it (Repost \(repostOn ? "on" : "off"))",
+            ownCount(id, 1) != nil || count(id, 1) == (repostOn ? before + 1 : 1))
       await shot("settings-posts-per-version")
       // The stepper counts from what the app shows: let the save land in the app first, as a person's next click would.
       for _ in 0..<20 where a.settings.postsPerVersion != before + 1 { await wait(250) }
@@ -210,6 +213,16 @@ enum VersionPostsScript {
       e.selectVersion(2)
       await wait(900)
       check("the editor shows the Posts row for v2", e.versionNo == 2 && has("Post count"))
+      // Round 36: the clip's Repost switch, off by default; a real click turns it on, and the count follows.
+      let repostBefore = (try? store.repostOn(videoId: id)) ?? true
+      check("Repost starts off (each version posts once)", !repostBefore && count(id, 1) == 1)
+      check("the editor shows the Repost switch", has("Repost switch"))
+      await shot("editor-repost-off")
+      await click("Repost switch")
+      for _ in 0..<20 where (try? store.repostOn(videoId: id)) != true { await wait(250) }
+      check("click Repost → on in the store; v1 posts \(settings().postsPerVersion) times", (try? store.repostOn(videoId: id)) == true
+              && count(id, 1) == settings().postsPerVersion)
+      await shot("editor-repost-on")
       let look = stamp(id)
       let v2 = count(id, 2)
       check("v2 starts at the default (\(v2))", ownCount(id, 2) == nil && v2 == e.defaultPostCount(2))
@@ -253,7 +266,11 @@ enum VersionPostsScript {
         tags = marks("Unit tag ")
       }
       if tags.isEmpty && screenLocked { note("screen locked: the Queue's cards may not be drawn, so their tags can't be found") }
-      check("the Queue draws version-post tags (\(tags.count))", !tags.isEmpty)
+      // Round 36: with Repost off by default only clips with several versions (or Repost on) have tags; the first cards
+      // may have none. The search below finds the two-version clip's own tags either way.
+      let expectTags = a.queueSorted(a.queueClips).prefix(4).contains { !a.dsClip($0, for: .queue).units.isEmpty }
+      if expectTags { check("the Queue draws version-post tags (\(tags.count))", !tags.isEmpty) }
+      else { note("the first Queue cards post once each (Repost off): no tags expected there") }
       check("the Queue draws date chips with a version post",
             a.queueList.prefix(4).contains { a.nextUnitLabel($0.id) != nil } && !marks("Date chip ").isEmpty)
       let waiting = a.queueList.filter { a.nextSlotByVideo[$0.id] == nil }

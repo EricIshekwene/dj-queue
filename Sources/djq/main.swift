@@ -73,11 +73,13 @@ usage: djq <command> [args]
   fixed <post> | reset <post> | skip <post> | post-now <post> | shift-plan <post>
   copyright <post> reupload [N]|skip|accept
   repost <video> <platform> | longform-posted <video> <url>
-  post-count <video> [--version N] <0-9|default> [--json]   how many times a version posts on each platform
+  reposts <video> [on|off] [--json] | reposts --list [--json]   Repost for a clip (off by default: each version posts once;
+                                      on: each version posts its count). Off takes its planned repeats off at once
+  post-count <video> [--version N] <0-9|default> [--json]   how many times a version posts on each platform (once while Repost is off)
                                       (default: Settings, 2); 0 = that version doesn't post. Shows every version post
   version-order <video> [2,1,3 | --default] [--json]   the order a clip's versions post in (v1, v2, v3 unless set);
                                       days already planned swap which version they carry. Shows every version post
-  posts-per-version [0-9] [--dry-run] show or set the default (Settings → Schedule); undo with bulk undo
+  posts-per-version [0-9] [--dry-run] show or set how many times a version posts on a clip with Repost on (Settings → Schedule)
   post-spacing [--clip D] [--version D] [--dry-run]   show or set the gaps: days between two posts of one clip (≥1),
                                       days before a version posts again; undo with bulk undo
   repost-ready <video> [--version N] [--off]   mark a text version ready to repost (or not); default v1
@@ -251,7 +253,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "post-count", "version-order", "posts-per-version", "post-spacing", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at", "trim"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "post-count", "version-order", "reposts", "posts-per-version", "post-spacing", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at", "trim"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -437,7 +439,7 @@ func run() throws -> Int32 {
     if !d.post_units.isEmpty {
       print("  posts  " + d.post_units.map { u in
         "\(u.label) " + (u.status == "waiting" ? "waiting" : u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "done")
-      }.joined(separator: " · "))
+      }.joined(separator: " · ") + (d.repost ? "  (Repost on)" : ""))
     }
     for i in d.issues { print("  issue  \(i.message)") }
 
@@ -896,6 +898,33 @@ func run() throws -> Int32 {
     for u in units {
       print("  \(pad(u.label, 12)) \(pad(u.status, 10)) \(u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "")"
             + (u.platforms_done.isEmpty ? "" : "  has it: " + u.platforms_done.joined(separator: ", ")))
+    }
+
+  case "reposts":
+    if flag("--list") {
+      let ids = try store.repostClips().sorted()
+      let vids = try ids.compactMap { try store.video(id: $0) }
+      if flag("--json") { try printJSON(vids.map(\.id)); return 0 }
+      if vids.isEmpty { print("Repost is off on every clip (each version posts once)") }
+      for v in vids { print("\(v.id.prefix(8))  \(v.displayName)") }
+      return 0
+    }
+    let v = try resolveVideo(store, try arg(0, "video id"))
+    if let raw = args.dropFirst().first(where: { !$0.hasPrefix("--") }) {
+      guard ["on", "off"].contains(raw) else { throw EngineError("reposts <video> on|off") }
+      wrote = try store.setRepost(videoId: v.id, raw == "on")
+      if wrote { try Planner(store: store).autoSchedule() }
+    }
+    let on = try store.repostOn(videoId: v.id)
+    let units = try AgentAPI.units(v.id, store: store, settings: settings)
+    if flag("--json") {
+      struct Out: Encodable { let video_id: String; let repost: Bool; let post_units: [AgentAPI.UnitOut] }
+      try printJSON(Out(video_id: v.id, repost: on, post_units: units))
+      return 0
+    }
+    print("\(v.tag) Repost \(on ? "on: each version posts its count" : "off: each version posts once")")
+    for u in units {
+      print("  \(pad(u.label, 12)) \(pad(u.status, 10)) \(u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "")")
     }
 
   case "version-order":

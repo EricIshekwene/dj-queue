@@ -12,6 +12,8 @@ import Testing
       $0.postsPerDay = perDay
       $0.postsPerVersion = each
     }
+    // Round 36: Repost is off by default; these rules are about clips with it on.
+    for id in try f.store.videos(where: "type='short-form'").map(\.id) { try f.store.setRepost(videoId: id, true) }
     return f
   }
 
@@ -220,6 +222,7 @@ import Testing
   /// post it had, while a scheduled clip gets its second.
   @Test func schema12KeepsTheBackCatalogueAsItWas() throws {
     let f = try Fixture.engine(2)
+    try f.repostAll()
     try f.paths.ensure()
     let file = f.paths.database
     do {
@@ -251,6 +254,9 @@ import Testing
     #expect(try s.db.one("PRAGMA user_version")?.int("user_version") == 12)
     let finished: [String: Int]? = try s.kv(PostUnits.finishedKey)
     #expect(finished == ["clip-0": 2])
+    // Round 36: Repost is off by default (each version once); these are the counts with it on.
+    #expect(try s.postCount(videoId: "clip-1", version: 1) == 1)
+    for id in ["clip-0", "clip-1"] { try s.setRepost(videoId: id, true) }
     #expect(try s.postCount(videoId: "clip-0", version: 1) == 1 && s.postCount(videoId: "clip-1", version: 1) == 2)
     #expect(try s.postCount(videoId: "clip-0", version: 2) == 0, "an old v2 of a finished clip never posts by itself")
     #expect(try s.postCount(videoId: "clip-0", version: 3) == 2, "a version added later follows the new rule")

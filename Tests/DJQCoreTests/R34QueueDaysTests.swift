@@ -12,6 +12,7 @@ import Testing
   /// was to post before "v1 · 1 of 2". The repeat now only takes a day after the first post.
   @Test func aRepeatNeverGoesBeforeTheClipsFirstPost() throws {
     let f = try Fixture.engine(2)
+    try f.repostAll()  // round 36: these are about clips with Repost on
     try f.updateSettings { $0.postsPerDay = 2; $0.postsPerVersion = 2 }
     try Planner(store: f.store).autoSchedule()
     let mine = try slots(f, "clip-0")
@@ -28,6 +29,7 @@ import Testing
   /// A new clip takes the clip's last repeat only, so a moved repeat never jumps ahead of its own clip's later post.
   @Test func aNewClipTakesOnlyAClipsLastPost() throws {
     let f = try Fixture.engine(4)
+    try f.repostAll()  // round 36: these are about clips with Repost on
     try f.updateSettings { $0.postsPerDay = 1; $0.postsPerVersion = 3 }
     try f.store.setSentToQueue("clip-3", false)
     try f.store.refreshState(videoId: "clip-3")
@@ -47,6 +49,7 @@ import Testing
   /// The overlap rule still sees a clip placed earlier the same day (review finding: a per-day lookup cache missed it).
   @Test func avoidOverlapHoldsOnTheSameDay() throws {
     let f = try Fixture.engine(3, scores: [10, 20, 30])
+    try f.repostAll()  // round 36: these are about clips with Repost on
     f.entries[2]["start"] = 10.0  // clip-1 overlaps clip-0 (same session, part 1)
     f.entries[2]["end"] = 31.0
     try f.saveManifest()
@@ -65,6 +68,7 @@ import Testing
   /// on, and that repeat's later posts move with it so the clip's posts stay in order.
   @Test func aBumpLeavesPinsAndTheNextWeekAlone() throws {
     let f = try Fixture.engine(8)
+    try f.repostAll()  // round 36: these are about clips with Repost on
     try f.updateSettings { $0.postsPerDay = 1; $0.postsPerVersion = 2 }
     try f.store.setSentToQueue("clip-7", false)
     try f.store.refreshState(videoId: "clip-7")

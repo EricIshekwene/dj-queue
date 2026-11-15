@@ -538,8 +538,12 @@ public final class Planner: @unchecked Sendable {
     guard let v = try store.video(id: videoId) else { return false }
     if unit == .first, v.alreadyPostedOn.contains(p) { return false }
     if try store.edit(videoId: videoId).isSkipped(p, defaults: try store.settings().defaults) { return false }
-    return try store.posts(where: "video_id=? AND platform=? AND version_no=? AND COALESCE(post_no,1)=?",
-                           [videoId, p.rawValue, unit.version, unit.post]).isEmpty
+    let rows = try store.posts(where: "video_id=? AND platform=? AND version_no=?", [videoId, p.rawValue, unit.version])
+    guard !rows.contains(where: { $0.unit == unit }) else { return false }
+    // Round 36: p already has as many of this version's posts as it posts (Repost off: a "2 of 2" that went out first).
+    var others = Set(rows.map(\.unit))
+    if unit.version == 1, v.alreadyPostedOn.contains(p) { others.insert(.first) }
+    return others.count < (try store.postCount(videoId: videoId, version: unit.version))
   }
 
   func usable(_ videoId: String, on p: Platform) throws -> Bool { try usable(videoId, .first, on: p) }

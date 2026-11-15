@@ -18,10 +18,12 @@ public enum PostUnits {
   public static let maxCount = 9
 
   /// Post count of version `number`: its own, else the default (a clip finished before round 31 keeps what it had).
-  public static func count(_ number: Int, own: Int?, settings: Settings, finishedUpTo: Int?) -> Int {
+  /// Round 36: without a count of its own a version posts once, unless Eric turned Repost on for the clip
+  /// (`RepostSwitch`); then `postsPerVersion` times. A version's own count (0 = never) always wins, Repost on or off.
+  public static func count(_ number: Int, own: Int?, settings: Settings, finishedUpTo: Int?, repost: Bool = true) -> Int {
     if let own { return min(max(0, own), maxCount) }
     if let top = finishedUpTo, number <= top { return number == 1 ? 1 : 0 }
-    return min(max(1, settings.postsPerVersion), maxCount)
+    return repost ? min(max(1, settings.postsPerVersion), maxCount) : 1
   }
 }
 
@@ -50,8 +52,15 @@ public struct ClipUnits: Sendable {
   /// Total posts this clip makes per platform over all its versions.
   public var total: Int { counts.values.reduce(0, +) }
 
+  /// Round 36: a platform also counts as done for a version once it has as many of that version's posts as the version
+  /// posts (with Repost off, a "2 of 2" that already went out there covers the version's one post).
   public func needsPost(_ u: PostUnit, on platforms: [Platform]) -> Bool {
-    platforms.contains { !skipped.contains($0) && !(taken[$0]?.contains(u) ?? false) }
+    let count = counts[u.version] ?? 0
+    return platforms.contains { p in
+      guard !skipped.contains(p) else { return false }
+      let have = taken[p] ?? []
+      return !have.contains(u) && have.filter { $0.version == u.version }.count < count
+    }
   }
 
   /// Units still waiting for a day.
@@ -75,6 +84,7 @@ public struct UnitBook: Sendable {
     let vids = try videos ?? store.videos(where: "type='short-form'")
     let finished: [String: Int] = (try? store.kv(PostUnits.finishedKey, as: [String: Int].self)) ?? [:]
     let orders = try store.versionOrders()
+    let reposting = try store.repostClips()
     // Only the clips asked about: `computeState` reads one clip's book on every state refresh.
     let ids = vids.filter { $0.type == .short }.map(\.id)
     let some = videos != nil
@@ -95,7 +105,9 @@ public struct UnitBook: Sendable {
       var counts: [Int: Int] = [:]
       var own = versions[v.id] ?? [:]
       if own[1] == nil { own[1] = .some(nil) }
-      for (n, c) in own { counts[n] = PostUnits.count(n, own: c, settings: settings, finishedUpTo: finished[v.id]) }
+      for (n, c) in own {
+        counts[n] = PostUnits.count(n, own: c, settings: settings, finishedUpTo: finished[v.id], repost: reposting.contains(v.id))
+      }
       var taken: [Platform: Set<PostUnit>] = [:]
       for p in v.alreadyPostedOn { taken[p, default: []].insert(.first) }
       var days: [(Int, String)] = []
@@ -197,7 +209,7 @@ extension Store {
     let s = try settings ?? self.settings()
     let finished: [String: Int] = (try? kv(PostUnits.finishedKey, as: [String: Int].self)) ?? [:]
     let own = try versions(videoId: videoId).first { $0.number == version }?.postCount
-    return PostUnits.count(version, own: own, settings: s, finishedUpTo: finished[videoId])
+    return PostUnits.count(version, own: own, settings: s, finishedUpTo: finished[videoId], repost: try repostOn(videoId: videoId))
   }
 
   /// Units of a clip still waiting for a day (nothing for long-form).
@@ -232,8 +244,9 @@ extension Store {
         try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,0)", [videoId, 1, JSONCoding.string(ver)])
       }
       changed = true
-      // A lower count takes its extra version posts off the calendar at once (the engine's pass does it too).
-      try Planner(store: self).dropUnitsBeyondCount(videoId: videoId)
+      // A lower count takes its extra version posts off the calendar at once (the engine's pass does it too), and the
+      // next pass closes the gaps (round 36).
+      if try Planner(store: self).dropUnitsBeyondCount(videoId: videoId) > 0 { try setKV(Planner.compactKey, true) }
       try logEvent("version", count.map { "v\(number) posts \($0) time\($0 == 1 ? "" : "s") on each platform" }
                      ?? "v\(number) posts the default number of times", videoId: videoId)
       try refreshState(videoId: videoId)
