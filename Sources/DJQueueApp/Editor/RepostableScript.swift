@@ -176,7 +176,7 @@ enum RepostableScript {
       a.refreshNow()
       a.loaded = true
       a.screen = .edit
-      let shorts = a.editList.filter { $0.type == .short && !$0.missing }
+      let shorts = a.editList.filter { $0.type == .short && !$0.missing && !$0.isPhoto && !$0.isStill }
       guard let v = shorts.first, let other = shorts.first(where: { $0.id != v.id }) else { check("two Edit clips", false); return }
       clip = v.id
       note("clip \(v.id.prefix(8)) “\(a.displayName(v))”")

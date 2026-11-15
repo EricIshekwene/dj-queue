@@ -261,7 +261,7 @@ struct EditorPostCountRow: View {
     if own == 0 { return "v\(n) doesn't post." }
     if own != nil { return "Set for v\(n). Without it: \(times(fallback).lowercased())." }
     if fallback == 0 { return "v\(n) doesn't post (it went out before reposts were counted)." }
-    return repost ? "The clip is repostable: \(times(fallback).lowercased()) on each platform." : "On each platform."
+    return repost ? "Repostable clip: \(times(fallback).lowercased()) on each platform." : "How many times v\(n) goes out on each platform."
   }
 }
 
