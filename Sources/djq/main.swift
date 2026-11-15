@@ -437,7 +437,7 @@ func run() throws -> Int32 {
     if !d.post_units.isEmpty {
       print("  posts  " + d.post_units.map { u in
         "\(u.label) " + (u.status == "waiting" ? "waiting" : u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "done")
-      }.joined(separator: " · ") + (d.repost ? "  (Repost on)" : ""))
+      }.joined(separator: " · ") + (d.repost ? "  (repostable)" : ""))
     }
     for i in d.issues { print("  issue  \(i.message)") }
 

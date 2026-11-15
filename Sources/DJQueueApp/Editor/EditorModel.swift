@@ -675,10 +675,13 @@ final class EditorModel: ObservableObject {
       let pending = (try? store.pendingUnits(videoId: id, settings: settings)) ?? []
       let order = (try? store.versionOrder(videoId: id)) ?? [1]
       let repost = (try? store.repostOn(videoId: id)) ?? false
+      let saved = (try? store.versions(videoId: id)) ?? []
       DispatchQueue.main.async {
         guard let self, token == self.loadToken else { return }
-        // Round 37: Mark repostable from the Queue or Edit while the editor is open reaches its Posts row.
+        // Round 37: Mark repostable / not repostable from the Queue or Edit while the editor is open reaches its Posts
+        // rows (a count changed here and not yet written stays as it is).
         if self.repostOn != repost { self.repostOn = repost }
+        self.syncPostCounts(saved)
         if self.posts != posts { self.posts = posts }
         if self.slots != slots { self.slots = slots }
         if self.pendingUnits != pending { self.pendingUnits = pending }

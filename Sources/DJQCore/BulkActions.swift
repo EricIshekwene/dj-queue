@@ -276,10 +276,11 @@ public final class BulkActions: @unchecked Sendable {
   }
 
   /// Round 37: Mark repostable (every version posts `postsPerVersion` times, or its own Posts) or not repostable (every
-  /// version posts once). Journaled with the plan, so undo also brings back the days the reposts had.
+  /// version posts once). Journaled without the plan: the engine re-lays it within seconds (compaction), which would
+  /// make a plan undo conflict. Undo puts the mark and the versions' Posts back, and the next pass plans from them.
   @discardableResult
   public func setRepostable(_ ids: [String], _ on: Bool, dryRun: Bool = false) throws -> BulkResult {
-    try run(on ? "repostable" : "not-repostable", ids: ids, dryRun: dryRun, plan: true, repost: true) { _, v, _ in
+    try run(on ? "repostable" : "not-repostable", ids: ids, dryRun: dryRun, repost: true) { _, v, _ in
       guard v.type == .short else { return .skipped("long-form is never reposted") }
       return try store.setRepost(videoId: v.id, on) ? .changed : .unchanged
     }
@@ -1268,14 +1269,18 @@ public final class BulkActions: @unchecked Sendable {
     } else {
       try db.run("DELETE FROM edits WHERE video_id=?", [c.id])
     }
-    // Round 20: each version keeps the Ready to repost it has now (undo takes back edits, not that mark).
+    // Round 20: each version keeps the Ready to repost it has now (undo takes back edits, not that mark). Round 37: and
+    // its Posts, unless this batch was Mark repostable / not repostable (which journals `repost`).
     let ready = Set(try store.repostReadyVersions(videoId: c.id))
+    let counts = Dictionary(try store.versions(videoId: c.id).map { ($0.number, $0.postCount) }, uniquingKeysWith: { a, _ in a })
     try db.run("DELETE FROM versions WHERE video_id=?", [c.id])
     for (n, json) in c.versions {
       let number = Int(n) ?? 1
       var out = json
-      if var v = try? JSONCoding.decoder.decode(Version.self, from: Data(json.utf8)), (v.repostReady == true) != ready.contains(number) {
+      if var v = try? JSONCoding.decoder.decode(Version.self, from: Data(json.utf8)),
+         (v.repostReady == true) != ready.contains(number) || (c.repost == nil && v.postCount != (counts[number] ?? nil)) {
         v.repostReady = ready.contains(number) ? true : nil
+        if c.repost == nil { v.postCount = counts[number] ?? nil }
         out = JSONCoding.string(v)
       }
       try db.run("INSERT INTO versions(video_id,number,json,updated_at) VALUES(?,?,?,?)", [c.id, number, out, store.clock.now])

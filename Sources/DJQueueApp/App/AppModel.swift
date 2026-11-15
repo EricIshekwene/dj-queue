@@ -413,9 +413,10 @@ final class AppModel {
       l.lastHeartbeat = try store.lastHeartbeat()
       l.versionCounts = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT video_id, COUNT(*) AS n FROM versions GROUP BY video_id")
         .compactMap { r in r.string("video_id").map { ($0, r.int("n") ?? 0) } })
-      l.repostable = try store.repostableClips()
+      // Round 37: from the plan's own book below (one read), never failing the load.
       // Round 31: version posts. A book that can't be read leaves labels at their plain version ("v2"), never the load.
       l.unitBook = try? UnitBook(store: store, settings: l.settings, videos: l.videos)
+      l.repostable = Set((l.unitBook?.clips ?? [:]).filter { $0.value.counts.values.contains { $0 > 1 } }.map(\.key))
       if let book = l.unitBook {
         let upcoming = Dictionary(grouping: l.upcomingSlots, by: \.videoId)
         for id in book.clips.keys { l.unitLines[id] = book.lines(id, upcoming: upcoming[id] ?? []) }

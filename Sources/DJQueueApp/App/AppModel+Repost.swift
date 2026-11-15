@@ -10,6 +10,10 @@ extension AppModel {
   func markRepostable(_ ids: [String], _ on: Bool) {
     let shorts = ids.filter { video($0)?.type == .short }
     guard !shorts.isEmpty else { show("Long-form is never reposted", error: true); return }
+    if on, settings.postsPerVersion <= 1 {
+      show("Posts per version is 1 (Settings › Schedule): set it to 2 or more, or set a version's Posts", error: true)
+      return
+    }
     let n = AppModel.pipelineClips(shorts.count)
     let times = EditorPostCountRow.times(max(1, settings.postsPerVersion)).lowercased()
     pipelineBulk(on ? "Mark \(n) repostable?" : "Mark \(n) not repostable?", verb: on ? "Mark repostable" : "Not repostable",
