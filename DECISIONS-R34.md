@@ -29,7 +29,7 @@ without a day.
    same video, so only the "1 of 2" / "2 of 2" order reads backwards.
 3. **A new clip still goes out within about a week (replaces round 31 rule 10).** Round 31 kept repeats to a week ahead
    so a clip sent today never waits behind a month of reposts. Now a clip new to the Queue (no day, no post, nothing
-   marked posted by hand) takes the earliest open position, or, from `Planner.firmDays` (7) days on, the day of the
+   marked posted by hand) takes the earliest open position (Queue order, as before), or, if it has no post at all, from `Planner.firmDays` (7) days on, the day of the
    earliest repeat (a post of a clip that already has an earlier day) that can still move, together with that clip's
    later posts, so its posts stay in order. Every one of them must move like a relayed slot: unpinned, not a set time,
    nothing posted, every live post an hour or more away and untouched. They go back to waiting and take the next open

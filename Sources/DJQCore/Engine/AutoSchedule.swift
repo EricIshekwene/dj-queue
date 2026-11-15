@@ -405,14 +405,18 @@ extension Planner {
     return true
   }
 
-  /// Step 1 of `fill`: each clip new to the Queue (no day, no post, nothing marked posted by hand) takes the earliest open
-  /// position, or from `firmDays` on the day of the earliest movable repeat. That repeat, and the clip's later posts with it
+  /// Step 1 of `fill`: each clip with no day yet takes the earliest open position (Queue order on a tie), and a clip new
+  /// to the Queue (no post, nothing marked posted by hand either) may instead take, from `firmDays` on, the day of the
+  /// earliest movable repeat. That repeat, and the clip's later posts with it
   /// so they stay in order, go back to waiting and get later days in step 2. So a clip Eric sends goes out within about a
   /// week, however many reposts are planned. Returns whether a repeat moved.
   private func placeNewClips(_ c: inout Pass, first: [String]?, placer: inout Placer, _ r: inout AutoScheduleReport) throws -> Bool {
     let backlog = try orderedBacklog(c.settings, first: first)
     let book = try UnitBook(store: store, settings: c.settings, videos: backlog)
-    var fresh = Set(backlog.map(\.id).filter { id in book[id].map { $0.days.isEmpty && $0.taken.values.allSatisfy(\.isEmpty) } ?? false })
+    // No day yet: takes open days first, in Queue order. Only a clip with nothing out at all (no post, nothing marked
+    // posted by hand) may take a repeat's day.
+    var fresh = Set(backlog.map(\.id).filter { book[$0]?.days.isEmpty ?? false })
+    let mayBump = fresh.filter { id in book[id]?.taken.values.allSatisfy(\.isEmpty) ?? false }
     guard !fresh.isEmpty else { return false }
     let byId = Dictionary(backlog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     var picker = UnitPicker(book: book, order: backlog.map(\.id), dm: c.dm)
@@ -430,7 +434,7 @@ extension Planner {
       if near?.day != spot.date { near = (spot.date, try overlapNeighbours(spot.date, c.settings, c.dm)) }
       let neighbours = near?.clips ?? []
       guard let (id, unit) = picker.pick(day: spot.date, allowed: { id in
-        guard fresh.contains(id), let v = byId[id] else { return false }
+        guard fresh.contains(id), spot.repeat == nil || mayBump.contains(id), let v = byId[id] else { return false }
         return !neighbours.contains { Queue.overlaps($0, v) }
       }) else { continue }
       if let b = spot.repeat {
