@@ -7,8 +7,10 @@ public struct SearchClipText: Sendable, Hashable {
   public var platformCaptions: [String] = []
   public var hashtags: [String] = []
   public var youtubeTitle = ""
-  /// Round 20: versions marked ready to repost ("ready to repost" finds the clip).
+  /// Round 20: versions marked ready to repost (kept for old data; round 37 shows `repostable`).
   public var repostReady: [Int] = []
+  /// Round 37: some version posts more than once ("repostable" finds the clip).
+  public var repostable = false
   public init() {}
 }
 
@@ -120,7 +122,7 @@ public enum SearchCorpus {
       for c in text.platformCaptions { add("Caption", c) }
       add("Hashtags", text.hashtags.joined(separator: " "))
       add("YouTube title", text.youtubeTitle)
-      if !text.repostReady.isEmpty { add("Reposts", "Ready to repost " + RepostReady.label(text.repostReady)) }
+      if text.repostable { add("Reposts", "Repostable") }
     }
     for t in v.titleTracks ?? [] { add("Track", [t.title, t.artist].compactMap { $0 }.joined(separator: " · ")) }
     add("Notes", v.notes)
@@ -259,6 +261,7 @@ extension Store {
       chains[id, default: []].append(v)
     }
     var out: [String: SearchClipText] = [:]
+    let repostable = (try? repostableClips()) ?? []
     for video in videos {
       let chain = chains[video.id] ?? []
       let r = VersionResolver.resolve(chain.isEmpty ? [Version(number: 1)] : chain, number: chain.last?.number ?? 1, settings: settings, video: video)
@@ -268,7 +271,7 @@ extension Store {
       t.platformCaptions = r.platformCaptions.keys.sorted().compactMap { r.platformCaptions[$0] }
       t.hashtags = Captions.hashtags(r, sets: sets)
       t.youtubeTitle = r.youtubeTitle
-      if video.type == .short { t.repostReady = RepostReady.numbers(chain) }
+      if video.type == .short { t.repostReady = RepostReady.numbers(chain); t.repostable = repostable.contains(video.id) }
       out[video.id] = t
     }
     return out

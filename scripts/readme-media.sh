@@ -110,17 +110,13 @@ still settings-arrow-keys $K/keys-08-settings-try-it-light
 gif editor-keys      $K/keys-01-space-plays-light $K/keys-02-typing-title-light $K/keys-03-click-away-then-space-light \
                  $K/keys-04-arrow-2s-light $K/keys-05-arrow-5s-light $K/keys-06-down-next-clip-light
 
-R=repost-ready
-# Round 20: Ready to repost per version, and bulk edits on versions. Header and inspector only (the player isn't the point).
-CROP=iw*0.25:ih*0.5:iw*0.75:0 gif repost-ready $R/repost-02-v2-row-off-light $R/repost-03-v2-ready-light \
-                 $R/repost-04-header-check-v2-light
-still repost-versions  $R/repost-05-version-list-both-ready-light
+R=repostable
+# Round 37 (replaces round 20's Ready to repost): bulk edits on versions say what reaches every version.
 # Round 27: a new version is its own copy; editing v1 never changes it.
 T=text-layers
 gif version-copies $T/text-32-version-copy-of-v1-light $T/text-33-v1-edited-light $T/text-34-copy-unchanged-light
-still repost-filter    $R/repost-07-library-filter-ready-light
-still bulk-versions    $R/repost-11-bulk-reset-versions-note-light
-still bulk-caption-versions $R/repost-10-bulk-caption-versions-note-light
+still bulk-versions    $R/repostable-10-bulk-reset-versions-note-light
+still bulk-caption-versions $R/repostable-09-bulk-caption-versions-note-light
 
 du -sh "$OUT"
 
@@ -196,17 +192,17 @@ still version-trim-dark $T-dark/vtrim-04-all-versions-dark
 V=version-posts
 # Round 31: every version is its own post and posts twice. Settings › Schedule's Posts per version, a version's own count
 # in the editor, then the Queue (next version post on the date chip, the others as tags) and the Calendar week.
-gif version-posts $V/version-posts-01-settings-posts-per-version-light $V/version-posts-04-editor-v2-default-light \
-                  $V/version-posts-05-editor-v2-own-count-light $V/version-posts-07-queue-two-versions-light \
-                  $V/version-posts-06-queue-version-posts-light $V/version-posts-09-calendar-week-later-posts-light \
-                  $V/version-posts-12-calendar-month-later-posts-light
-still version-posts-queue $V/version-posts-06-queue-version-posts-light
-still version-posts-calendar $V/version-posts-09-calendar-week-later-posts-light
-still version-posts-month $V-dark/version-posts-12-calendar-month-later-posts-dark
+gif version-posts $V/version-posts-01-settings-posts-per-version-light $V/version-posts-03-editor-v2-default-light \
+                  $V/version-posts-04-editor-v2-own-count-light $V/version-posts-06-queue-two-versions-light \
+                  $V/version-posts-05-queue-version-posts-light $V/version-posts-08-calendar-week-later-posts-light \
+                  $V/version-posts-11-calendar-month-later-posts-light
+still version-posts-queue $V/version-posts-05-queue-version-posts-light
+still version-posts-calendar $V/version-posts-08-calendar-week-later-posts-light
+still version-posts-month $V-dark/version-posts-11-calendar-month-later-posts-dark
 
 # Round 34: every post in the Queue has a day (No day yet 0, every card dated), and the month filled with them.
-still queue-every-day $V/version-posts-06-queue-version-posts-light
-still queue-every-day-month $V-dark/version-posts-12-calendar-month-later-posts-dark
+still queue-every-day $V/version-posts-05-queue-version-posts-light
+still queue-every-day-month $V-dark/version-posts-11-calendar-month-later-posts-dark
 
 L=list-sort
 # Round 32: the Queue's sort wins. Next post first (posting order, scores mixed), then Worst → best and Best → worst in
@@ -232,8 +228,12 @@ gif version-order $O/version-order-01-version-list-number-order-light $O/version
 still version-order $O/version-order-02-version-list-v2-first-light
 still version-order-dark $O-dark/version-order-02-version-list-v2-first-dark
 still library-removed $O/version-order-07-library-removed-light
-# Round 36: Repost per clip (off by default) in the editor, and each version's Posts in the versions list.
-still repost-switch $V/version-posts-03-editor-repost-on-light
+# Round 37: Posts is the one repost control (editor and versions list); Mark repostable asks first on the Queue and Edit,
+# and Filters › Reposts finds the clips.
+still repost-switch $V/version-posts-02-editor-posts-only-light
 still version-posts-list $O/version-order-04-version-list-v2-posts-light
+still mark-repostable $R/repostable-06-queue-mark-repostable-sheet-light
+still mark-repostable-dark $R-dark/repostable-06-queue-mark-repostable-sheet-dark
+still repostable-filter $R/repostable-04-edit-filter-repostable-light
 
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }

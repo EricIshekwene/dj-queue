@@ -20,7 +20,7 @@ usage: djq <command> [args]
   posts [--problems] [--json]         upcoming/recent posts (or unresolved problems)
   week [--json] [YYYY-MM-DD]          the week's days, read-only (clips in the Queue schedule themselves)
   schedule [--dry-run] [--json]       put Queue clips on open days now (the engine does this on every tick)
-  videos [--stage S] [--state S] [--repost-ready] [--json]   clips (stage: score edit queue scheduled posted; state: a stored state, unscored, scored, needs-edit, repost-ready, all)
+  videos [--stage S] [--state S] [--repostable] [--json]   clips (stage: score edit queue scheduled posted; state: a stored state, unscored, scored, needs-edit, repostable, all)
   video <video> [--json]              one clip: title, suggestions, edit (+resolved), versions, captions, posts
   defaults [--json]                   new clip defaults (Settings → New clip defaults)
   photo add <file>… [--separate] [--title "<t>"] [--json] | photo list [--json]   photo posts (djq photo help)
@@ -56,7 +56,7 @@ usage: djq <command> [args]
        | crop-offset <percent, -40…40> [--own]   move the crop left (-) or right of centre, as % of the frame; --own also moves clips with a crop
        | caption [--template <id|default>] [--add a,b] [--remove c]   template and groups together, one undo; --add keeps the clip's other groups
        | extra-hashtags "<#a #b>"|default | youtube-title-template <id|default> | drop-hashtags <P>
-       | skip-platform <P> | unskip-platform <P>
+       | skip-platform <P> | unskip-platform <P> | repostable | not-repostable
        | accept-title | title-raw-tag | title "<t>"|--clear | pin-consecutive <YYYY-MM-DD>
        | post-today | re-render | unqueue | requeue
   bulk undo <batch> [--force] [--yes] | bulk batches [--json]   (--yes: Eric's OK when the undo turns Postiz posting back on)
@@ -73,18 +73,16 @@ usage: djq <command> [args]
   fixed <post> | reset <post> | skip <post> | post-now <post> | shift-plan <post>
   copyright <post> reupload [N]|skip|accept
   repost <video> <platform> | longform-posted <video> <url>
-  reposts <video> [on|off] [--json] | reposts --list [--json]   Repost for a clip (off by default: each version posts once;
-                                      on: each version posts its count). Off takes its planned repeats off at once
-  post-count <video> [--version N] <0-9|default> [--json]   how many times a version posts on each platform (once while Repost is off)
+  reposts <video> [on|off] [--json] | reposts --list [--json]   Mark a clip repostable (each version posts its count,
+                                      Settings: 2) or not (each version posts once). Off takes its planned reposts off at once
+  post-count <video> [--version N] <0-9|default> [--json]   how many times a version posts on each platform (its Posts)
                                       (default: Settings, 2); 0 = that version doesn't post. Shows every version post
   version-order <video> [2,1,3 | --default] [--json]   the order a clip's versions post in (v1, v2, v3 unless set);
                                       days already planned swap which version they carry. Shows every version post
-  posts-per-version [0-9] [--dry-run] show or set how many times a version posts on a clip with Repost on (Settings → Schedule)
+  posts-per-version [0-9] [--dry-run] show or set how many times each version of a repostable clip posts (Settings → Schedule)
   post-spacing [--clip D] [--version D] [--dry-run]   show or set the gaps: days between two posts of one clip (≥1),
                                       days before a version posts again; undo with bulk undo
-  repost-ready <video> [--version N] [--off]   mark a text version ready to repost (or not); default v1
-                                      it only marks the version: nothing is queued, scheduled or posted
-  repost-ready --list [--json]        every clip with a version ready to repost
+  repost-ready <video> [--off] | repost-ready --list   old name of `reposts <video> on|off` / `reposts --list` (round 37)
   score <video> <0-100|clear> | exclude <video> | include <video>
   posts-per-day [1-5] [--dry-run]      show or set posts per day (Settings → General); undo with bulk undo
   slot <platform> [HH:MM] [--dry-run]  show or set a platform's slot (Settings → Schedule) and re-time its unposted future
@@ -393,13 +391,13 @@ func run() throws -> Int32 {
       return st
     }
     var list = try AgentAPI.videos(store: store, filter: state, stage: stage)
-    if flag("--repost-ready") { list = list.filter { !$0.repost_ready_versions.isEmpty } }
+    if flag("--repostable") || flag("--repost-ready") { list = list.filter(\.repostable) }
     if flag("--json") { try printJSON(list); return 0 }
     for v in list {
       print("  \(short(v.id))  \(pad(stageLabel(v), 11)) \(pad(v.score.map(String.init) ?? "–", 4))\(v.display_name)"
             + (v.title == nil ? "" : "  (tag: \(v.raw_tag))") + (v.suggestion_count > 0 ? "  [\(v.suggestion_count) suggestion(s)]" : "")
             + (v.reasons.isEmpty ? "" : "  — " + v.reasons.joined(separator: " · "))
-            + (v.repost_ready_versions.isEmpty ? "" : "  [ready to repost: \(RepostReady.label(v.repost_ready_versions))]"))
+            + (v.repostable ? "  [repostable]" : ""))
     }
     print("  \(list.count) clip(s)")
 
@@ -439,7 +437,7 @@ func run() throws -> Int32 {
     if !d.post_units.isEmpty {
       print("  posts  " + d.post_units.map { u in
         "\(u.label) " + (u.status == "waiting" ? "waiting" : u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "done")
-      }.joined(separator: " · ") + (d.repost ? "  (Repost on)" : ""))
+      }.joined(separator: " · ") + (d.repost ? "  (repostable)" : ""))
     }
     for i in d.issues { print("  issue  \(i.message)") }
 
@@ -842,23 +840,19 @@ func run() throws -> Int32 {
     wrote = true
     print("repost v\(n.versionNo) on \(n.platform.displayName) · \(fmt(n.scheduledAt, settings))")
   case "repost-ready":
+    // Round 37: Ready to repost became Mark repostable (the whole clip); the old name still works.
     if flag("--list") {
-      let map = try store.repostReadyVersions()
-      let vids = try map.keys.compactMap { try store.video(id: $0) }.sorted { ($0.sessionId, $0.part ?? 0, $0.start ?? 0, $0.name) < ($1.sessionId, $1.part ?? 0, $1.start ?? 0, $1.name) }
-      if flag("--json") {
-        struct Row: Encodable { var video_id: String; var display_name: String; var stage: String?; var versions: [Int] }
-        try printJSON(vids.map { Row(video_id: $0.id, display_name: $0.displayName, stage: ClipStage.of($0)?.rawValue, versions: map[$0.id] ?? []) })
-        return 0
-      }
-      for v in vids { print("  \(short(v.id))  \(pad(RepostReady.label(map[v.id] ?? []), 14))\(v.displayName)") }
-      print("  \(vids.count) clip(s) with a version ready to repost")
+      let vids = try store.repostableClips().compactMap { try store.video(id: $0) }.sorted { $0.displayName < $1.displayName }
+      if flag("--json") { try printJSON(vids.map(\.id)); return 0 }
+      for v in vids { print("  \(short(v.id))  \(v.displayName)") }
+      print("  \(vids.count) repostable clip(s) (Ready to repost is now Mark repostable: djq reposts)")
       return 0
     }
     let v = try resolveVideo(store, try arg(0, "video id"))
-    let n = try option("--version").map { try intArg($0, "--version", 1...99) } ?? 1
     let on = !flag("--off")
-    wrote = try store.setRepostReady(videoId: v.id, number: n, on)
-    print("\(v.tag) v\(n) \(on ? "ready to repost" : "not ready to repost")\(wrote ? "" : " (already)") · nothing queued or scheduled")
+    wrote = try store.setRepost(videoId: v.id, on)
+    if wrote { try Planner(store: store).autoSchedule() }
+    print("\(v.tag) \(on ? "repostable" : "not repostable")\(wrote ? "" : " (already)") · Ready to repost is now Mark repostable (djq reposts)")
   case "longform-posted":
     let v = try resolveVideo(store, try arg(0, "video id"))
     try actions.markLongformPosted(videoId: v.id, url: try arg(1, "url"))
@@ -902,10 +896,9 @@ func run() throws -> Int32 {
 
   case "reposts":
     if flag("--list") {
-      let ids = try store.repostClips().sorted()
-      let vids = try ids.compactMap { try store.video(id: $0) }
+      let vids = try store.repostableClips().compactMap { try store.video(id: $0) }.sorted { $0.displayName < $1.displayName }
       if flag("--json") { try printJSON(vids.map(\.id)); return 0 }
-      if vids.isEmpty { print("Repost is off on every clip (each version posts once)") }
+      if vids.isEmpty { print("No clip is repostable (each version posts once)") }
       for v in vids { print("\(v.id.prefix(8))  \(v.displayName)") }
       return 0
     }
@@ -915,14 +908,14 @@ func run() throws -> Int32 {
       wrote = try store.setRepost(videoId: v.id, raw == "on")
       if wrote { try Planner(store: store).autoSchedule() }
     }
-    let on = try store.repostOn(videoId: v.id)
+    let on = try store.isRepostable(videoId: v.id)
     let units = try AgentAPI.units(v.id, store: store, settings: settings)
     if flag("--json") {
       struct Out: Encodable { let video_id: String; let repost: Bool; let post_units: [AgentAPI.UnitOut] }
       try printJSON(Out(video_id: v.id, repost: on, post_units: units))
       return 0
     }
-    print("\(v.tag) Repost \(on ? "on: each version posts its count" : "off: each version posts once")")
+    print("\(v.tag) \(on ? "repostable: each version posts its count" : "not repostable: each version posts once")")
     for u in units {
       print("  \(pad(u.label, 12)) \(pad(u.status, 10)) \(u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "")")
     }
@@ -1230,6 +1223,7 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
     guard let k = Kind(rawValue: try arg(0, "kind")) else { throw CLIError("kind must be \"dj vid\" or talking") }
     r = try bulk.setKind(ids, k, dryRun: dry)
   case "exclude", "include": r = try bulk.setExcluded(ids, action == "exclude", dryRun: dry)
+  case "repostable", "not-repostable": r = try bulk.setRepostable(ids, action == "repostable", dryRun: dry)
   case "caption-template":
     let t = try arg(0, "template id|default")
     r = try bulk.setCaptionTemplate(ids, t == "default" ? nil : t, dryRun: dry)

@@ -263,6 +263,7 @@ struct LibraryView: View {
       Button(shorts.isEmpty ? "Apply defaults — select short clips"
              : "Apply defaults (frame, trim, text, caption) to \(shorts.count) clip\(shorts.count == 1 ? "" : "s")…") { applyDefaults(shorts) }
         .disabled(shorts.isEmpty)
+      RepostMenuItems(model: model, targets: shorts)
     }
   }
 

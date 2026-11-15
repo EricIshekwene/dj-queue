@@ -213,16 +213,16 @@ enum VersionPostsScript {
       e.selectVersion(2)
       await wait(900)
       check("the editor shows the Posts row for v2", e.versionNo == 2 && has("Post count"))
-      // Round 36: the clip's Repost switch, off by default; a real click turns it on, and the count follows.
-      let repostBefore = (try? store.repostOn(videoId: id)) ?? true
-      check("Repost starts off (each version posts once)", !repostBefore && count(id, 1) == 1)
-      check("the editor shows the Repost switch", has("Repost switch"))
-      await shot("editor-repost-off")
-      await click("Repost switch")
-      for _ in 0..<20 where (try? store.repostOn(videoId: id)) != true { await wait(250) }
-      check("click Repost → on in the store; v1 posts \(settings().postsPerVersion) times", (try? store.repostOn(videoId: id)) == true
-              && count(id, 1) == settings().postsPerVersion)
-      await shot("editor-repost-on")
+      // Round 37: the editor has no Repost switch; the whole clip is marked repostable from the Queue or Edit (the
+      // repostable check drives that bulk action). Here: off by default, then marked through the store.
+      check("not repostable at first (each version posts once)", ((try? store.isRepostable(videoId: id)) ?? true) == false && count(id, 1) == 1)
+      check("the editor has no Repost switch and no Ready to repost row", !has("Repost switch") && !has("Repost ready"))
+      await shot("editor-posts-only")
+      note("stand-in: Mark repostable through the store (the bulk action is the repostable check's)")
+      _ = try? store.setRepost(videoId: id, true)
+      ChangeSignal.post()
+      await wait(900)
+      check("marked repostable → v1 posts \(settings().postsPerVersion) times", count(id, 1) == settings().postsPerVersion)
       let look = stamp(id)
       let v2 = count(id, 2)
       check("v2 starts at the default (\(v2))", ownCount(id, 2) == nil && v2 == e.defaultPostCount(2))

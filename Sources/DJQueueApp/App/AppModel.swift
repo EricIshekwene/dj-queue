@@ -80,7 +80,8 @@ final class AppModel {
   var lastHeartbeat: Heartbeat?
   var versionCounts: [String: Int] = [:]
   /// Round 20: versions marked ready to repost, per clip (clips with none are absent).
-  var repostReady: [String: [Int]] = [:]
+  /// Round 37: clips that post some version more than once (Mark repostable, or a version's own Posts).
+  var repostable: Set<String> = []
   /// Round 31: every short clip's version posts (counts, what's taken), read off-main with each refresh. Labels such as
   /// "v2 · 1 of 2" come from here (`unitLabel`), never from a read while drawing. nil until the first load.
   var unitBook: UnitBook?
@@ -364,7 +365,7 @@ final class AppModel {
     var runway = Runway(approvedDays: 0, readyDays: 0, totalDays: 0)
     var lastHeartbeat: Heartbeat?
     var versionCounts: [String: Int] = [:]
-    var repostReady: [String: [Int]] = [:]
+    var repostable: Set<String> = []
     var unitBook: UnitBook?
     var unitLines: [String: [UnitLine]] = [:]
     var relinked: Set<String> = []
@@ -412,9 +413,10 @@ final class AppModel {
       l.lastHeartbeat = try store.lastHeartbeat()
       l.versionCounts = Dictionary(uniqueKeysWithValues: try store.db.query("SELECT video_id, COUNT(*) AS n FROM versions GROUP BY video_id")
         .compactMap { r in r.string("video_id").map { ($0, r.int("n") ?? 0) } })
-      l.repostReady = try store.repostReadyVersions()
+      // Round 37: from the plan's own book below (one read), never failing the load.
       // Round 31: version posts. A book that can't be read leaves labels at their plain version ("v2"), never the load.
       l.unitBook = try? UnitBook(store: store, settings: l.settings, videos: l.videos)
+      l.repostable = Set((l.unitBook?.clips ?? [:]).filter { $0.value.counts.values.contains { $0 > 1 } }.map(\.key))
       if let book = l.unitBook {
         let upcoming = Dictionary(grouping: l.upcomingSlots, by: \.videoId)
         for id in book.clips.keys { l.unitLines[id] = book.lines(id, upcoming: upcoming[id] ?? []) }
@@ -512,7 +514,7 @@ final class AppModel {
     runway = l.runway
     lastHeartbeat = l.lastHeartbeat
     versionCounts = l.versionCounts
-    repostReady = l.repostReady
+    repostable = l.repostable
     unitBook = l.unitBook
     unitLines = l.unitLines
     relinked = l.relinked

@@ -22,14 +22,9 @@ struct EditorInspector: View {
             // Full-width hairlines between sections (the Framer / Webflow / Figma inspector pattern) so each section
             // reads as its own block.
             VStack(alignment: .leading, spacing: 0) {
-              if !model.isPhoto, model.versionNumbers.count > 1 || model.isRepostReady(model.versionNo) {
-                EditorRepostReadyRow(model: model)
-                DSSeparator()
-              }
-              // Round 31: how many times this version posts (short-form only; long-form is never reposted). Round 36:
-              // under the clip's Repost switch, off by default (each version posts once).
+              // Round 37: one control for reposts, how many times this version posts (short-form only; long-form is
+              // never reposted). The whole clip: Mark repostable on the Queue, Edit, Library or Calendar.
               if model.video?.type == .short {
-                EditorRepostRow(model: model)
                 EditorPostCountRow(model: model)
                 DSSeparator()
               }
@@ -132,7 +127,7 @@ struct EditorVersionList: View {
     VStack(alignment: .leading, spacing: 2) {
       Text("Versions").font(DS.type.headline).foregroundStyle(DS.color.text)
         .padding(.horizontal, DS.space.sm).padding(.top, DS.space.sm).padding(.bottom, DS.space.xxs)
-      Text("Each version is its own copy for a repost: editing one never changes another. The clip's Title, crop, cover, size, markers and platforms are shared by every version, and so is the trim unless a version has its own. Turn on each version that's ready to repost. Versions post in the order listed: the arrows change it. Each version posts once, or its count when the clip's Repost is on; Posts on a version overrides both.")
+      Text("Each version is its own copy: editing one never changes another. Versions post in this order (the arrows change it). Posts is how many times each one goes out.")
         .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, DS.space.sm).padding(.bottom, DS.space.xs)
       // Round 35: listed in the order they post (1st, 2nd, …); the arrows change it.
@@ -166,30 +161,13 @@ struct EditorVersionList: View {
         // Round 35: when it posts, in one line (no platform list).
         Text(model.planLine(of: n)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
           .background(ScriptAnchor("Version plan v\(n)"))
-        // Round 36: how many times this version posts, Eric's override of the clip's Repost (on: 2, off: once).
+        // Round 37: the one repost control, how many times this version posts.
         if model.video?.type == .short { postsStepper(n) }
         if !u.posted.isEmpty { Text("Posted on " + u.posted.map(\.displayName).joined(separator: ", ")) }
-        if model.isRepostReady(n) {
-          Label("Ready to repost", systemImage: "checkmark.circle.fill").foregroundStyle(DS.color.success)
-        }
       }
       .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
       Spacer()
       if selected { DSBadge("Editing", style: .soft(.neutral), size: .sm, help: "The version you're editing") }
-      // A button around the switch: one click target, and the row's own tap (select the version) never sees it.
-      Button { model.setRepostReady(n, !model.isRepostReady(n)) } label: {
-        DSSwitch(isOn: .constant(model.isRepostReady(n)), disabled: model.repostReadyOff != nil, small: true).allowsHitTesting(false)
-      }
-      .buttonStyle(.plain)
-      .disabled(model.repostReadyOff != nil)
-      .accessibilityLabel("Ready to repost v\(n)")
-      .accessibilityValue(model.isRepostReady(n) ? "On" : "Off")
-        .dsTooltip(model.repostReadyOff == nil
-                   ? (model.isRepostReady(n) ? "v\(n) is ready to repost: turn off to leave it out of the repost cycle"
-                                             : "Mark v\(n) ready to repost (nothing is queued or scheduled)")
-                   : nil,
-                   disabledReason: model.repostReadyOff)
-        .background(ScriptAnchor("Repost ready v\(n)"))
       Menu {
         if count > 1 && pos > 1 && model.versionOrderOff == nil { Button("Post v\(n) first") { model.moveVersion(n, first: true) } }
         Button("Duplicate as a separate version") { model.newVersion(copying: n) }
@@ -245,34 +223,6 @@ extension EditorVersionList {
   }
 }
 
-/// Round 36: Repost for the whole clip, off by default. A label, what it does underneath and a switch on the right, the
-/// settings-row pattern (Customer.io's "Limit send rate", HoneyBook's session settings on Mobbin); the Posts row under it
-/// counts once the switch is on.
-struct EditorRepostRow: View {
-  @ObservedObject var model: EditorModel
-
-  var body: some View {
-    let on = model.repostOn
-    let times = model.settings.postsPerVersion
-    Button { model.setRepost(!on) } label: {
-      DSToggle("Repost", description: on
-                 ? "Each version posts \(EditorPostCountRow.times(times).lowercased()), spaced out (Settings › Schedule). Set a version's own count below."
-                 : "Off: each version posts once, unless it has its own count. Turn on to post this clip's versions again.",
-               isOn: .constant(on), disabledReason: model.postCountOff, size: .sm)
-        .allowsHitTesting(false)
-        .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .disabled(model.postCountOff != nil)
-    .accessibilityLabel("Repost this clip")
-    .accessibilityValue(on ? "On" : "Off")
-    .background(ScriptAnchor("Repost switch"))
-    .dsTooltip(model.postCountOff == nil ? (on ? "Turn off to post each version once; planned reposts come off"
-                                               : "Turn on to repost this clip; its reposts get days on the calendar") : nil)
-    .padding(.horizontal, DS.space.md).padding(.top, DS.space.sm)
-  }
-}
-
 /// Round 31: how many times the version being edited posts on each platform. One compact row: the count with − and +,
 /// what it means underneath, and "Use default" once the version has a count of its own. Only the count is written
 /// (`Store.setPostCount`): no preview or render changes.
@@ -292,58 +242,26 @@ struct EditorPostCountRow: View {
                    format: Self.times)
           .disabled(model.postCountOff != nil)
           .background(ScriptAnchor("Post count"))
-      }
-      HStack(spacing: DS.space.xs) {
-        Text(model.postCountOff ?? Self.note(n, own: own, fallback: fallback, repost: model.repostOn))
-          .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
-        Spacer(minLength: 0)
         if own != nil, model.postCountOff == nil {
-          DSButton("Use default", variant: .ghost, size: .sm,
-                   tooltip: "Back to the default: \(Self.times(fallback).lowercased()) (Settings › Schedule)") { model.setPostCount(n, nil) }
+          DSIconButton("arrow.uturn.backward", tooltip: "Back to \(Self.times(fallback).lowercased())", size: .sm) { model.setPostCount(n, nil) }
             .background(ScriptAnchor("Post count default"))
         }
       }
+      Text(model.postCountOff ?? Self.note(n, own: own, fallback: fallback, repost: model.repostOn))
+        .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
     }
     .padding(.horizontal, DS.space.md).padding(.vertical, DS.space.sm)
-    .dsTooltip(model.postCountOff == nil ? "Each post of a version is its own post in the plan, spaced from the clip's other posts" : nil)
+    .dsTooltip(model.postCountOff == nil ? "How many times v\(n) goes out on each platform. Repeats are spaced out" : nil)
   }
 
   static func times(_ n: Int) -> String { n == 0 ? "Never" : n == 1 ? "Once" : "\(n) times" }
 
-  /// "v2 posts 2 times on each platform (the default)." · "v2's own count; the default is 2 times."
+  /// One short line under the stepper.
   static func note(_ n: Int, own: Int?, fallback: Int, repost: Bool = true) -> String {
-    if let own {
-      return own == 0 ? "v\(n) doesn't post. The default is \(times(fallback).lowercased())."
-        : "v\(n)'s own count, on each platform. The default is \(times(fallback).lowercased())."
-    }
-    return fallback == 0 ? "v\(n) doesn't post (it went out before reposts were counted)."
-      : !repost ? "v\(n) posts once on each platform (Repost is off). Set a count to override."
-      : "v\(n) posts \(times(fallback).lowercased()) on each platform (the default)."
+    if own == 0 { return "v\(n) doesn't post." }
+    if own != nil { return "Set for v\(n). Without it: \(times(fallback).lowercased())." }
+    if fallback == 0 { return "v\(n) doesn't post (it went out before reposts were counted)." }
+    return repost ? "Repostable clip: \(times(fallback).lowercased()) on each platform." : "How many times v\(n) goes out on each platform."
   }
 }
 
-/// Round 20: "Ready to repost" for the version being edited (shown once a clip has a second version, or this one is
-/// marked). The same switch sits on every row of the version list.
-struct EditorRepostReadyRow: View {
-  @ObservedObject var model: EditorModel
-
-  var body: some View {
-    let n = model.versionNo
-    // The whole row is one button (label, description and switch), like a settings row.
-    Button { model.setRepostReady(n, !model.isRepostReady(n)) } label: {
-      DSToggle("Ready to repost", description: model.isRepostReady(n)
-                 ? "v\(n) is in the repost cycle. Nothing is queued or scheduled by this."
-                 : "Turn on when v\(n) is finished, to include it in the repost cycle.",
-               isOn: .constant(model.isRepostReady(n)), disabledReason: model.repostReadyOff, size: .sm)
-        .allowsHitTesting(false)
-        .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .disabled(model.repostReadyOff != nil)
-    .accessibilityLabel("Ready to repost v\(n)")
-    .accessibilityValue(model.isRepostReady(n) ? "On" : "Off")
-      .background(ScriptAnchor("Repost ready"))
-      .dsTooltip(model.repostReadyOff == nil ? "Each version you mark ready joins the repost cycle; the clip's stage doesn't change" : nil)
-      .padding(.horizontal, DS.space.md).padding(.vertical, DS.space.sm)
-  }
-}

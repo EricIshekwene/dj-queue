@@ -206,6 +206,7 @@ private struct EditBulkBar: View {
       }
       Button(model.postAtMenuTitle(ids), systemImage: "clock") { model.askPostAt(ids) }
       EditApplyDefaultsMenu(model: model, ids: ids)
+      RepostMenuItems(model: model, targets: ids)
       Menu("Skip platform") {
         ForEach(model.settings.activePlatforms) { p in
           Button(p.displayName) {

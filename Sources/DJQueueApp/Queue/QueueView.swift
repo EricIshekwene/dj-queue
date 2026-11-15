@@ -158,6 +158,7 @@ private struct QueueBulkBar: View {
       Divider()
       Button("Caption…", systemImage: "text.alignleft") { model.captionDialogIds = ids }
       Button("Crop…", systemImage: "crop") { model.cropDialogIds = ids }
+      RepostMenuItems(model: model, targets: ids)
       Menu("Skip platform") {
         ForEach(model.settings.activePlatforms) { p in Button(p.displayName) { setPlatform(p, skipped: true) } }
       }
