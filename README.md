@@ -62,6 +62,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![The Queue in posting order, then sorted worst to best and best to worst](docs/media/queue-sort.gif) | ![The Queue list sorted best to worst in dark mode](docs/media/queue-sort-dark.jpg) |
 
+**Post today always goes out (v0.25.0).** Post today is held back only when Postiz itself can't take the post, and the dialog says why. When every slot of the day has already gone out or is pinned (an evening Post today), the clip goes out now on its own, every platform at the next minute, and nothing else on the Calendar moves; a drag or *Move to…* onto that full today asks the same. The dialog lists each platform with when it goes out. YouTube is the one that can wait: Postiz's shared YouTube upload limit runs out at night and resets at midnight Pacific, so in those hours YouTube goes at 00:30 Pacific by itself and the dialog says so. A clip whose post already went out today is the one refusal left, and its reason sits in the dialog instead of behind *Why skipped*.
+
+| Evening Post today: now on its own, YouTube waits for Postiz's quota, then a drag onto the full day | The same dialog in dark |
+|---|---|
+| ![Post today on a full evening: each platform right away, YouTube at 3:30 AM with the reason](docs/media/post-today.gif) | ![The Post today dialog in dark mode](docs/media/post-today-dark.jpg) |
+
 **Photo posts and set-time posts (v0.15.0).** A photo, or a carousel of several, goes through the same life as a clip: add it, edit it (shape, a crop per photo, texts on the photos you pick, caption, hashtag groups), send it to the Queue with no score, and track it on the Calendar. YouTube Shorts is skipped because it takes video only, and a carousel longer than a platform allows sends its first photos there and says so. Any Queue item, photo or clip, can also go out at an exact day and minute, outside the regular schedule, without moving anything else.
 
 | Add photos — pick or drop them, one carousel or a post per photo | The photo editor — crop each photo, put a text on photos 2–3, reorder, platform notes |

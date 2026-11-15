@@ -185,7 +185,7 @@ extension AppModel {
       guard let self else { return }
       self.pin(v.id, dayKey: self.dm.addDays(self.todayKey, 1))
     })
-    c.append(.init(id: "clip.\(v.id).postToday", title: "Post today", symbol: "bolt", subtitle: "The rest of the Calendar moves a day later",
+    c.append(.init(id: "clip.\(v.id).postToday", title: "Post today", symbol: "bolt", subtitle: "Today's next slot, or now on its own when today is full",
                    disabled: longWhy ?? (v.excluded ? "Excluded" : nil)) {
       [weak self] in self?.postTodayAsking([v.id])
     })

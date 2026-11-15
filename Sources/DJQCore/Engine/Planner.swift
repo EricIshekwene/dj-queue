@@ -161,6 +161,14 @@ public final class Planner: @unchecked Sendable {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
     guard date >= store.today(dm) else { throw EngineError("\(date) is in the past") }
+    // Round 33: a pin onto a today with no room left is Post today: it goes out now on its own. Not for a clip already
+    // on today (it only gets its pin) or with a set time (that keeps its minute: `moveExactSlot`).
+    if date == store.today(dm) {
+      let own = try store.planSlots(where: "video_id=? AND date>=?", [videoId, date]).first
+      if own?.date != date, own?.isExact != true, try todayHasNoRoom(settings: settings, dm: dm, for: videoId) {
+        return try postToday(videoId: videoId)
+      }
+    }
     try store.db.transaction {
       if var s = try store.planSlots(where: "video_id=? AND date>=?", [videoId, store.today(dm)]).first {
         if s.date != date { try moveSlot(&s, to: date, settings: settings, dm: dm) }
@@ -323,10 +331,39 @@ public final class Planner: @unchecked Sendable {
     let dm = DayMath(settings: settings)
     guard var s = try store.planSlot(id: slotId) else { throw EngineError("No plan slot \(slotId)") }
     guard date >= store.today(dm) else { throw EngineError("\(date) is in the past") }
+    if date == store.today(dm), s.date != date, !s.isExact, try todayHasNoRoom(settings: settings, dm: dm, for: s.videoId) {
+      return try postToday(videoId: s.videoId)
+    }
     try store.db.transaction { try moveSlot(&s, to: date, settings: settings, dm: dm) }
   }
 
+  /// Round 33: every regular position of today is held by another clip that can't give it up (pinned, posted, or a
+  /// post removed from Postiz). A move or pin onto today then goes out now on its own (`postToday`) instead of being
+  /// refused for a rule of the app's own.
+  public func todayHasNoRoom(for videoId: String) throws -> Bool {
+    let settings = try store.settings()
+    return try todayHasNoRoom(settings: settings, dm: DayMath(settings: settings), for: videoId)
+  }
+
+  func todayHasNoRoom(settings: Settings, dm: DayMath, for videoId: String) throws -> Bool {
+    let today = store.today(dm)
+    let here = try store.planSlots(where: "date=?", [today]).filter { !$0.isExact && $0.videoId != videoId }
+    for pos in 0..<max(1, settings.postsPerDay) {
+      guard let s = here.first(where: { $0.position == pos }) else { return false }
+      if s.pinned { continue }
+      let posts = try store.slotPosts(s.id)
+      if posts.contains(where: { $0.state == .posted }) { continue }
+      if try posts.contains(where: { try !$0.state.isTerminal && store.finalPostizJob(postId: $0.id) != nil }) { continue }
+      return false
+    }
+    return true
+  }
+
   /// Puts a video on today (pinned) and pushes the rest of the plan a day later. Pinned slots never move.
+  ///
+  /// Round 33 (Eric: "Post today" may only be blocked when Postiz itself won't take it): when today has no regular
+  /// position left to give (every one posted or pinned, e.g. in the evening), or the item has a set time, it goes out
+  /// now on its own instead (`postNowOnItsOwn`): nothing else moves and posts per day doesn't stop it.
   public func postToday(videoId: String) throws {
     let settings = try store.settings()
     let dm = DayMath(settings: settings)
@@ -334,7 +371,13 @@ public final class Planner: @unchecked Sendable {
     let perDay = max(1, settings.postsPerDay)
     let existing = try store.planSlots(where: "video_id=? AND date>=?", [videoId, today]).first
     if let e = existing {
-      if e.isExact { throw EngineError(StageWording.hasSetTime) }
+      if e.isExact {
+        try postNowOnItsOwn(videoId: videoId)
+        return
+      }
+      if e.date == today, let p = try store.slotPosts(e.id).first(where: { $0.state == .posted }) {
+        throw EngineError(StageWording.alreadyGoingOutToday(p.platform))
+      }
       try ensureNothingPosted(e)
       try ensureNothingFinal(e)
     } else {
@@ -344,6 +387,31 @@ public final class Planner: @unchecked Sendable {
     guard let unit = try existing?.unit ?? nextUnit(videoId, settings: settings) else {
       throw EngineError(StageWording.nothingLeftToPost(try store.video(id: videoId)?.tag ?? videoId))
     }
+    do {
+      try postTodayOnASlot(videoId: videoId, existing: existing, unit: unit, today: today, perDay: perDay,
+                           settings: settings, dm: dm)
+    } catch is TodayIsFull {
+      // The savepoint rolled back: the plan is as it was. Today has nothing to give, so it goes out now on its own.
+      // A clip that has posted before can't take a set time (its next version post keeps its count), so it takes an
+      // extra position on today instead: platforms whose time has passed go at once, the rest at their times today.
+      if try store.posts(where: "video_id=? AND kind IN ('regular','retry') AND state='posted'", [videoId], order: "id").isEmpty {
+        try postNowOnItsOwn(videoId: videoId)
+        return
+      }
+      try postTodayOnASlot(videoId: videoId, existing: existing, unit: unit, today: today, perDay: perDay,
+                           settings: settings, dm: dm, extra: true)
+    }
+    try store.logEvent("plan", "Post today", videoId: videoId)
+  }
+
+  /// Today's regular positions are all posted or pinned: `postToday` goes out now on its own instead.
+  struct TodayIsFull: Error {}
+
+  /// `postToday` on a regular position of today (the rest of the plan moves a day). Throws `TodayIsFull`, with nothing
+  /// changed, when no position is left after the push. `extra`: past posts per day, the first position after them
+  /// (set-time slots start at `PlanSlot.exactBase`).
+  private func postTodayOnASlot(videoId: String, existing: PlanSlot?, unit: PostUnit, today: String, perDay: Int,
+                                settings: Settings, dm: DayMath, extra: Bool = false) throws {
     try store.db.transaction {
       var until: String?
       if let e = existing {
@@ -354,23 +422,30 @@ public final class Planner: @unchecked Sendable {
       }
       func freePosition() throws -> Int? {
         let used = Set(try store.planSlots(where: "date=?", [today]).map(\.position))
-        return (0..<perDay).first { !used.contains($0) }
+        return (0..<perDay).first { !used.contains($0) } ?? (extra ? (perDay..<PlanSlot.exactBase).first { !used.contains($0) } : nil)
       }
       var pos = try freePosition()
-      if pos == nil || existing != nil {
+      // An extra position moves nothing: today had no room to make.
+      if !extra, pos == nil || existing != nil {
         try push(from: today, days: 1, until: until)
         pos = try freePosition()
       }
-      guard let position = pos else {
-        throw EngineError("Today's slots are pinned or already posted — unpin one first")
-      }
+      guard let position = pos else { throw TodayIsFull() }
       let s = PlanSlot(id: existing?.id ?? newId(), date: today, position: position, videoId: videoId, pinned: true,
                        weekStart: dm.weekStart(of: dm.date(today)), unit: unit)
       try store.save(s)
       try regenerateMany([(s, true)], settings: settings, dm: dm)
+      if extra {
+        // Past posts per day there is no slot time worth keeping (position 3 would land tomorrow night): every
+        // platform goes now, YouTube out of its quiet window, as Post now does.
+        let at = Self.exactMinute(store.clock.now).addingTimeInterval(60)
+        for var p in try store.slotPosts(s.id) where !p.state.isTerminal && p.kind == .regular {
+          p.scheduledAt = YouTubeWindow.clear(at, p.platform)
+          try store.save(p, note: "post today (today's slots taken)")
+        }
+      }
       try store.refreshState(videoId: videoId)
     }
-    try store.logEvent("plan", "Post today", videoId: videoId)
   }
 
   /// Planned: swaps with the next slot (it posts one slot later). Backlog: moves one place later in the queue.

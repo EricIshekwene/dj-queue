@@ -37,6 +37,23 @@ public struct BulkResult: Codable, Sendable {
   public var unplanned: [String: [Planner.UnplanItem]]? = nil
   /// Stage moves only (`back` / `forward`): clip id → where it was, where it ended up, and what happened.
   public var moves: [String: StageMove]? = nil
+  /// Post today (and a move or pin onto today) only: clip id → when each platform goes out, and why one waits.
+  public var goesOut: [String: [GoesOut]]? = nil
+  /// Round 33: clips that went out on their own because today had no slot to give (nothing else moved).
+  public var onItsOwn: [String]? = nil
+}
+
+/// Round 33: one platform of a Post today, for the confirmation and the toast. `now`: it goes out within
+/// `Planner.autoScheduleLead`. `wait`: why a platform doesn't go now when Postiz is the reason (YouTube's shared
+/// upload quota, a channel to reconnect), in Eric's words with what happens next. nil = it goes at its slot time today.
+public struct GoesOut: Codable, Sendable, Equatable {
+  public var platform: Platform
+  public var at: Date
+  public var now: Bool
+  public var wait: String?
+  public init(platform: Platform, at: Date, now: Bool, wait: String? = nil) {
+    self.platform = platform; self.at = at; self.now = now; self.wait = wait
+  }
 }
 
 /// Where clips stand after "Make ready with defaults" (every non-skipped clip, changed or not).
@@ -401,22 +418,72 @@ public final class BulkActions: @unchecked Sendable {
   public func pinConsecutive(_ ids: [String], from date: String, dryRun: Bool = false) throws -> BulkResult {
     let planner = Planner(store: store)
     var day = date
-    return try run("pin-consecutive", ids: ids, params: ["from": date], dryRun: dryRun, plan: true) { _, v, s in
+    var out: [String: [GoesOut]] = [:]
+    var alone: Set<String> = []
+    var r = try run("pin-consecutive", ids: ids, params: ["from": date], dryRun: dryRun, plan: true) { _, v, s in
       let dm = DayMath(settings: s)
       defer { day = dm.addDays(day, 1) }
       try planner.pin(videoId: v.id, date: day)
+      if day == store.today(dm) {
+        out[v.id] = try goesOut(v.id, settings: s)
+        if try isOnItsOwn(v.id, settings: s) { alone.insert(v.id) }
+      }
       return .changed
     }
+    if !out.isEmpty { r.goesOut = out.filter { r.changed.contains($0.key) } }
+    if !alone.isEmpty { r.onItsOwn = ids.filter { alone.contains($0) && r.changed.contains($0) } }
+    return r
   }
 
   /// Post today (in the order given; clips beyond today's free slots are skipped with the reason).
   @discardableResult
   public func postToday(_ ids: [String], dryRun: Bool = false) throws -> BulkResult {
     let planner = Planner(store: store)
-    return try run("post-today", ids: ids, dryRun: dryRun, plan: true) { _, v, _ in
+    var out: [String: [GoesOut]] = [:]
+    var alone: Set<String> = []
+    var r = try run("post-today", ids: ids, dryRun: dryRun, plan: true) { _, v, s in
       try planner.postToday(videoId: v.id)
+      out[v.id] = try goesOut(v.id, settings: s)
+      if try isOnItsOwn(v.id, settings: s) { alone.insert(v.id) }
       return .changed
     }
+    r.goesOut = out.filter { r.changed.contains($0.key) }
+    r.onItsOwn = ids.filter { alone.contains($0) && r.changed.contains($0) }
+    return r
+  }
+
+  /// Round 33: the clip's day today is a set time or a position past posts per day (`Planner.postToday`'s way out).
+  func isOnItsOwn(_ videoId: String, settings: Settings) throws -> Bool {
+    let today = store.today(DayMath(settings: settings))
+    guard let s = try store.planSlots(where: "video_id=? AND date>=?", [videoId, today]).first(where: { $0.date == today || $0.isExact })
+    else { return false }
+    return s.isExact || s.position >= max(1, settings.postsPerDay)
+  }
+
+  /// Round 33: when each platform of the clip's post today goes out (its slot from today on), read inside the batch so a
+  /// dry run reports what the real one does. Only posts going out today or a Postiz wait past it count.
+  func goesOut(_ videoId: String, settings: Settings) throws -> [GoesOut] {
+    let dm = DayMath(settings: settings)
+    let now = store.clock.now
+    let today = store.today(dm)
+    guard let slot = try store.planSlots(where: "video_id=? AND date>=?", [videoId, today])
+      .min(by: { ($0.date, $0.position) < ($1.date, $1.position) }) else { return [] }
+    let soon = now.addingTimeInterval(Planner.exactLead)  // Postiz sends anything inside its lead at once
+    return try store.slotPosts(slot.id).filter { $0.videoId == videoId && !$0.state.isTerminal && $0.kind != .repost }
+      .sorted { ($0.scheduledAt, $0.platform) < ($1.scheduledAt, $1.platform) }
+      .map { p in
+        // A time that has passed goes when Postiz can send it: now, or YouTube after its quiet window
+        // (`PostizService.remoteDate` applies the same rule to every create).
+        let due = max(p.scheduledAt, now)
+        let at = YouTubeWindow.clear(due, p.platform)
+        var wait: String?
+        if let _: PostizSignInWait = try store.kv(PostizService.signInKey(p.platform)) {
+          wait = StageWording.waitsForSignIn(p.platform)
+        } else if p.platform == .youtube, at > soon, at != due || YouTubeWindow.isMoved(at) {
+          wait = StageWording.youtubeQuotaWait(at, settings: settings)
+        }
+        return GoesOut(platform: p.platform, at: at, now: at <= soon && wait == nil, wait: wait)
+      }
   }
 
   /// "Remove from queue": sends each clip back to Edit (`Video.heldInEdit`, issue "Sent back from Queue") and takes

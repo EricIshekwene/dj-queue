@@ -20,7 +20,6 @@ struct CalendarClipMenu: View {
 
   var body: some View {
     let moveWhy = model.calendarMoveBlocker(slot, posts: posts)
-    // Round 21: a set-time item keeps its minute. Post today would drop it, so it says why not (Core's words).
     // Only a set time that is still to come counts: one that already went out leaves nothing to keep or take off.
     let timed = model.setTime(video.id) != nil
     Button("Move to…" + AppModel.menuReason(moveWhy), systemImage: "calendar") { model.calendarPinTarget = [video.id] }
@@ -31,7 +30,8 @@ struct CalendarClipMenu: View {
       }
       .disabled(slot.pinned || moveWhy != nil)
     }
-    let todayWhy = timed ? StageWording.hasSetTime : moveWhy
+    // Round 33: a set time no longer stops Post today: it goes out now instead of at the set time.
+    let todayWhy = moveWhy
     Button("Post today" + AppModel.menuReason(todayWhy), systemImage: "bolt") { model.postTodayAsking([video.id]) }
       .disabled(todayWhy != nil)
     Button("Open editor", systemImage: "slider.horizontal.below.rectangle") { model.openEditor(video.id) }

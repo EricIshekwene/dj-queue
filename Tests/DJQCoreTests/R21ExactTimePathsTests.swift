@@ -255,8 +255,7 @@ import Testing
     #expect(throws: EngineError("It has a set time — change the time instead")) { try planner.swap(exact.id, other.id) }
     #expect(throws: EngineError(StageWording.hasSetTime)) { try planner.swap(other.id, exact.id) }
     #expect(throws: EngineError(StageWording.hasSetTime)) { try planner.skipNext(videoId: "clip-1") }
-    #expect(throws: EngineError(StageWording.hasSetTime)) { try planner.postToday(videoId: "clip-1") }
-    #expect(try BulkActions(store: f.store).postToday(["clip-1"]).skipped["clip-1"] == StageWording.hasSetTime)
+    // Round 33: Post today on a set-time item is no longer refused; R33PostTodayTests covers it going out now.
     #expect(try R.plan(f) == plan)
     let face1 = try face(f, "clip-1")
     // Skip next on a regular clip passes over the set-time slot to the next regular one.
