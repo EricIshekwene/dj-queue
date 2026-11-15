@@ -37,7 +37,12 @@ struct RepostMenuItems: View {
     if !shorts.isEmpty {
       let n = shorts.count == 1 ? "" : " \(shorts.count)"
       let all = shorts.allSatisfy(model.isRepostable), none = !shorts.contains(where: model.isRepostable)
-      if !all { Button("Mark\(n) repostable", systemImage: "arrow.2.squarepath") { model.markRepostable(shorts, true) } }
+      if !all {
+        // Native items show no tooltip: a disabled one says why in its title.
+        let why = model.settings.postsPerVersion <= 1 ? " — Posts per version is 1 in Settings" : ""
+        Button("Mark\(n) repostable" + why, systemImage: "arrow.2.squarepath") { model.markRepostable(shorts, true) }
+          .disabled(!why.isEmpty)
+      }
       if !none { Button("Mark\(n) not repostable", systemImage: "1.circle") { model.markRepostable(shorts, false) } }
     }
   }

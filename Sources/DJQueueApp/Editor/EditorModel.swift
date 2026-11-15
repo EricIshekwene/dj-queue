@@ -669,6 +669,8 @@ final class EditorModel: ObservableObject {
   func reloadPlan() {
     guard video != nil, !snapshotMode else { return }
     let store = store, id = videoId, token = loadToken, settings = settings
+    // What this editor had written when the read started: a count clicked since then is newer than what the read sees.
+    let syncedAtStart = Dictionary(syncedVersions.map { ($0.number, $0.postCount) }, uniquingKeysWith: { a, _ in a })
     Self.saveQueue.async { [weak self] in
       let posts = (try? store.posts(where: "video_id=?", [id])) ?? []
       let slots = (try? store.planSlots(where: "video_id=?", [id])) ?? []
@@ -681,7 +683,8 @@ final class EditorModel: ObservableObject {
         // Round 37: Mark repostable / not repostable from the Queue or Edit while the editor is open reaches its Posts
         // rows (a count changed here and not yet written stays as it is).
         if self.repostOn != repost { self.repostOn = repost }
-        self.syncPostCounts(saved)
+        let current = Dictionary(self.syncedVersions.map { ($0.number, $0.postCount) }, uniquingKeysWith: { a, _ in a })
+        self.syncPostCounts(saved.filter { (current[$0.number] ?? nil) == (syncedAtStart[$0.number] ?? nil) })
         if self.posts != posts { self.posts = posts }
         if self.slots != slots { self.slots = slots }
         if self.pendingUnits != pending { self.pendingUnits = pending }
