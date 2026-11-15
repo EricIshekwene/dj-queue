@@ -219,8 +219,9 @@ extension EditorVersionList {
         .disabled(model.postCountOff != nil)
         .background(ScriptAnchor("Version posts v\(n)"))
       if own != nil, model.postCountOff == nil {
-        DSButton("Default", variant: .ghost, size: .sm,
-                 tooltip: "Back to the clip's Repost: \(EditorPostCountRow.times(model.defaultPostCount(n)).lowercased())") { model.setPostCount(n, nil) }
+        // The same reset icon as a field's Custom chip, so the row stays narrow.
+        DSIconButton("arrow.uturn.backward", tooltip: "Back to the clip's Repost: \(EditorPostCountRow.times(model.defaultPostCount(n)).lowercased())",
+                     size: .sm) { model.setPostCount(n, nil) }
           .background(ScriptAnchor("Version posts default v\(n)"))
       }
     }
