@@ -79,8 +79,6 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | Repost on a clip, with the Posts count under it | Each version's Posts in the versions list |
 |---|---|
 | ![Editor inspector with Repost on and Posts 2 times](docs/media/repost-switch.jpg) | ![Versions list with a Posts stepper on every version](docs/media/version-posts-list.jpg) |
-| **In dark** | |
-| ![Editor inspector in dark with Repost on](docs/media/repost-switch-dark.jpg) | |
 
 **Pick which version posts first (v0.27.0).** Each clip's versions post in an order you set: the editor's version list shows them in that order with *1st*, *2nd*, *3rd*, and the ↑ / ↓ arrows (or *Post vN first* in a row's ⋯ menu) move one. Days already on the Calendar keep their dates and swap which version they carry, so the clip's next day goes out with the version you put first; a day that's today, has a set time, or is already in Postiz stays as it was. Every version's row says when it posts in one line, *Planned to post Tue 1 Dec 11:00 AM* or *Waiting for a day in the Queue*, with no platform list. Clips you removed on purpose (out of videos.json and excluded) leave Library › All and read *Removed* under Excluded instead of *File missing*. Agents use `djq version-order <clip> 2,1,3`.
 

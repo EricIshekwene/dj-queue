@@ -234,7 +234,6 @@ still version-order-dark $O-dark/version-order-02-version-list-v2-first-dark
 still library-removed $O/version-order-07-library-removed-light
 # Round 36: Repost per clip (off by default) in the editor, and each version's Posts in the versions list.
 still repost-switch $V/version-posts-03-editor-repost-on-light
-still repost-switch-dark $V-dark/version-posts-03-editor-repost-on-dark
 still version-posts-list $O/version-order-04-version-list-v2-posts-light
 
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }
