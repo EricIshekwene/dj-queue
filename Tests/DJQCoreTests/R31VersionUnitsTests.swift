@@ -102,9 +102,10 @@ import Testing
     try f.store.setSentToQueue("clip-5", true)
     try f.store.refreshState(videoId: "clip-5")
     let r = try Planner(store: f.store).autoSchedule()
-    // The new clip takes the earliest repeat from a week on; the days before stay as they were.
+    // The new clip takes the earliest last post of a clip from a week on (so that clip's posts stay in order); the days
+    // before stay as they were, and it goes out well before the reposts end.
     let new = try #require(try slots(f, "clip-5").first)
-    #expect(new.unit == .first && new.date == f.dm.addDays("2026-11-02", Planner.firmDays))
+    #expect(new.unit == .first && new.date >= f.dm.addDays("2026-11-02", Planner.firmDays) && new.date < before)
     #expect(Set(firm).isSubset(of: Set(try slots(f).map(\.id))))
     #expect(r.relaid >= 1)
     // Everything still has a day, and the round-31 spacing holds.

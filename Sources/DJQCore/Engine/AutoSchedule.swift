@@ -448,8 +448,9 @@ extension Planner {
     return moved
   }
 
-  /// Slots from `firmDays` on that a new clip may take: a version post of a clip with an earlier day (or post), unpinned,
-  /// not a set time, and movable like a relayed slot (nothing posted, every live post an hour or more away and untouched).
+  /// Slots from `firmDays` on that a new clip may take: the last version post of a clip with an earlier day (or post),
+  /// so its posts stay in order when it moves later; unpinned, not a set time, and movable like a relayed slot (nothing
+  /// posted, every live post an hour or more away and untouched).
   private func movableRepeats(_ c: Pass) throws -> [PlanSlot] {
     let from = c.dm.addDays(c.today, Self.firmDays)
     let slots = try store.planSlots(where: "date>=? AND pinned=0 AND exact_at IS NULL", [from])
@@ -457,7 +458,8 @@ extension Planner {
     let vids = try Set(slots.map(\.videoId)).compactMap { try store.video(id: $0) }
     let book = try UnitBook(store: store, settings: c.settings, videos: vids)
     return try slots.filter { s in
-      guard let units = book[s.videoId], units.days.contains(where: { $0.day < s.date }) else { return false }
+      guard let units = book[s.videoId], units.days.contains(where: { $0.day < s.date }),
+            !units.days.contains(where: { $0.day > s.date }) else { return false }
       return try isMovable(s, now: c.now)
     }
   }

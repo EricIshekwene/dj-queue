@@ -20,15 +20,21 @@ without a day.
    (now 365; only a runaway bound, a pass stops as soon as nothing is left to place). On the 15 Nov data that is 80 posts
    on 28 Nov–25 Dec, none waiting. Round 31's spacing (2 days per clip, 7 per version, round robin, first posts before
    repeats) is unchanged; a day that no clip may take under those rules still stays open.
-2. **A new clip still goes out within about a week (replaces round 31 rule 10).** Round 31 kept repeats to a week ahead
+2. **A clip's posts go out in order.** Eric's screenshot showed Maladie x DJ Tassouman x Bobo at "Today · v1 · 2 of 2"
+   with its "1 of 2" on 23 Nov: the first post sat a week out and the picker only checked the gaps in both directions,
+   so the repeat took an earlier open day. A clip's next post now only takes a day after every day the clip already has.
+   The two clips already laid out that way (Maladie x DJ Tassouman x Bobo, Maladie x DJ Tassouman) keep their days:
+   relabelling posts that may already be with Postiz could break the never-double-post guard, and both posts are the
+   same video, so only the "1 of 2" / "2 of 2" order reads backwards.
+3. **A new clip still goes out within about a week (replaces round 31 rule 10).** Round 31 kept repeats to a week ahead
    so a clip sent today never waits behind a month of reposts. Now a clip new to the Queue (no day and no post yet)
-   takes the earliest open position, or, from `Planner.firmDays` (7) days on, the day of the earliest repeat (a post of a
-   clip that already has an earlier day) that can still move: unpinned, not a set time, nothing posted, every live post
+   takes the earliest open position, or, from `Planner.firmDays` (7) days on, the day of the earliest repeat that is its
+   clip's last planned post (so that clip's posts stay in order) and can still move: unpinned, not a set time, nothing posted, every live post
    an hour or more away and untouched (the relay's rule). That repeat goes back to waiting and takes the next open day in
    the same pass, and the log says "moves to a later day to make room for a new clip". The next week never changes when
-   a clip is sent, and first posts never move for one another.
-3. **Travel Safe posts once.** It went out everywhere 4–6 Nov, before round 31, so it is back catalogue (round 31 rule 18).
+   a clip is sent, and first posts never move for one another. On the 15 Nov data the earliest such day is 23 Nov.
+4. **Travel Safe posts once.** It went out everywhere 4–6 Nov, before round 31, so it is back catalogue (round 31 rule 18).
    Its v1 count is set to 1 with `djq post-count fd8573b7 --version 1 1`; `--version 1 default` brings the second post
    back. Its TikTok copy is still waiting in the TikTok inbox: finish it there and Mark posted with the link. No other
    Queue clip had a post from before 13 Nov.
-4. **The Calendar's "N in Queue waiting" line** now means the schedule is full a year ahead; its tooltip says so.
+5. **The Calendar's "N in Queue waiting" line** now means the schedule is full a year ahead; its tooltip says so.

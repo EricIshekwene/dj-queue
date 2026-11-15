@@ -134,7 +134,8 @@ public struct UnitBook: Sendable {
 ///    never back to back), and the same version posts again only `sameVersionGapDays` after its previous post;
 /// 2. among the clips that fit, the one that went longest without a post goes next (a clip with none yet first), so the
 ///    calendar goes round the clips; a tie goes to the Queue order (the clip's score, Settings → Queue sort);
-/// 3. inside the clip, every version's first post comes before any repeat, older versions first.
+/// 3. inside the clip, every version's first post comes before any repeat, older versions first, and each one takes a
+///    day after every day the clip already has (round 34: never "2 of 2" before "1 of 2").
 /// 4. every version post gets a day, out to the horizon; a clip new to the Queue goes first (`Planner.fill`, round 34).
 /// Nothing fits → the position stays open, and the next pass fills it when something does.
 struct UnitPicker {
@@ -166,6 +167,9 @@ struct UnitPicker {
     for (rank, id) in order.enumerated() {
       guard let c = book[id] else { continue }
       if c.days.contains(where: { abs(dm.days(from: $0.day, to: day)) < clipGap }) { continue }
+      // Round 34: a clip's posts go out in order. Its next one never lands before a day it already has (a first post
+      // moved a week on by hand or by a skip would otherwise let "2 of 2" post before "1 of 2").
+      if let latest = c.days.map(\.day).max(), day <= latest { continue }
       let unit = c.pending(s.activePlatforms).first { u in
         !blocked.contains(Self.key(id, u))
           && !c.days.contains { $0.version == u.version && abs(dm.days(from: $0.day, to: day)) < versionGap }
