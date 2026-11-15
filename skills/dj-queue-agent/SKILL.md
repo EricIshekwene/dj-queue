@@ -154,9 +154,9 @@ djq overlay remove <video> <number|id> [--version N]
 ### Versions: ready to repost, and bulk edits (round 20)
 
 ```sh
-djq repost-ready <video> [--version N] [--off]   # mark (or unmark) a text version ready to repost; default v1
-djq repost-ready --list [--json]                 # every clip with a version ready to repost
-djq videos --repost-ready [--json]               # same filter on the clip list (also --state repost-ready, bulk --filter repost-ready)
+djq bulk repostable --ids a,b | bulk not-repostable --ids a,b   # Mark repostable (every version posts Posts per version, 2) or not (once); asks nothing, undo with bulk undo — only on Eric's word
+djq reposts <video> [on|off] | reposts --list   # one clip; `repost-ready` is the old name
+djq videos --repostable [--json]                # repostable clips (some version posts more than once; filter `repostable`)
 ```
 
 - Marking a version ready only marks it: the clip's stage, Queue, slots and posts don't change, and nothing is scheduled.
@@ -171,7 +171,7 @@ djq videos --repost-ready [--json]               # same filter on the clip list 
 - Round 27: every version from v2 on is its own copy (`standalone: true` in `djq video --json`). Nothing carries
   forward between versions: editing v1 never changes v2 and the other way round; what a version doesn't set follows
   the defaults. `djq text|caption|youtube-title --version N` on a version that doesn't exist yet makes it as a full
-  copy of the one before, then applies the change. A copy never carries "Ready to repost".
+  copy of the one before, then applies the change. A copy posts once unless its clip is repostable or you set its Posts.
 
 ### Trim per version (round 30)
 

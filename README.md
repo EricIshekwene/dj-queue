@@ -22,19 +22,17 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | **Editor keys** (v0.13.0) — Space plays right after typing, ← → jump 2 s (5 s here), ↓ opens the next clip | **Arrow keys jump** — pick the step and try it on the strip, in Settings → Playback or beside Play |
 | ![Space, arrow jumps and ↓ in the editor](docs/media/editor-keys.gif) | ![Settings → Playback, Arrow keys jump with its try-it strip](docs/media/settings-arrow-keys.jpg) |
 
-**Versions and reposts (v0.14.0).** Each text version of a clip can be marked *Ready to repost*, so the repost cycle can pick it up; marking one never moves the clip or schedules anything. Bulk edits reach every version except captions, and the bulk dialogs say so.
+**Bulk edits on versions (v0.14.0).** Bulk edits reach every version except captions, and the bulk dialogs say so. (v0.14.0's *Ready to repost* switch is gone since v0.29.0: see *Posts and Mark repostable* below.)
 
-| Ready to repost — a switch for the version you're editing, and on each version | Bulk edits on clips with several versions |
+| Bulk edits on clips with several versions | The Caption dialog says captions change on v1 only |
 |---|---|
-| ![Marking v2 ready to repost in the editor](docs/media/repost-ready.gif) | ![Reset to defaults says what reaches every version](docs/media/bulk-versions.jpg) |
-| **Every version in one list** | **Filters › Reposts: Ready to repost** |
-| ![Version list with Ready to repost switches](docs/media/repost-versions.jpg) | ![Library filtered to clips with a version ready to repost](docs/media/repost-filter.jpg) |
+| ![Reset to defaults says what reaches every version](docs/media/bulk-versions.jpg) | ![Bulk caption dialog with the versions note](docs/media/bulk-caption-versions.jpg) |
 
 **Every version is its own copy (v0.20.0).** A new version is a complete copy of the one it came from (every text with its timing, so a text that runs the whole clip still does, plus the caption) and then stands on its own: editing v1 never changes v2, and the other way round. A copy never carries *Ready to repost*. The clip's Title, crop, cover, size, markers and platforms stay shared by every version (and the trim, unless a version has its own: see below). Existing versions were separated without changing anything they show.
 
 | A copy of v1 as v4, then v1 edited: v4 keeps what it had | The version list says what's shared |
 |---|---|
-| ![v1 copied as v4; editing v1 leaves v4 as it was](docs/media/version-copies.gif) | ![Version list: each version is its own copy](docs/media/repost-versions.jpg) |
+| ![v1 copied as v4; editing v1 leaves v4 as it was](docs/media/version-copies.gif) | ![Versions list: each version is its own copy](docs/media/version-posts-list.jpg) |
 
 **Caption defaults from the editor (v0.22.0).** At the foot of the editor's Caption section, *Make default for new clips…* lists this clip's caption template, hashtag groups (in order), extra hashtags, YouTube title template and the platforms it posts to. What differs from New clip defaults starts ticked; Make default saves the ticked parts, and the clip then reads Default. New clips start with it. Clips you already have keep exactly what they post, unless you turn on *Also update N clips that use the current defaults*; clips with scheduled or posted posts always keep theirs. A caption you typed yourself can't be a default (save it as a template first). One Undo takes it all back. The template menu's "Make … the default…" opens the same form.
 
@@ -48,7 +46,7 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![Dragging v3's trim end; v1 keeps the shared trim](docs/media/version-trim.gif) | ![Trim switch on All versions, dark](docs/media/version-trim-dark.jpg) |
 
-**Every version posts twice (v0.24.0; since v0.28.0 only with Repost on, see below).** Each version of a clip is its own post in the plan, and every version posts twice on each platform: v1 · 1 of 2, v2 · 1 of 2, then v1 · 2 of 2 and v2 · 2 of 2. Reposts go by count, never by views. Two posts of one clip are at least 2 days apart and a version waits a week before it posts again, so the Calendar goes round the clips and nothing posts back to back. Every Calendar card says which version post it is; the Queue keeps one card per clip, with the next version post on its date chip and the others as small tags with their day or *waiting*. Settings › Schedule has *Posts per version* and both gaps, and the editor's *Posts* row gives the version you're editing its own count (0 leaves it out). Long-form is never reposted. Agents use `djq post-count`, `djq posts-per-version` and `djq post-spacing`.
+**Every version posts twice (v0.24.0; since v0.28.0 only on repostable clips, see below).** Each version of a clip is its own post in the plan, and every version posts twice on each platform: v1 · 1 of 2, v2 · 1 of 2, then v1 · 2 of 2 and v2 · 2 of 2. Reposts go by count, never by views. Two posts of one clip are at least 2 days apart and a version waits a week before it posts again, so the Calendar goes round the clips and nothing posts back to back. Every Calendar card says which version post it is; the Queue keeps one card per clip, with the next version post on its date chip and the others as small tags with their day or *waiting*. Settings › Schedule has *Posts per version* and both gaps, and the editor's *Posts* row gives the version you're editing its own count (0 leaves it out). Long-form is never reposted. Agents use `djq post-count`, `djq posts-per-version` and `djq post-spacing`.
 
 | Posts per version in Settings, a version's own count in the editor, then the Queue and the Calendar | The Queue: the next version post on the date chip, the rest waiting |
 |---|---|
@@ -74,11 +72,13 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![Post today on a full evening: each platform right away, YouTube at 3:30 AM with the reason](docs/media/post-today.gif) | ![The Post today dialog in dark mode](docs/media/post-today-dark.jpg) |
 
-**Repost is off until you turn it on (v0.28.0).** Each version of a clip posts once. Turn on *Repost* in the editor (under *Ready to repost*) and that clip's versions post twice each, spaced out (Settings › Schedule › *Posts per version*). Any version can override it with its own count, on or off: the editor's *Posts* row, or the *Posts* stepper on each row of the versions list next to the ↑ / ↓ order (↺ goes back to the clip's Repost; *Never* leaves a version out). Reposts already planned for clips you hadn't turned on came off, and the Calendar closed up: what was 41 days of content is back to first posts only. A repost that already went out counts as that version's one post. Agents use `djq reposts <clip> on|off` and `djq post-count`.
+**Posts and Mark repostable (v0.28.0, one control since v0.29.0).** Each version posts once unless you say otherwise. In the editor there's one repost control: **Posts** on the version you're editing, and a Posts stepper on every row of the versions list (Never, Once, 2 times …; ↺ goes back to the clip's setting). For whole clips, select them on the Queue, Edit or Library (or right-click one, also on the Calendar and in ⌘K) and choose **Mark repostable**: every version then posts twice, spaced out (Settings › Schedule › *Posts per version*), unless a version has its own Posts. **Mark not repostable** puts every version back to once; reposts already planned come off and the Calendar closes up. Both ask first and have Undo. Filters › Reposts shows *Repostable* or *Posts once*, and ⌘K finds "repostable". Agents use `djq bulk repostable|not-repostable`, `djq reposts <clip> on|off` and `djq post-count`.
 
-| Repost on a clip, with the Posts count under it | Each version's Posts in the versions list |
+| Mark repostable on the Queue asks first | Posts is the one control in the editor |
 |---|---|
-| ![Editor inspector with Repost on and Posts 2 times](docs/media/repost-switch.jpg) | ![Versions list with a Posts stepper on every version](docs/media/version-posts-list.jpg) |
+| ![Mark 2 clips repostable? Each version 2 times, spaced out](docs/media/mark-repostable.jpg) | ![Editor inspector with Posts at the top](docs/media/repost-switch.jpg) |
+| **Each version's Posts in the versions list** | **Filters › Reposts: Repostable** |
+| ![Versions list with a Posts stepper on every version](docs/media/version-posts-list.jpg) | ![Edit filtered to repostable clips](docs/media/repostable-filter.jpg) |
 
 **Pick which version posts first (v0.27.0).** Each clip's versions post in an order you set: the editor's version list shows them in that order with *1st*, *2nd*, *3rd*, and the ↑ / ↓ arrows (or *Post vN first* in a row's ⋯ menu) move one. Days already on the Calendar keep their dates and swap which version they carry, so the clip's next day goes out with the version you put first; a day that's today, has a set time, or is already in Postiz stays as it was. Every version's row says when it posts in one line, *Planned to post Tue 1 Dec 11:00 AM* or *Waiting for a day in the Queue*, with no platform list. Clips you removed on purpose (out of videos.json and excluded) leave Library › All and read *Removed* under Excluded instead of *File missing*. Agents use `djq version-order <clip> 2,1,3`.
 
