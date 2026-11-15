@@ -74,6 +74,14 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![Post today on a full evening: each platform right away, YouTube at 3:30 AM with the reason](docs/media/post-today.gif) | ![The Post today dialog in dark mode](docs/media/post-today-dark.jpg) |
 
+**Pick which version posts first (v0.26.0).** Each clip's versions post in an order you set: the editor's version list shows them in that order with *1st*, *2nd*, *3rd*, and the ↑ / ↓ arrows (or *Post vN first* in a row's ⋯ menu) move one. Days already on the Calendar keep their dates and swap which version they carry, so the clip's next day goes out with the version you put first; a day that's today, has a set time, or is already in Postiz stays as it was. Every version's row says when it posts in one line, *Planned to post Tue 1 Dec 11:00 AM* or *Waiting for a day in the Queue*, with no platform list. Clips you removed on purpose (out of videos.json and excluded) leave Library › All and read *Removed* under Excluded instead of *File missing*. Agents use `djq version-order <clip> 2,1,3`.
+
+| The version list: v2 moved first with ↑, then v1 down and back | Dark |
+|---|---|
+| ![The version list in posting order, v2 moved to 1st, each version with its planned time or waiting](docs/media/version-order.gif) | ![The version list in dark mode with v2 1st, v1 2nd, v3 3rd](docs/media/version-order-dark.jpg) |
+| **Library › Excluded** — removed clips read *Removed*, not *File missing* | |
+| ![Library Excluded filter with three removed quiz clips marked Removed](docs/media/library-removed.jpg) | |
+
 **Photo posts and set-time posts (v0.15.0).** A photo, or a carousel of several, goes through the same life as a clip: add it, edit it (shape, a crop per photo, texts on the photos you pick, caption, hashtag groups), send it to the Queue with no score, and track it on the Calendar. YouTube Shorts is skipped because it takes video only, and a carousel longer than a platform allows sends its first photos there and says so. Any Queue item, photo or clip, can also go out at an exact day and minute, outside the regular schedule, without moving anything else.
 
 | Add photos — pick or drop them, one carousel or a post per photo | The photo editor — crop each photo, put a text on photos 2–3, reorder, platform notes |
