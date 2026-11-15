@@ -35,6 +35,7 @@ import Testing
   /// From a real plan: the next post has a day, the rest wait, and a posted one reads done.
   @Test func linesFollowThePlan() throws {
     let f = try Fixture.engine(2)
+    try f.repostAll()
     try f.updateSettings { $0.postsPerDay = 1; $0.postsPerVersion = 2 }
     var v2 = Version(number: 2)
     v2.text = "Hook 2"

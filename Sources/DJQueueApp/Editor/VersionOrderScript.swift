@@ -68,10 +68,11 @@ enum VersionOrderScript {
     }
 
     /// A real click (events sent to that window) on the control marked `label`.
-    @discardableResult func click(_ w: NSWindow, _ label: String) async -> Bool {
+    @discardableResult func click(_ w: NSWindow, _ label: String, trailing: Bool = false) async -> Bool {
       guard let root = w.contentView, let a = anchor(root, ScriptAnchor.prefix + label) else { note("no control “\(label)”"); return false }
       let f = a.convert(a.bounds, to: nil)
-      let p = NSPoint(x: f.midX, y: f.midY)
+      // `trailing`: the + end of a stepper.
+      let p = NSPoint(x: trailing ? f.maxX - 12 : f.midX, y: f.midY)
       mouse(w, .leftMouseDown, p)
       await wait(40)
       mouse(w, .leftMouseUp, p)
@@ -182,7 +183,7 @@ enum VersionOrderScript {
       let hc = NSHostingController(rootView: EditorVersionList(model: e) { _ in })
       hc.sceneBridgingOptions = []
       list.contentViewController = hc
-      list.setContentSize(NSSize(width: 380, height: 150 + 64 * CGFloat(n)))
+      list.setContentSize(NSSize(width: 380, height: 170 + 92 * CGFloat(n)))
       Backstage.show(list)
       defer { list.orderOut(nil); list.close() }
       note("stand-in: the version list in its own backstage window (the real one is a native popover)")
@@ -227,6 +228,18 @@ enum VersionOrderScript {
         check("click ↑ on v1 → back to v2, then v1, then v3", order(id) == want)
       }
       check("no live version post is doubled on a platform (\(livePairs(id)))", livePairs(id).allSatisfy { $0.value == 1 })
+      // Round 36: each version's Posts in the list, Eric's override of the clip's Repost.
+      check("every row has its Posts stepper", marks(list, "Version posts v").filter { !$0.contains("default") }.count == n)
+      let base = (try? store.postCount(videoId: id, version: 2)) ?? -1
+      await click(list, "Version posts v2", trailing: true)
+      for _ in 0..<20 where ((try? store.postCount(videoId: id, version: 2)) ?? -1) == base { await wait(250) }
+      let own2 = ((try? store.versions(videoId: id)) ?? []).first { $0.number == 2 }?.postCount
+      check("click + on v2's Posts → v2 posts \(base + 1) times, its own count (\(own2.map(String.init) ?? "none"))", own2 == base + 1)
+      check("…and Default shows on v2", !marks(list, "Version posts default v2").isEmpty)
+      await shot("version-list-v2-posts", list)
+      await click(list, "Version posts default v2")
+      for _ in 0..<20 where ((try? store.versions(videoId: id)) ?? []).first(where: { $0.number == 2 })?.postCount != nil { await wait(250) }
+      check("Default → v2 follows the clip's Repost again (\(base))", ((try? store.postCount(videoId: id, version: 2)) ?? -1) == base)
       e.flushAndWait()
 
       // 2. The Queue card's date chip carries v2 now.

@@ -12,6 +12,8 @@ import Testing
       $0.postsPerDay = perDay
       $0.postsPerVersion = each
     }
+    // Round 36: Repost is off by default; these rules are about clips with it on.
+    for id in try f.store.videos(where: "type='short-form'").map(\.id) { try f.store.setRepost(videoId: id, true) }
     return f
   }
 

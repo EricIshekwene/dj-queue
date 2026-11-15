@@ -26,8 +26,10 @@ struct EditorInspector: View {
                 EditorRepostReadyRow(model: model)
                 DSSeparator()
               }
-              // Round 31: how many times this version posts (short-form only; long-form is never reposted).
+              // Round 31: how many times this version posts (short-form only; long-form is never reposted). Round 36:
+              // under the clip's Repost switch, off by default (each version posts once).
               if model.video?.type == .short {
+                EditorRepostRow(model: model)
                 EditorPostCountRow(model: model)
                 DSSeparator()
               }
@@ -130,7 +132,7 @@ struct EditorVersionList: View {
     VStack(alignment: .leading, spacing: 2) {
       Text("Versions").font(DS.type.headline).foregroundStyle(DS.color.text)
         .padding(.horizontal, DS.space.sm).padding(.top, DS.space.sm).padding(.bottom, DS.space.xxs)
-      Text("Each version is its own copy for a repost: editing one never changes another. The clip's Title, crop, cover, size, markers and platforms are shared by every version, and so is the trim unless a version has its own. Turn on each version that's ready to repost. Versions post in the order listed: the arrows change it.")
+      Text("Each version is its own copy for a repost: editing one never changes another. The clip's Title, crop, cover, size, markers and platforms are shared by every version, and so is the trim unless a version has its own. Turn on each version that's ready to repost. Versions post in the order listed: the arrows change it. Each version posts once, or its count when the clip's Repost is on; Posts on a version overrides both.")
         .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, DS.space.sm).padding(.bottom, DS.space.xs)
       // Round 35: listed in the order they post (1st, 2nd, …); the arrows change it.
@@ -164,6 +166,8 @@ struct EditorVersionList: View {
         // Round 35: when it posts, in one line (no platform list).
         Text(model.planLine(of: n)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
           .background(ScriptAnchor("Version plan v\(n)"))
+        // Round 36: how many times this version posts, Eric's override of the clip's Repost (on: 2, off: once).
+        if model.video?.type == .short { postsStepper(n) }
         if !u.posted.isEmpty { Text("Posted on " + u.posted.map(\.displayName).joined(separator: ", ")) }
         if model.isRepostReady(n) {
           Label("Ready to repost", systemImage: "checkmark.circle.fill").foregroundStyle(DS.color.success)
@@ -203,6 +207,28 @@ struct EditorVersionList: View {
 }
 
 extension EditorVersionList {
+  /// Round 36: "Posts [−] 2 times [+]" on each version, with Default once it has a count of its own. A button style so
+  /// the row's own tap (select the version) never sees the clicks.
+  fileprivate func postsStepper(_ n: Int) -> some View {
+    let own = model.ownPostCount(n)
+    return HStack(spacing: DS.space.xs) {
+      Text("Posts").font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
+      DSXStepper(label: "Posts of v\(n)", int: Binding(get: { model.postCount(n) }, set: { model.setPostCount(n, $0) }),
+                 range: 0...PostUnits.maxCount, less: "Post v\(n) fewer times", more: "Post v\(n) more times",
+                 format: EditorPostCountRow.times)
+        .disabled(model.postCountOff != nil)
+        .background(ScriptAnchor("Version posts v\(n)"))
+      if own != nil, model.postCountOff == nil {
+        DSButton("Default", variant: .ghost, size: .sm,
+                 tooltip: "Back to the clip's Repost: \(EditorPostCountRow.times(model.defaultPostCount(n)).lowercased())") { model.setPostCount(n, nil) }
+          .background(ScriptAnchor("Version posts default v\(n)"))
+      }
+    }
+    .padding(.top, 2)
+    .dsTooltip(model.postCountOff ?? (own == nil ? "v\(n) follows the clip's Repost: \(EditorPostCountRow.times(model.defaultPostCount(n)).lowercased()). Change it to override"
+                                                 : "v\(n)'s own count: it overrides the clip's Repost"))
+  }
+
   /// Round 35: move a version earlier or later in the posting order (Eric: "easily change that priority").
   fileprivate func orderArrows(_ n: Int, pos: Int, count: Int) -> some View {
     let off = model.versionOrderOff
@@ -215,6 +241,34 @@ extension EditorVersionList {
         .background(ScriptAnchor("Version later v\(n)"))
     }
     .frame(width: 24)
+  }
+}
+
+/// Round 36: Repost for the whole clip, off by default. A label, what it does underneath and a switch on the right, the
+/// settings-row pattern (Customer.io's "Limit send rate", HoneyBook's session settings on Mobbin); the Posts row under it
+/// counts once the switch is on.
+struct EditorRepostRow: View {
+  @ObservedObject var model: EditorModel
+
+  var body: some View {
+    let on = model.repostOn
+    let times = model.settings.postsPerVersion
+    Button { model.setRepost(!on) } label: {
+      DSToggle("Repost", description: on
+                 ? "Each version posts \(EditorPostCountRow.times(times).lowercased()), spaced out (Settings › Schedule). Set a version's own count below."
+                 : "Off: each version posts once, unless it has its own count. Turn on to post this clip's versions again.",
+               isOn: .constant(on), disabledReason: model.postCountOff, size: .sm)
+        .allowsHitTesting(false)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(model.postCountOff != nil)
+    .accessibilityLabel("Repost this clip")
+    .accessibilityValue(on ? "On" : "Off")
+    .background(ScriptAnchor("Repost switch"))
+    .dsTooltip(model.postCountOff == nil ? (on ? "Turn off to post each version once; planned reposts come off"
+                                               : "Turn on to repost this clip; its reposts get days on the calendar") : nil)
+    .padding(.horizontal, DS.space.md).padding(.top, DS.space.sm)
   }
 }
 
@@ -239,7 +293,7 @@ struct EditorPostCountRow: View {
           .background(ScriptAnchor("Post count"))
       }
       HStack(spacing: DS.space.xs) {
-        Text(model.postCountOff ?? Self.note(n, own: own, fallback: fallback))
+        Text(model.postCountOff ?? Self.note(n, own: own, fallback: fallback, repost: model.repostOn))
           .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
         Spacer(minLength: 0)
         if own != nil, model.postCountOff == nil {
@@ -256,12 +310,13 @@ struct EditorPostCountRow: View {
   static func times(_ n: Int) -> String { n == 0 ? "Never" : n == 1 ? "Once" : "\(n) times" }
 
   /// "v2 posts 2 times on each platform (the default)." · "v2's own count; the default is 2 times."
-  static func note(_ n: Int, own: Int?, fallback: Int) -> String {
+  static func note(_ n: Int, own: Int?, fallback: Int, repost: Bool = true) -> String {
     if let own {
       return own == 0 ? "v\(n) doesn't post. The default is \(times(fallback).lowercased())."
         : "v\(n)'s own count, on each platform. The default is \(times(fallback).lowercased())."
     }
     return fallback == 0 ? "v\(n) doesn't post (it went out before reposts were counted)."
+      : !repost ? "v\(n) posts once on each platform (Repost is off). Set a count to override."
       : "v\(n) posts \(times(fallback).lowercased()) on each platform (the default)."
   }
 }
