@@ -112,6 +112,26 @@ import Testing
     #expect(!PostizService.retriesByItself(m, on: p))
   }
 
+  /// Threads' generic "could not process the media … check the media format" came on a render that posts fine
+  /// everywhere else: on Threads it retries with fresh media; the same words stay everywhere else, and a real format
+  /// problem, an "already published" or a policy word on Threads still stays.
+  @Test func threadsCouldNotProcessTheMediaRetriesFresh() {
+    let threads = "Threads could not process the media, please check the media format and try again"
+    for m in [threads, "Threads couldn't process the media", "Threads couldn’t process the media. Check the media format."] {
+      #expect(PostizService.classify(m, on: .threads) == .media, "\(m)")
+      #expect(PostizService.retriesByItself(m, on: .threads))
+    }
+    for p in Platform.allCases where p != .threads {
+      #expect(PostizService.classify(threads, on: p) == .stays, "\(p.rawValue)")
+      #expect(!PostizService.retriesByItself(threads, on: p))
+    }
+    for m in ["Invalid file format", "Threads could not process the media: it was already published",
+              "Threads could not process the media: it violates our Community Guidelines"] {
+      #expect(PostizService.classify(m, on: .threads) == .stays, "\(m)")
+      #expect(!PostizService.retriesByItself(m, on: .threads))
+    }
+  }
+
   @Test func copyrightStaysCopyrightWhateverElseItSays() {
     for m in ["Copyright claim: media not found", "Music rights: session expired"] {
       #expect(PostizService.classify(m, on: .instagram) == .copyright)

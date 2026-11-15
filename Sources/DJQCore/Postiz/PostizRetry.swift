@@ -265,6 +265,9 @@ extension PostizService {
     + #"re ?connect\w*|re ?link\w*|disconnected|not connected|logged out|signed out|"#
     + #"(log ?in|sign ?in|session|credentials?) (has |is )?(expired|required|invalid|revoked)|(log|sign) ?in again|"#
     + #"(need|needs|have|has) to (log|sign) ?in|scopes? not authori[sz]ed|refresh ?needed|channel (is |was )?disabled)\b"#
+  /// Threads' generic text when its own processing of the video container fails. It says "check the media format", but
+  /// the same render posts fine elsewhere and on a later try: no Threads post exists, so it retries with fresh media.
+  static let threadsCouldNotProcess = #"\bthreads could ?n[o'’]?t process the media\b"#
   /// On YouTube these may come after the video exists (the thumbnail step, "we uploaded your video but …").
   static let youTubeMayExist = #"\b(thumbnails?|uploaded (your |the )?video|video (was |has been )?uploaded)\b"#
 
@@ -322,14 +325,17 @@ extension PostizService {
   }
 
   /// The one reading of a Postiz ERROR (round 22). The order matters: copyright first, then anything that says the
-  /// platform may have it, then media and sign-in (unless a policy word is there too), then the old veto, then YouTube's
+  /// platform may have it, then Threads' "could not process the media" (media, though it names the format), then a size
+  /// or format problem, then media and sign-in (unless a policy word is there too), then the old veto, then YouTube's
   /// rule (only the upload quota retries; any other error may come after the video exists).
   public static func classify(_ message: String, on platform: Platform) -> PostizFailureKind {
     if isCopyright(message) { return .copyright }
     let m = normalized(message)
     func has(_ re: String) -> Bool { m.range(of: re, options: .regularExpression) != nil }
-    if has(alreadyThere) || has(sizeOrFormat) { return .stays }
+    if has(alreadyThere) { return .stays }
     let policy = has(policyWords)
+    if platform == .threads, has(threadsCouldNotProcess), !policy { return .media }
+    if has(sizeOrFormat) { return .stays }
     let mayExist = platform == .youtube && (has(youTubeMayExist) || has(youTubeAfterUpload))
     if !policy, platform == .youtube ? isYouTubeSourceMediaProblem(message) : isMediaProblem(message) { return .media }
     if !policy, !mayExist, isSignInProblem(message) { return .signIn }
