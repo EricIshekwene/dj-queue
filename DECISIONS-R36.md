@@ -21,12 +21,16 @@ posted as some form of override". Also: mark Travel Safe's TikTok as posted.
 4. **Turning it off takes the planned repeats off at once** where they can still move (unpinned, no set time, nothing
    posted, every post an hour or more away and untouched, the relay's rule), and the next pass **closes the gaps**: a
    relay of the movable days in their old order, so later clips move up. The same happens on the engine's first pass
-   after this update, which is what shrinks Eric's 41 days of content back to first posts only (19 days on the 15 Nov
-   data, through Thu 3 Dec).
+   after this update, which is what shrinks Eric's 41 days of content back to first posts only (20 days on the 15 Nov
+   data, through Fri 4 Dec).
 5. **A repost that already went out counts as the version's one post.** Maladie x DJ Tassouman x Bobo posted its
    "2 of 2" today before its "1 of 2" (the round-34 bug): with Repost off its later "1 of 2" comes off instead of
    posting the same video again. Generally a version's later day comes off when its other posts already make its count.
-   A day that can't move (posted, in Postiz, within the hour, pinned, set time) is never taken off.
+   This is per platform, the same rule the planner uses to give a version a day: a day only comes off when no platform
+   needs it, and a day that stays loses only its untouched posts (planned or rendered, an hour or more away, nothing in
+   Postiz) on platforms that already have the version's count. A day that can't move (posted, in Postiz, within the
+   hour, pinned, set time) is never taken off; a pinned or set-time day also keeps all its posts, since it's Eric's
+   own choice (none of his pinned days is affected on 15 Nov).
 6. **Ready to repost (round 20) stays a mark** with the same wording; it doesn't turn Repost on. Whether to merge the two
    is a question for Eric.
 7. **Travel Safe's TikTok** was marked posted with the account link (`https://www.tiktok.com/@dj.lovd`, as the other
