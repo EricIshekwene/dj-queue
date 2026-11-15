@@ -134,26 +134,27 @@ public struct UnitBook: Sendable {
 ///    never back to back), and the same version posts again only `sameVersionGapDays` after its previous post;
 /// 2. among the clips that fit, the one that went longest without a post goes next (a clip with none yet first), so the
 ///    calendar goes round the clips; a tie goes to the Queue order (the clip's score, Settings → Queue sort);
-/// 3. inside the clip, every version's first post comes before any repeat, older versions first.
-/// 4. a clip's first post takes any open day up to the horizon (30 days); a clip that already has a day or a post
-///    (its repeats and later versions) only takes days up to `repeatLimit` (a week ahead), so reposts never fill the
-///    month ahead and a clip Eric sends to the Queue always finds a day within a week of what's already planned.
+/// 3. inside the clip, every version's first post comes before any repeat, older versions first, and each one takes a
+///    day after every day the clip already has (round 34: never "2 of 2" before "1 of 2").
+/// 4. every version post gets a day, out to the horizon; a clip new to the Queue goes first (`Planner.fill`, round 34).
 /// Nothing fits → the position stays open, and the next pass fills it when something does.
 struct UnitPicker {
   var book: UnitBook
   /// Clip ids in the order ties go (the Queue order, or the relay's old order first).
   let order: [String]
   let dm: DayMath
-  /// The last day a clip with a day or a post already may take (nil = no limit).
-  let repeatLimit: String?
   /// Units that couldn't take a day in this pass (every platform was inside the lead or already done).
   var blocked: Set<String> = []
 
-  init(book: UnitBook, order: [String], dm: DayMath, repeatLimit: String? = nil) {
+  init(book: UnitBook, order: [String], dm: DayMath) {
     self.book = book
     self.order = order
     self.dm = dm
-    self.repeatLimit = repeatLimit
+  }
+
+  /// Some clip still has a version post waiting that this pass hasn't given up on.
+  var hasPending: Bool {
+    order.contains { id in book.pending(id).contains { !blocked.contains(Self.key(id, $0)) } }
   }
 
   static func key(_ id: String, _ u: PostUnit) -> String { "\(id)#\(u)" }
@@ -165,8 +166,10 @@ struct UnitPicker {
     var best: (last: String, rank: Int, id: String, unit: PostUnit)?
     for (rank, id) in order.enumerated() {
       guard let c = book[id] else { continue }
-      if let repeatLimit, day > repeatLimit, !c.days.isEmpty { continue }
       if c.days.contains(where: { abs(dm.days(from: $0.day, to: day)) < clipGap }) { continue }
+      // Round 34: a clip's posts go out in order. Its next one never lands before a day it already has (a first post
+      // moved a week on by hand or by a skip would otherwise let "2 of 2" post before "1 of 2").
+      if let latest = c.days.map(\.day).max(), day <= latest { continue }
       let unit = c.pending(s.activePlatforms).first { u in
         !blocked.contains(Self.key(id, u))
           && !c.days.contains { $0.version == u.version && abs(dm.days(from: $0.day, to: day)) < versionGap }

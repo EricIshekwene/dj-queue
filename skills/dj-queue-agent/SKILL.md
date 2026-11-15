@@ -261,7 +261,7 @@ djq photo audio <id> --remove [--json]                    # take the audio off: 
 A short clip's stage: **Score** (no score) → **Edit** (scored, something still missing, sent back, or its file is
 missing, or nothing to fix but not sent yet) → **Queue** (Eric sent it; approved, waiting for a day) → **Posted**.
 **Scheduled** is a status, not a step: the clip has a day on the Calendar, not fully posted. The engine gives every Queue
-clip a day by itself, up to 30 days ahead, and creates its posts at once. Only Eric's Send to Queue moves a clip
+clip a day by itself (every version post gets one; round 34), and creates its posts at once. Only Eric's Send to Queue moves a clip
 Edit → Queue: a clip with nothing to fix stays in Edit until then, with no reason chip. When a Queue clip stops
 being valid (crop cleared, a platform limit lowered, file missing) the engine moves it to Edit by itself on its next
 tick and after every `djq` write, logging "Moved to Edit: <reasons>"; it stays there until Eric sends it again. A

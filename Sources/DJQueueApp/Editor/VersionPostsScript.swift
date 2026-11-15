@@ -256,8 +256,12 @@ enum VersionPostsScript {
       check("the Queue draws version-post tags (\(tags.count))", !tags.isEmpty)
       check("the Queue draws date chips with a version post",
             a.queueList.prefix(4).contains { a.nextUnitLabel($0.id) != nil } && !marks("Date chip ").isEmpty)
-      let waiting = a.queueList.filter { a.nextSlotByVideo[$0.id] == nil }.count
-      note("Queue: \(a.queueList.count) clips, \(a.queueList.count - waiting) with a day, \(waiting) with none yet")
+      let waiting = a.queueList.filter { a.nextSlotByVideo[$0.id] == nil }
+      note("Queue: \(a.queueList.count) clips, \(a.queueList.count - waiting.count) with a day, \(waiting.count) with none yet")
+      // Round 34: every post in the Queue has a day, so no card reads "Not scheduled" (unless a whole year is full).
+      check("every Queue clip has a day: none reads “Not scheduled” (\(waiting.count))",
+            waiting.isEmpty && a.queueList.allSatisfy { a.dateText($0) != "Not scheduled" })
+      check("the engine has nothing left waiting for a day", ((try? Planner(store: store).schedulable(settings())) ?? []).isEmpty)
       await shot("queue-version-posts")
       // The two-version clip itself (search narrows the list; positions keep their numbers).
       ListPrefs.shared.setSearch(.queue, a.displayName(clip))
@@ -286,13 +290,7 @@ enum VersionPostsScript {
       check("the clip's card on \(next?.date ?? "?") says \(next.map { a.unitLabel($0) } ?? "?")",
             next == nil || cards.contains { $0.slot.id == next?.id })
       await shot("calendar-week-version-posts")
-      // Repeats and later versions: in this copy every day to 25 Nov already has a first post, and a repeat looks only a
-      // week ahead, so none has a day yet. The engine's pass as it will run in a week gives them days after that.
-      let dm = DayMath(settings: settings())
-      if ((try? store.planSlots(where: "date>=?", [today])) ?? []).allSatisfy({ $0.unit == .first }) {
-        note("seeding: the engine's pass as of \(dm.addDays(today, 8)) 08:00 (this copy only), so repeats get their days")
-        _ = try? Planner(store: store).autoSchedule(now: dm.at(dm.addDays(today, 8), minutes: 8 * 60))
-      }
+      // Repeats and later versions: round 34 gives them days in the same pass as the first posts.
       let later = ((try? store.planSlots(where: "date>=?", [today])) ?? []).filter { $0.unit != .first }
         .sorted { ($0.date, $0.position) < ($1.date, $1.position) }
       check("repeats and later versions have days (\(later.count))", !later.isEmpty)

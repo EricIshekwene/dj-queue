@@ -37,7 +37,7 @@ behave as before. Long-form is never reposted. The spacing numbers were left to 
    first), so new clips go out before any repeat and the calendar goes round the clips. A tie goes to the Queue order.
 9. **Inside a clip, every version's first post comes before any repeat, older versions first:** v1 · 1, v2 · 1, v3 · 1,
    then v1 · 2, v2 · 2, … This puts the longest possible time between a version and its repeat.
-10. **Repeats look a week ahead, first posts a month.** A clip's first post takes any open day up to the 30-day horizon,
+10. **(Replaced by DECISIONS-R34.md: every post gets a day; a new clip takes a repeat's day from a week on.) Repeats look a week ahead, first posts a month.** A clip's first post takes any open day up to the 30-day horizon,
     as before. A clip that already has a day or a post (its repeats and later versions) only takes days up to 7 days
     ahead (`Planner.repeatHorizonDays`). With every version posting twice the Queue always has more posts than the
     month has days; filling the month with reposts would leave a clip Eric sends today waiting 30 days. This way a new

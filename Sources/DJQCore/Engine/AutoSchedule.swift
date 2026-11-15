@@ -13,10 +13,13 @@ import Foundation
 /// - a clip with history on a platform skips that platform on its day instead of pulling another clip onto its card
 ///   (DECISIONS-R13.md), and a clip with nowhere left to post takes no day.
 extension Planner {
-  /// How far ahead the calendar is filled (days after today, no setting).
-  public static let autoScheduleHorizonDays = 30
-  /// Round 31: how far ahead a clip that already has a day or a post gets its next version post (DECISIONS-R31.md).
-  public static let repeatHorizonDays = 7
+  /// How far ahead the calendar may be filled (days after today, no setting). Round 34: every version post in the Queue
+  /// gets a day (DECISIONS-R34.md), so this only bounds a runaway; a pass stops as soon as nothing is left to place.
+  public static let autoScheduleHorizonDays = 365
+  /// Round 34: the days ahead that stay as planned when a new clip comes in. From this many days on, a new clip's first
+  /// post takes the day of the earliest repeat (a version post of a clip that already has an earlier day), and that repeat
+  /// moves to a later open day (DECISIONS-R34.md; it replaces round 31's week-ahead limit on repeats).
+  public static let firmDays = 7
   /// A position is open only when its earliest platform time is at least this far away.
   public static let autoScheduleLead: TimeInterval = 30 * 60
   /// A relay leaves a slot alone when one of its live posts goes out sooner than this.
@@ -316,66 +319,186 @@ extension Planner {
     let dm = DayMath(settings: settings)
     let backlog = try schedulable(settings)
     guard !backlog.isEmpty else { return 0 }
-    var picker = UnitPicker(book: try UnitBook(store: store, settings: settings, videos: backlog), order: backlog.map(\.id), dm: dm,
-                            repeatLimit: dm.addDays(dm.key(now), Self.repeatHorizonDays))
+    var picker = UnitPicker(book: try UnitBook(store: store, settings: settings, videos: backlog), order: backlog.map(\.id), dm: dm)
     var n = 0
     let byId = Dictionary(backlog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    var near: (day: String, clips: [Video])?
     for (day, _) in try openPositions(now: now, settings: settings, dm: dm) {
-      let near = try overlapNeighbours(day, settings, dm)
+      guard picker.hasPending else { break }
+      if near?.day != day { near = (day, try overlapNeighbours(day, settings, dm)) }
+      let neighbours = near?.clips ?? []
       guard let (id, unit) = picker.pick(day: day, allowed: { id in
         guard let v = byId[id] else { return false }
-        return !near.contains { Queue.overlaps($0, v) }
+        return !neighbours.contains { Queue.overlaps($0, v) }
       }) else { continue }
       picker.placed(id, unit, day: day)
+      near?.clips.append(byId[id]!)
       n += 1
     }
     return n
   }
 
-  /// Open positions in calendar order take the next version post (`UnitPicker`: the round-31 spacing and round-robin rules),
-  /// keeping the overlap rule. `first` puts those clips ahead of the rest of the Queue on a tie, in that order.
+  /// Round 34 (DECISIONS-R34.md): every version post in the Queue gets a day. Two steps:
+  /// 1. a clip with no day and no post yet (new to the Queue) takes the earliest open position, or, from `firmDays` on,
+  ///    the day of the earliest repeat that can still move; that repeat goes back to waiting;
+  /// 2. open positions in calendar order take the next version post (`UnitPicker`: the round-31 spacing and round-robin
+  ///    rules, the overlap rule) out to the horizon, until nothing is left to place.
+  /// `first` puts those clips ahead of the rest of the Queue on a tie, in that order.
   private func fill(_ c: inout Pass, first: [String]?, _ r: inout AutoScheduleReport) throws {
-    let open = try openPositions(now: c.now, settings: c.settings, dm: c.dm)
-    guard !open.isEmpty else { return }
-    var backlog = try schedulable(c.settings)
-    guard !backlog.isEmpty else { return }
-    if let first {
-      var seen = Set<String>()
-      let ordered = first.filter { seen.insert($0).inserted }
-      let rank = Dictionary(ordered.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { a, _ in a })
-      backlog = backlog.filter { rank[$0.id] != nil }.sorted { rank[$0.id]! < rank[$1.id]! } + backlog.filter { rank[$0.id] == nil }
-    }
-    let byId = Dictionary(backlog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-    var picker = UnitPicker(book: try UnitBook(store: store, settings: c.settings, videos: backlog), order: backlog.map(\.id), dm: c.dm,
-                            repeatLimit: c.dm.addDays(c.today, Self.repeatHorizonDays))
+    guard try !schedulable(c.settings).isEmpty else { return }
     var placer = try c.placer ?? Placer(store: store, dm: c.dm)
+    if try placeNewClips(&c, first: first, placer: &placer, &r) { placer = try Placer(store: store, dm: c.dm) }  // a moved repeat's posts are gone
+    let open = try openPositions(now: c.now, settings: c.settings, dm: c.dm)
+    let backlog = try orderedBacklog(c.settings, first: first)
+    guard !open.isEmpty, !backlog.isEmpty else { c.placer = placer; return }
+    let byId = Dictionary(backlog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    var picker = UnitPicker(book: try UnitBook(store: store, settings: c.settings, videos: backlog), order: backlog.map(\.id), dm: c.dm)
+    var near: (day: String, clips: [Video])?
     for (day, pos) in open {
-      let near = try overlapNeighbours(day, c.settings, c.dm)
+      guard picker.hasPending else { break }
+      if near?.day != day { near = (day, try overlapNeighbours(day, c.settings, c.dm)) }
+      let neighbours = near?.clips ?? []
       while let (id, unit) = picker.pick(day: day, allowed: { id in
         guard let v = byId[id] else { return false }
-        return !near.contains { Queue.overlaps($0, v) }
+        return !neighbours.contains { Queue.overlaps($0, v) }
       }) {
-        let week = c.dm.weekStart(of: c.dm.date(day))
-        try approve(week: week, at: c.now)
-        let s = PlanSlot(id: newId(), date: day, position: pos, videoId: id, pinned: false, weekStart: week, unit: unit)
-        try store.save(s)
-        try createPosts(s, settings: c.settings, dm: c.dm, picker: &c.picker, placer: &placer, note: "auto-scheduled",
-                        notBefore: c.now.addingTimeInterval(Self.autoScheduleLead), pullForHistory: false)
-        guard try !store.slotPosts(s.id).isEmpty else {  // a slot with no posts would hold its clip on Scheduled for good
-          try store.deletePlanSlot(s.id)
-          try store.refreshState(videoId: id)
+        guard try place(id, unit, day: day, position: pos, &c, &placer, &r) else {
           picker.block(id, unit)
           continue
         }
         picker.placed(id, unit, day: day)
-        r.clips.append(ScheduledClip(videoId: id, date: day, position: pos, unit: unit))
-        let k = UnitPicker.key(id, unit)
-        if c.previousDay[k] == nil { r.scheduled += 1 }
-        if c.previousDay[k] != day { try logScheduled(id, unit, day, c) }
+        near?.clips.append(byId[id]!)  // the overlap rule sees the clip it just placed, as a fresh lookup would
         break
       }
     }
     c.placer = placer
+  }
+
+  /// The Queue in posting order without clips that have nowhere left to post, `first` ahead on a tie.
+  private func orderedBacklog(_ settings: Settings, first: [String]?) throws -> [Video] {
+    let backlog = try schedulable(settings)
+    guard let first else { return backlog }
+    var seen = Set<String>()
+    let ordered = first.filter { seen.insert($0).inserted }
+    let rank = Dictionary(ordered.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { a, _ in a })
+    return backlog.filter { rank[$0.id] != nil }.sorted { rank[$0.id]! < rank[$1.id]! } + backlog.filter { rank[$0.id] == nil }
+  }
+
+  /// Saves a slot for one version post and creates its posts. False (and nothing kept) when no platform could take it.
+  private func place(_ id: String, _ unit: PostUnit, day: String, position pos: Int, _ c: inout Pass, _ placer: inout Placer,
+                     _ r: inout AutoScheduleReport) throws -> Bool {
+    let week = c.dm.weekStart(of: c.dm.date(day))
+    try approve(week: week, at: c.now)
+    let s = PlanSlot(id: newId(), date: day, position: pos, videoId: id, pinned: false, weekStart: week, unit: unit)
+    try store.save(s)
+    try createPosts(s, settings: c.settings, dm: c.dm, picker: &c.picker, placer: &placer, note: "auto-scheduled",
+                    notBefore: c.now.addingTimeInterval(Self.autoScheduleLead), pullForHistory: false)
+    guard try !store.slotPosts(s.id).isEmpty else {  // a slot with no posts would hold its clip on Scheduled for good
+      try store.deletePlanSlot(s.id)
+      try store.refreshState(videoId: id)
+      return false
+    }
+    r.clips.append(ScheduledClip(videoId: id, date: day, position: pos, unit: unit))
+    let k = UnitPicker.key(id, unit)
+    if c.previousDay[k] == nil { r.scheduled += 1 }
+    if c.previousDay[k] != day { try logScheduled(id, unit, day, c) }
+    return true
+  }
+
+  /// Step 1 of `fill`: each clip with no day yet takes the earliest open position (Queue order on a tie), and a clip new
+  /// to the Queue (no post, nothing marked posted by hand either) may instead take, from `firmDays` on, the day of the
+  /// earliest movable repeat. That repeat, and the clip's later posts with it
+  /// so they stay in order, go back to waiting and get later days in step 2. So a clip Eric sends goes out within about a
+  /// week, however many reposts are planned. Returns whether a repeat moved.
+  private func placeNewClips(_ c: inout Pass, first: [String]?, placer: inout Placer, _ r: inout AutoScheduleReport) throws -> Bool {
+    let backlog = try orderedBacklog(c.settings, first: first)
+    let book = try UnitBook(store: store, settings: c.settings, videos: backlog)
+    // No day yet: takes open days first, in Queue order. Only a clip with nothing out at all (no post, nothing marked
+    // posted by hand) may take a repeat's day.
+    var fresh = Set(backlog.map(\.id).filter { book[$0]?.days.isEmpty ?? false })
+    let mayBump = fresh.filter { id in book[id]?.taken.values.allSatisfy(\.isEmpty) ?? false }
+    guard !fresh.isEmpty else { return false }
+    let byId = Dictionary(backlog.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    var picker = UnitPicker(book: book, order: backlog.map(\.id), dm: c.dm)
+    // Where a new clip can go, in calendar order: open positions, and repeats from `firmDays` on.
+    var spots: [(date: String, position: Int, repeat: Bump?)] = try openPositions(now: c.now, settings: c.settings, dm: c.dm)
+      .map { ($0.date, $0.position, nil) }
+    spots += try movableRepeats(c).map { ($0.slot.date, $0.slot.position, $0) }
+    spots.sort { ($0.date, $0.position) < ($1.date, $1.position) }
+    var moved = false
+    var gone = Set<String>()  // slots a bump already took off (the tail of an earlier one)
+    var near: (day: String, clips: [Video])?
+    for spot in spots {
+      guard !fresh.isEmpty else { break }
+      if let b = spot.repeat, gone.contains(b.slot.id) { continue }
+      if near?.day != spot.date { near = (spot.date, try overlapNeighbours(spot.date, c.settings, c.dm)) }
+      let neighbours = near?.clips ?? []
+      guard let (id, unit) = picker.pick(day: spot.date, allowed: { id in
+        guard fresh.contains(id), spot.repeat == nil || mayBump.contains(id), let v = byId[id] else { return false }
+        return !neighbours.contains { Queue.overlaps($0, v) }
+      }) else { continue }
+      if let b = spot.repeat {
+        for s in [b.slot] + b.tail where !gone.contains(s.id) {
+          try clearSlot(s)
+          try store.deletePlanSlot(s.id)
+          try store.refreshState(videoId: s.videoId)
+          c.previousDay[UnitPicker.key(s.videoId, s.unit)] = s.date
+          gone.insert(s.id)
+          r.relaid += 1
+        }
+        moved = true
+        placer = try Placer(store: store, dm: c.dm)
+        let label = try UnitBook.label(b.slot.unit, count: store.postCount(videoId: b.slot.videoId, version: b.slot.versionNo, settings: c.settings))
+        try store.logEvent("plan", "\(BulkActions.day(b.slot.date, c.dm, c.settings)): \(label) made room for a new clip in the Queue"
+                             + (b.tail.isEmpty ? "" : " (with the \(b.tail.count) post\(b.tail.count == 1 ? "" : "s") after it)") + "; it gets another day",
+                           videoId: b.slot.videoId)
+      }
+      // Tried once per pass: a clip that can't take this day (every platform inside the lead or done) isn't tried again,
+      // so a failed placement can't keep moving repeats.
+      fresh.remove(id)
+      guard try place(id, unit, day: spot.date, position: spot.position, &c, &placer, &r) else {
+        picker.block(id, unit)
+        continue
+      }
+      picker.placed(id, unit, day: spot.date)
+      near?.clips.append(byId[id]!)
+    }
+    return moved
+  }
+
+  /// A repeat a new clip may take, with the clip's later slots (they move with it so the clip's posts stay in order).
+  private struct Bump {
+    var slot: PlanSlot
+    var tail: [PlanSlot]
+  }
+
+  /// Slots from `firmDays` on that a new clip may take: a version post of a clip with an earlier day (or post), unpinned,
+  /// not a set time, and movable like a relayed slot (nothing posted, every live post an hour or more away and
+  /// untouched), and so is every later post of that clip, which moves with it.
+  private func movableRepeats(_ c: Pass) throws -> [Bump] {
+    let from = c.dm.addDays(c.today, Self.firmDays)
+    let ahead = try store.planSlots(where: "date>=?", [from])
+    let slots = ahead.filter { !$0.pinned && !$0.isExact }
+    guard !slots.isEmpty else { return [] }
+    let vids = try Set(slots.map(\.videoId)).compactMap { try store.video(id: $0) }
+    let book = try UnitBook(store: store, settings: c.settings, videos: vids)
+    let byClip = Dictionary(grouping: ahead, by: \.videoId)
+    var movable: [String: Bool] = [:]
+    func canMove(_ s: PlanSlot) throws -> Bool {
+      if let m = movable[s.id] { return m }
+      let m = try !s.pinned && !s.isExact && isMovable(s, now: c.now)
+      movable[s.id] = m
+      return m
+    }
+    var out: [Bump] = []
+    for s in slots.sorted(by: { ($0.date, $0.position) < ($1.date, $1.position) }) {
+      guard let units = book[s.videoId], units.days.contains(where: { $0.day < s.date }) else { continue }
+      let tail = (byClip[s.videoId] ?? []).filter { $0.date > s.date }
+      // Every later day of the clip is one of these slots (no post without a slot after it), and all of them can move.
+      guard units.days.filter({ $0.day > s.date }).count == tail.count, try canMove(s), try tail.allSatisfy(canMove) else { continue }
+      out.append(Bump(slot: s, tail: tail))
+    }
+    return out
   }
 
   /// The clips the overlap rule keeps `day` apart from (Settings → avoid overlap; empty when it's off).
