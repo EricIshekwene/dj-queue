@@ -75,6 +75,8 @@ usage: djq <command> [args]
   repost <video> <platform> | longform-posted <video> <url>
   post-count <video> [--version N] <0-9|default> [--json]   how many times a version posts on each platform
                                       (default: Settings, 2); 0 = that version doesn't post. Shows every version post
+  version-order <video> [2,1,3 | --default] [--json]   the order a clip's versions post in (v1, v2, v3 unless set);
+                                      days already planned swap which version they carry. Shows every version post
   posts-per-version [0-9] [--dry-run] show or set the default (Settings → Schedule); undo with bulk undo
   post-spacing [--clip D] [--version D] [--dry-run]   show or set the gaps: days between two posts of one clip (≥1),
                                       days before a version posts again; undo with bulk undo
@@ -249,7 +251,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "post-count", "posts-per-version", "post-spacing", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at", "trim"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "post-count", "version-order", "posts-per-version", "post-spacing", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at", "trim"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -894,6 +896,27 @@ func run() throws -> Int32 {
     for u in units {
       print("  \(pad(u.label, 12)) \(pad(u.status, 10)) \(u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "")"
             + (u.platforms_done.isEmpty ? "" : "  has it: " + u.platforms_done.joined(separator: ", ")))
+    }
+
+  case "version-order":
+    let v = try resolveVideo(store, try arg(0, "video id"))
+    if flag("--default") {
+      wrote = try store.setVersionOrder(videoId: v.id, nil)
+    } else if let raw = args.dropFirst().first(where: { !$0.hasPrefix("--") }) {
+      let parts = raw.split(whereSeparator: { $0 == "," || $0 == " " }).map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "vV")) }
+      let order = try parts.map { try intArg($0, "version", 1...99) }
+      wrote = try store.setVersionOrder(videoId: v.id, order)
+    }
+    let order = try store.versionOrder(videoId: v.id)
+    let units = try AgentAPI.units(v.id, store: store, settings: settings)
+    if flag("--json") {
+      struct Out: Encodable { let video_id: String; let version_order: [Int]; let post_units: [AgentAPI.UnitOut] }
+      try printJSON(Out(video_id: v.id, version_order: order, post_units: units))
+      return 0
+    }
+    print("\(v.tag) posts \(VersionOrder.text(order))\(try store.hasOwnVersionOrder(videoId: v.id) ? "" : " (number order)")")
+    for u in units {
+      print("  \(pad(u.label, 12)) \(pad(u.status, 10)) \(u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "")")
     }
 
   case "posts-per-version":

@@ -38,10 +38,13 @@ public struct ClipUnits: Sendable {
   public var skipped: Set<Platform>
   /// Days the clip posts or posted on, with the version: slot days and the days of posts that have no slot.
   public var days: [(version: Int, day: String)]
+  /// Round 35: Eric's posting order for this clip's versions (`VersionOrder`); empty = v1, v2, v3, ….
+  public var order: [Int] = []
 
-  /// Every unit, in planning order (first posts before repeats, older versions first).
+  /// Every unit, in planning order (first posts before repeats, then the clip's version order: v1 first by default).
   public var all: [PostUnit] {
-    counts.flatMap { n, c in (0..<c).map { PostUnit(version: n, post: $0 + 1) } }.sorted()
+    counts.flatMap { n, c in (0..<c).map { PostUnit(version: n, post: $0 + 1) } }
+      .sorted { VersionOrder.precedes($0, $1, order: order) }
   }
 
   /// Total posts this clip makes per platform over all its versions.
@@ -71,6 +74,7 @@ public struct UnitBook: Sendable {
     let dm = DayMath(settings: settings)
     let vids = try videos ?? store.videos(where: "type='short-form'")
     let finished: [String: Int] = (try? store.kv(PostUnits.finishedKey, as: [String: Int].self)) ?? [:]
+    let orders = try store.versionOrders()
     // Only the clips asked about: `computeState` reads one clip's book on every state refresh.
     let ids = vids.filter { $0.type == .short }.map(\.id)
     let some = videos != nil
@@ -106,7 +110,7 @@ public struct UnitBook: Sendable {
       let edit = (try? store.edit(videoId: v.id)) ?? Edit()
       let skipped = Set(Platform.allCases.filter { edit.isSkipped($0, defaults: defaults) })
       clips[v.id] = ClipUnits(videoId: v.id, counts: counts, slotted: Set(mySlots.map(\.unit)), taken: taken, skipped: skipped,
-                              days: days.map { (version: $0.0, day: $0.1) })
+                              days: days.map { (version: $0.0, day: $0.1) }, order: orders[v.id] ?? [])
     }
   }
 
@@ -134,8 +138,9 @@ public struct UnitBook: Sendable {
 ///    never back to back), and the same version posts again only `sameVersionGapDays` after its previous post;
 /// 2. among the clips that fit, the one that went longest without a post goes next (a clip with none yet first), so the
 ///    calendar goes round the clips; a tie goes to the Queue order (the clip's score, Settings → Queue sort);
-/// 3. inside the clip, every version's first post comes before any repeat, older versions first, and each one takes a
-///    day after every day the clip already has (round 34: never "2 of 2" before "1 of 2").
+/// 3. inside the clip, every version's first post comes before any repeat, in the clip's version order (`VersionOrder`:
+///    v1 first unless Eric chose otherwise), and each one takes a day after every day the clip already has (round 34:
+///    never "2 of 2" before "1 of 2").
 /// 4. every version post gets a day, out to the horizon; a clip new to the Queue goes first (`Planner.fill`, round 34).
 /// Nothing fits → the position stays open, and the next pass fills it when something does.
 struct UnitPicker {

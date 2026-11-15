@@ -364,17 +364,22 @@ struct LibrarySectionLabel: View {
 /// Scheduled · Posted) — never "Ready" or "Needs edit"; stage IS readiness — or why it has no stage.
 enum LibraryClipState: Equatable {
   case stage(ClipStage), longform, excluded, missing, removed
+  /// Round 35: out of videos.json and excluded on purpose (`Video.isDiscarded`); its file may be gone.
+  case discarded
 }
 
 extension AppModel {
-  /// File missing on disk (danger chip "File missing · Relink", no autoplay).
-  func libraryIsMissing(_ v: Video) -> Bool { v.missing || v.state == .missingFile }
+  /// File missing on disk (danger chip "File missing · Relink", no autoplay). Round 35: not for a clip removed on purpose
+  /// (`Video.isDiscarded`: out of videos.json and excluded), whose file is meant to be gone: that one reads "Removed".
+  func libraryIsMissing(_ v: Video) -> Bool { (v.missing || v.state == .missingFile) && !v.isDiscarded }
   /// Gone from videos.json and not kept by Eric (L.S5: Keep / Exclude).
   /// Never a photo post: photos are added in the app and were never in a videos.json (round 21).
   /// (A photo post and a video made from a photo were never in a videos.json.)
-  func libraryIsRemoved(_ v: Video) -> Bool { !v.inManifest && !v.isPhoto && !v.isStill && !keptRemoved.contains(v.id) }
+  /// Round 35: not a clip that's also excluded (`Video.isDiscarded`): that one was removed on purpose and reads "Removed".
+  func libraryIsRemoved(_ v: Video) -> Bool { !v.inManifest && !v.isPhoto && !v.isStill && !v.isDiscarded && !keptRemoved.contains(v.id) }
 
   func libraryState(_ v: Video) -> LibraryClipState {
+    if v.isDiscarded { return .discarded }
     if libraryIsMissing(v) { return .missing }
     if v.excluded { return .excluded }
     if libraryIsRemoved(v) { return .removed }
@@ -388,6 +393,8 @@ extension AppModel {
     case .longform: DSClipTag(text: "Not posted", style: .outline, tooltip: "Not on YouTube yet — Mark posted when it's up")
     case .excluded: DSClipTag(text: "Excluded", style: .outline, tooltip: "Never posted — Include brings it back")
     case .missing: DSClipTag(text: "Missing", style: .soft(.danger), tooltip: "The source file moved or was deleted — Health › Doctor relinks it")
+    case .discarded: DSClipTag(text: "Removed", style: .outline,
+                               tooltip: "Removed from the set and excluded, so it never posts. Its file was deleted on purpose; the record is kept")
     case .removed: DSClipTag(text: "Not in videos.json", style: .soft(.warning), tooltip: "Gone from the session's videos.json — kept here, never posted unless you keep it")
     }
   }
