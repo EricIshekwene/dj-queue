@@ -28,15 +28,15 @@ without a day.
    relabelling posts that may already be with Postiz could break the never-double-post guard, and both posts are the
    same video, so only the "1 of 2" / "2 of 2" order reads backwards.
 3. **A new clip still goes out within about a week (replaces round 31 rule 10).** Round 31 kept repeats to a week ahead
-   so a clip sent today never waits behind a month of reposts. Now a clip new to the Queue (no day, no post, nothing
-   marked posted by hand) takes the earliest open position (Queue order, as before), or, if it has no post at all, from `Planner.firmDays` (7) days on, the day of the
-   earliest repeat (a post of a clip that already has an earlier day) that can still move, together with that clip's
+   so a clip sent today never waits behind a month of reposts. Now a clip with no day yet takes the earliest open
+   position (Queue order, as before), or, if nothing of it has posted (no post, nothing marked posted by hand), from
+   `Planner.firmDays` (7) days on the day of the earliest repeat (a post of a clip that already has an earlier day) that can still move, together with that clip's
    later posts, so its posts stay in order. Every one of them must move like a relayed slot: unpinned, not a set time,
    nothing posted, every live post an hour or more away and untouched. They go back to waiting and take the next open
    days in the same pass; the log says the repeat "made room for a new clip in the Queue; it gets another day". The next
    week never changes when a clip is sent, pinned and set-time days never move, and first posts never move for one
-   another. A clip that can't take the day it was offered isn't offered another in that pass, so a failed placement
-   can't keep moving repeats.
+   another. A clip that can't take the day it was offered isn't offered another in that pass (in the rare case that
+   happens on a repeat's day, that one repeat moves once a tick; nothing posts twice).
 4. **Travel Safe posts once.** It went out everywhere 4–6 Nov, before round 31, so it is back catalogue (round 31 rule 18).
    Its v1 count is set to 1 with `djq post-count fd8573b7 --version 1 1`; `--version 1 default` brings the second post
    back. Its TikTok copy is still waiting in the TikTok inbox: finish it there and Mark posted with the link. No other
