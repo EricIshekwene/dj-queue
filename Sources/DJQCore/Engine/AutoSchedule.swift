@@ -309,15 +309,41 @@ extension Planner {
     let vids = try Set(slots.map(\.videoId)).compactMap { try store.video(id: $0) }
     let book = try UnitBook(store: store, settings: settings, videos: vids)
     var n = 0
-    // Round 36: a version also has too many when its other posts (a day, or a post anywhere) already make its count,
-    // e.g. Repost off on a clip whose "2 of 2" went out before its "1 of 2". The latest day comes off first.
-    var held: [String: Set<PostUnit>] = [:]
-    for (id, c) in book.clips { held[id] = c.slotted.union(c.taken.values.flatMap { $0 }) }
+    // Round 36: a day also comes off when no platform needs it any more: on every active platform the clip posts to,
+    // the version's other posts already make its count (Repost off on a clip whose "2 of 2" went out before its
+    // "1 of 2"). The same per-platform rule as `ClipUnits.needsPost`, so the fill never puts it back. Latest day first.
+    var taken: [String: [Platform: Set<PostUnit>]] = book.clips.mapValues(\.taken)
+    let active = settings.activePlatforms
     for s in slots.sorted(by: { ($0.date, $0.position) > ($1.date, $1.position) }) {
       guard let c = book[s.videoId] else { continue }
       let count = c.counts[s.versionNo] ?? 0
-      let others = (held[s.videoId] ?? []).filter { $0.version == s.versionNo && $0 != s.unit }.count
-      guard s.postNo > count || others >= count, try isMovable(s, now: now) else { continue }
+      let needed = active.contains { p in
+        !c.skipped.contains(p)
+          && ((taken[s.videoId]?[p] ?? []).filter { $0.version == s.versionNo && $0 != s.unit }).count < count
+      }
+      guard s.postNo > count || !needed, try isMovable(s, now: now) else {
+        // The day stays for the platforms that need it; a post on a platform that already has its count of this
+        // version comes off when nothing has touched it yet (planned or rendered, an hour or more away, nothing in
+        // Postiz), so the same video isn't posted there again.
+        if s.postNo <= count {
+          var removed = 0
+          for p in try store.slotPosts(s.id) where p.kind == .regular && [.planned, .rendered].contains(p.state) {
+            let others = ((taken[s.videoId]?[p.platform] ?? []).filter { $0.version == s.versionNo && $0 != s.unit }).count
+            guard others >= count, p.scheduledAt >= now.addingTimeInterval(Self.relayLead),
+                  try store.livePostizJob(postId: p.id) == nil, try store.finalPostizJob(postId: p.id) == nil,
+                  try store.publishedPostizJob(lineage: PostizJob.lineage(p)) == nil else { continue }
+            try store.deletePost(p.id)
+            try store.logEvent("plan", "\(BulkActions.day(s.date, dm, settings)): \(p.platform.displayName) already has v\(s.versionNo)'s post, so \(book.label(s.videoId, s.unit)) won't post there", videoId: s.videoId)
+            removed += 1
+          }
+          guard removed > 0 else { continue }
+          n += 1
+          // A day left with no post would hold the clip on Scheduled for good (like the fill).
+          if try store.slotPosts(s.id).isEmpty && !s.pinned { try store.deletePlanSlot(s.id) }
+          try store.refreshState(videoId: s.videoId)
+        }
+        continue
+      }
       // Like `remove(slotId:)`: its automatic retries go too, and so does any other attempt of it still waiting.
       try store.dropAutoRetries(slot: s)
       for p in try store.posts(where: "video_id=? AND version_no=? AND COALESCE(post_no,1)=? AND kind<>'regular' AND state IN ('planned','rendering','rendered')",
@@ -327,10 +353,9 @@ extension Planner {
       try clearSlot(s)
       try store.deletePlanSlot(s.id)
       try store.refreshState(videoId: s.videoId)
-      // The unit no longer holds a post unless a row of it stays (posted elsewhere, failed or skipped history).
-      if try store.posts(where: "video_id=? AND version_no=? AND COALESCE(post_no,1)=?", [s.videoId, s.versionNo, s.postNo]).isEmpty {
-        held[s.videoId]?.remove(s.unit)
-      }
+      // Each platform keeps the unit only where a row of it stays (posted, failed or skipped history).
+      let left = Set(try store.posts(where: "video_id=? AND version_no=? AND COALESCE(post_no,1)=?", [s.videoId, s.versionNo, s.postNo]).map(\.platform))
+      for p in Platform.allCases where !left.contains(p) { taken[s.videoId]?[p]?.remove(s.unit) }
       try store.logEvent("plan", "\(BulkActions.day(s.date, dm, settings)): \(book.label(s.videoId, s.unit)) taken off, v\(s.versionNo) posts \(count) time\(count == 1 ? "" : "s") now", videoId: s.videoId)
       n += 1
     }

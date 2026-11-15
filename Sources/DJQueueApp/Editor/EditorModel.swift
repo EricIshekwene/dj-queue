@@ -1717,12 +1717,13 @@ final class EditorModel: ObservableObject {
     guard postCountOff == nil, video != nil, repostOn != on else { return }
     repostOn = on
     let store = store, id = videoId
-    Self.saveQueue.async {
+    Self.saveQueue.async { [weak self] in
       do {
         try store.setRepost(videoId: id, on)
         ChangeSignal.post()
       } catch {
         Log.shared.error("editor repost failed: \(error)")
+        DispatchQueue.main.async { self?.repostOn = !on }  // the switch shows what's stored
       }
     }
     show(on ? "Repost on: each version posts \(settings.postsPerVersion == 1 ? "once" : "\(settings.postsPerVersion) times") (its own count where set)"

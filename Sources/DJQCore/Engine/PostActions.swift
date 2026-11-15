@@ -298,7 +298,7 @@ public final class PostActions: @unchecked Sendable {
     if book[videoId]?.skipped.contains(platform) == true { throw EngineError("\(v.tag) is turned off for \(platform.displayName) in the editor") }
     let had = Set(prior.map(\.unit)).union(book[videoId]?.taken[platform] ?? [])
     guard let unit = book[videoId]?.all.first(where: { !had.contains($0) }) else {
-      throw EngineError("Every version of \(v.tag) has posted its count on \(platform.displayName) — add a version or raise its count (djq post-count)")
+      throw EngineError("Every version of \(v.tag) has posted its count on \(platform.displayName) — turn Repost on (djq reposts <video> on), raise its count (djq post-count) or add a version")
     }
     let next = unit.version
     let lastDay = dm.key(last.postedAt ?? last.scheduledAt)

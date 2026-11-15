@@ -100,4 +100,34 @@ import Testing
     try f.store.setRepost(videoId: "clip-0", true)
     #expect(try f.store.postCount(videoId: "clip-0", version: 1) == 2)
   }
+
+  /// Review B1: "2 of 2" went out on TikTok only; with Instagram on too and Repost off, v1 · 1 still posts on Instagram,
+  /// never again on TikTok, and the calendar settles (no re-lay every pass).
+  @Test func aRepostOnOnePlatformDoesntPostAgainThereAndNothingChurns() throws {
+    let f = try Fixture.engine(2)
+    try f.updateSettings { $0.postsPerDay = 1; $0.postsPerVersion = 2; $0.enabledPlatforms = [.tiktok] }
+    try f.repostAll()
+    try Planner(store: f.store).autoSchedule()
+    let mine = try slots(f, "clip-0")
+    var a = mine[0], b = mine[1]
+    a.unit = PostUnit(version: 1, post: 2)
+    b.unit = .first
+    for (s, u) in [(a, PostUnit(version: 1, post: 2)), (b, PostUnit.first)] {
+      try f.store.save(s)
+      for var p in try f.store.slotPosts(s.id) { p.versionNo = u.version; p.postNo = u.post; try f.store.save(p) }
+    }
+    let early = try #require(try f.store.slotPosts(a.id).first)
+    f.clock.set(early.scheduledAt.addingTimeInterval(60))
+    try PostActions(store: f.store).markPosted(postId: early.id, url: Fixture.postURLs[.tiktok]!)
+    try f.updateSettings { $0.enabledPlatforms = [.tiktok, .instagram] }
+    try f.store.setRepost(videoId: "clip-0", false)
+    for _ in 0..<3 { try Planner(store: f.store).autoSchedule() }
+    let r = try Planner(store: f.store).autoSchedule()
+    #expect(r.relaid == 0 && r.scheduled == 0, "settled: \(r.summary)")
+    let live = try f.store.posts().filter { $0.videoId == "clip-0" && $0.versionNo == 1 && $0.state != .skipped }
+    #expect(live.filter { $0.platform == .tiktok }.count == 1, "TikTok has v1 once (the 2 of 2 that went out)")
+    #expect(live.filter { $0.platform == .instagram }.count == 1, "Instagram still gets v1 once")
+    #expect(try f.store.pendingUnits(videoId: "clip-0").isEmpty)
+    #expect(try f.doublePosts().isEmpty)
+  }
 }
