@@ -39,10 +39,11 @@ import Testing
     let f = try setup(3)
     try addVersion(f, "clip-0", 2)
     let r = try Planner(store: f.store).autoSchedule()
-    // First posts take any day; a clip that already has one gets its next version post up to a week ahead only.
+    // Round 34: every version post gets a day in the first pass, first posts first.
     #expect(r.clips.prefix(3).allSatisfy { $0.unit == .first })
-    #expect(r.clips.allSatisfy { $0.unit == .first || $0.date <= f.dm.addDays("2026-11-02", Planner.repeatHorizonDays) })
-    // The engine runs every day: as the week rolls on, the rest get their days.
+    #expect(r.clips.count == 8)
+    #expect(try Planner(store: f.store).schedulable(f.store.settings()).isEmpty)
+    // The engine runs every day: nothing moves, nothing doubles.
     for d in 1...21 {
       f.setTime(f.dm.addDays("2026-11-02", d), "08:00")
       try Planner(store: f.store).autoSchedule()
@@ -92,14 +93,35 @@ import Testing
     try f.store.setSentToQueue("clip-5", false)
     try f.store.refreshState(videoId: "clip-5")
     try Planner(store: f.store).autoSchedule()
-    // Five clips × 4 version posts, one a day: only the week ahead holds repeats, the month isn't filled with them.
-    let last = try #require(try slots(f).map(\.date).max())
-    #expect(last <= f.dm.addDays("2026-11-02", Planner.repeatHorizonDays))
+    // Round 34: five clips × 4 version posts, one a day: every one has a day, reposts reach weeks ahead.
+    #expect(try Planner(store: f.store).schedulable(f.store.settings()).isEmpty)
+    #expect(try slots(f).count == 20)
+    let before = try #require(try slots(f).map(\.date).max())
+    #expect(before > f.dm.addDays("2026-11-02", Planner.firmDays))
+    let firm = try slots(f).filter { $0.date < f.dm.addDays("2026-11-02", Planner.firmDays) }.map(\.id)
     try f.store.setSentToQueue("clip-5", true)
     try f.store.refreshState(videoId: "clip-5")
-    try Planner(store: f.store).autoSchedule()
+    let r = try Planner(store: f.store).autoSchedule()
+    // The new clip takes the earliest repeat from a week on; the days before stay as they were.
     let new = try #require(try slots(f, "clip-5").first)
-    #expect(new.unit == .first && new.date <= f.dm.addDays("2026-11-02", Planner.repeatHorizonDays + 1))
+    #expect(new.unit == .first && new.date == f.dm.addDays("2026-11-02", Planner.firmDays))
+    #expect(Set(firm).isSubset(of: Set(try slots(f).map(\.id))))
+    #expect(r.relaid >= 1)
+    // Everything still has a day, and the round-31 spacing holds.
+    #expect(try Planner(store: f.store).schedulable(f.store.settings()).isEmpty)
+    for id in (0..<6).map({ "clip-\($0)" }) {
+      let mine = try slots(f, id)
+      for (i, a) in mine.enumerated() {
+        for b in mine[(i + 1)...] {
+          #expect(f.dm.days(from: a.date, to: b.date) >= 2, "\(id) \(a.unit) \(a.date) / \(b.unit) \(b.date)")
+          if a.versionNo == b.versionNo { #expect(f.dm.days(from: a.date, to: b.date) >= 7) }
+        }
+      }
+    }
+    #expect(try f.doublePosts().isEmpty)
+    // A second pass changes nothing.
+    let again = try Planner(store: f.store).autoSchedule()
+    #expect(again.scheduled == 0 && again.relaid == 0)
   }
 
   @Test func aClipStaysInProgressUntilEveryVersionPostIsOut() throws {
@@ -339,8 +361,11 @@ import Testing
     let f = try setup(2, perDay: 2)
     try f.updateSettings { $0.sameVersionGapDays = 10 }
     try Planner(store: f.store).autoSchedule()
-    // Repeats wait for their gap and the week ahead: days stay open with clips "waiting", by design.
-    #expect(try !Planner(store: f.store).schedulable(f.store.settings()).isEmpty)
+    // Round 34: every post has a day; the days the spacing keeps open between them stay open, by design.
+    #expect(try Planner(store: f.store).schedulable(f.store.settings()).isEmpty)
+    let days = Set(try f.store.planSlots().map(\.date))
+    let span = try f.store.planSlots().map(\.date)
+    #expect(f.dm.days(from: try #require(span.min()), to: try #require(span.max())) + 1 > days.count, "open days between posts")
     #expect(try Planner(store: f.store).fillPreview() == 0)
     #expect(try Doctor(store: f.store).planGaps().isEmpty)
   }
@@ -364,14 +389,15 @@ import Testing
   @Test func repostRefusesAnOffPlatformAndCountsHandPosted() throws {
     let f = try setup(1)
     try tiktokOnly(f)
-    try f.updateSettings { $0.sameVersionGapDays = 10 }  // v1 · 2 waits past the week ahead: repost takes it
     try Planner(store: f.store).autoSchedule()
     let a = PostActions(store: f.store)
-    let p = try #require(try f.store.posts().first)
+    let p = try #require(try f.store.posts().sorted { $0.scheduledAt < $1.scheduledAt }.first)
     f.clock.set(p.scheduledAt.addingTimeInterval(60))
     try a.markPosted(postId: p.id, url: Fixture.postURLs[.tiktok]!)
+    // Round 34: v1 · 2 already has its day, so a third post is the one without a TikTok post yet: repost takes it.
+    try f.store.setPostCount(videoId: "clip-0", number: 1, 3)
     let r = try a.repost(videoId: "clip-0", platform: .tiktok)
-    #expect(r.unit == PostUnit(version: 1, post: 2) && PostizJob.lineage(r) == "clip-0#tiktok#v1p2")
+    #expect(r.unit == PostUnit(version: 1, post: 3) && PostizJob.lineage(r) == "clip-0#tiktok#v1p3")
     #expect(throws: EngineError.self) { try a.repost(videoId: "clip-0", platform: .tiktok) }
   }
 }

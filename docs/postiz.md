@@ -308,7 +308,7 @@ post goes to the Calendar to post by hand, with the reason. A channel that needs
 
 **Budget.** All calls share the 25-per-hour budget. Order: deletes, creates for the soonest slots, sync, analytics.
 A week of clips on 6 platforms is 6–7 uploads + 42 creates, so it spreads over about two hours; the render horizon
-(7 days) leaves plenty of time. The calendar is filled 30 days ahead (round 13), but nothing goes to Postiz beyond the
+(7 days) leaves plenty of time. The calendar holds every Queue post, however far ahead (round 34), but nothing goes to Postiz beyond the
 render horizon. A plan that re-lays (posts/day or Queue sort changed) cancels and re-creates what moved, in the same budget;
 a slot with a post less than an hour away stays where it is, and nothing is created for a clip + platform until the delete
 of its earlier copy is confirmed.

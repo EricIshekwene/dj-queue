@@ -77,15 +77,17 @@ import Testing
     #expect(try layout(f).filter { !$0.hasPrefix("2026-11-03") } == before.filter { !$0.hasPrefix("2026-11-03") })
   }
 
-  @Test func horizonIsThirtyDaysAfterToday() throws {
+  /// Round 34: every post in the Queue gets a day, past 30 days when the Queue is that long (DECISIONS-R34.md).
+  @Test func everyQueuePostGetsADayPastThirtyDays() throws {
     let f = try setup(40)
+    let units = try Planner(store: f.store).schedulable(f.store.settings())
+      .reduce(0) { $0 + (try f.store.pendingUnits(videoId: $1.id).count) }
     let r = try Planner(store: f.store).autoSchedule()
-    #expect(r.scheduled == 31 && r.waiting == 9)
+    #expect(r.scheduled == units && r.waiting == 0 && r.reason == nil)
     let last = try #require(try f.store.planSlots().map(\.date).max())
-    #expect(last == "2026-12-02")  // Nov 2 + 30
-    #expect(r.reason == nil)
+    #expect(last > "2026-12-02")  // past Nov 2 + 30
     let next = try Planner(store: f.store).autoSchedule()
-    #expect(next.scheduled == 0 && next.reason == "no open day")
+    #expect(next.scheduled == 0 && next.relaid == 0 && next.waiting == 0)
   }
 
   @Test func aDayNeverGoesPastPostsPerDay() throws {
