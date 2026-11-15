@@ -204,6 +204,10 @@ still version-posts-queue $V/version-posts-04-queue-version-posts-light
 still version-posts-calendar $V/version-posts-07-calendar-week-later-posts-light
 still version-posts-month $V-dark/version-posts-10-calendar-month-later-posts-dark
 
+# Round 34: every post in the Queue has a day (No day yet 0, every card dated), and the month filled with them.
+still queue-every-day $V/version-posts-04-queue-version-posts-light
+still queue-every-day-month $V-dark/version-posts-10-calendar-month-later-posts-dark
+
 L=list-sort
 # Round 32: the Queue's sort wins. Next post first (posting order, scores mixed), then Worst → best and Best → worst in
 # Grid, then Has a day still worst first.

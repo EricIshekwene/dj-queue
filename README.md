@@ -56,6 +56,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 | **The Calendar week** — every card says its version post, repeats included | **Month** — the short form, "v1 2/2" |
 | ![Calendar week with v1 · 1 of 2 and v1 · 2 of 2 under the titles](docs/media/version-posts-calendar.jpg) | ![Calendar month in dark with v1 1/2 and v1 2/2 on the chips](docs/media/version-posts-month.jpg) |
 
+**Everything in the Queue has a day (v0.25).** Round 31 let a clip's second post and its later versions take days only a week ahead, so once the week filled up they all read *Not scheduled* while the weeks after stood empty. Now every post in the Queue gets a day at posts per day, however far out that is, and a clip's posts always go out in order (never *2 of 2* before *1 of 2*). A clip you send still goes out within about a week: from a week on it takes the day of the earliest repost that can still move, and that repost (with the clip's later posts) moves later. The next week, pinned days and set times never move for it.
+
+| Every Queue card has a day: *No day yet 0* | The month filled with first posts and reposts |
+|---|---|
+| ![Queue with every clip dated and No day yet 0](docs/media/queue-every-day.jpg) | ![Calendar month in dark, every day filled](docs/media/queue-every-day-month.jpg) |
+
 **The sort you pick is the order you see (v0.24.1).** On the Queue, *Worst → best* and *Best → worst* now order every clip by score, whether it already has a day or not, in all four layouts and under any search, filter or *Has a day · No day yet* chip. Unscored photos still come first, and ties go older set, part, then start time. Before, clips with a day stayed in calendar order, so since every version got its own day the sort barely showed. *Next post first* is the old view: posting order with each clip's place number. Every other list was checked too: Score's *Set order* now keeps each set together, and Edit, Library, Posts, the Calendar's platform filter and ⌘K already applied theirs.
 
 | Next post first, then Worst → best and Best → worst, then *Has a day* | Best → worst in List, dark |
