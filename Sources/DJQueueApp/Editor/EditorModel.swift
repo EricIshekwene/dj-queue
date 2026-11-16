@@ -215,7 +215,8 @@ final class EditorModel: ObservableObject {
   /// those keep the one post they had unless a count is set. nil for every other clip.
   @Published private(set) var finishedPostsUpTo: Int?
   /// Round 36: Repost for this clip (`Store.setRepost`). Off (the default): each version posts once.
-  @Published private(set) var repostOn = false
+  /// Round 38: the clip's repostable count (nil = not repostable). Every version posts it unless it has its own Posts.
+  @Published private(set) var repostCount: Int?
   /// True while a trim handle is being dragged (expensive derived work waits for the drag end).
   @Published private(set) var trimDragging = false
   /// Round 24: the part of the clip file the timeline shows (nil before a clip loads, which reads as the whole file).
@@ -283,7 +284,7 @@ final class EditorModel: ObservableObject {
     var slots: [PlanSlot] = [], pendingUnits: [PostUnit] = [], versionOrder: [Int] = [1]
     var audioBlocker: String?
     var finishedPostsUpTo: Int?
-    var repostOn = false
+    var repostCount: Int?
     var error: String?, readOnly = false
   }
 
@@ -316,7 +317,7 @@ final class EditorModel: ObservableObject {
       l.issues = try Validation.issues(video: v, store: store)
       l.audioBlocker = Self.audioBlocker(store, v)
       l.finishedPostsUpTo = (try? store.kv(PostUnits.finishedKey, as: [String: Int].self))?[id]
-      l.repostOn = (try? store.repostOn(videoId: id)) ?? false
+      l.repostCount = (try? store.repostCount(videoId: id)) ?? nil
     } catch {
       l.error = l.readOnly ? "This \(l.video?.isPhoto == true ? "post" : "clip")'s saved edit can't be read, so editing is off to protect it. Run Doctor."
         : "Couldn't load: \(error)"
@@ -384,7 +385,7 @@ final class EditorModel: ObservableObject {
     readOnly = l.readOnly; loadError = l.error
     audioBlocker = l.audioBlocker
     finishedPostsUpTo = l.finishedPostsUpTo
-    repostOn = l.repostOn
+    repostCount = l.repostCount
     fieldRevision &+= 1
     viewportRaw = l.video?.isPhoto == true ? nil : TimelineViewport.initial(duration: duration, trim: trim)
     if let v = l.video, let w = v.sourceWidth, let h = v.sourceHeight, w > 0, h > 0 { sourceSize = CGSize(width: w, height: h) }
@@ -676,13 +677,13 @@ final class EditorModel: ObservableObject {
       let slots = (try? store.planSlots(where: "video_id=?", [id])) ?? []
       let pending = (try? store.pendingUnits(videoId: id, settings: settings)) ?? []
       let order = (try? store.versionOrder(videoId: id)) ?? [1]
-      let repost = (try? store.repostOn(videoId: id)) ?? false
+      let repost = (try? store.repostCount(videoId: id)) ?? nil
       let saved = (try? store.versions(videoId: id)) ?? []
       DispatchQueue.main.async {
         guard let self, token == self.loadToken else { return }
         // Round 37: Mark repostable / not repostable from the Queue or Edit while the editor is open reaches its Posts
         // rows (a count changed here and not yet written stays as it is).
-        if self.repostOn != repost { self.repostOn = repost }
+        if self.repostCount != repost { self.repostCount = repost }
         let current = Dictionary(self.syncedVersions.map { ($0.number, $0.postCount) }, uniquingKeysWith: { a, _ in a })
         self.syncPostCounts(saved.filter { (current[$0.number] ?? nil) == (syncedAtStart[$0.number] ?? nil) })
         if self.posts != posts { self.posts = posts }
@@ -1712,12 +1713,35 @@ final class EditorModel: ObservableObject {
   /// What version `n` posts without a count of its own: Settings → Schedule, or the one post a clip finished before
   /// round 31 keeps (`PostUnits.count`).
   func defaultPostCount(_ n: Int) -> Int {
-    PostUnits.count(n, own: nil, settings: settings, finishedUpTo: finishedPostsUpTo, repost: repostOn)
+    PostUnits.count(n, own: nil, settings: settings, finishedUpTo: finishedPostsUpTo, repostCount: repostCount)
   }
 
   /// How many times version `n` posts on each platform.
   func postCount(_ n: Int) -> Int {
-    PostUnits.count(n, own: ownPostCount(n), settings: settings, finishedUpTo: finishedPostsUpTo, repost: repostOn)
+    PostUnits.count(n, own: ownPostCount(n), settings: settings, finishedUpTo: finishedPostsUpTo, repostCount: repostCount)
+  }
+
+  /// The count a clip gets when it's marked repostable without one (Settings › Posts per version, at least 2).
+  var defaultRepostCount: Int { max(2, settings.postsPerVersion) }
+
+  /// Round 38: marks the clip repostable ×`count` (every version) or not (nil). Planning data only: nothing re-renders,
+  /// and it isn't an editor undo step (one click puts it back). A version's own Posts stays its override.
+  func setClipRepost(_ count: Int?) {
+    guard postCountOff == nil, video != nil, repostCount != count else { return }
+    let was = repostCount
+    repostCount = count
+    let store = store, id = videoId
+    Self.saveQueue.async { [weak self] in
+      do {
+        try store.setRepost(videoId: id, count: count)
+        ChangeSignal.post()
+      } catch {
+        Log.shared.error("editor repost failed: \(error)")
+        DispatchQueue.main.async { self?.repostCount = was }  // the control shows what's stored
+      }
+    }
+    show(count.map { "Repostable ×\($0): each version posts \($0) times unless it has its own Posts" }
+           ?? "Not repostable: each version posts once unless it has its own Posts")
   }
 
   /// Sets version `n`'s own post count (nil = back to the default). Only the count: it changes no pixels, so nothing

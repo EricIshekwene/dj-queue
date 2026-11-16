@@ -257,9 +257,11 @@ import Testing
     // Round 36: Repost is off by default (each version once); these are the counts with it on.
     #expect(try s.postCount(videoId: "clip-1", version: 1) == 1)
     for id in ["clip-0", "clip-1"] { try s.setRepost(videoId: id, true) }
-    #expect(try s.postCount(videoId: "clip-0", version: 1) == 1 && s.postCount(videoId: "clip-1", version: 1) == 2)
-    #expect(try s.postCount(videoId: "clip-0", version: 2) == 0, "an old v2 of a finished clip never posts by itself")
+    // Round 38: marking a clip repostable is Eric's explicit choice: it reaches a finished clip's versions too.
+    #expect(try s.postCount(videoId: "clip-0", version: 1) == 2 && s.postCount(videoId: "clip-1", version: 1) == 2)
     #expect(try s.postCount(videoId: "clip-0", version: 3) == 2, "a version added later follows the new rule")
+    try s.setRepost(videoId: "clip-0", false)
+    #expect(try s.postCount(videoId: "clip-0", version: 2) == 0, "unmarked, an old v2 of a finished clip never posts by itself")
     let backups = try FileManager.default.contentsOfDirectory(atPath: f.paths.appSupport.appendingPathComponent("backups").path)
     #expect(backups.contains { $0.hasPrefix("queue-before-schema12-") })
   }
@@ -354,12 +356,12 @@ import Testing
     try f.store.setPostCount(videoId: "clip-0", number: 1, 1)
     #expect(try slots(f).map(\.unit) == [.first])
     #expect(try f.store.posts().map(\.unit) == [.first])
-    // The default going down does the same on the next pass.
+    // The clip's count going down (round 38: not repostable) does the same on the next pass.
     try f.store.setPostCount(videoId: "clip-0", number: 1, nil)
     try runDays(f)
     #expect(try slots(f).count == 2)
     f.setTime("2026-11-02", "08:00")
-    try f.updateSettings { $0.postsPerVersion = 1 }
+    try f.store.setRepost(videoId: "clip-0", count: nil)
     try Planner(store: f.store).autoSchedule()
     #expect(try slots(f).map(\.unit) == [.first])
   }

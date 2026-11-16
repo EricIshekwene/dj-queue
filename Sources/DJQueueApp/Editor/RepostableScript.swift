@@ -158,12 +158,13 @@ enum RepostableScript {
     func slots(_ id: String) -> [PlanSlot] { (try? store.planSlots(where: "video_id=?", [id])) ?? [] }
 
     /// Opens the bulk sheet through the menu item's own call, checks it, shoots it and confirms it.
-    func markRepostable(_ ids: [String], _ on: Bool, _ name: String) async {
+    func markRepostable(_ ids: [String], _ count: Int?, _ name: String) async {
       guard let a = app else { return }
-      note("stand-in: “Mark \(on ? "" : "not ")repostable” through the menu item's call (native menus can't run off screen)")
-      a.markRepostable(ids, on)
+      note("stand-in: “Mark \(count.map { "repostable ×\($0)" } ?? "not repostable")” through the menu item's call (native menus can't run off screen)")
+      a.markRepostable(ids, count: count)
       await wait(1500)
-      check("the bulk sheet asks first (\(a.pendingBulk?.request.title ?? "none"))", a.pendingBulk?.request.title.contains(on ? "repostable?" : "not repostable?") == true)
+      check("the bulk sheet asks first (\(a.pendingBulk?.request.title ?? "none"))",
+            a.pendingBulk?.request.title.contains(count.map { "repostable ×\($0)?" } ?? "not repostable?") == true)
       await shot(name)
       a.confirmPendingBulk()
       await wait(2500)
@@ -204,24 +205,37 @@ enum RepostableScript {
         e.updateVersion(coalesce: false) { $0.text = "Repost hook v2" }
         await wait(900)
       }
-      check("no Ready to repost row and no Repost switch, only Posts", !has("Repost ready") && !has("Repost switch") && has("Post count"))
-      await shot("editor-posts-only")
-      let stampBefore = stamp()
-      // The + end of the stepper (a real click).
-      if let root = w.contentView, let anchorView = anchor(root, ScriptAnchor.prefix + "Post count") {
-        let f = anchorView.convert(anchorView.bounds, to: nil)
-        let p = NSPoint(x: f.maxX - 12, y: f.midY)
+      func clickStepper(_ label: String, plus: Bool) async {
+        guard let root = w.contentView, let v = anchor(root, ScriptAnchor.prefix + label) else { note("no control “\(label)”"); return }
+        let f = v.convert(v.bounds, to: nil)
+        let p = NSPoint(x: plus ? f.maxX - 12 : f.minX + 12, y: f.midY)
         mouse(.leftMouseDown, p, in: w); await wait(40); mouse(.leftMouseUp, p, in: w); await wait(900)
       }
       let n = e.versionNo
-      check("click + on Posts → v\(n) posts twice (its own count)", count(clip, n) == 2 && e.ownPostCount(n) == 2)
-      check("…the clip now reads repostable", repostable(clip))
-      check("…and how it looks didn't change (preview stamp)", stamp() == stampBefore)
-      stageHolds("after Posts +")
-      await shot("editor-posts-twice")
-      e.setPostCount(n, nil)
-      await wait(700)
-      check("back to once", count(clip, n) == 1 && !repostable(clip))
+      let stampBefore = stamp()
+      // Two layers: the clip's Repostable, and this version's Posts (follows the clip until set).
+      check("the clip row (Repostable) and the version row (Posts, Clip setting); no Ready to repost",
+            has("Clip repostable") && has("Post count") && has("Post count follows clip") && !has("Repost ready"))
+      await shot("editor-not-repostable")
+      await click("Clip repostable")
+      let dflt = max(2, (try? store.settings().postsPerVersion) ?? 2)
+      check("click Repostable → the clip is repostable ×\(dflt) in the store", ((try? store.repostCount(videoId: clip)) ?? nil) == dflt)
+      check("…and v\(n) follows it: \(dflt) times, still Clip setting", count(clip, n) == dflt && e.ownPostCount(n) == nil && has("Post count follows clip"))
+      await clickStepper("Clip repost count", plus: true)
+      check("click + on the clip's count → ×\(dflt + 1), every version follows", ((try? store.repostCount(videoId: clip)) ?? nil) == dflt + 1
+              && count(clip, 1) == dflt + 1)
+      await shot("editor-repostable-clip")
+      await clickStepper("Post count", plus: false)
+      check("click − on v\(n)'s Posts → an override for v\(n) only (\(count(clip, n)))", e.ownPostCount(n) == dflt && count(clip, n) == dflt
+              && has("Post count override"))
+      check("…the clip keeps ×\(dflt + 1)", ((try? store.repostCount(videoId: clip)) ?? nil) == dflt + 1)
+      await shot("editor-version-override")
+      await click("Post count default")
+      check("↺ → v\(n) follows the clip again", e.ownPostCount(n) == nil && count(clip, n) == dflt + 1)
+      await click("Clip repostable")
+      check("Repostable off → every version once", ((try? store.repostCount(videoId: clip)) ?? nil) == nil && count(clip, n) == 1)
+      check("…and how it looks never changed (preview stamp)", stamp() == stampBefore)
+      stageHolds("after the clip and version controls")
       e.flushAndWait()
       a.closeEditor()
       await wait(900)
@@ -230,9 +244,8 @@ enum RepostableScript {
       a.refreshNow()
       await wait(600)
       let both = [clip, other.id]
-      await markRepostable(both, true, "edit-mark-repostable-sheet")
-      let times = max(1, (try? store.settings().postsPerVersion) ?? 2)
-      check("both clips repostable, every version \(times) times", both.allSatisfy { repostable($0) && count($0, 1) == times })
+      await markRepostable(both, 3, "edit-mark-repostable-sheet")
+      check("both clips repostable ×3, every version 3 times", both.allSatisfy { repostable($0) && count($0, 1) == 3 })
       stageHolds("after Mark repostable (an Edit clip stays in Edit)")
       a.refreshNow()
       await wait(700)
@@ -259,14 +272,14 @@ enum RepostableScript {
       if queued.count == 2 {
         _ = try? Planner(store: store).autoSchedule()
         let before = queued.map { slots($0).count }
-        await markRepostable(Array(queued), true, "queue-mark-repostable-sheet")
+        await markRepostable(Array(queued), 2, "queue-mark-repostable-sheet")
         _ = try? Planner(store: store).autoSchedule()
         a.refreshNow()
         await wait(1200)
         let after = queued.map { slots($0).count }
         check("Queue: the reposts got days (\(before) → \(after) days)", zip(before, after).allSatisfy { $1 > $0 })
         await shot("queue-repostable")
-        await markRepostable(Array(queued), false, "queue-not-repostable-sheet")
+        await markRepostable(Array(queued), nil, "queue-not-repostable-sheet")
         _ = try? Planner(store: store).autoSchedule()
         a.refreshNow()
         await wait(900)

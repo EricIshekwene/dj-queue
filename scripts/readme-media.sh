@@ -115,8 +115,8 @@ R=repostable
 # Round 27: a new version is its own copy; editing v1 never changes it.
 T=text-layers
 gif version-copies $T/text-32-version-copy-of-v1-light $T/text-33-v1-edited-light $T/text-34-copy-unchanged-light
-still bulk-versions    $R/repostable-10-bulk-reset-versions-note-light
-still bulk-caption-versions $R/repostable-09-bulk-caption-versions-note-light
+still bulk-versions    $R/repostable-11-bulk-reset-versions-note-light
+still bulk-caption-versions $R/repostable-10-bulk-caption-versions-note-light
 
 du -sh "$OUT"
 
@@ -228,12 +228,12 @@ gif version-order $O/version-order-01-version-list-number-order-light $O/version
 still version-order $O/version-order-02-version-list-v2-first-light
 still version-order-dark $O-dark/version-order-02-version-list-v2-first-dark
 still library-removed $O/version-order-07-library-removed-light
-# Round 37: Posts is the one repost control (editor and versions list); Mark repostable asks first on the Queue and Edit,
+# Round 37/38: Repostable ×N for the clip and a version override in the editor; Mark repostable asks first on the Queue,
 # and Filters › Reposts finds the clips.
-still repost-switch $V/version-posts-02-editor-posts-only-light
+still repost-switch $R/repostable-03-editor-version-override-light
 still version-posts-list $O/version-order-04-version-list-v2-posts-light
-still mark-repostable $R/repostable-06-queue-mark-repostable-sheet-light
-still mark-repostable-dark $R-dark/repostable-06-queue-mark-repostable-sheet-dark
-still repostable-filter $R/repostable-04-edit-filter-repostable-light
+still mark-repostable $R/repostable-07-queue-mark-repostable-sheet-light
+still mark-repostable-dark $R-dark/repostable-07-queue-mark-repostable-sheet-dark
+still repostable-filter $R/repostable-05-edit-filter-repostable-light
 
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }

@@ -82,6 +82,8 @@ final class AppModel {
   /// Round 20: versions marked ready to repost, per clip (clips with none are absent).
   /// Round 37: clips that post some version more than once (Mark repostable, or a version's own Posts).
   var repostable: Set<String> = []
+  /// Round 38: clip id → its repostable count, for the clips marked repostable.
+  var repostCounts: [String: Int] = [:]
   /// Round 31: every short clip's version posts (counts, what's taken), read off-main with each refresh. Labels such as
   /// "v2 · 1 of 2" come from here (`unitLabel`), never from a read while drawing. nil until the first load.
   var unitBook: UnitBook?
@@ -366,6 +368,7 @@ final class AppModel {
     var lastHeartbeat: Heartbeat?
     var versionCounts: [String: Int] = [:]
     var repostable: Set<String> = []
+    var repostCounts: [String: Int] = [:]
     var unitBook: UnitBook?
     var unitLines: [String: [UnitLine]] = [:]
     var relinked: Set<String> = []
@@ -417,6 +420,7 @@ final class AppModel {
       // Round 31: version posts. A book that can't be read leaves labels at their plain version ("v2"), never the load.
       l.unitBook = try? UnitBook(store: store, settings: l.settings, videos: l.videos)
       l.repostable = Set((l.unitBook?.clips ?? [:]).filter { $0.value.counts.values.contains { $0 > 1 } }.map(\.key))
+      l.repostCounts = (try? store.repostCounts()) ?? [:]
       if let book = l.unitBook {
         let upcoming = Dictionary(grouping: l.upcomingSlots, by: \.videoId)
         for id in book.clips.keys { l.unitLines[id] = book.lines(id, upcoming: upcoming[id] ?? []) }
@@ -515,6 +519,7 @@ final class AppModel {
     lastHeartbeat = l.lastHeartbeat
     versionCounts = l.versionCounts
     repostable = l.repostable
+    repostCounts = l.repostCounts
     unitBook = l.unitBook
     unitLines = l.unitLines
     relinked = l.relinked
