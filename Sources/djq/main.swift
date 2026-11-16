@@ -75,7 +75,7 @@ usage: djq <command> [args]
   repost <video> <platform> | longform-posted <video> <url>
   reposts <video> [on [2-9]|off] [--json] | reposts --list [--json]   Mark a clip repostable ×N (every version posts N
                                       times; N defaults to Posts per version) or not (once). A version's own Posts overrides it
-  post-count <video> [--version N] <0-9|default> [--json]   a version's own Posts, overriding the clip's (default = use the clip's)
+  post-count <video> [--version N] <0-9|default> [--json]   a version's own Posts, overriding the clip's repost count (default = follow the clip)
                                       (default: Settings, 2); 0 = that version doesn't post. Shows every version post
   version-order <video> [2,1,3 | --default] [--json]   the order a clip's versions post in (v1, v2, v3 unless set);
                                       days already planned swap which version they carry. Shows every version post
@@ -906,9 +906,13 @@ func run() throws -> Int32 {
     let rest = args.dropFirst().filter { !$0.hasPrefix("--") }
     if let raw = rest.first {
       guard ["on", "off"].contains(raw) else { throw EngineError("reposts <video> on [2-9]|off") }
-      let count: Int? = raw == "off" ? nil
-        : try rest.dropFirst().first.map { try intArg($0, "count", 2...PostUnits.maxCount) } ?? max(2, settings.postsPerVersion)
-      wrote = try store.setRepost(videoId: v.id, count: count)
+      if raw == "off" {
+        wrote = try store.setRepost(videoId: v.id, count: nil)
+      } else if let n = try rest.dropFirst().first.map({ try intArg($0, "count", 2...PostUnits.maxCount) }) {
+        wrote = try store.setRepost(videoId: v.id, count: n)
+      } else {
+        wrote = try store.setRepost(videoId: v.id, true)  // keeps the count it has, else the Settings count
+      }
       if wrote { try Planner(store: store).autoSchedule() }
     }
     let count = try store.repostCount(videoId: v.id)
@@ -1228,9 +1232,11 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
     r = try bulk.setKind(ids, k, dryRun: dry)
   case "exclude", "include": r = try bulk.setExcluded(ids, action == "exclude", dryRun: dry)
   case "repostable":
-    let n = try args.first(where: { Int($0) != nil }).map { try intArg($0, "count", 2...PostUnits.maxCount) }
-      ?? max(2, try store.settings().postsPerVersion)
-    r = try bulk.setRepostable(ids, count: n, dryRun: dry)
+    if let n = try args.first(where: { Int($0) != nil }).map({ try intArg($0, "count", 2...PostUnits.maxCount) }) {
+      r = try bulk.setRepostable(ids, count: n, dryRun: dry)
+    } else {
+      r = try bulk.setRepostable(ids, true, dryRun: dry)  // each keeps its count, else the Settings count
+    }
   case "not-repostable": r = try bulk.setRepostable(ids, count: nil, dryRun: dry)
   case "caption-template":
     let t = try arg(0, "template id|default")

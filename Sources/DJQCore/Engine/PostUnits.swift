@@ -17,9 +17,8 @@ public enum PostUnits {
   /// The most posts one version can ask for (the editor's stepper and `djq post-count` stop here).
   public static let maxCount = 9
 
-  /// Post count of version `number`: its own, else the default (a clip finished before round 31 keeps what it had).
-  /// Round 36: without a count of its own a version posts once, unless Eric turned Repost on for the clip
-  /// (`RepostSwitch`); then `postsPerVersion` times. A version's own count (0 = never) always wins, Repost on or off.
+  /// Post count of version `number` with the clip marked repostable at the Settings count (`repost`) or not; see the
+  /// `repostCount:` form for the rule.
   public static func count(_ number: Int, own: Int?, settings: Settings, finishedUpTo: Int?, repost: Bool = true) -> Int {
     count(number, own: own, settings: settings, finishedUpTo: finishedUpTo,
           repostCount: repost ? max(1, settings.postsPerVersion) : nil)

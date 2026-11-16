@@ -46,10 +46,10 @@ extension Store {
   /// Writes the whole map (only the kv; callers re-plan).
   func writeRepostCounts(_ map: [String: Int]) throws { try setKV(RepostSwitch.key, map) }
 
-  /// Marks a clip repostable with `on` = true (at the Settings default count) or not.
+  /// Marks a clip repostable (`on`: it keeps the count it has, else starts at the Settings count) or not.
   @discardableResult
   public func setRepost(videoId: String, _ on: Bool) throws -> Bool {
-    try setRepost(videoId: videoId, count: on ? max(2, try settings().postsPerVersion) : nil)
+    try setRepost(videoId: videoId, count: on ? (try repostCount(videoId: videoId) ?? max(2, try settings().postsPerVersion)) : nil)
   }
 
   /// Marks a clip repostable with `count` (2–9: every version posts that many times) or not (nil: every version once).

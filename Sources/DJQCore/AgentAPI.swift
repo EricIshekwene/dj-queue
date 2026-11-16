@@ -208,7 +208,7 @@ public enum AgentAPI {
     public var post_units: [UnitOut] = []
     /// Round 35: the order the clip's versions post in (`djq version-order`), e.g. [2, 1, 3].
     public var version_order: [Int] = []
-    /// Round 36: Repost on (`djq reposts <video> on`): each version posts its count; off, each version posts once.
+    /// Round 37/38: some version posts more than once (the clip is repostable, or a version's own Posts is above once).
     public var repost: Bool = false
     /// Round 38: the clip's repostable count (nil = not repostable); a version's own Posts overrides it.
     public var repost_count: Int? = nil

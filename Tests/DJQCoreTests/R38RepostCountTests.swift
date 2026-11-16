@@ -62,4 +62,14 @@ import Testing
     #expect(try f.store.planSlots().map(\.postNo).sorted() == [1, 2])
     #expect(try f.doublePosts().isEmpty)
   }
+
+  /// Review: "on" without a count keeps the count a clip has (it never resets ×4 to the Settings count).
+  @Test func onWithoutACountKeepsTheClipsCount() throws {
+    let f = try Fixture.engine(2)
+    try f.updateSettings { $0.postsPerVersion = 2 }
+    try f.store.setRepost(videoId: "clip-0", count: 4)
+    #expect(try !f.store.setRepost(videoId: "clip-0", true))
+    _ = try BulkActions(store: f.store).setRepostable(["clip-0", "clip-1"], true)
+    #expect(try f.store.repostCounts() == ["clip-0": 4, "clip-1": 2])
+  }
 }

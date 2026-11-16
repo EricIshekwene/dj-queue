@@ -216,7 +216,7 @@ enum VersionPostsScript {
       // Round 37: the editor has no Repost switch; the whole clip is marked repostable from the Queue or Edit (the
       // repostable check drives that bulk action). Here: off by default, then marked through the store.
       check("not repostable at first (each version posts once)", ((try? store.isRepostable(videoId: id)) ?? true) == false && count(id, 1) == 1)
-      check("the editor has no Repost switch and no Ready to repost row", !has("Repost switch") && !has("Repost ready"))
+      check("the editor has the clip's Repostable row and no Ready to repost row", has("Clip repostable") && !has("Repost ready"))
       await shot("editor-posts-only")
       note("stand-in: Mark repostable through the store (the bulk action is the repostable check's)")
       _ = try? store.setRepost(videoId: id, true)

@@ -288,10 +288,14 @@ public final class BulkActions: @unchecked Sendable {
     }
   }
 
-  /// `on`: the Settings default count (Posts per version).
+  /// `on`: each clip keeps the count it has, else starts at the Settings count (Posts per version).
   @discardableResult
   public func setRepostable(_ ids: [String], _ on: Bool, dryRun: Bool = false) throws -> BulkResult {
-    try setRepostable(ids, count: on ? max(2, try store.settings().postsPerVersion) : nil, dryRun: dryRun)
+    guard on else { return try setRepostable(ids, count: nil, dryRun: dryRun) }
+    return try run("repostable", ids: ids, dryRun: dryRun, repost: true) { _, v, _ in
+      guard v.type == .short else { return .skipped("long-form is never reposted") }
+      return try store.setRepost(videoId: v.id, true) ? .changed : .unchanged
+    }
   }
 
   @discardableResult
