@@ -275,15 +275,23 @@ public final class BulkActions: @unchecked Sendable {
     }
   }
 
-  /// Round 37: Mark repostable (every version posts `postsPerVersion` times, or its own Posts) or not repostable (every
-  /// version posts once). Journaled without the plan: the engine re-lays it within seconds (compaction), which would
-  /// make a plan undo conflict. Undo puts the mark and the versions' Posts back, and the next pass plans from them.
+  /// Round 37/38: Mark repostable ×`count` (every version posts that many times, unless it has its own Posts) or not
+  /// repostable (nil: every version once, unless it has its own Posts). Journaled without the plan: the engine re-lays it
+  /// within seconds (compaction), which would make a plan undo conflict. Undo puts the mark back, and the next pass plans
+  /// from it.
+  @discardableResult
+  public func setRepostable(_ ids: [String], count: Int?, dryRun: Bool = false) throws -> BulkResult {
+    try run(count == nil ? "not-repostable" : "repostable", ids: ids, params: count.map { ["count": String($0)] } ?? [:],
+            dryRun: dryRun, repost: true) { _, v, _ in
+      guard v.type == .short else { return .skipped("long-form is never reposted") }
+      return try store.setRepost(videoId: v.id, count: count) ? .changed : .unchanged
+    }
+  }
+
+  /// `on`: the Settings default count (Posts per version).
   @discardableResult
   public func setRepostable(_ ids: [String], _ on: Bool, dryRun: Bool = false) throws -> BulkResult {
-    try run(on ? "repostable" : "not-repostable", ids: ids, dryRun: dryRun, repost: true) { _, v, _ in
-      guard v.type == .short else { return .skipped("long-form is never reposted") }
-      return try store.setRepost(videoId: v.id, on) ? .changed : .unchanged
-    }
+    try setRepostable(ids, count: on ? max(2, try store.settings().postsPerVersion) : nil, dryRun: dryRun)
   }
 
   @discardableResult
@@ -1017,6 +1025,8 @@ public final class BulkActions: @unchecked Sendable {
     /// Round 37: the clip's repostable mark (kv `plan.repost`), journaled only by Mark repostable / not repostable. nil
     /// in every other batch, so a later mark never blocks their undo and their undo never changes it.
     var repost: Bool? = nil
+    /// Round 38: the repostable count with `repost` (nil in round 37's journals: they read the default count).
+    var repostCount: Int? = nil
   }
 
   /// `cur` is still what snapshot `a` recorded. A sent flag that went from on to off isn't Eric's later work: the engine
@@ -1024,7 +1034,8 @@ public final class BulkActions: @unchecked Sendable {
   static func same(_ cur: ClipSnap, _ a: ClipSnap) -> Bool {
     var c = cur
     if a.sent != false { c.sent = a.sent }
-    if a.repost == nil { c.repost = nil }
+    if a.repost == nil { c.repost = nil; c.repostCount = nil }
+    if a.repost != nil, a.repostCount == nil { c.repostCount = nil }  // a round-37 journal: only the mark was recorded
     // Round 20: Ready to repost isn't part of an edit: marking a version after a batch doesn't block its undo.
     c.versions = c.versions.mapValues(withoutReady)
     var b = a
@@ -1240,7 +1251,8 @@ public final class BulkActions: @unchecked Sendable {
                     excluded: r?.bool("excluded") ?? false, title: r?.string("title"), titleTracks: r?.string("title_tracks"),
                     titleSource: r?.string("title_source"), edit: edit, versions: versions, renders: rs,
                     held: r?.bool("held_in_edit") == true ? true : nil, sent: r?.bool("sent_to_queue") ?? false,
-                    photos: r?.string("photos"), still: try stillSnapshot(id), repost: repost ? try store.repostOn(videoId: id) : nil)
+                    photos: r?.string("photos"), still: try stillSnapshot(id), repost: repost ? try store.repostOn(videoId: id) : nil,
+                    repostCount: repost ? try store.repostCount(videoId: id) : nil)
   }
 
   /// `separating`: round 27, restored v2+ that still follow an earlier version stand alone again (`VersionCopy`),
@@ -1258,10 +1270,14 @@ public final class BulkActions: @unchecked Sendable {
     // Round 23: a photo post that became a video (or a video that became a photo post again) goes back to what it was.
     try restoreStill(c)
     // Round 37: the repostable mark, when this batch set it (the plan and version counts come back with the rest).
-    if let on = c.repost, try store.repostOn(videoId: c.id) != on {
-      var all = try store.repostClips()
-      if on { all.insert(c.id) } else { all.remove(c.id) }
-      try store.setKV(RepostSwitch.key, all.sorted())
+    if let on = c.repost {
+      var all = try store.repostCounts()
+      let fallback = max(2, try store.settings().postsPerVersion)
+      let want = on ? (c.repostCount ?? fallback) : nil
+      if all[c.id] != want {
+        all[c.id] = want
+        try store.writeRepostCounts(all)
+      }
     }
     if let e = c.edit {
       try db.run("INSERT INTO edits(video_id,json,updated_at) VALUES(?,?,?) ON CONFLICT(video_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",

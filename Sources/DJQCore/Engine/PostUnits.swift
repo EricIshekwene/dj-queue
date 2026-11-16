@@ -21,9 +21,16 @@ public enum PostUnits {
   /// Round 36: without a count of its own a version posts once, unless Eric turned Repost on for the clip
   /// (`RepostSwitch`); then `postsPerVersion` times. A version's own count (0 = never) always wins, Repost on or off.
   public static func count(_ number: Int, own: Int?, settings: Settings, finishedUpTo: Int?, repost: Bool = true) -> Int {
+    count(number, own: own, settings: settings, finishedUpTo: finishedUpTo,
+          repostCount: repost ? max(1, settings.postsPerVersion) : nil)
+  }
+
+  /// Round 38 (DECISIONS-R38.md): the clip's repost count (`RepostSwitch`, nil = not repostable) is what every version
+  /// posts; a version's own Posts (0 = never) overrides it for that version only.
+  public static func count(_ number: Int, own: Int?, settings: Settings, finishedUpTo: Int?, repostCount: Int?) -> Int {
     if let own { return min(max(0, own), maxCount) }
-    if let top = finishedUpTo, number <= top { return number == 1 ? 1 : 0 }
-    return repost ? min(max(1, settings.postsPerVersion), maxCount) : 1
+    if let top = finishedUpTo, number <= top, repostCount == nil { return number == 1 ? 1 : 0 }
+    return min(max(1, repostCount ?? 1), maxCount)
   }
 }
 
@@ -84,7 +91,7 @@ public struct UnitBook: Sendable {
     let vids = try videos ?? store.videos(where: "type='short-form'")
     let finished: [String: Int] = (try? store.kv(PostUnits.finishedKey, as: [String: Int].self)) ?? [:]
     let orders = try store.versionOrders()
-    let reposting = try store.repostClips()
+    let reposting = try store.repostCounts()
     // Only the clips asked about: `computeState` reads one clip's book on every state refresh.
     let ids = vids.filter { $0.type == .short }.map(\.id)
     let some = videos != nil
@@ -106,7 +113,7 @@ public struct UnitBook: Sendable {
       var own = versions[v.id] ?? [:]
       if own[1] == nil { own[1] = .some(nil) }
       for (n, c) in own {
-        counts[n] = PostUnits.count(n, own: c, settings: settings, finishedUpTo: finished[v.id], repost: reposting.contains(v.id))
+        counts[n] = PostUnits.count(n, own: c, settings: settings, finishedUpTo: finished[v.id], repostCount: reposting[v.id])
       }
       var taken: [Platform: Set<PostUnit>] = [:]
       for p in v.alreadyPostedOn { taken[p, default: []].insert(.first) }
@@ -132,7 +139,7 @@ public struct UnitBook: Sendable {
   public func pending(_ id: String) -> [PostUnit] { clips[id]?.pending(settings.activePlatforms) ?? [] }
 
   /// Post count of `version` on clip `id` (the default when the clip isn't short-form or unknown).
-  public func count(_ id: String, version: Int) -> Int { clips[id]?.counts[version] ?? max(0, settings.postsPerVersion) }
+  public func count(_ id: String, version: Int) -> Int { clips[id]?.counts[version] ?? 1 }
 
   /// "v2 · 1 of 2" for a unit of clip `id`.
   public func label(_ id: String, _ u: PostUnit) -> String { u.label(of: count(id, version: u.version)) }
@@ -209,7 +216,7 @@ extension Store {
     let s = try settings ?? self.settings()
     let finished: [String: Int] = (try? kv(PostUnits.finishedKey, as: [String: Int].self)) ?? [:]
     let own = try versions(videoId: videoId).first { $0.number == version }?.postCount
-    return PostUnits.count(version, own: own, settings: s, finishedUpTo: finished[videoId], repost: try repostOn(videoId: videoId))
+    return PostUnits.count(version, own: own, settings: s, finishedUpTo: finished[videoId], repostCount: try repostCount(videoId: videoId))
   }
 
   /// Units of a clip still waiting for a day (nothing for long-form).

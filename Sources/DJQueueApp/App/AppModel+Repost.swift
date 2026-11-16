@@ -1,33 +1,29 @@
 import DJQCore
 import SwiftUI
 
-/// Round 37 (DECISIONS-R37.md): Mark repostable / not repostable, the clip-wide repost action. One place for every
-/// surface (Queue, Edit, Library, Calendar, ⌘K); each asks first and has Undo, like the other bulk actions.
+/// Round 37/38 (DECISIONS-R37.md, R38): Mark repostable ×N / not repostable, the clip-wide repost setting. One place for
+/// every surface (Queue, Edit, Library, Calendar, ⌘K); each asks first and has Undo, like the other bulk actions. A
+/// version's own Posts is its override and stays either way.
 extension AppModel {
   func isRepostable(_ id: String) -> Bool { repostable.contains(id) }
 
-  /// Asks, then marks the short clips in `ids` repostable (each version posts `postsPerVersion` times) or not (once).
-  func markRepostable(_ ids: [String], _ on: Bool) {
+  /// Asks, then marks the short clips in `ids` repostable ×`count` (every version posts that many times) or not (nil).
+  func markRepostable(_ ids: [String], count: Int?) {
     let shorts = ids.filter { video($0)?.type == .short }
     guard !shorts.isEmpty else { show("Long-form is never reposted", error: true); return }
-    if on, settings.postsPerVersion <= 1 {
-      show("Posts per version is 1 (Settings › Schedule): set it to 2 or more, or set a version's Posts", error: true)
-      return
-    }
     let n = AppModel.pipelineClips(shorts.count)
-    let times = EditorPostCountRow.times(max(1, settings.postsPerVersion)).lowercased()
-    pipelineBulk(on ? "Mark \(n) repostable?" : "Mark \(n) not repostable?", verb: on ? "Mark repostable" : "Not repostable",
-                 ids: shorts,
-                 changes: [.init(field: "Posts", value: on ? "Each version \(times), spaced out. A version's own Posts stays."
-                                                     : "Each version once. Reposts already planned come off.")],
-                 done: on ? "Marked repostable" : "Marked not repostable") { b, dry in
-      try b.setRepostable(shorts, on, dryRun: dry)
+    pipelineBulk(count.map { "Mark \(n) repostable ×\($0)?" } ?? "Mark \(n) not repostable?",
+                 verb: count.map { "Repostable ×\($0)" } ?? "Not repostable", ids: shorts,
+                 changes: [.init(field: "Posts", value: count.map { "Every version \($0) times, spaced out. A version's own Posts stays." }
+                                                     ?? "Every version once. A version's own Posts stays; reposts already planned come off.")],
+                 done: count.map { "Marked repostable ×\($0)" } ?? "Marked not repostable") { b, dry in
+      try b.setRepostable(shorts, count: count, dryRun: dry)
     }
   }
 }
 
-/// "Mark repostable" / "Mark not repostable" for a menu (native items: no tooltip, so the title says it). One clip shows
-/// the one that changes it; several show both.
+/// "Mark repostable ▸ ×2 ×3 ×4 ×5" and "Mark not repostable" for a menu (native items: no tooltip, so titles say it). The
+/// count a single clip has is checked.
 struct RepostMenuItems: View {
   @Bindable var model: AppModel
   let targets: [String]
@@ -36,14 +32,19 @@ struct RepostMenuItems: View {
     let shorts = targets.filter { model.video($0)?.type == .short }
     if !shorts.isEmpty {
       let n = shorts.count == 1 ? "" : " \(shorts.count)"
-      let all = shorts.allSatisfy(model.isRepostable), none = !shorts.contains(where: model.isRepostable)
-      if !all {
-        // Native items show no tooltip: a disabled one says why in its title.
-        let why = model.settings.postsPerVersion <= 1 ? " — Posts per version is 1 in Settings" : ""
-        Button("Mark\(n) repostable" + why, systemImage: "arrow.2.squarepath") { model.markRepostable(shorts, true) }
-          .disabled(!why.isEmpty)
+      let counts = Set(shorts.map { model.repostCounts[$0] })
+      let current = counts.count == 1 ? counts.first! : nil
+      Menu("Mark\(n) repostable") {
+        ForEach(RepostSwitch.menuCounts, id: \.self) { c in
+          Button { model.markRepostable(shorts, count: c) } label: {
+            if current == c { Label("×\(c): every version posts \(c) times", systemImage: "checkmark") }
+            else { Text("×\(c): every version posts \(c) times") }
+          }
+        }
       }
-      if !none { Button("Mark\(n) not repostable", systemImage: "1.circle") { model.markRepostable(shorts, false) } }
+      if counts.contains(where: { $0 != nil }) {
+        Button("Mark\(n) not repostable", systemImage: "1.circle") { model.markRepostable(shorts, count: nil) }
+      }
     }
   }
 }

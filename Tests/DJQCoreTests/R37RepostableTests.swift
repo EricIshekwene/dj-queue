@@ -25,7 +25,7 @@ import Testing
     #expect(try f.doublePosts().isEmpty)
   }
 
-  @Test func notRepostableClearsOwnCountsAboveOnceAndKeepsNever() throws {
+  @Test func notRepostableKeepsVersionOverrides() throws {
     let f = try Fixture.engine(1)
     var v2 = Version(number: 2)
     v2.text = "Hook 2"
@@ -38,14 +38,17 @@ import Testing
     try f.store.setPostCount(videoId: "clip-0", number: 2, 3)
     try f.store.setPostCount(videoId: "clip-0", number: 3, 0)
     #expect(try f.store.isRepostable(videoId: "clip-0"), "a version's own Posts above once makes the clip repostable")
+    // Round 38: a version's own Posts is its override: marking the clip repostable or not leaves it alone.
+    try f.store.setRepost(videoId: "clip-0", count: 4)
+    #expect(try f.store.postCount(videoId: "clip-0", version: 1) == 4 && f.store.postCount(videoId: "clip-0", version: 2) == 3)
     let r = try BulkActions(store: f.store).setRepostable(["clip-0"], false)
     #expect(r.changed == ["clip-0"])
-    #expect(try f.store.postCount(videoId: "clip-0", version: 2) == 1)
+    #expect(try f.store.postCount(videoId: "clip-0", version: 1) == 1)
+    #expect(try f.store.postCount(videoId: "clip-0", version: 2) == 3, "the override stays")
     #expect(try f.store.postCount(videoId: "clip-0", version: 3) == 0, "Never stays Never")
-    #expect(try !f.store.isRepostable(videoId: "clip-0"))
-    // Undo brings v2's own 3 back.
+    // Undo brings ×4 back.
     _ = try BulkActions(store: f.store).undo(try #require(r.batchId))
-    #expect(try f.store.postCount(videoId: "clip-0", version: 2) == 3)
+    #expect(try f.store.repostCount(videoId: "clip-0") == 4 && f.store.postCount(videoId: "clip-0", version: 1) == 4)
   }
 
   @Test func anUnrelatedBatchsUndoLeavesTheMarkAlone() throws {

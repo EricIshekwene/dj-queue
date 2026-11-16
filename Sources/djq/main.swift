@@ -56,7 +56,7 @@ usage: djq <command> [args]
        | crop-offset <percent, -40…40> [--own]   move the crop left (-) or right of centre, as % of the frame; --own also moves clips with a crop
        | caption [--template <id|default>] [--add a,b] [--remove c]   template and groups together, one undo; --add keeps the clip's other groups
        | extra-hashtags "<#a #b>"|default | youtube-title-template <id|default> | drop-hashtags <P>
-       | skip-platform <P> | unskip-platform <P> | repostable | not-repostable
+       | skip-platform <P> | unskip-platform <P> | repostable [2-9] | not-repostable
        | accept-title | title-raw-tag | title "<t>"|--clear | pin-consecutive <YYYY-MM-DD>
        | post-today | re-render | unqueue | requeue
   bulk undo <batch> [--force] [--yes] | bulk batches [--json]   (--yes: Eric's OK when the undo turns Postiz posting back on)
@@ -73,13 +73,13 @@ usage: djq <command> [args]
   fixed <post> | reset <post> | skip <post> | post-now <post> | shift-plan <post>
   copyright <post> reupload [N]|skip|accept
   repost <video> <platform> | longform-posted <video> <url>
-  reposts <video> [on|off] [--json] | reposts --list [--json]   Mark a clip repostable (each version posts its count,
-                                      Settings: 2) or not (each version posts once). Off takes its planned reposts off at once
-  post-count <video> [--version N] <0-9|default> [--json]   how many times a version posts on each platform (its Posts)
+  reposts <video> [on [2-9]|off] [--json] | reposts --list [--json]   Mark a clip repostable ×N (every version posts N
+                                      times; N defaults to Posts per version) or not (once). A version's own Posts overrides it
+  post-count <video> [--version N] <0-9|default> [--json]   a version's own Posts, overriding the clip's (default = use the clip's)
                                       (default: Settings, 2); 0 = that version doesn't post. Shows every version post
   version-order <video> [2,1,3 | --default] [--json]   the order a clip's versions post in (v1, v2, v3 unless set);
                                       days already planned swap which version they carry. Shows every version post
-  posts-per-version [0-9] [--dry-run] show or set how many times each version of a repostable clip posts (Settings → Schedule)
+  posts-per-version [0-9] [--dry-run] show or set the repost count a clip gets when none is picked (Settings → Schedule)
   post-spacing [--clip D] [--version D] [--dry-run]   show or set the gaps: days between two posts of one clip (≥1),
                                       days before a version posts again; undo with bulk undo
   repost-ready <video> [--off] | repost-ready --list   old name of `reposts <video> on|off` / `reposts --list` (round 37)
@@ -437,7 +437,7 @@ func run() throws -> Int32 {
     if !d.post_units.isEmpty {
       print("  posts  " + d.post_units.map { u in
         "\(u.label) " + (u.status == "waiting" ? "waiting" : u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "done")
-      }.joined(separator: " · ") + (d.repost ? "  (repostable)" : ""))
+      }.joined(separator: " · ") + (d.repost_count.map { "  (repostable ×\($0))" } ?? ""))
     }
     for i in d.issues { print("  issue  \(i.message)") }
 
@@ -903,19 +903,23 @@ func run() throws -> Int32 {
       return 0
     }
     let v = try resolveVideo(store, try arg(0, "video id"))
-    if let raw = args.dropFirst().first(where: { !$0.hasPrefix("--") }) {
-      guard ["on", "off"].contains(raw) else { throw EngineError("reposts <video> on|off") }
-      wrote = try store.setRepost(videoId: v.id, raw == "on")
+    let rest = args.dropFirst().filter { !$0.hasPrefix("--") }
+    if let raw = rest.first {
+      guard ["on", "off"].contains(raw) else { throw EngineError("reposts <video> on [2-9]|off") }
+      let count: Int? = raw == "off" ? nil
+        : try rest.dropFirst().first.map { try intArg($0, "count", 2...PostUnits.maxCount) } ?? max(2, settings.postsPerVersion)
+      wrote = try store.setRepost(videoId: v.id, count: count)
       if wrote { try Planner(store: store).autoSchedule() }
     }
-    let on = try store.isRepostable(videoId: v.id)
+    let count = try store.repostCount(videoId: v.id)
     let units = try AgentAPI.units(v.id, store: store, settings: settings)
     if flag("--json") {
-      struct Out: Encodable { let video_id: String; let repost: Bool; let post_units: [AgentAPI.UnitOut] }
-      try printJSON(Out(video_id: v.id, repost: on, post_units: units))
+      struct Out: Encodable { let video_id: String; let repost: Bool; let repost_count: Int?; let post_units: [AgentAPI.UnitOut] }
+      try printJSON(Out(video_id: v.id, repost: try store.isRepostable(videoId: v.id), repost_count: count, post_units: units))
       return 0
     }
-    print("\(v.tag) \(on ? "repostable: each version posts its count" : "not repostable: each version posts once")")
+    print("\(v.tag) " + (count.map { "repostable ×\($0): each version posts \($0) times unless it has its own Posts" }
+                         ?? "not repostable: each version posts once unless it has its own Posts"))
     for u in units {
       print("  \(pad(u.label, 12)) \(pad(u.status, 10)) \(u.date.map { fmt(dm.date($0), settings, "EEE d MMM") } ?? "")")
     }
@@ -1223,7 +1227,11 @@ func runBulk(_ store: Store, _ wrote: inout Bool) throws -> Int32 {
     guard let k = Kind(rawValue: try arg(0, "kind")) else { throw CLIError("kind must be \"dj vid\" or talking") }
     r = try bulk.setKind(ids, k, dryRun: dry)
   case "exclude", "include": r = try bulk.setExcluded(ids, action == "exclude", dryRun: dry)
-  case "repostable", "not-repostable": r = try bulk.setRepostable(ids, action == "repostable", dryRun: dry)
+  case "repostable":
+    let n = try args.first(where: { Int($0) != nil }).map { try intArg($0, "count", 2...PostUnits.maxCount) }
+      ?? max(2, try store.settings().postsPerVersion)
+    r = try bulk.setRepostable(ids, count: n, dryRun: dry)
+  case "not-repostable": r = try bulk.setRepostable(ids, count: nil, dryRun: dry)
   case "caption-template":
     let t = try arg(0, "template id|default")
     r = try bulk.setCaptionTemplate(ids, t == "default" ? nil : t, dryRun: dry)

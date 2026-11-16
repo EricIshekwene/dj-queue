@@ -210,6 +210,8 @@ public enum AgentAPI {
     public var version_order: [Int] = []
     /// Round 36: Repost on (`djq reposts <video> on`): each version posts its count; off, each version posts once.
     public var repost: Bool = false
+    /// Round 38: the clip's repostable count (nil = not repostable); a version's own Posts overrides it.
+    public var repost_count: Int? = nil
   }
 
   /// Round 30: one version's trim. `own` = the version's own trim (`djq trim --version`); false = it follows the clip's
@@ -361,7 +363,8 @@ public enum AgentAPI {
       version_trims: try versionTrims(id, store: store, settings: settings),
       post_units: try units(id, store: store, settings: settings),
       version_order: v.type == .short ? try store.versionOrder(videoId: id) : [],
-      repost: v.type == .short ? try store.isRepostable(videoId: id) : false)
+      repost: v.type == .short ? try store.isRepostable(videoId: id) : false,
+      repost_count: v.type == .short ? try store.repostCount(videoId: id) : nil)
   }
 
   /// `djq week --json [date]`
