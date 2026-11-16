@@ -234,18 +234,12 @@ struct EditorClipRepostRow: View {
 
   var body: some View {
     let count = model.repostCount
-    VStack(alignment: .leading, spacing: 2) {
+    VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: DS.space.sm) {
         Text("Repostable").font(DS.type.body).foregroundStyle(model.postCountOff == nil ? DS.color.text : DS.color.textDisabled)
-        Text("Whole clip").font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
+          .lineLimit(1).fixedSize()
+        Text("Whole clip").font(DS.type.caption).foregroundStyle(DS.color.textTertiary).lineLimit(1).fixedSize()
         Spacer(minLength: DS.space.xs)
-        if let count {
-          DSXStepper(label: "Repost count", int: Binding(get: { count }, set: { model.setClipRepost($0) }),
-                     range: 2...PostUnits.maxCount, less: "Each version posts fewer times", more: "Each version posts more times",
-                     format: { "×\($0)" })
-            .disabled(model.postCountOff != nil)
-            .background(ScriptAnchor("Clip repost count"))
-        }
         Button { model.setClipRepost(count == nil ? model.defaultRepostCount : nil) } label: {
           DSSwitch(isOn: .constant(count != nil), disabled: model.postCountOff != nil, small: true).allowsHitTesting(false)
             .contentShape(Rectangle())
@@ -258,8 +252,19 @@ struct EditorClipRepostRow: View {
                    disabledReason: model.postCountOff)
         .background(ScriptAnchor("Clip repostable"))
       }
-      Text(model.postCountOff ?? (count.map { "Every version posts \($0) times unless it has its own Posts below." }
-                                   ?? "Every version posts once unless it has its own Posts below."))
+      if let count {
+        HStack(spacing: DS.space.sm) {
+          Text("Each version posts").font(DS.type.callout).foregroundStyle(DS.color.textSecondary).lineLimit(1).fixedSize()
+          Spacer(minLength: DS.space.xs)
+          DSXStepper(label: "Repost count", int: Binding(get: { count }, set: { model.setClipRepost($0) }),
+                     range: 2...PostUnits.maxCount, less: "Each version posts fewer times", more: "Each version posts more times",
+                     format: { "×\($0)" })
+            .disabled(model.postCountOff != nil)
+            .background(ScriptAnchor("Clip repost count"))
+        }
+      }
+      Text(model.postCountOff ?? (count == nil ? "Off: every version posts once unless it has its own Posts below."
+                                                : "A version's own Posts below overrides this."))
         .font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
     }
     .padding(.horizontal, DS.space.md).padding(.top, DS.space.sm).padding(.bottom, DS.space.xs)
@@ -278,6 +283,7 @@ struct EditorPostCountRow: View {
     VStack(alignment: .leading, spacing: 2) {
       HStack(spacing: DS.space.sm) {
         Text("v\(n) posts").font(DS.type.body).foregroundStyle(model.postCountOff == nil ? DS.color.text : DS.color.textDisabled)
+          .lineLimit(1).fixedSize()
         DSBadge(own == nil ? "Clip setting" : "Override", style: own == nil ? .outline : .soft(.info), size: .sm,
                 help: own == nil ? "v\(n) follows the clip: \(Self.times(fallback).lowercased())" : "Set for v\(n) only")
           .background(ScriptAnchor(own == nil ? "Post count follows clip" : "Post count override"))
