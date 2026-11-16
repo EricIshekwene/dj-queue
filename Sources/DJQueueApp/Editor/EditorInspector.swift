@@ -248,6 +248,7 @@ struct EditorClipRepostRow: View {
         }
         Button { model.setClipRepost(count == nil ? model.defaultRepostCount : nil) } label: {
           DSSwitch(isOn: .constant(count != nil), disabled: model.postCountOff != nil, small: true).allowsHitTesting(false)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(model.postCountOff != nil)
