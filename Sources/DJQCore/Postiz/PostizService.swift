@@ -1160,7 +1160,7 @@ public final class PostizService: @unchecked Sendable {
   /// analytics refresh, the Analytics screen's Refresh) also asks posts not asked in the last 6 h; it waits for posting
   /// too, and makes at most `limit` calls in all.
   @discardableResult
-  public func analytics(_ settings: Settings? = nil, force: Bool = false, limit: Int? = nil) throws -> String {
+  public func analytics(_ settings: Settings? = nil, force: Bool = false, limit: Int? = nil, channelsOnly: Bool = false) throws -> String {
     let settings = try settings ?? store.settings()
     let last: Date? = try store.kv(Self.analyticsKey)
     if !force, let last, now.timeIntervalSince(last) < Self.analyticsSweepEvery { return "" }
@@ -1173,9 +1173,9 @@ public final class PostizService: @unchecked Sendable {
     var retryAfter: [String: Date] = (try store.kv(Self.analyticsRetryKey) ?? [:]).filter { $0.value > now }
     let spare = try store.postizBudget().remaining(now: now, limit: settings.publishing.hourlyBudget) - PostizCallKind.analytics.reserve
     var room = force ? (limit ?? 12) : max(0, min(AnalyticsSchedule.perHour - calls.count, spare - AnalyticsSchedule.perHour))
-    var n = 0, empty = 0
+    var n = 0, empty = 0, made = 0  // made: this sweep's calls (`now` moves on a real clock, so it's counted here)
     var stopped = false
-    if room > 0 {
+    if room > 0 && !channelsOnly {
       let lastTimes = try store.lastSnapshotTimes()
       let lastEmpty = Set(try store.db.query("""
         SELECT s.post_id AS id FROM post_metric_snapshots s JOIN (SELECT post_id, MAX(taken_at) AS t FROM post_metric_snapshots
@@ -1201,7 +1201,7 @@ public final class PostizService: @unchecked Sendable {
           data = try call(.analytics, settings) { try client(settings).analytics(d.t.postizId, days: 30) }
         } catch {
           if Self.stops(error) { stopped = true; break }
-          calls.append(now)
+          calls.append(now); made += 1
           switch error as? PostizError {
           case .notFound?, .validation?:
             // Postiz has nothing for it (a deleted post, a missing platform id): recorded empty, asked monthly.
@@ -1213,7 +1213,7 @@ public final class PostizService: @unchecked Sendable {
           }
           continue
         }
-        calls.append(now)
+        calls.append(now); made += 1
         guard let series = AnalyticsParse.series(data) else {
           // Unreadable: tried again in a day (never every sweep), logged once.
           retryAfter[d.t.post.id] = now.addingTimeInterval(86400)
@@ -1233,7 +1233,7 @@ public final class PostizService: @unchecked Sendable {
         n += 1
       }
     }
-    room = force ? max(0, (limit ?? 12) - calls.filter { $0 == now }.count) : min(2, AnalyticsSchedule.perHour - calls.count, spare - AnalyticsSchedule.perHour - calls.filter { $0 == now }.count)
+    room = force ? max(0, (limit ?? 12) - made) : min(2, AnalyticsSchedule.perHour - calls.count, spare - AnalyticsSchedule.perHour - made)
     var parts: [String] = []
     if n > 0 { parts.append("metrics \(n)\(stopped ? " (more later)" : "")") }
     if empty > 0 { parts.append("\(empty) without numbers") }

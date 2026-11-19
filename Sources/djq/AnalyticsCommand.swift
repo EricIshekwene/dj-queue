@@ -70,8 +70,7 @@ enum AnalyticsCommand {
     case "refresh":
       let limit = try option("--limit").map { try intArg($0, "--limit", 1...60) } ?? 12
       let svc = PostizService(store: store)
-      let s = flag("--channels") ? (try svc.channelAnalytics(force: true, limit: min(limit, 6)).pulled.map { "channels \($0)" }.joined(separator: " · "))
-        : try svc.analytics(force: true, limit: limit)
+      let s = try svc.analytics(force: true, limit: limit, channelsOnly: flag("--channels"))
       wrote = !s.isEmpty && s != PostizService.waitingForPosting  // new numbers: the app refreshes
       if json { try printJSON(["result": s.isEmpty ? "nothing new" : s]); return 0 }
       print(s.isEmpty ? "Nothing new (nothing due, or the Postiz budget is used up for this hour)." : s)

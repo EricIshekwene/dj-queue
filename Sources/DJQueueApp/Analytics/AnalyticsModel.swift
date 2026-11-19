@@ -91,7 +91,8 @@ final class AnalyticsProbe {
         self.refreshing = false
         switch r {
         case .success(let s):
-          model.show(s.isEmpty ? "Nothing new: numbers are up to date, or this hour's Postiz budget is in use" : "Pulled \(s)")
+          model.show(s == PostizService.waitingForPosting ? "Waiting: a post is being sent to Postiz, and posting goes first. Try again in a minute"
+                     : s.isEmpty ? "Nothing new: numbers are up to date, or this hour's Postiz budget is in use" : "Pulled \(s)")
         case .failure(let e):
           model.show("Couldn't reach Postiz: \(e.localizedDescription)", error: true)
         }
