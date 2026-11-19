@@ -201,4 +201,78 @@ import Testing
     try f.store.saveChannelMetrics([ChannelMetricPoint(platform: .tiktok, label: "Views", day: today, value: 6000, kind: "total", fetchedAt: f.clock.now)])
     #expect(try f.store.channelMetrics(platform: .tiktok).map(\.value) == [6000])
   }
+
+  // MARK: Review fixes
+
+  @Test func anUnreadableAnswerOrA5xxNeverLoopsOrSkipsAges() throws {
+    let rig = try Rig(1, platforms: [.tiktok])
+    rig.settle()
+    rig.f.setTime("2026-11-02", "19:30")
+    rig.fake.publishDue(now: rig.f.clock.now)
+    rig.tick()
+    let tt = try #require(try rig.f.post(.tiktok, day: "2026-11-02"))
+    rig.fake.analyticsBody = Data(#"{"something":"new"}"#.utf8)
+    rig.f.clock.advance(13 * 3600); rig.tick()
+    let n = rig.fake.calls("GET analytics/post").count
+    #expect(n == 1)
+    for _ in 0..<12 { rig.f.clock.advance(300); rig.tick() }  // an hour of sweeps: not asked again
+    #expect(rig.fake.calls("GET analytics/post").count == n)
+    #expect(try rig.store.snapshotsByPost(includeEmpty: true)[tt.id] == nil)
+    // A 5xx: nothing stored and the post keeps its ages (no empty backoff), asked again later.
+    rig.fake.analyticsBody = nil
+    rig.f.clock.advance(86400)
+    rig.fake.failNext["GET analytics/post"] = [502]
+    rig.tick()
+    #expect(try rig.store.snapshotsByPost(includeEmpty: true)[tt.id] == nil)
+    rig.f.clock.advance(3700); rig.tick()
+    #expect(try rig.store.snapshots(postId: tt.id).map(\.source) == ["postiz"])
+  }
+
+  @Test func refreshWaitsForPostingAndKeepsItsCap() throws {
+    let rig = try Rig(3)
+    rig.settle()
+    // A post being replaced: Refresh waits.
+    var j = try #require(try rig.store.openPostizJobs().first)
+    let phase = j.phase
+    j.phase = .deleting
+    try rig.store.save(j)
+    #expect(try rig.service.analytics(force: true, limit: 12) == PostizService.waitingForPosting)
+    j.phase = phase
+    try rig.store.save(j)
+    rig.f.setTime("2026-11-04", "20:00")
+    rig.fake.publishDue(now: rig.f.clock.now)
+    rig.tick(2)
+    rig.f.clock.advance(3 * 86400)
+    let before = rig.fake.calls("GET analytics").count
+    _ = try rig.service.analytics(force: true, limit: 12)
+    let made = rig.fake.calls("GET analytics").count - before
+    #expect(made > 0 && made <= 12)
+  }
+
+  @Test func missedCountsOnlySlotsThatNeverWentOut() throws {
+    let f = try Fixture.engine(3)
+    try f.updateSettings { $0.postsPerDay = 1; $0.enabledPlatforms = [.tiktok] }
+    let at = f.clock.now.addingTimeInterval(-2 * 86400)
+    func post(_ id: String, _ v: String, _ s: PostState, attempt: Int = 1) throws {
+      var p = try posted(f, id, v, .tiktok, at)
+      p.state = s
+      p.attemptNo = attempt
+      if !s.wentOut { p.postedAt = nil }
+      try f.store.save(p)
+    }
+    try post("a", "clip-0", .failed)  // failed, nothing after: missed
+    try post("b", "clip-1", .overdue)  // a day went by unposted: missed
+    try post("c", "clip-2", .failed)  // failed, then went out on a retry: not missed
+    try post("c2", "clip-2", .posted, attempt: 2)
+    let r = try AnalyticsReport.build(store: f.store, range: .d7, now: f.clock.now)
+    #expect(r.consistency.missedInRange == 2)
+  }
+
+  @Test func averagesAreAveragedAndTheTileOpensOnWatchTime() throws {
+    let yt = AnalyticsReport.ChannelTrend(platform: .youtube, label: "Average View Duration", key: .avgViewSeconds, kind: "daily",
+                                          points: [.init(date: "a", value: 10), .init(date: "b", value: 20)])
+    #expect(yt.headline == 15 && yt.isAverage)
+    let mins = AnalyticsReport.ChannelTrend(platform: .youtube, label: "Estimated Minutes Watched", key: .watchMinutes, kind: "daily", points: [])
+    #expect(mins.priority < yt.priority)
+  }
 }

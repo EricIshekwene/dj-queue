@@ -289,7 +289,7 @@ struct AnalyticsConsistencyCard: View {
             stat("\(c.daysOnTarget)/\(c.daysTracked)", "days on target", "Days since the first post that met the target of \(c.targetPerDay) posts")
           }
           GridRow {
-            stat("\(c.missedInRange)", "missed", "Posts in the period that failed, were skipped or missed their slot", tone: c.missedInRange > 0 ? .warning : nil)
+            stat("\(c.missedInRange)", "missed", "Posts in the period whose slot never went out: failed with no retry coming, or missed (a skipped platform isn't a miss)", tone: c.missedInRange > 0 ? .warning : nil)
           }
         }
         .fixedSize()
@@ -750,7 +750,7 @@ struct AnalyticsChannelsCard: View {
 
   private func tile(_ p: Platform, _ trends: [AnalyticsReport.ChannelTrend]) -> some View {
     let chosen = probe.channelMetric[p].flatMap { l in trends.first { $0.label == l } }
-      ?? trends.first { $0.key == .views && $0.kind == "daily" } ?? trends.first { $0.key == .views } ?? trends.first
+      ?? trends.min { ($0.priority, $0.kind == "daily" ? 0 : 1, $0.label) < ($1.priority, $1.kind == "daily" ? 0 : 1, $1.label) }
     return VStack(alignment: .leading, spacing: DS.space.xs) {
       HStack(spacing: 6) {
         Circle().fill(DS.chart.color(p)).frame(width: 8, height: 8)
@@ -763,7 +763,8 @@ struct AnalyticsChannelsCard: View {
         }
       }
       if let t = chosen, !t.points.isEmpty {
-        Text(t.kind == "daily" ? "\(AnalyticsFmt.count(t.headline)) in the period" : "\(AnalyticsFmt.count(t.headline)) as of the last pull")
+        Text(t.kind != "daily" ? "\(AnalyticsFmt.count(t.headline)) as of the last pull"
+             : t.isAverage ? "\(t.headline.map { String(format: "%.1f", $0) } ?? "–") on average a day" : "\(AnalyticsFmt.count(t.headline)) in the period")
           .font(DS.type.caption).foregroundStyle(DS.color.textSecondary)
         Chart {
           ForEach(t.points, id: \.date) { pt in

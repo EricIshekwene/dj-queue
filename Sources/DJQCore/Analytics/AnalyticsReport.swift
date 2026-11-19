@@ -206,8 +206,25 @@ public struct AnalyticsReport: Codable, Sendable {
     public var kind: String
     public var points: [AnalyticsSeries.Point]
     public var id: String { "\(platform.rawValue)·\(label)" }
-    /// Sum for daily series, latest for totals.
-    public var headline: Double? { kind == "daily" ? points.map(\.value).reduce(0, +) : points.last?.value }
+    /// Sum for daily counts, the average for daily averages (view duration, view %), latest for totals.
+    public var headline: Double? {
+      if kind != "daily" { return points.last?.value }
+      if isAverage { return points.isEmpty ? nil : points.map(\.value).reduce(0, +) / Double(points.count) }
+      return points.map(\.value).reduce(0, +)
+    }
+    public var isAverage: Bool { key == .avgViewSeconds || key == .avgViewPercent }
+    /// Which series a platform's tile opens on (views first, then watch time, impressions, reach …).
+    public var priority: Int {
+      switch key {
+      case .views?: 0
+      case .watchMinutes?: 1
+      case .impressions?: 2
+      case .reach?: 3
+      case .followersGained?: 4
+      case .likes?: 5
+      default: isAverage ? 9 : 6
+      }
+    }
   }
 
   public struct AvailabilityRow: Codable, Sendable, Identifiable {
@@ -277,12 +294,14 @@ extension AnalyticsReport {
     let pts: [(t: Date, v: Double)]
     var lastAt: Date? { pts.last?.t }
 
-    init(postedAt: Date, snapshots: [PostSnapshot], metric: (PostSnapshot) -> Double?) {
+    /// `knownAt`: only the snapshots taken by then (the previous period "as it was known", so both periods are
+    /// measured with the same lag behind their last day).
+    init(postedAt: Date, snapshots: [PostSnapshot], knownAt: Date? = nil, metric: (PostSnapshot) -> Double?) {
       self.postedAt = postedAt
       var out: [(Date, Double)] = []
       var top = 0.0
       for s in snapshots.sorted(by: { $0.takenAt < $1.takenAt }) {
-        guard let v = metric(s), s.takenAt > postedAt else { continue }
+        guard let v = metric(s), s.takenAt > postedAt, s.takenAt <= (knownAt ?? .distantFuture) else { continue }
         top = max(top, v)
         out.append((s.takenAt, top))
       }
@@ -380,8 +399,14 @@ extension AnalyticsReport {
       buckets[b]?.posts[p.platform.rawValue, default: 0] += 1
       publishedIn[b, default: []].append(p.id)
     }
+    /// Views in a post's first day (posts at least a day old with a pull that far): the same age for every post, so
+    /// newer posts aren't compared with older ones that had longer to grow.
+    func firstDay(_ c: [String: Cumulative], _ id: String) -> Double? {
+      guard let cum = c[id], let last = cum.lastAt, last.timeIntervalSince(cum.postedAt) >= 0.9 * 86400 else { return nil }
+      return cum.at(cum.postedAt.addingTimeInterval(86400))
+    }
     for (b, ids) in publishedIn {
-      buckets[b]?.viewsPerPost = median(ids.compactMap { latest(viewsCum, $0) })
+      buckets[b]?.viewsPerPost = median(ids.compactMap { firstDay(viewsCum, $0) })
     }
     for c in channelPts where c.kind == "daily" {
       guard let k = c.key, k == .followersGained || k == .followersLost, let b = bucketOf(c.day) else { continue }
@@ -401,23 +426,33 @@ extension AnalyticsReport {
       for p in ps { if let vv = latest(viewsCum, p.id), vv > 0, let ii = latest(interCum, p.id) { v += vv; i += ii } }
       return v > 0 ? i / v * 100 : nil
     }
-    func perPost(_ ps: [PlatformPost]) -> Double? {
-      median(ps.filter { now.timeIntervalSince($0.postedAt!) >= 86400 }.compactMap { latest(viewsCum, $0.id) })
-    }
+    func perPost(_ ps: [PlatformPost], _ c: [String: Cumulative]) -> Double? { median(ps.compactMap { firstDay(c, $0.id) }) }
     func followers(from a: String, to e: String) -> Double? {
       let pts = channelPts.filter { $0.kind == "daily" && $0.day >= a && $0.day <= e && ($0.key == .followersGained || $0.key == .followersLost) }
       return pts.isEmpty ? nil : pts.reduce(0) { $0 + ($1.key == .followersGained ? $1.value : -$1.value) }
     }
     let inRange = published(from: rangeStart, to: now.addingTimeInterval(1))
-    let inPrev = prevStart.map { published(from: $0, to: rangeStart) }
+    // The period before, the same length as the part of this period that has passed, as it was known at its end.
+    let prevEnd = prevStart.map { $0.addingTimeInterval(now.timeIntervalSince(rangeStart)) }
+    let inPrev = prevStart.flatMap { a in prevEnd.map { published(from: a, to: $0) } }
+    var viewsPrev: [String: Cumulative] = [:], likesPrev: [String: Cumulative] = [:]
+    if let prevEnd {
+      for p in posted where p.postedAt! < prevEnd {
+        guard let s = snaps[p.id] else { continue }
+        let v = Cumulative(postedAt: p.postedAt!, snapshots: s, knownAt: prevEnd, metric: { $0.views })
+        if !v.pts.isEmpty { viewsPrev[p.id] = v }
+        let l = Cumulative(postedAt: p.postedAt!, snapshots: s, knownAt: prevEnd, metric: { $0.likes })
+        if !l.pts.isEmpty { likesPrev[p.id] = l }
+      }
+    }
     let prevDayA = range.days.map { dm.addDays(startDay, -$0) }
     let followerPlatforms = Set(channelPts.filter { $0.key == .followersGained }.map(\.platform)).sorted().map(\.displayName)
     let kpis: [KPI] = [
       KPI(id: .views, title: "Views", value: gained(viewsCum, from: rangeStart, to: now),
-          previous: prevStart.map { gained(viewsCum, from: $0, to: rangeStart) }, unit: "count", spark: timeline.map(\.totalViews),
+          previous: prevStart.flatMap { a in prevEnd.map { gained(viewsPrev, from: a, to: $0) } }, unit: "count", spark: timeline.map(\.totalViews),
           note: "Gained in the period on every post"),
       KPI(id: .likes, title: "Likes", value: gained(likesCum, from: rangeStart, to: now),
-          previous: prevStart.map { gained(likesCum, from: $0, to: rangeStart) }, unit: "count", spark: timeline.map(\.totalLikes),
+          previous: prevStart.flatMap { a in prevEnd.map { gained(likesPrev, from: a, to: $0) } }, unit: "count", spark: timeline.map(\.totalLikes),
           note: "Gained in the period (reactions on Facebook)"),
       KPI(id: .engagement, title: "Engagement", value: engagement(inRange), previous: inPrev.flatMap(engagement), unit: "percent",
           spark: timeline.map { $0.engagement ?? 0 }, note: "Likes, comments, shares and saves per view, posts from the period"),
@@ -428,8 +463,8 @@ extension AnalyticsReport {
             : "Net new, \(followerPlatforms.joined(separator: " + ")) only (the others don't give it)"),
       KPI(id: .posts, title: "Posts", value: Double(inRange.count), previous: inPrev.map { Double($0.count) }, unit: "count",
           spark: timeline.map { Double($0.totalPosts) }, note: "Posts that went out"),
-      KPI(id: .viewsPerPost, title: "Views / post", value: perPost(inRange), previous: inPrev.flatMap(perPost), unit: "count",
-          spark: timeline.map { $0.viewsPerPost ?? 0 }, note: "Median, posts from the period at least a day old"),
+      KPI(id: .viewsPerPost, title: "Views / post", value: perPost(inRange, viewsCum), previous: inPrev.flatMap { perPost($0, viewsPrev) },
+          unit: "count", spark: timeline.map { $0.viewsPerPost ?? 0 }, note: "Median views in a post's first day, posts from the period"),
     ]
 
     // Consistency.
@@ -441,7 +476,7 @@ extension AnalyticsReport {
     // Missed = a failed or overdue post whose slot never went out and has no retry coming (a retried failure that
     // later posted isn't a miss; a platform Eric skipped isn't either).
     func unitKey(_ p: PlatformPost) -> String { "\(p.videoId)|\(p.platform.rawValue)|\(p.versionNo)|\(p.postNo)" }
-    let settled = Set(allPosts.filter { $0.state.wentOut || !$0.state.isTerminal }.map(unitKey))
+    let settled = Set(allPosts.filter { $0.state.wentOut || (!$0.state.isTerminal && $0.state != .overdue) }.map(unitKey))
     for p in allPosts where !p.state.wentOut {
       let d = dm.key(p.scheduledAt)
       if [.failed, .overdue].contains(p.state) && p.scheduledAt < now && !settled.contains(unitKey(p)) { missedByDay[d, default: 0] += 1 }

@@ -74,6 +74,8 @@ final class AnalyticsProbe {
     let r = await Task.detached(priority: .userInitiated) {
       try? AnalyticsReport.build(store: store, range: range, platforms: platforms, now: now)
     }.value
+    // A slower build for choices since changed never replaces the newer one.
+    guard !Task.isCancelled, range == self.range, platforms == self.platforms else { return }
     if let r { report = r }
     loading = false
   }

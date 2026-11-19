@@ -9,6 +9,7 @@ extension Store {
       views REAL, likes REAL, PRIMARY KEY(post_id, taken_at));
     CREATE INDEX IF NOT EXISTS post_metric_snapshots_video ON post_metric_snapshots(video_id);
     CREATE INDEX IF NOT EXISTS post_metric_snapshots_taken ON post_metric_snapshots(taken_at);
+    CREATE INDEX IF NOT EXISTS postiz_jobs_video ON postiz_jobs(video_id);
     CREATE TABLE IF NOT EXISTS channel_metrics(platform TEXT NOT NULL, label TEXT NOT NULL, day TEXT NOT NULL,
       value REAL NOT NULL, kind TEXT NOT NULL, fetched_at REAL NOT NULL, PRIMARY KEY(platform, label, day));
     """

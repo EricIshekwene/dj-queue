@@ -7,10 +7,16 @@ import SwiftUI
 struct ClipPerformanceSummary: View {
   @Bindable var model: AppModel
   let videoId: String
+  @State private var data: ClipAnalytics?
 
   var body: some View {
-    let c = try? ClipAnalytics.build(store: model.store, videoId: videoId, now: model.now)
-    if let c, !c.posts.isEmpty {
+    Group {
+      if let c = data, !c.posts.isEmpty { summary(c) }
+    }
+    .task(id: "\(videoId)|\(model.lastRefresh.timeIntervalSince1970)") { data = await ClipAnalytics.load(model, videoId) }
+  }
+
+  private func summary(_ c: ClipAnalytics) -> some View {
       VStack(alignment: .leading, spacing: DS.space.xs) {
         HStack(alignment: .firstTextBaseline, spacing: DS.space.xs) {
           Text("Performance").font(DS.type.calloutSemibold).foregroundStyle(DS.color.text)
@@ -42,7 +48,15 @@ struct ClipPerformanceSummary: View {
       .padding(DS.space.sm)
       .background(DS.color.surfaceSunken, in: RoundedRectangle(cornerRadius: DS.radius.sm, style: .continuous))
       .background(ScriptAnchor("Clip performance"))
-    }
+  }
+}
+
+extension ClipAnalytics {
+  /// One clip's numbers, read off the main thread (synchronously in snapshot runs, where nothing may wait).
+  @MainActor static func load(_ model: AppModel, _ videoId: String) async -> ClipAnalytics? {
+    let (store, now) = (model.store, model.now)
+    if model.frozen { return try? build(store: store, videoId: videoId, now: now) }
+    return await Task.detached(priority: .userInitiated) { try? build(store: store, videoId: videoId, now: now) }.value
   }
 }
 
@@ -51,10 +65,10 @@ struct ClipPerformanceSummary: View {
 struct PostNumbersHistory: View {
   @Bindable var model: AppModel
   let post: PlatformPost
+  @State private var data: ClipAnalytics?
 
   var body: some View {
-    let c = try? ClipAnalytics.build(store: model.store, videoId: post.videoId, now: model.now)
-    let line = c?.posts.first { $0.postId == post.id }
+    let line = data?.posts.first { $0.postId == post.id }
     let snaps = (line?.snapshots ?? []).filter { $0.views != nil }
     VStack(alignment: .leading, spacing: 6) {
       if snaps.count >= 2, let at = post.postedAt {
@@ -74,6 +88,7 @@ struct PostNumbersHistory: View {
       }
       Text(caption(line, snaps)).font(DS.type.caption).foregroundStyle(DS.color.textSecondary).fixedSize(horizontal: false, vertical: true)
     }
+    .task(id: "\(post.id)|\(model.lastRefresh.timeIntervalSince1970)") { data = await ClipAnalytics.load(model, post.videoId) }
   }
 
   private func caption(_ line: ClipAnalytics.PostLine?, _ snaps: [PostSnapshot]) -> String {

@@ -672,19 +672,27 @@ extension PostizService {
 
 extension Doctor {
 
-  /// Round 39: analytics numbers stopped coming in (no pull for 3 days while published posts are due). Info only:
-  /// the cause (Postiz key, budget, engine) has its own check, and nothing about posting depends on it.
+  /// Round 39: analytics numbers stopped coming in: published Postiz posts have had a pull due for over 3 days. Info
+  /// only: the cause (Postiz key, budget, engine) has its own check, and nothing about posting depends on it.
   func analyticsFreshness() throws -> [DoctorFinding] {
     let now = store.clock.now
-    let published = try store.db.one("""
-      SELECT COUNT(*) AS n FROM postiz_jobs WHERE close_reason='published' AND postiz_id IS NOT NULL AND kind='post' AND closed_at < ?
-      """, [now.addingTimeInterval(-2 * 86400)])?.int("n") ?? 0
-    guard published > 0 else { return [] }
-    let last = try store.db.one("SELECT MAX(taken_at) AS t FROM post_metric_snapshots WHERE source<>'manual'")?.date("t")
-    guard last == nil || now.timeIntervalSince(last!) > 3 * 86400 else { return [] }
-    let since = last.map { "since \(Int(now.timeIntervalSince($0) / 86400)) days" } ?? "yet"
-    return [DoctorFinding(id: "analytics", severity: .info, title: "No analytics numbers pulled \(since)",
-                          detail: "\(published) published Postiz post\(published == 1 ? "" : "s") are waiting for their views and likes. Pulls use spare Postiz budget, after posting.",
+    let last = try store.lastSnapshotTimes()
+    let empty = Set(try store.db.query("""
+      SELECT s.post_id AS id FROM post_metric_snapshots s JOIN (SELECT post_id, MAX(taken_at) AS t FROM post_metric_snapshots
+      WHERE source<>'manual' GROUP BY post_id) m ON m.post_id=s.post_id AND m.t=s.taken_at WHERE s.source='empty'
+      """).compactMap { $0.string("id") })
+    var waiting = 0
+    for r in try store.db.query("""
+      SELECT j.post_id AS id, COALESCE(p.posted_at, j.closed_at, j.remote_date) AS at FROM postiz_jobs j JOIN platform_posts p ON p.id=j.post_id
+      WHERE j.close_reason='published' AND j.postiz_id IS NOT NULL AND j.kind='post'
+      """) {
+      guard let id = r.string("id"), let at = r.date("at"),
+            let m = AnalyticsSchedule.due(postedAt: at, last: last[id], lastWasEmpty: empty.contains(id), now: now) else { continue }
+      if at.addingTimeInterval(m * 86400) < now.addingTimeInterval(-3 * 86400) { waiting += 1 }
+    }
+    guard waiting > 0 else { return [] }
+    return [DoctorFinding(id: "analytics", severity: .info, title: "Analytics numbers are late for \(waiting) post\(waiting == 1 ? "" : "s")",
+                          detail: "Their views and likes have been due for more than 3 days. Pulls use spare Postiz budget, after posting.",
                           where_: [], fix: "Run `djq analytics refresh` (budgeted, read-only). If it says the key is refused, re-save it in Settings → Publishing.")]
   }
 }
