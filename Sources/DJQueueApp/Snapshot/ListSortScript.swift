@@ -141,6 +141,7 @@ enum ListSortScript {
         case .scoreLow: inScoreOrder(vs.filter { !($0.needsNoScore && $0.score == nil) }, worstFirst: true)
         case .natural where page == .edit: inScoreOrder(vs, worstFirst: true)
         case .newest: zip(vs, vs.dropFirst()).allSatisfy { $0.createdAt >= $1.createdAt }
+        case .views: zip(vs, vs.dropFirst()).allSatisfy { (model.viewsByVideo[$0.id] ?? -1) >= (model.viewsByVideo[$1.id] ?? -1) }
         case .title: zip(vs, vs.dropFirst()).allSatisfy { model.displayName($0).localizedCaseInsensitiveCompare(model.displayName($1)) != .orderedDescending }
         case .session:
           zip(vs, vs.dropFirst()).allSatisfy {

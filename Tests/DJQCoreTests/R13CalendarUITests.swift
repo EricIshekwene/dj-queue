@@ -39,7 +39,7 @@ import Testing
 
   @Test func theStagesAreGone() throws {
     let screen = try String(contentsOf: Self.app.appendingPathComponent("App/Screen.swift"), encoding: .utf8)
-    #expect(screen.contains("case score, edit, queue, calendar, library, posts, health"))
+    #expect(screen.contains("case score, edit, queue, calendar, library, posts, analytics, health"))
     for (path, text) in try sources() {
       #expect(!text.contains("screen = .today"), "\(path)")
       #expect(!text.contains("screen = .week"), "\(path)")

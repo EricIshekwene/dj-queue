@@ -67,6 +67,21 @@ only — absent/null fields follow the defaults), `resolved_edit` (effective val
 `resolved_v1` (effective text/caption settings + `defaulted[]`), `captions{platform: text}`, `youtube_title`,
 `issues[{kind, platform, message, count, limit, countWithoutHashtags}]`, `plan`, `posts`.
 
+## Analytics (round 39, read-only)
+
+```sh
+djq analytics [--range 7d|30d|90d|all] [--platform tiktok,instagram] [--json]   # the Analytics screen
+djq analytics clip <video> [--json]   # each post of a clip: views, likes, every snapshot, next pull
+djq analytics post <post> [--json]    # one post's snapshots
+djq analytics available [--json]      # what each platform gives through Postiz (+ labels seen here)
+djq analytics refresh [--limit N] [--channels]   # pull what's due now: budgeted Postiz reads, never posts
+```
+
+Numbers come from Postiz only (post analytics are "as of now" totals, kept as dated snapshots; accounts once a day).
+X gives nothing. Views per day between two pulls are an even spread (the report says so); everything else is counted.
+`docs/analytics.md` has the platform table and the pull schedule. Answer Eric with these numbers; never invent or
+extrapolate a view count, and never re-post or reset a post to get numbers.
+
 ## Write
 
 ```sh

@@ -53,6 +53,7 @@ public final class Doctor: @unchecked Sendable {
     check("system.timezone", timeZone)
     check("autoupdate", autoUpdate)
     check("postiz", postiz)
+    check("analytics", analyticsFreshness)
     check("capcut.markers") {
       [DoctorFinding(id: "capcut.markers", severity: .info, title: "CapCut markers not checked",
                      detail: "No CapCut project → videos.json mapping is recorded yet, so marker changes since export can't be compared.",
@@ -667,4 +668,23 @@ extension PostizService {
   /// Asks the engine (DJ Queue's, when it holds the engine lock) to run its sync step on the next tick, whatever the
   /// interval. Post `ChangeSignal` after it so the app ticks now.
   public func requestSync() throws { try store.setKV(Self.syncNowKey, true) }
+}
+
+extension Doctor {
+
+  /// Round 39: analytics numbers stopped coming in (no pull for 3 days while published posts are due). Info only:
+  /// the cause (Postiz key, budget, engine) has its own check, and nothing about posting depends on it.
+  func analyticsFreshness() throws -> [DoctorFinding] {
+    let now = store.clock.now
+    let published = try store.db.one("""
+      SELECT COUNT(*) AS n FROM postiz_jobs WHERE close_reason='published' AND postiz_id IS NOT NULL AND kind='post' AND closed_at < ?
+      """, [now.addingTimeInterval(-2 * 86400)])?.int("n") ?? 0
+    guard published > 0 else { return [] }
+    let last = try store.db.one("SELECT MAX(taken_at) AS t FROM post_metric_snapshots WHERE source<>'manual'")?.date("t")
+    guard last == nil || now.timeIntervalSince(last!) > 3 * 86400 else { return [] }
+    let since = last.map { "since \(Int(now.timeIntervalSince($0) / 86400)) days" } ?? "yet"
+    return [DoctorFinding(id: "analytics", severity: .info, title: "No analytics numbers pulled \(since)",
+                          detail: "\(published) published Postiz post\(published == 1 ? "" : "s") are waiting for their views and likes. Pulls use spare Postiz budget, after posting.",
+                          where_: [], fix: "Run `djq analytics refresh` (budgeted, read-only). If it says the key is refused, re-save it in Settings → Publishing.")]
+  }
 }

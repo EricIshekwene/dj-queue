@@ -110,7 +110,10 @@ struct ClipPreviewSheet: View {
     // A photo post says "Photo" / "Carousel · 5" where a clip names its night and length (D18).
     let about = v.photoLabel ?? [model.clipContext(v), Fmt.duration(model.clipDuration(v))].filter { !$0.isEmpty }.joined(separator: " · ")
     DSDialog(model.displayName(video), description: about, width: v.isPhoto ? 480 : edited ? 420 : 760, onClose: close) {
-      EditedClipPlayer(model: model, video: video, source: $source)
+      VStack(alignment: .leading, spacing: DS.space.sm) {
+        EditedClipPlayer(model: model, video: video, source: $source)
+        if v.type == .short { ClipPerformanceSummary(model: model, videoId: v.id) }
+      }
     } footer: {
       DSButton("Close", variant: .ghost, shortcut: "esc", action: close).keyboardShortcut(.cancelAction)
       DSButton("Open editor", icon: "slider.horizontal.below.rectangle", variant: .primary,

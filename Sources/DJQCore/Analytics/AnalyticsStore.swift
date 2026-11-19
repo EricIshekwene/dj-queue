@@ -13,7 +13,29 @@ extension Store {
       value REAL NOT NULL, kind TEXT NOT NULL, fetched_at REAL NOT NULL, PRIMARY KEY(platform, label, day));
     """
 
-  func ensureAnalyticsTables() throws { try db.exec(Self.analyticsSchema) }
+  func ensureAnalyticsTables() throws {
+    try db.exec(Self.analyticsSchema)
+    try backfillSnapshots()
+  }
+
+  static let backfillKey = "analytics.backfilled"
+
+  /// Once: the views and likes posts already carried (round 6's daily pull, or typed in) become each post's first
+  /// snapshot, at the time they were taken, so history starts from what DJ Queue already knew.
+  func backfillSnapshots() throws {
+    guard (try kv(Self.backfillKey, as: Bool.self)) != true else { return }
+    try db.transaction {
+      for p in try posts(where: "metrics IS NOT NULL AND id NOT IN (SELECT post_id FROM post_metric_snapshots)") {
+        guard let m = p.metrics, m.views != nil || m.likes != nil else { continue }
+        var values: [String: Double] = [:]
+        if let v = m.views { values[MetricKey.views.rawValue] = Double(v) }
+        if let l = m.likes { values[MetricKey.likes.rawValue] = Double(l) }
+        try addSnapshot(PostSnapshot(postId: p.id, takenAt: m.at ?? p.updatedAt, source: p.publisher == "postiz" ? "postiz" : "manual",
+                                     values: values), post: p)
+      }
+      try setKV(Self.backfillKey, true)
+    }
+  }
 
   // MARK: Post snapshots
 
@@ -35,6 +57,12 @@ extension Store {
   /// Every snapshot, oldest first, grouped by post id (`includeEmpty`: also Postiz's empty answers).
   public func snapshotsByPost(includeEmpty: Bool = false) throws -> [String: [PostSnapshot]] {
     let rows = try db.query("SELECT * FROM post_metric_snapshots \(includeEmpty ? "" : "WHERE source<>'empty'") ORDER BY taken_at")
+    return Dictionary(grouping: rows.map(Self.snapshot), by: \.postId)
+  }
+
+  /// One clip's snapshots (empty answers included), grouped by post id.
+  public func snapshotsByPost(videoId: String) throws -> [String: [PostSnapshot]] {
+    let rows = try db.query("SELECT * FROM post_metric_snapshots WHERE video_id=? ORDER BY taken_at", [videoId])
     return Dictionary(grouping: rows.map(Self.snapshot), by: \.postId)
   }
 

@@ -1157,9 +1157,14 @@ public final class PostizService: @unchecked Sendable {
     let settings = try settings ?? store.settings()
     let last: Date? = try store.kv(Self.analyticsKey)
     if !force, let last, now.timeIntervalSince(last) < Self.analyticsSweepEvery { return "" }
+    // Posting first: while any Postiz post is being created, replaced or deleted (or isn't confirmed), the sweep waits.
+    if !force, try store.openPostizJobs().contains(where: { $0.phase != .live || $0.isUnconfirmed }) { return "" }
     try store.setKV(Self.analyticsKey, now)
     var calls: [Date] = (try store.kv(Self.analyticsCallsKey) ?? []).filter { now.timeIntervalSince($0) < 3600 }
-    let room = force ? (limit ?? 20) : max(0, AnalyticsSchedule.perHour - calls.count)
+    // Analytics (posts and channels together) take at most `perHour` calls an hour, and only from a budget that has
+    // at least `perHour` calls left above the reserve kept for posting.
+    let spare = try store.postizBudget().remaining(now: now, limit: settings.publishing.hourlyBudget) - PostizCallKind.analytics.reserve
+    let room = force ? (limit ?? 20) : max(0, min(AnalyticsSchedule.perHour - calls.count, spare - AnalyticsSchedule.perHour))
     var n = 0, empty = 0
     var stopped = false
     if room > 0 {
@@ -1214,20 +1219,24 @@ public final class PostizService: @unchecked Sendable {
     var parts: [String] = []
     if n > 0 { parts.append("metrics \(n)\(stopped ? " (more later)" : "")") }
     if empty > 0 { parts.append("\(empty) without numbers") }
-    if !stopped, let c = try channelAnalytics(settings, force: force), !c.isEmpty { parts.append(c) }
+    let channelRoom = force ? 6 : min(2, max(0, AnalyticsSchedule.perHour - calls.count))
+    if !stopped, channelRoom > 0, let c = try channelAnalytics(settings, force: force, limit: channelRoom), !c.isEmpty {
+      parts.append(c)
+      if !force { try store.setKV(Self.analyticsCallsKey, calls + Array(repeating: now, count: c.split(separator: ",").count)) }
+    }
     return parts.joined(separator: " · ")
   }
 
   /// Once a day per mapped channel: `GET /analytics/{integration}`. Daily series are stored per day; one-point
   /// totals are stored on today's date, which is how their history builds up.
   @discardableResult
-  public func channelAnalytics(_ settings: Settings? = nil, force: Bool = false) throws -> String? {
+  public func channelAnalytics(_ settings: Settings? = nil, force: Bool = false, limit: Int = 6) throws -> String? {
     let settings = try settings ?? store.settings()
     var lastPull: [String: Date] = try store.kv(Self.channelAnalyticsKey) ?? [:]
     let dm = DayMath(settings: settings)
     var done: [String] = []
     for p in Platform.allCases {
-      guard let id = settings.publishing.channels[p], !id.isEmpty else { continue }
+      guard done.count < limit, let id = settings.publishing.channels[p], !id.isEmpty else { continue }
       let prev = lastPull[p.rawValue]
       if !force, let prev, now.timeIntervalSince(prev) < AnalyticsSchedule.channelInterval { continue }
       let first = prev == nil
@@ -1238,6 +1247,7 @@ public final class PostizService: @unchecked Sendable {
         }
       } catch {
         if Self.stops(error) { break }
+        lastPull[p.rawValue] = now  // refused (a 4xx): asked again tomorrow, not every sweep
         continue
       }
       lastPull[p.rawValue] = now

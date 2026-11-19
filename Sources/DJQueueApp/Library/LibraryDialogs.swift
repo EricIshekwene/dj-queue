@@ -55,6 +55,7 @@ struct LibraryQuickLook: View {
           if let s = v.score, v.type == .short { DSBadge("Score \(s)", style: .outline, help: "Your score (0–100) — it sets the posting order") }
           Spacer(minLength: 0)
         }
+        if v.type == .short { ClipPerformanceSummary(model: model, videoId: v.id) }
         if missing {
           if v.isPhoto {
             note(.danger, "A photo of this post is gone from DJ Queue's Photos folder.",

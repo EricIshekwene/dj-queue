@@ -95,10 +95,28 @@ enum SnapshotRunner {
       pModel.postiz.hasKey = true
       pModel.refreshNow()
 
+      // 4. Analytics model (round 39): the sample plus twelve weeks of made-up posting history with numbers.
+      var aPaths = Paths(root: src.root, appSupport: tmp.appendingPathComponent("asupport"), logs: tmp.appendingPathComponent("alogs"),
+                         launchAgents: tmp.appendingPathComponent("aLA"))
+      aPaths.photosOverride = paths.photosOverride
+      try FileManager.default.createDirectory(at: aPaths.appSupport, withIntermediateDirectories: true)
+      try FileManager.default.createSymbolicLink(at: aPaths.thumbs, withDestinationURL: src.thumbs)
+      try store.db.backup(to: aPaths.database.path)
+      let aStore = try Store(paths: aPaths, clock: FixedClock(now))
+      try SampleData.seedAnalytics(store: aStore, now: now)
+      let aModel = AppModel(store: aStore)
+      aModel.frozen = true
+      aModel.now = now
+      aModel.refreshNow()
+
       // The covers belong to the main sample model (the empty one must not take over the shared cache).
       ThumbCache.shared.store = store
       model.refreshNow()
 
+      if ProcessInfo.processInfo.environment["DJQ_ANALYTICS_SCRIPT"] != nil {
+        ThumbCache.shared.store = aStore
+        return await AnalyticsScript.run(model: aModel, store: aStore, out: out)
+      }
       if ProcessInfo.processInfo.environment["DJQ_SEND_TO_QUEUE_SCRIPT"] != nil {
         return await SendToQueueScript.run(model: model, store: store, out: out)
       }
@@ -114,7 +132,7 @@ enum SnapshotRunner {
       if ProcessInfo.processInfo.environment["DJQ_POST_AT_SCRIPT"] != nil {
         return await PostAtScript.run(model: model, store: store, clock: clock, out: out)
       }
-      let ctx = SnapshotContext(model: model, empty: empty, store: store, now: now, postiz: pModel)
+      let ctx = SnapshotContext(model: model, empty: empty, store: store, now: now, postiz: pModel, analytics: aModel)
       var shots = SnapshotShots.shell(ctx) + SnapshotShots.pipeline(ctx) + SnapshotShots.planning(ctx)
         + SnapshotShots.browse(ctx) + SnapshotShots.settings(ctx)
         + SnapshotShots.unqueue(ctx)
@@ -123,6 +141,7 @@ enum SnapshotRunner {
         + SnapshotShots.r6postiz(ctx)
         + SnapshotShots.r9retry(ctx)
         + SnapshotShots.r10search(ctx)
+        + SnapshotShots.analytics(ctx)
       if let only = ProcessInfo.processInfo.environment["DJQ_SNAPSHOT_ONLY"] {
         shots = shots.filter { $0.name.contains(only) }
       }
@@ -156,6 +175,8 @@ struct SnapshotContext {
   let now: Date
   /// Round 6: the sample with Postiz on (see `SampleData.seedPostiz`).
   let postiz: AppModel
+  /// Round 39: the sample with twelve weeks of posting history and numbers (see `SampleData.seedAnalytics`).
+  let analytics: AppModel
 
   /// The first clip in the upcoming plan (Queue/Week shots).
   var firstPlannedId: String? { model.upcomingSlots.first?.videoId }

@@ -60,6 +60,18 @@ X=deselect
 gif   deselect      $X/deselect-01-text-selected-light $X/deselect-02-canvas-click-deselects-light $X/deselect-03-trim-selected-light $X/deselect-04-trim-released-light
 still deselect-dark deselect-dark/deselect-05-all-released-dark
 
+# Round 39: Analytics (the analytics check clicks tabs, a chip and a top clip; the board is drawn whole for the still)
+N=analytics
+gif   analytics       $N/analytics-01-overview-light $N/analytics-02-likes-light $N/analytics-03-posts-light \
+                 $N/analytics-04-30-days-light $N/analytics-05-tiktok-light $N/analytics-06-tiktok-curves-light \
+                 $N/analytics-07-consistency-light $N/analytics-08-top-clips-light $N/analytics-09-clip-preview-light
+still analytics       screens/40-analytics-light
+still analytics-dark  screens/40-analytics-dark
+still analytics-board screens/44-analytics-board-light
+still analytics-tiktok $N/analytics-06-tiktok-curves-light
+still analytics-library $N/analytics-10-library-most-views-light
+still analytics-post  $N/analytics-11-post-inspector-light
+
 S=screens
 still queue          $S/18-queue-cards-light
 still queue-dark     $S/18-queue-cards-dark

@@ -72,6 +72,7 @@ struct MainWindowView: View {
     case .calendar: CalendarView(model: model)
     case .library: LibraryView(model: model)
     case .posts: PostsView(model: model)
+    case .analytics: AnalyticsView(model: model)
     case .health: HealthView(model: model)
     }
   }

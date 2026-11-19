@@ -90,6 +90,7 @@ struct AppSidebar: View {
     case .calendar: ("See the posts going out", count == nil ? nil : "\(n)due")
     case .library: ("Browse every clip, posted or not", nil)
     case .posts: ("See every post", count == nil ? nil : "\(n)need attention")
+    case .analytics: ("See how posts are doing over time", nil)
     case .health: ("Check engine and schedule", healthMeaning)
     }
     return [compact ? s.title : purpose, meaning].compactMap { $0 }.joined(separator: " · ")

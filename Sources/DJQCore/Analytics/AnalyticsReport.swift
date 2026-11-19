@@ -434,13 +434,17 @@ extension AnalyticsReport {
 
     // Consistency.
     let target = settings.postsPerDay * settings.activePlatforms.filter { included.contains($0) }.count
-    let heatWeeks = min(52, max(13, (spanDays + 6) / 7))
+    let heatWeeks = min(52, max(26, (spanDays + 6) / 7))
     let heatStart = dm.addDays(dm.weekStart(of: now), -7 * (heatWeeks - 1))
     var postedByDay: [String: Int] = [:], missedByDay: [String: Int] = [:], plannedByDay: [String: Int] = [:]
     for p in posted { postedByDay[dm.key(p.postedAt!), default: 0] += 1 }
+    // Missed = a failed or overdue post whose slot never went out and has no retry coming (a retried failure that
+    // later posted isn't a miss; a platform Eric skipped isn't either).
+    func unitKey(_ p: PlatformPost) -> String { "\(p.videoId)|\(p.platform.rawValue)|\(p.versionNo)|\(p.postNo)" }
+    let settled = Set(allPosts.filter { $0.state.wentOut || !$0.state.isTerminal }.map(unitKey))
     for p in allPosts where !p.state.wentOut {
       let d = dm.key(p.scheduledAt)
-      if [.failed, .skipped, .overdue].contains(p.state) && p.scheduledAt < now { missedByDay[d, default: 0] += 1 }
+      if [.failed, .overdue].contains(p.state) && p.scheduledAt < now && !settled.contains(unitKey(p)) { missedByDay[d, default: 0] += 1 }
       else if p.scheduledAt >= now, !p.state.isTerminal { plannedByDay[d, default: 0] += 1 }
     }
     let cells = (0..<(heatWeeks * 7)).map { i -> DayCell in
@@ -495,9 +499,11 @@ extension AnalyticsReport {
     }
     let medians: [MedianCurve] = included.compactMap { pl in
       let cs = postCurves.filter { $0.platform == pl }
+      // Older ages only have older posts behind them; views never go down, so the median never does either.
+      var top = 0.0
       let pts = curveAges.compactMap { a -> CurvePoint? in
         let vs = cs.compactMap { c in c.points.first { $0.age == a }?.views }
-        return median(vs).map { CurvePoint(age: a, views: $0, n: vs.count) }
+        return median(vs).map { top = max(top, $0); return CurvePoint(age: a, views: top, n: vs.count) }
       }
       return pts.count > 1 ? MedianCurve(platform: pl, points: pts) : nil
     }
@@ -536,7 +542,7 @@ extension AnalyticsReport {
       let views = ps.reduce(0.0) { s, p in s + (viewsCum[p.id].map { max(0, $0.at(now) - $0.at(rangeStart)) } ?? 0) }
       let likes = ps.reduce(0.0) { s, p in s + (likesCum[p.id].map { max(0, $0.at(now) - $0.at(rangeStart)) } ?? 0) }
       let total = ps.reduce(0.0) { $0 + (latest(viewsCum, $1.id) ?? 0) }
-      guard total > 0 || ps.contains(where: { $0.postedAt! >= rangeStart }) else { continue }
+      guard total > 0 else { continue }
       var byPl: [Platform: Double] = [:]
       for p in ps { byPl[p.platform, default: 0] += latest(viewsCum, p.id) ?? 0 }
       let inter = ps.reduce(0.0) { $0 + (latest(viewsCum, $1.id) != nil ? (latest(interCum, $1.id) ?? 0) : 0) }
@@ -604,7 +610,7 @@ public struct ClipAnalytics: Codable, Sendable {
 
   public static func build(store: Store, videoId: String, now: Date) throws -> ClipAnalytics {
     let posts = try store.posts(where: "video_id=?", [videoId]).filter { $0.state.wentOut }
-    let snaps = try store.snapshotsByPost(includeEmpty: true)
+    let snaps = try store.snapshotsByPost(videoId: videoId)
     let targets = Dictionary((try? PostizService.analyticsTargetsLight(store: store, videoId: videoId)) ?? [], uniquingKeysWith: { a, _ in a })
     var lines: [PostLine] = []
     for p in posts.sorted(by: { ($0.postedAt ?? $0.scheduledAt) < ($1.postedAt ?? $1.scheduledAt) }) {
