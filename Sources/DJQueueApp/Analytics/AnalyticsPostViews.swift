@@ -10,7 +10,8 @@ struct ClipPerformanceSummary: View {
   @State private var data: ClipAnalytics?
 
   var body: some View {
-    Group {
+    // A stack, not a Group: an empty Group has no view to hang the load on, so it would never start.
+    VStack(alignment: .leading, spacing: 0) {
       if let c = data, !c.posts.isEmpty { summary(c) }
     }
     .task(id: "\(videoId)|\(model.lastRefresh.timeIntervalSince1970)") { data = await ClipAnalytics.load(model, videoId) }

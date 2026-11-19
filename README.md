@@ -154,6 +154,8 @@ sit in the Posts inspector. `djq analytics` prints the same as text or JSON.
 | ![Clicking through Analytics](docs/media/analytics.gif) | ![Every Analytics card](docs/media/analytics-board.jpg) |
 | **One platform: every post's curve behind the median** | **Library › Most views, with views on each card** |
 | ![TikTok posts and their median](docs/media/analytics-tiktok.jpg) | ![Library sorted by views](docs/media/analytics-library.jpg) |
+| **A post's views over time, in the Posts inspector** | **Analytics in dark mode** |
+| ![Posts inspector with the views chart](docs/media/analytics-post.jpg) | ![Analytics, dark](docs/media/analytics-dark.jpg) |
 
 Postiz only gives most numbers "as of now", so DJ Queue keeps a dated snapshot each time it asks (each post at 12 hours,
 1, 3, 7, 14, 30, 60, 90, 180 and 365 days; each account once a day). That's where the history comes from. Analytics use

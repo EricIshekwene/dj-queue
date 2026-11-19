@@ -46,6 +46,10 @@ extension SampleData {
           post.postNo = postNo
           try store.save(post)
           guard !missed else { continue }
+          var lastViews = 0.0, lastLikes = 0.0
+          defer {
+            if lastViews > 0 { post.metrics = PostMetrics(views: Int(lastViews), likes: Int(lastLikes), at: now); try? store.save(post) }
+          }
           let final = (base[p] ?? 0) * quality * trend * (postNo == 2 ? 0.62 : 1) * (0.8 + Double((h >> 3) % 40) / 100)
           for m in AnalyticsSchedule.milestones {
             let t = at.addingTimeInterval(m * 86400)
@@ -57,6 +61,7 @@ extension SampleData {
             let g = 1 - exp(-m / 1.6) * 0.92
             let views = (final * g).rounded()
             let likes = (views * (likeRate[p] ?? 0)).rounded()
+            lastViews = views; lastLikes = likes
             try store.addSnapshot(PostSnapshot(postId: post.id, takenAt: t, source: "postiz",
                                                values: ["views": views, "likes": likes, "comments": (likes / 14).rounded(),
                                                         "shares": (likes / 9).rounded()]), post: post)

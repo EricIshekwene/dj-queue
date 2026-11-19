@@ -144,6 +144,7 @@ enum AnalyticsScript {
     check("top clip clicked", await click("Analytics clip 1"))
     await wait(600)
     check("its preview opened", model.previewVideo?.id == rAll?.topClips.first?.videoId)
+    for _ in 0..<40 where !has("Clip performance") { await wait(100) }  // its numbers load after it opens
     check("the preview shows the clip's numbers", has("Clip performance"))
     await shot("clip-preview")
     model.previewVideo = nil
@@ -168,6 +169,7 @@ enum AnalyticsScript {
       model.postsSelection = p.id
       model.screen = .posts
       await wait(1500)
+      for _ in 0..<40 where !has("Post numbers chart") { await wait(100) }
       check("the inspector draws the post's views over time", has("Post numbers chart"))
       await shot("post-inspector")
     } else {
