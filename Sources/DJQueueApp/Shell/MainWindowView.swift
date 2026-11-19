@@ -72,6 +72,7 @@ struct MainWindowView: View {
     case .calendar: CalendarView(model: model)
     case .library: LibraryView(model: model)
     case .posts: PostsView(model: model)
+    case .analytics: AnalyticsView(model: model)
     case .health: HealthView(model: model)
     }
   }
@@ -230,7 +231,7 @@ struct ShortcutSheet: View {
   @Bindable var model: AppModel
 
   private let groups: [(String, [(String, String)])] = [
-    ("Everywhere", [("⌘K", "Search everything"), ("⌘F", "Filter the list on screen"), ("⌘/", "This cheat sheet"), ("⌘1 – ⌘7", "Score · Edit · Queue · Calendar · Library · Posts · Health"),
+    ("Everywhere", [("⌘K", "Search everything"), ("⌘F", "Filter the list on screen"), ("⌘/", "This cheat sheet"), ("⌘1 – ⌘8", "Score · Edit · Queue · Calendar · Library · Posts · Analytics · Health"),
                     ("⌘,", "Settings"), ("⌘R", "Refresh"), ("⌘0", "Open the DJ Queue window (menu bar)"),
                     ("⌘Z", "Undo the most recent change (again for the one before)")]),
     ("Selecting clips", [("Click circle", "Select a clip"), ("⇧ Click", "Select a range"), ("⌘ Click", "Add or remove one"),

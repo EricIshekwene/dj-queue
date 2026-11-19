@@ -106,6 +106,8 @@ public final class Store: @unchecked Sendable {
       try db.exec("ALTER TABLE postiz_jobs ADD COLUMN lineage TEXT NOT NULL DEFAULT ''; CREATE INDEX IF NOT EXISTS postiz_jobs_lineage ON postiz_jobs(lineage)")
     }
     if !jcols.isEmpty, !jcols.contains("content") { try db.exec("ALTER TABLE postiz_jobs ADD COLUMN content TEXT NOT NULL DEFAULT ''") }
+    // Round 39: analytics history (additive, no schema step; see AnalyticsStore.swift).
+    try ensureAnalyticsTables()
   }
 
   /// Round 2: titles + suggestions, batch journal, cached source size, override-only edits.

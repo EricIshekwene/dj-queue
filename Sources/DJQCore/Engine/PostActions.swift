@@ -317,12 +317,20 @@ public final class PostActions: @unchecked Sendable {
     return p
   }
 
-  public func setMetrics(postId: String, _ m: PostMetrics) throws {
+  /// Saves views/likes on the post. Typed-in numbers (`snapshot`) also go into the analytics history (round 39) as a
+  /// "manual" snapshot, so they show on the Analytics curves next to the pulled ones.
+  public func setMetrics(postId: String, _ m: PostMetrics, snapshot: Bool = true) throws {
     var p = try post(postId)
     var m = m
     if m.at == nil { m.at = now }
     p.metrics = m
     try store.save(p)
+    if snapshot {
+      var values: [String: Double] = [:]
+      if let v = m.views { values[MetricKey.views.rawValue] = Double(v) }
+      if let l = m.likes { values[MetricKey.likes.rawValue] = Double(l) }
+      if !values.isEmpty { try store.addSnapshot(PostSnapshot(postId: postId, takenAt: m.at ?? now, source: "manual", values: values), post: p) }
+    }
   }
 
   /// Records the YouTube URL and moves the file Ready to Post/Longform → Posted/Longform.

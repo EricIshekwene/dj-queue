@@ -84,6 +84,8 @@ final class AppModel {
   var repostable: Set<String> = []
   /// Round 38: clip id → its repostable count, for the clips marked repostable.
   var repostCounts: [String: Int] = [:]
+  /// Round 39: views so far per clip (latest snapshot of each post), for the views tag and Library's Most views sort.
+  var viewsByVideo: [String: Double] = [:]
   /// Round 31: every short clip's version posts (counts, what's taken), read off-main with each refresh. Labels such as
   /// "v2 · 1 of 2" come from here (`unitLabel`), never from a read while drawing. nil until the first load.
   var unitBook: UnitBook?
@@ -369,6 +371,7 @@ final class AppModel {
     var versionCounts: [String: Int] = [:]
     var repostable: Set<String> = []
     var repostCounts: [String: Int] = [:]
+    var viewsByVideo: [String: Double] = [:]
     var unitBook: UnitBook?
     var unitLines: [String: [UnitLine]] = [:]
     var relinked: Set<String> = []
@@ -421,6 +424,7 @@ final class AppModel {
       l.unitBook = try? UnitBook(store: store, settings: l.settings, videos: l.videos)
       l.repostable = Set((l.unitBook?.clips ?? [:]).filter { $0.value.counts.values.contains { $0 > 1 } }.map(\.key))
       l.repostCounts = (try? store.repostCounts()) ?? [:]
+      l.viewsByVideo = (try? ClipAnalytics.viewsByVideo(store: store)) ?? [:]
       if let book = l.unitBook {
         let upcoming = Dictionary(grouping: l.upcomingSlots, by: \.videoId)
         for id in book.clips.keys { l.unitLines[id] = book.lines(id, upcoming: upcoming[id] ?? []) }
@@ -520,6 +524,7 @@ final class AppModel {
     versionCounts = l.versionCounts
     repostable = l.repostable
     repostCounts = l.repostCounts
+    if viewsByVideo != l.viewsByVideo { viewsByVideo = l.viewsByVideo }
     unitBook = l.unitBook
     unitLines = l.unitLines
     relinked = l.relinked

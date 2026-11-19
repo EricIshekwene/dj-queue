@@ -80,7 +80,7 @@ struct AppSidebar: View {
   }
 
   /// Expanded: what the screen is for, plus what its count or dot means ("Score new clips · 13 to score"). Compact
-  /// (no visible title): the screen's name with the same meaning ("Score · 13 to score"). ⌘1…⌘7 ride as keycaps.
+  /// (no visible title): the screen's name with the same meaning ("Score · 13 to score"). ⌘1…⌘8 ride as keycaps.
   private func rowTooltip(_ s: Screen, count: Int?) -> String {
     let n = count.map { "\($0) " } ?? ""
     let (purpose, meaning): (String, String?) = switch s {
@@ -90,6 +90,7 @@ struct AppSidebar: View {
     case .calendar: ("See the posts going out", count == nil ? nil : "\(n)due")
     case .library: ("Browse every clip, posted or not", nil)
     case .posts: ("See every post", count == nil ? nil : "\(n)need attention")
+    case .analytics: ("See how posts are doing over time", nil)
     case .health: ("Check engine and schedule", healthMeaning)
     }
     return [compact ? s.title : purpose, meaning].compactMap { $0 }.joined(separator: " · ")

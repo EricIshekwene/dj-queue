@@ -26,7 +26,7 @@ struct PaletteCommand: Identifiable {
 // MARK: - Commands
 
 extension AppModel {
-  /// Destinations: every screen (⌘1…⌘7) and Settings.
+  /// Destinations: every screen (⌘1…⌘8) and Settings.
   var paletteGoTo: [PaletteCommand] {
     Screen.allCases.map { s in
       PaletteCommand(id: "go.\(s.rawValue)", title: "Go to \(s.title)", symbol: s.symbol, hint: "⌘\(s.key.character)", group: "Go to") {
@@ -86,6 +86,20 @@ extension AppModel {
       self?.editor = nil
       self?.screen = .calendar
     })
+    // Round 39: Analytics' Refresh numbers, and each period straight from ⌘K.
+    c.append(.init(id: "analytics.refresh", title: "Refresh analytics numbers", symbol: "arrow.clockwise",
+                   subtitle: "Ask Postiz for the views and likes that are due (spare budget, never posts)") { [weak self] in
+      guard let self else { return }
+      AnalyticsProbe.shared.pullNow(self)
+    })
+    for r in AnalyticsRange.allCases {
+      c.append(.init(id: "analytics.\(r.rawValue)", title: "Analytics: \(r.longLabel)", symbol: "chart.xyaxis.line",
+                     subtitle: "Views, likes, followers and consistency over time") { [weak self] in
+        self?.editor = nil
+        AnalyticsProbe.shared.range = r
+        self?.screen = .analytics
+      })
+    }
     for m in CalendarViewMode.allCases {
       c.append(.init(id: "calendar.\(m.rawValue)", title: "Calendar: \(m.title)", symbol: "calendar", hint: m.key) { [weak self] in
         self?.editor = nil

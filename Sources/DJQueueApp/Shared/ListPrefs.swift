@@ -6,7 +6,7 @@ import Observation
 enum ListPage: String, CaseIterable, Codable, Sendable {
   case score, edit, queue, library, posts
 
-  /// The list on `screen`; nil for screens without one (Calendar, Health).
+  /// The list on `screen`; nil for screens without one (Calendar, Analytics, Health).
   static func of(_ screen: Screen) -> ListPage? {
     switch screen {
     case .score: .score
@@ -14,7 +14,7 @@ enum ListPage: String, CaseIterable, Codable, Sendable {
     case .queue: .queue
     case .library: .library
     case .posts: .posts
-    case .calendar, .health: nil
+    case .calendar, .analytics, .health: nil
     }
   }
 }

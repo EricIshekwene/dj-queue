@@ -1119,39 +1119,179 @@ public final class PostizService: @unchecked Sendable {
                                actions: [.open], postId: j.postId, videoId: j.videoId))
   }
 
-  // MARK: Analytics (F3)
+  // MARK: Analytics (F3, round 39)
 
   public static let analyticsKey = "postiz.lastAnalytics"
+  /// Dates of post-analytics calls in the last hour (the `AnalyticsSchedule.perHour` cap).
+  public static let analyticsCallsKey = "analytics.calls"
+  /// Platform → last channel-analytics pull.
+  public static let channelAnalyticsKey = "analytics.channels"
+  /// How often the sweep looks for due posts (it's cheap, but every engine tick would be noise).
+  static let analyticsSweepEvery: TimeInterval = 5 * 60
 
-  /// Once a day: views/likes for posts Postiz published in the last 30 days, into `PlatformPost.metrics`.
-  /// Lowest priority; stops when the budget leaves no room.
+  /// One published Postiz post DJ Queue can ask about.
+  public struct AnalyticsTarget: Sendable, Hashable {
+    public var post: PlatformPost
+    public var postizId: String
+    public var postedAt: Date
+  }
+
+  /// Every post Postiz published for us (one per post: its published job), newest first.
+  public func analyticsTargets() throws -> [AnalyticsTarget] {
+    let jobs = try store.postizJobs(where: "close_reason='published' AND postiz_id IS NOT NULL AND kind='post'", order: "closed_at DESC")
+    var seen = Set<String>()
+    var out: [AnalyticsTarget] = []
+    for j in jobs where seen.insert(j.postId).inserted {
+      guard let p = try store.post(id: j.postId), let pid = j.postizId else { continue }
+      out.append(AnalyticsTarget(post: p, postizId: pid, postedAt: p.postedAt ?? j.closedAt ?? j.remoteDate))
+    }
+    return out
+  }
+
+  /// Post id → no pull before this time (a 5xx or an unreadable answer: tried again later, the schedule kept).
+  public static let analyticsRetryKey = "analytics.retryAfter"
+  /// What a refresh says when it waited for posting.
+  public static let waitingForPosting = "waiting: a post is being sent to Postiz (posting goes first)"
+
+  /// The pull sweep (round 39, docs/analytics.md): posts that reached an age in `AnalyticsSchedule.milestones` get a
+  /// snapshot (youngest milestone first), then each mapped channel once a day. Analytics (posts and channels together)
+  /// take at most `AnalyticsSchedule.perHour` calls an hour, only from a budget with that many spare calls above the
+  /// reserve kept for posting, and none while a Postiz post is being created, replaced or deleted. `force` (djq
+  /// analytics refresh, the Analytics screen's Refresh) also asks posts not asked in the last 6 h; it waits for posting
+  /// too, and makes at most `limit` calls in all.
   @discardableResult
-  public func analytics(_ settings: Settings? = nil, force: Bool = false) throws -> String {
+  public func analytics(_ settings: Settings? = nil, force: Bool = false, limit: Int? = nil, channelsOnly: Bool = false) throws -> String {
     let settings = try settings ?? store.settings()
     let last: Date? = try store.kv(Self.analyticsKey)
-    if !force, let last, now.timeIntervalSince(last) < 86400 { return "" }
-    let since = now.addingTimeInterval(-30 * 86400)
-    let jobs = try store.postizJobs(where: "close_reason='published' AND postiz_id IS NOT NULL AND closed_at>=? AND kind='post'", [since])
-    guard !jobs.isEmpty else { return "" }
-    var n = 0
-    for j in jobs {
-      guard try store.post(id: j.postId) != nil, let pid = j.postizId else { continue }
-      let data: Data
-      do {
-        data = try call(.analytics, settings) { try client(settings).analytics(pid, days: 7) }
-      } catch {
-        if Self.stops(error) { return n > 0 ? "metrics \(n) (more later)" : "" }
-        continue
-      }
-      if let m = PostizAnalytics.parse(data) {
-        try PostActions(store: store).setMetrics(postId: j.postId, m)
-        n += 1
-      } else if PostizAnalytics.isUnknownShape(data), try store.markNotified("postiz.analyticsShape") {
-        Log.shared.warn("postiz analytics: unknown response shape for one post; metrics left empty")
-      }
+    if !force, let last, now.timeIntervalSince(last) < Self.analyticsSweepEvery { return "" }
+    // Posting first: while any Postiz post is being created, replaced or deleted (or isn't confirmed), the sweep waits.
+    if try store.openPostizJobs().contains(where: { $0.phase != .live || $0.isUnconfirmed }) {
+      return force ? Self.waitingForPosting : ""
     }
     try store.setKV(Self.analyticsKey, now)
-    return n > 0 ? "metrics \(n)" : ""
+    var calls: [Date] = (try store.kv(Self.analyticsCallsKey) ?? []).filter { now.timeIntervalSince($0) < 3600 }
+    var retryAfter: [String: Date] = (try store.kv(Self.analyticsRetryKey) ?? [:]).filter { $0.value > now }
+    let spare = try store.postizBudget().remaining(now: now, limit: settings.publishing.hourlyBudget) - PostizCallKind.analytics.reserve
+    var room = force ? (limit ?? 12) : max(0, min(AnalyticsSchedule.perHour - calls.count, spare - AnalyticsSchedule.perHour))
+    var n = 0, empty = 0, made = 0  // made: this sweep's calls (`now` moves on a real clock, so it's counted here)
+    var stopped = false
+    if room > 0 && !channelsOnly {
+      let lastTimes = try store.lastSnapshotTimes()
+      let lastEmpty = Set(try store.db.query("""
+        SELECT s.post_id AS id FROM post_metric_snapshots s JOIN (SELECT post_id, MAX(taken_at) AS t FROM post_metric_snapshots
+        WHERE source<>'manual' GROUP BY post_id) m ON m.post_id=s.post_id AND m.t=s.taken_at WHERE s.source='empty'
+        """).compactMap { $0.string("id") })
+      var due: [(t: AnalyticsTarget, m: Double, last: Date?)] = []
+      for t in try analyticsTargets() where retryAfter[t.post.id] == nil {
+        let l = lastTimes[t.post.id]
+        if let m = AnalyticsSchedule.due(postedAt: t.postedAt, last: l, lastWasEmpty: lastEmpty.contains(t.post.id), now: now) {
+          due.append((t, m, l))
+        } else if force, now.timeIntervalSince(l ?? .distantPast) > 6 * 3600,
+                  now.timeIntervalSince(t.postedAt) < 366 * 86400, !lastEmpty.contains(t.post.id) {
+          due.append((t, 1000, l))
+        }
+      }
+      due.sort { $0.m != $1.m ? $0.m < $1.m : ($0.last ?? .distantPast) < ($1.last ?? .distantPast) }
+      func markEmpty(_ d: AnalyticsTarget) throws {
+        try store.addSnapshot(PostSnapshot(postId: d.post.id, takenAt: now, source: "empty", values: [:]), post: d.post)
+      }
+      for d in due.prefix(room) {
+        let data: Data
+        do {
+          data = try call(.analytics, settings) { try client(settings).analytics(d.t.postizId, days: 30) }
+        } catch {
+          if Self.stops(error) { stopped = true; break }
+          calls.append(now); made += 1
+          switch error as? PostizError {
+          case .notFound?, .validation?:
+            // Postiz has nothing for it (a deleted post, a missing platform id): recorded empty, asked monthly.
+            try markEmpty(d.t)
+            empty += 1
+          default:
+            // A 5xx or the like: nothing stored, the post keeps its ages and is tried again in an hour.
+            retryAfter[d.t.post.id] = now.addingTimeInterval(3600)
+          }
+          continue
+        }
+        calls.append(now); made += 1
+        guard let series = AnalyticsParse.series(data) else {
+          // Unreadable: tried again in a day (never every sweep), logged once.
+          retryAfter[d.t.post.id] = now.addingTimeInterval(86400)
+          if try store.markNotified("postiz.analyticsShape") {
+            Log.shared.warn("postiz analytics: unknown response shape for one post; nothing stored")
+          }
+          continue
+        }
+        let values = PostSnapshot.values(from: series)
+        if values.isEmpty { try markEmpty(d.t); empty += 1; continue }
+        let s = PostSnapshot(postId: d.t.post.id, takenAt: now, source: "postiz", values: values)
+        try store.addSnapshot(s, post: d.t.post)
+        if s.views != nil || s.likes != nil {
+          try PostActions(store: store).setMetrics(postId: d.t.post.id, PostMetrics(views: s.views.map { Int($0) },
+                                                                                     likes: s.likes.map { Int($0) }, at: now), snapshot: false)
+        }
+        n += 1
+      }
+    }
+    room = force ? max(0, (limit ?? 12) - made) : min(2, AnalyticsSchedule.perHour - calls.count, spare - AnalyticsSchedule.perHour - made)
+    var parts: [String] = []
+    if n > 0 { parts.append("metrics \(n)\(stopped ? " (more later)" : "")") }
+    if empty > 0 { parts.append("\(empty) without numbers") }
+    if !stopped, room > 0 {
+      let c = try channelAnalytics(settings, force: force, limit: room)
+      calls += Array(repeating: now, count: c.calls)
+      if !c.pulled.isEmpty { parts.append("channels \(c.pulled.joined(separator: ","))") }
+    }
+    try store.setKV(Self.analyticsCallsKey, calls)
+    try store.setKV(Self.analyticsRetryKey, retryAfter)
+    return parts.joined(separator: " · ")
+  }
+
+  /// Once a day per mapped channel: `GET /analytics/{integration}`. Daily series are stored per day; one-point
+  /// totals are stored on today's date, which is how their history builds up. Returns the calls made (for the hourly
+  /// cap) and the channels that answered.
+  @discardableResult
+  public func channelAnalytics(_ settings: Settings? = nil, force: Bool = false, limit: Int = 6) throws -> (calls: Int, pulled: [String]) {
+    let settings = try settings ?? store.settings()
+    var lastPull: [String: Date] = try store.kv(Self.channelAnalyticsKey) ?? [:]
+    let dm = DayMath(settings: settings)
+    var done: [String] = []
+    var made = 0
+    for p in Platform.allCases {
+      guard made < limit, let id = settings.publishing.channels[p], !id.isEmpty else { continue }
+      let prev = lastPull[p.rawValue]
+      if !force, let prev, now.timeIntervalSince(prev) < AnalyticsSchedule.channelInterval { continue }
+      let first = prev == nil
+      let data: Data
+      do {
+        data = try call(.analytics, settings) {
+          try client(settings).channelAnalytics(id, days: first ? AnalyticsSchedule.channelFirstDays : AnalyticsSchedule.channelDays)
+        }
+      } catch {
+        if Self.stops(error) { break }
+        made += 1
+        lastPull[p.rawValue] = now  // refused or failed: asked again tomorrow, not every sweep
+        continue
+      }
+      made += 1
+      lastPull[p.rawValue] = now
+      guard let series = AnalyticsParse.series(data) else { continue }
+      var pts: [ChannelMetricPoint] = []
+      for s in series {
+        if s.isDaily {
+          pts += s.points.filter { !$0.date.isEmpty }.map {
+            ChannelMetricPoint(platform: p, label: s.label, day: $0.date, value: $0.value, kind: "daily", fetchedAt: now)
+          }
+        } else if !first, let v = s.points.first?.value {
+          // The 90-day backfill's totals cover a different window than the daily 30-day ones: only daily ones count.
+          pts.append(ChannelMetricPoint(platform: p, label: s.label, day: dm.key(now), value: v, kind: "total", fetchedAt: now))
+        }
+      }
+      try store.saveChannelMetrics(pts)
+      done.append(p.shortName)
+    }
+    try store.setKV(Self.channelAnalyticsKey, lastPull)
+    return (made, done)
   }
 
   // MARK: CLI / Settings helpers

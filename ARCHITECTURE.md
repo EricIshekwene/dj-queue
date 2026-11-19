@@ -34,6 +34,13 @@ One app bundle, `~/Applications/DJ Queue.app` (bundle id `com.djlovd.queue`), la
 
 **Auto-update (v0.6.0, `Sources/DJQCore/AutoUpdate/`, DECISIONS-R4-AUTOUPDATE.md).** A second LaunchAgent, `com.djlovd.queue.autoupdate`, runs `djq autoupdate run --trigger watch` from the installed bundle whenever `refs/heads/main` (or `packed-refs`, `refs/tags`) of the source checkout changes, or the app writes `request.json` / `window.json` under `<app support>/autoupdate/`. One run at a time (`run.lock`): gate (`scripts/test.sh` + `scripts/build-app.sh` in a scratch clone with scratch `DJQ_HOME`/`DJQ_ROOT`) → wait for no render → DB backup → install (old bundle kept in `autoupdate/previous/`) → `launchctl kickstart -k` the engine → verify (fresh engine heartbeat, ids/scores/titles/count via `djq videos --json`, no new Doctor errors) → notice. The runner is the only writer of `state.json`; the app reads it for the banner, menu-bar dot and Settings, and delivers its notices. Bundles carry `DJQGitCommit` and `DJQSchemaVersion` in Info.plist.
 
+**Analytics (round 39, `Sources/DJQCore/Analytics/`, DECISIONS-R39.md, docs/analytics.md).** Two additive tables created on
+open (no schema step): `post_metric_snapshots` (one row per post per pull, values by `MetricKey`) and `channel_metrics`
+(account series per day). `PostizService.analytics()` runs inside the Postiz sync: posts at set ages
+(`AnalyticsSchedule.milestones`), accounts daily, at most 8 calls an hour from spare budget and never while a Postiz post
+is being created, replaced or deleted. `AnalyticsReport.build(store:range:platforms:now:)` is the pure report the
+Analytics screen (`Sources/DJQueueApp/Analytics/`) and `djq analytics --json` show; `ClipAnalytics` is one clip's posts.
+
 **Title and Text suggestions (round 5, schema v4, DECISIONS-R5-TEXT.md).** Two separate tables of the same shape: `title_suggestions` (the clip's one-line Title) and `text_suggestions` (the overlay text on the video, line breaks kept). `Store.suggestions(_ kind: SuggestionKind, videoId:)`, `addSuggestions(…, kind:)`; intake syncs both from `videos.json`; `djq suggest` and `djq video --json` carry both; the editor's Title and Text sections each show their own chips.
 
 ## Contracts (exact public API — other agents compile against these names)

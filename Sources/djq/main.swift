@@ -89,6 +89,8 @@ usage: djq <command> [args]
                                       posts, not pinned ones or any within 30 minutes of going out; undo with bulk undo
   pause [platform] | resume [platform]
   intake | tick [--force] | doctor [--json] [--live] | health [--days N]
+  analytics [--range 7d|30d|90d|all] [--platform P] [--json] | analytics clip <video> | post <post> | available | refresh
+                                      performance over time, consistency, per clip/post snapshots (djq analytics help)
   render <video> [--version N] [--platform P]
   agent install [--app PATH] [--load] [--force] | agent uninstall [--unload] | agent status
   autoupdate on|off|status|run|rollback|log   install commits to main automatically (djq autoupdate help)
@@ -251,7 +253,7 @@ func printWeek(_ store: Store, _ week: String) throws {
 }
 
 /// Every command `run` handles (checked before the database is opened).
-let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "post-count", "version-order", "reposts", "posts-per-version", "post-spacing", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at", "trim"]
+let knownCommands: Set<String> = ["status", "queue", "today", "posts", "week", "schedule", "videos", "video", "defaults", "title", "suggest", "text", "overlay", "caption", "youtube-title", "hashtag-groups", "title-templates", "caption-templates", "kind", "bulk", "agent-prompt", "stage", "unqueue", "requeue", "pin", "post-today", "skip-next", "push", "remove-slot", "swap", "move", "posted", "problem", "fixed", "reset", "skip", "post-now", "shift-plan", "copyright", "repost", "repost-ready", "longform-posted", "score", "exclude", "include", "posts-per-day", "slot", "post-count", "version-order", "reposts", "posts-per-version", "post-spacing", "pause", "resume", "intake", "tick", "doctor", "health", "render", "postiz", "agent", "post-at", "trim", "analytics"]
 
 func run() throws -> Int32 {
   guard let cmd = args.first else { print(usage); return 0 }
@@ -1119,6 +1121,9 @@ func run() throws -> Int32 {
 
   case "trim":
     return try TrimCommand.run(store, settings, &wrote)
+
+  case "analytics":
+    return try AnalyticsCommand.run(store, settings, &wrote)
 
   case "agent":
     switch try arg(0, "install|uninstall|status") {

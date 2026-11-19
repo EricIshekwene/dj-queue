@@ -140,6 +140,40 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![Text 2 selected with its outline and bar, a click beside the picture clears both; the end handle selected, a click on the picture releases it and the arrow moves the playhead](docs/media/deselect.gif) | ![The editor in dark after a click on an empty spot: no outline, no handle selected](docs/media/deselect-dark.jpg) |
 
+## Analytics
+
+**v0.31.0.** The pipeline exists for posting consistently, so Analytics is about performance over time. Six metric tabs
+(Views, Likes, Engagement, Followers, Posts, Views per post) each show the change from the period before and pick what
+the main chart shows; then consistency (streaks, days on target and a year grid of posting days), posts per week above
+views per week, how posts grow day by day, first posts against reposts, versions and weekdays, top clips, and each
+platform's own account numbers. Library sorts by Most views, cards carry their views, and a post's numbers over time
+sit in the Posts inspector. `djq analytics` prints the same as text or JSON.
+
+| Click a tab, pick a period or a platform, open a top clip | The whole board (sample data) |
+|---|---|
+| ![Clicking through Analytics](docs/media/analytics.gif) | ![Every Analytics card](docs/media/analytics-board.jpg) |
+| **One platform: every post's curve behind the median** | **Library › Most views, with views on each card** |
+| ![TikTok posts and their median](docs/media/analytics-tiktok.jpg) | ![Library sorted by views](docs/media/analytics-library.jpg) |
+| **A post's views over time, in the Posts inspector** | **Analytics in dark mode** |
+| ![Posts inspector with the views chart](docs/media/analytics-post.jpg) | ![Analytics, dark](docs/media/analytics-dark.jpg) |
+
+Postiz only gives most numbers "as of now", so DJ Queue keeps a dated snapshot each time it asks (each post at 12 hours,
+1, 3, 7, 14, 30, 60, 90, 180 and 365 days; each account once a day). That's where the history comes from. Analytics use
+at most 8 Postiz calls an hour from spare budget and wait while anything is being posted. What each platform gives
+through Postiz, checked on my channels:
+
+| Platform | Per post | Account, per day | Account, totals only | Followers |
+|---|---|---|---|---|
+| TikTok | Views, Likes, Comments, Shares | – | Views, Likes, Comments, Shares (kept daily) | – |
+| Instagram | Views, Reach, Likes, Comments, Shares, Saves | Reach | Views, Likes, Comments, Shares, Saves, Replies | – |
+| Facebook | Plays, Reactions, Engagement | Impressions, Media views, Engagement, New followers | – | per day |
+| YouTube Shorts | Views, Likes, Comments, Favorites | Minutes watched, Avg view duration and %, Likes, Subscribers gained/lost | – | per day |
+| Threads | Views, Likes, Replies, Reposts, Quotes | Views | Likes, Replies, Reposts, Quotes | – |
+| X | – | – | – | – |
+
+Plus DJ Queue's own records for every platform: when each post went out, version, repost number, score and missed
+slots. Details: [`docs/analytics.md`](docs/analytics.md).
+
 ## What it does
 
 The app follows a clip's life — **Score → Edit → Queue → Calendar** — with one job and one primary action per screen, on a calm, rounded design system modelled on ChatGPT's look and shadcn/ui component anatomy.
@@ -162,6 +196,7 @@ The app follows a clip's life — **Score → Edit → Queue → Calendar** — 
 - **Manual publisher (phase 1)** — the Calendar's Day view: drag the file into the upload page, copy the platform-specific caption, mark posted with the URL. Built behind a `Publisher` interface.
 - **Postiz publisher (phase 2, v0.7.0)** — per platform, Manual or Postiz. Once a clip is scheduled and a render exists, the engine uploads it and schedules it in Postiz at the slot, so posts go out with the Mac off; edits, re-renders and plan changes replace or cancel the Postiz post, and the engine syncs back the state, the live link, failures and copyright blocks. A one-switch Test run (TikTok inbox, YouTube unlisted, Postiz drafts for the rest), a request budget, and a fallback to the Calendar for any platform Postiz can't take. Contract: [`docs/postiz.md`](docs/postiz.md); first-run checklist: [`docs/postiz-test.md`](docs/postiz-test.md).
 - **Failure handling** — missed slots shift that platform's plan without ever double-posting. A post that fails retries by itself until it goes out (+1 h, +6 h, then the platform's next slot every day; YouTube's quota on its next slot after midnight Pacific), with fresh media and the retry already in Postiz so it goes out with the Mac off; it shows one calm "Retrying Thu 8:00 am" chip and nothing to audit. A channel whose Postiz sign-in broke is one "Reconnect TikTok in Postiz" item while its posts wait and then go out by themselves. Only copyright blocks and failures a retry can't fix ask for you.
+- **Analytics** — performance over time from dated snapshots of what Postiz reports, consistency (streaks, days on target), how posts grow, reposts against first posts, top clips and each account's own numbers; see [Analytics](#analytics).
 - **Doctor** — `djq doctor` checks everything (manifests, missing files, renders, overdue posts, runway, DB integrity, disk, tools) and prints a report an AI agent can act on, paired with a skill that documents the safe fix for every finding.
 
 ## Screens
@@ -181,6 +216,8 @@ The app follows a clip's life — **Score → Edit → Queue → Calendar** — 
 | ![Posts](docs/media/posts.jpg) | ![Library](docs/media/library.jpg) |
 | **Settings — new clip defaults** | **Settings — captions and hashtag groups** |
 | ![Settings, new clip defaults](docs/media/settings-defaults.jpg) | ![Settings, captions](docs/media/settings-captions.jpg) |
+| **Analytics** | **Analytics in dark mode** |
+| ![Analytics](docs/media/analytics.jpg) | ![Analytics, dark](docs/media/analytics-dark.jpg) |
 | **Queue in dark mode** | **Edit — cards** |
 | ![Queue, dark](docs/media/queue-dark.jpg) | ![Edit cards](docs/media/edit-cards.jpg) |
 

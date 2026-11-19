@@ -478,4 +478,10 @@ public final class PostizClient: @unchecked Sendable {
   public func analytics(_ id: String, days: Int = 7) throws -> Data {
     try call("GET", "analytics/post/\(id)", query: [("date", String(days))])
   }
+
+  /// Raw analytics JSON for a channel (integration) over the last `days` days (round 39): per platform, daily series
+  /// (Facebook impressions, Instagram reach, YouTube minutes…) and/or one-point totals (TikTok).
+  public func channelAnalytics(_ integrationId: String, days: Int = 30) throws -> Data {
+    try call("GET", "analytics/\(integrationId)", query: [("date", String(days))])
+  }
 }

@@ -291,8 +291,9 @@ struct TodayRow: View {
         if let u = post.url, let url = URL(string: u) {
           DSIconButton("arrow.up.right.square", tooltip: "Open the live post in your browser", size: .sm) { NSWorkspace.shared.open(url) }
         }
-        DSButton(post.metrics?.views.map { "\($0) views" } ?? "Metrics", icon: "chart.bar", variant: .ghost, size: .sm,
-                 tooltip: "Enter views and likes after 72 h") { showMetrics = true }
+        DSButton(post.metrics?.views.map { "\(AnalyticsFmt.count(Double($0))) views" } ?? "Numbers", icon: "chart.bar", variant: .ghost, size: .sm,
+                 tooltip: post.publisher == "postiz" ? "Views and likes over time (pulled from Postiz on a schedule); type them in to correct"
+                   : "Type in this post's views and likes (posted by hand, so Postiz can't pull them)") { showMetrics = true }
           .popover(isPresented: $showMetrics) { MetricsPopover(model: model, post: post) }
         more
       case .skipped:

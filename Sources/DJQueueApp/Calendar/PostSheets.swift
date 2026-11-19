@@ -174,7 +174,8 @@ struct ReuploadItems: View {
   }
 }
 
-/// Views and likes after 72 h.
+/// A post's numbers (round 39: pulled from Postiz on a schedule, with their history; typing them in still works for
+/// posts made by hand, and becomes a "typed in" point on the Analytics curves).
 struct MetricsPopover: View {
   @Bindable var model: AppModel
   let post: PlatformPost
@@ -184,7 +185,8 @@ struct MetricsPopover: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: DS.space.sm) {
-      Text("Metrics after 72 h").font(DS.type.headline).foregroundStyle(DS.color.text)
+      Text("Views and likes").font(DS.type.headline).foregroundStyle(DS.color.text)
+      PostNumbersHistory(model: model, post: post)
       HStack(spacing: DS.space.xs) {
         DSTextField("Views", placeholder: "0", text: $views, size: .sm)
         DSTextField("Likes", placeholder: "0", text: $likes, size: .sm)
@@ -200,7 +202,7 @@ struct MetricsPopover: View {
       }
     }
     .padding(DS.space.md)
-    .frame(width: 260)
+    .frame(width: 300)
     .background(DS.color.surfaceRaised)
     .onAppear {
       views = post.metrics?.views.map(String.init) ?? ""

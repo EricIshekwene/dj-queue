@@ -47,7 +47,7 @@ enum QueueOrder {
 /// Clip orders offered by the sort menus. `natural` is the page's own order (Score: set order; Edit: score, worst
 /// first).
 enum ClipSort: String, CaseIterable {
-  case natural, session, newest, scoreHigh, scoreLow, title
+  case natural, session, newest, scoreHigh, scoreLow, title, views
 }
 
 extension ListPage {
@@ -67,7 +67,7 @@ extension ListPage {
     switch self {
     case .score: [.natural, .newest, .title]
     case .edit: [.natural, .scoreHigh, .session, .newest, .title]
-    case .library: [.session, .newest, .scoreHigh, .scoreLow, .title]
+    case .library: [.session, .newest, .scoreHigh, .scoreLow, .views, .title]
     case .queue, .posts: []
     }
   }
@@ -86,6 +86,7 @@ extension ListPage {
     case .scoreHigh: "Score, best first"
     case .scoreLow: "Score, worst first"
     case .title: "Title A–Z"
+    case .views: "Most views"
     }
   }
 
@@ -242,6 +243,7 @@ extension AppModel {
     case .scoreHigh: return vs.sorted { ($0.score ?? -1, $1.id) > ($1.score ?? -1, $0.id) }
     case .scoreLow: return vs.sorted { ($0.score ?? 101, $0.id) < ($1.score ?? 101, $1.id) }
     case .title: return vs.sorted { displayName($0).localizedCaseInsensitiveCompare(displayName($1)) == .orderedAscending }
+    case .views: return vs.sorted { (viewsByVideo[$0.id] ?? -1, $1.id) > (viewsByVideo[$1.id] ?? -1, $0.id) }
     }
   }
 

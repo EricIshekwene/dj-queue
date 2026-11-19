@@ -202,12 +202,15 @@ struct PostInspector: View {
   private var metrics: some View {
     let dirty = views != (post.metrics?.views.map(String.init) ?? "") || likes != (post.metrics?.likes.map(String.init) ?? "")
     let invalid = (!views.isEmpty && Int(views) == nil) || (!likes.isEmpty && Int(likes) == nil)
-    return HStack(alignment: .bottom, spacing: DS.space.xs) {
+    return VStack(alignment: .leading, spacing: DS.space.xs) {
+      PostNumbersHistory(model: model, post: post)
+      HStack(alignment: .bottom, spacing: DS.space.xs) {
       DSTextField("Views", placeholder: "0", text: $views, size: .sm)
       DSTextField("Likes", placeholder: "0", text: $likes, size: .sm)
       DSButton("Save", variant: .outline, size: .sm,
                disabledReason: invalid ? "Whole numbers only" : !dirty ? "Nothing changed" : nil) {
         model.setMetrics(post, views: Int(views), likes: Int(likes))
+      }
       }
     }
   }

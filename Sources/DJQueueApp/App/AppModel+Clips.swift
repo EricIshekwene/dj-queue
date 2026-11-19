@@ -42,6 +42,12 @@ extension AppModel {
       c.suggestions = (suggestionsByVideo[v.id] ?? []).prefix(3).map { DSTitleSuggestion(text: $0.text, detail: Self.tracksText($0.tracks)) }
     }
     if screen != .score && screen != .edit { c.platforms = platformStates(v.id) }
+    // Round 39: a clip that has posted shows its views so far (every post, latest numbers) on Library, Queue,
+    // Calendar and Posts cards; Analytics has the detail.
+    if screen != .score && screen != .edit, let n = viewsByVideo[v.id], n > 0 {
+      c.tags.append(DSClipTag(text: "\(AnalyticsFmt.count(n)) views", icon: "eye",
+                              tooltip: "Views so far on every post of this clip (latest numbers from Postiz or typed in). Details in Analytics"))
+    }
     if screen == .queue {
       c.dateText = dateText(v)
       // Round 31: one card per clip, saying which version post goes out next and where the others stand.
