@@ -449,7 +449,7 @@ struct CommandPalette: View {
         .onSubmit { run(at: index, in: content.flat) }
         .onKeyPress(.upArrow) { index = max(0, index - 1); return .handled }
         .onKeyPress(.downArrow) { index = min(max(0, content.flat.count - 1), index + 1); return .handled }
-        .onKeyPress(.delete) {
+        .onKeyPress(keys: KeyEquivalent.backspaceKeys) { _ in
           guard ui.paletteQuery.isEmpty, clip != nil else { return .ignored }
           back()
           return .handled

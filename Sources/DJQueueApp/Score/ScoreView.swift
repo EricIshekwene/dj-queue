@@ -7,7 +7,7 @@ import SwiftUI
 /// per session (`All 12 · Nov 1 set 8 · …`) · Filters (Kind) · sort. No primary (↩ is the primary).
 /// - **Single** (default): progress strip, the large autoplaying player with ‹ ›, a floating control pill (score
 ///   field · Save & next ↩ · Skip), the 280 pt side panel (title, session, length, Kind, notes, Exclude) and the
-///   key-hint line. Keys: digits, ↩ save & next, ⇥ skip, ←/→ previous/next, ⌘⌫ exclude.
+///   key-hint line. Keys: a real text field (⌫, ⌦, ⌘A, the caret), ↩ save & next, ⇥ skip, ←/→ previous/next when the box is empty, ⌘⌫ exclude.
 /// - **Grid**: tiles with an inline score field under each (⇥ moves on); typing selects the tile; the bulk bar
 ///   offers Set score… · Kind ▾ · Exclude · More (±1/±10 on typed scores) · **Save scores**.
 /// Hidden: platforms, dates, captions, versions, editor controls.

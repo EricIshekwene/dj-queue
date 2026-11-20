@@ -212,7 +212,7 @@ struct GallerySingle: View {
             DSIconButton("chevron.right", tooltip: "Next", variant: .outline, size: .lg, shortcut: "→") {}
           }
           scorePill
-          Text("Type 0–100 · ↩ save & next · ⇥ skip · ←/→ previous/next · ⌘⌫ exclude")
+          Text("Type 0–100 · ↩ save & next · ⇥ skip · ←/→ previous/next when empty · ⌘⌫ exclude")
             .font(DS.type.caption).foregroundStyle(DS.color.textTertiary)
         }
         Spacer(minLength: 0)
