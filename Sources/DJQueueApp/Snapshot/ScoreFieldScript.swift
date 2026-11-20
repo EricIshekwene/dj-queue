@@ -174,6 +174,14 @@ enum ScoreFieldScript {
     model.refreshNow()
     await wait(400)
     check("⌘⌫ excludes the clip", toExclude.flatMap(model.video)?.excluded == true)
+    check("the box keeps no undo of its own (⌘Z is the app's)", editor()?.allowsUndo == false)
+    // ⌘Z through the window's shortcut. A background window is never key, so this takes the "no field editing"
+    // branch of `ShortcutButtons`; `ScoreTextField.Field.editing` sends the box there too when the window is key.
+    await key("z", code: 6, flags: .command)
+    await wait(1200)
+    model.refreshNow()
+    await wait(400)
+    check("⌘Z brings the excluded clip back", toExclude.flatMap(model.video)?.excluded == false)
 
     // MARK: Library type-to-score
 

@@ -170,6 +170,7 @@ struct ScoreSingleView: View {
     case .move(let d): move(d)
     case .exclude: if let v = video { onExclude(v) }
     case .clear: text = ""
+    case .ignore: break
     }
   }
 
@@ -252,7 +253,8 @@ struct ScoreTextField: NSViewRepresentable {
     ])
     f.formatter = ScoreFormatter()
     f.delegate = context.coordinator
-    f.onFocus = { context.coordinator.parent.onFocus($0) }
+    let c = context.coordinator
+    f.onFocus = { [weak c] on in c?.focusChanged(on) }
     f.setAccessibilityLabel("Score")
     f.stringValue = text
     return f
@@ -263,7 +265,8 @@ struct ScoreTextField: NSViewRepresentable {
     if f.stringValue != text { f.stringValue = text }
     if context.coordinator.focusToken != focusToken {
       context.coordinator.focusToken = focusToken
-      f.takeKeyboard()
+      // After this update: taking the keyboard tells SwiftUI the box has focus, which it can't take mid-update.
+      DispatchQueue.main.async { [weak f] in f?.takeKeyboard() }
     }
   }
 
@@ -279,18 +282,37 @@ struct ScoreTextField: NSViewRepresentable {
     }
 
     func controlTextDidEndEditing(_ n: Notification) {
+      (n.userInfo?["NSFieldEditor"] as? NSTextView)?.allowsUndo = true
       (n.object as? Field)?.showPlaceholder(true)
-      parent.onFocus(false)
+      focusChanged(false)
+    }
+
+    /// Told to SwiftUI on the next turn, and only when it changes (AppKit can report it during a view update).
+    private var focused = false
+    func focusChanged(_ on: Bool) {
+      guard on != focused else { return }
+      focused = on
+      DispatchQueue.main.async { [weak self] in self?.parent.onFocus(on) }
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
       guard let c = ScoreFieldKeys.command(for: NSStringFromSelector(selector), text: textView.string) else { return false }
-      if c == .clear { textView.string = "" ; parent.text = "" } else { parent.onCommand(c) }
+      if c == .clear {
+        textView.string = ""
+        parent.text = ""
+      }
+      parent.onCommand(c)
       return true
     }
   }
 
   final class Field: NSTextField {
+    /// The score box has the cursor in the key window (⌘Z / ⌘A in `ShortcutButtons` look).
+    static var editing: NSTextView? {
+      guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView, (tv.delegate as AnyObject?) is Field else { return nil }
+      return tv
+    }
+
     var onFocus: ((Bool) -> Void)?
     /// "0–100" while the box doesn't have the cursor. With the cursor it's an empty box with a centred caret: a
     /// centred placeholder would sit under the caret (the hint line under the pill says what to type).
@@ -320,6 +342,9 @@ struct ScoreTextField: NSViewRepresentable {
       let ok = super.becomeFirstResponder()
       if !ok { showPlaceholder(true) }
       if ok {
+        // ⌘Z on Score undoes the last save or exclude (`ShortcutButtons`), never a digit: ⌫ takes those back. The
+        // window's field editor is shared, so it gets its undo back when the box lets go.
+        (currentEditor() as? NSTextView)?.allowsUndo = false
         onFocus?(true)
         (currentEditor() as? NSTextView)?.insertionPointColor = NSColor(DS.color.accent)
       }
@@ -328,8 +353,8 @@ struct ScoreTextField: NSViewRepresentable {
   }
 }
 
-/// Only 0–100 gets in the score box: a letter, a fourth digit or 101 is turned away and the box keeps what it had
-/// (typed or pasted). The value stays the typed text.
+/// Only 0–100 gets in the score box: letters and spaces drop out (a pasted "72\n" is 72), a fourth digit or 101 is
+/// turned away and the box keeps what it had. The value stays the typed text.
 final class ScoreFormatter: Formatter {
   override func string(for obj: Any?) -> String? { obj as? String ?? (obj as? NSNumber)?.stringValue }
   override func getObjectValue(_ obj: AutoreleasingUnsafeMutablePointer<AnyObject?>?, for string: String,
@@ -339,6 +364,11 @@ final class ScoreFormatter: Formatter {
   }
   override func isPartialStringValid(_ partial: String, newEditingString: AutoreleasingUnsafeMutablePointer<NSString?>?,
                                      errorDescription error: AutoreleasingUnsafeMutablePointer<NSString?>?) -> Bool {
-    ScoreFieldKeys.accepts(partial)
+    if ScoreFieldKeys.accepts(partial) { return true }
+    // A stray letter or a paste with a newline keeps its digits, quietly; only a number past 100 is turned away.
+    if let digits = ScoreFieldKeys.cleaned(partial) {
+      newEditingString?.pointee = digits as NSString
+    }
+    return false
   }
 }

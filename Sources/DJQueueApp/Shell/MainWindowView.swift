@@ -184,7 +184,8 @@ struct ShortcutButtons: View {
         .keyboardShortcut("e", modifiers: .command)
       Button("") { model.refresh() }.keyboardShortcut("r", modifiers: .command)
       Button("") {
-        if Self.textFieldIsEditing || model.editor != nil {
+        // The Score box with nothing typed isn't text to select: ⌘A selects clips as it did before it was a field.
+        if (Self.textFieldIsEditing && ScoreTextField.Field.editing?.string.isEmpty != true) || model.editor != nil {
           NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
         } else {
           model.selectAll(model.screen)
@@ -195,7 +196,12 @@ struct ShortcutButtons: View {
       // edit history) unless an overlay covers it; otherwise the most recent undoable app action (UndoHistory).
       if model.editor == nil || model.overlayCoversEditor {
         Button("") {
-          if Self.textFieldIsEditing { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) } else { model.undoLast() }
+          // The Score box keeps no undo of its own (⌫ takes digits back): ⌘Z there undoes the last save or exclude.
+          if Self.textFieldIsEditing && ScoreTextField.Field.editing == nil {
+            NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
+          } else {
+            model.undoLast()
+          }
         }
         .keyboardShortcut("z", modifiers: .command)
       }
@@ -236,8 +242,10 @@ struct ShortcutSheet: View {
                     ("⌘Z", "Undo the most recent change (again for the one before)")]),
     ("Selecting clips", [("Click circle", "Select a clip"), ("⇧ Click", "Select a range"), ("⌘ Click", "Add or remove one"),
                          ("⌘A", "Select every clip on the screen"), ("Esc", "Clear the selection")]),
-    ("Clips", [("⌘E", "Open the selected clip in the editor"), ("← / →", "Previous / next clip (Single view)"),
-               ("0–9", "Type a score for the selected clips (Queue, Library)"), ("⌘⌫", "Exclude the clip (Score)")]),
+    ("Clips", [("⌘E", "Open the selected clip in the editor"), ("← / →", "Previous / next clip (Single view; on Score while the box is empty)"),
+               ("↩ · ⇥", "Save & next · skip (Score)"), ("⌫ · esc", "Take back a digit · empty the score box (Score)"),
+               ("0–9", "Type a score for the selected clips (Library; ⌫ takes back a digit before it saves)"),
+               ("⌘⌫", "Exclude the clip (Score)")]),
     ("Calendar", [("D · 3 · W · M", "Day, 3 Day, Week, Month"), ("T", "Today"), ("← / →", "Previous / next day, week or month"),
                   ("Drag", "Move a clip to another day")]),
     ("Editor", [("⌘Z / ⇧⌘Z", "Undo / redo the last change to this clip"), ("↑ / ↓ or ⌘[ / ⌘]", "Previous / next clip"), ("⌘↩", "Done"),

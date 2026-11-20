@@ -13,7 +13,8 @@ import Testing
     #expect(K.command(for: "insertBacktab:", text: "5") == .skip(-1))
     #expect(K.command(for: "deleteToBeginningOfLine:", text: "72") == .exclude)
     #expect(K.command(for: "cancelOperation:", text: "72") == .clear)
-    #expect(K.command(for: "cancelOperation:", text: "") == nil)
+    #expect(K.command(for: "cancelOperation:", text: "") == .clear)
+    #expect(K.command(for: "complete:", text: "7") == .ignore)
   }
 
   @Test func arrowsMoveTheCaretWithTextAndChangeClipsWhenEmpty() {
@@ -33,5 +34,13 @@ import Testing
   @Test func acceptsOnlyZeroToHundred() {
     for ok in ["", "0", "7", "72", "100", "07"] { #expect(K.accepts(ok), "\(ok)") }
     for bad in ["101", "1000", "x", "7a", "-1", " 7", "4.5", "٣"] { #expect(!K.accepts(bad), "\(bad)") }
+  }
+
+  @Test func pastesAndStrayLettersKeepTheDigits() {
+    #expect(K.cleaned("72\n") == "72")
+    #expect(K.cleaned(" 7a") == "7")
+    #expect(K.cleaned("x") == "")
+    #expect(K.cleaned("101") == nil)
+    #expect(K.cleaned("1234") == nil)
   }
 }
