@@ -295,7 +295,11 @@ struct ScoreTextField: NSViewRepresentable {
     /// "0–100" while the box doesn't have the cursor. With the cursor it's an empty box with a centred caret: a
     /// centred placeholder would sit under the caret (the hint line under the pill says what to type).
     var placeholder: NSAttributedString? { didSet { showPlaceholder(currentEditor() == nil) } }
-    func showPlaceholder(_ on: Bool) { placeholderAttributedString = on ? placeholder : nil }
+    func showPlaceholder(_ on: Bool) {
+      placeholderAttributedString = on ? placeholder : nil
+      needsDisplay = true
+      currentEditor()?.needsDisplay = true
+    }
     /// A focus asked for before the field was in a window (the first clip), taken once it is.
     private var wantsKeyboard = false
 
@@ -311,9 +315,11 @@ struct ScoreTextField: NSViewRepresentable {
     }
 
     override func becomeFirstResponder() -> Bool {
+      // Before the field editor starts: it takes the placeholder as it finds it.
+      showPlaceholder(false)
       let ok = super.becomeFirstResponder()
+      if !ok { showPlaceholder(true) }
       if ok {
-        showPlaceholder(false)
         onFocus?(true)
         (currentEditor() as? NSTextView)?.insertionPointColor = NSColor(DS.color.accent)
       }
