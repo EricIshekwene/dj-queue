@@ -140,6 +140,12 @@ Recorded off screen from the app's own click-through checks: each frame is a rea
 |---|---|
 | ![Text 2 selected with its outline and bar, a click beside the picture clears both; the end handle selected, a click on the picture releases it and the arrow moves the playhead](docs/media/deselect.gif) | ![The editor in dark after a click on an empty spot: no outline, no handle selected](docs/media/deselect-dark.jpg) |
 
+**The score box is a normal text box (v0.31.1).** On Score, the 0–100 box takes Backspace and Delete, ⌘A then Backspace empties it, and you can click or arrow the cursor through the number. ← / → still go to the previous / next clip while the box is empty, and ↩ save & next, ⇥ skip, ⌘⌫ exclude and esc (empty the box) work as before. Letters and spaces never get in (a pasted "72" with a line break is 72), and ⌘Z still undoes the last save or exclude. In Library, typing a score on selected clips now takes ⌫ for a digit before it saves.
+
+| Type, ⌫, select all and empty, then ↩ saves the corrected 62 | 85 → ⌫ → 8, in dark |
+|---|---|
+| ![Typing in the score box, taking a digit back, selecting all and emptying it, then saving](docs/media/score-field.gif) | ![The score box after Backspace in dark mode](docs/media/score-field-dark.jpg) |
+
 ## Analytics
 
 **v0.31.0.** The pipeline exists for posting consistently, so Analytics is about performance over time. Six metric tabs

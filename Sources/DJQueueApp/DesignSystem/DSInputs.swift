@@ -567,3 +567,9 @@ struct DSSlider: View {
     value = min(range.upperBound, max(range.lowerBound, value + d))
   }
 }
+
+extension KeyEquivalent {
+  /// The Backspace key for `onKeyPress` (round 40): SwiftUI's `.delete` is U+0008, but AppKit reports the Mac's
+  /// Backspace as U+007F, so a handler that names only `.delete` can miss it.
+  static let backspaceKeys: Set<KeyEquivalent> = [.delete, KeyEquivalent("\u{7F}")]
+}

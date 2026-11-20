@@ -247,5 +247,11 @@ still version-posts-list $O/version-order-04-version-list-v2-posts-light
 still mark-repostable $R/repostable-07-queue-mark-repostable-sheet-light
 still mark-repostable-dark $R-dark/repostable-07-queue-mark-repostable-sheet-dark
 still repostable-filter $R/repostable-05-edit-filter-repostable-light
+# Round 40: the Score box is a real text field: type, ⌫, select all, empty it, then ↩ saves the corrected score.
+F=score-field
+CROP=iw*0.44:ih*0.40:iw*0.24:ih*0.60 gif score-field $F/score-field-01-typed-85-light $F/score-field-02-backspace-light \
+  $F/score-field-03-select-all-light $F/score-field-04-cleared-light $F/score-field-05-typed-62-light $F/score-field-06-saved-light
+still score-field $F/score-field-01-typed-85-light
+still score-field-dark $F-dark/score-field-02-backspace-dark
 
 (( missing == 0 )) || { echo "readme-media: $missing missing (rerun live-checks with those checks)" >&2; exit 1; }

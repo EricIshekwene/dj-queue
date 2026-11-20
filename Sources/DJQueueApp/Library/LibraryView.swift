@@ -44,7 +44,8 @@ struct LibraryView: View {
       overlays
     }
     .background {
-      // Space = quick look, digits = score the selected short clips (round-1 Library keys), when no field has focus.
+      // Space = quick look, digits = score the selected short clips (round-1 Library keys; ⌫ takes a waiting digit back),
+      // when no field has focus.
       Color.clear
         .focusable()
         .focused($keyFocus)
@@ -60,6 +61,8 @@ struct LibraryView: View {
           model.typeDigit(press.characters, ids: ids)
           return .handled
         }
+        // ⌫ takes back a digit that hasn't saved yet (round 40). Both spellings: AppKit's Backspace is U+007F.
+        .onKeyPress(keys: KeyEquivalent.backspaceKeys, phases: .down) { _ in model.typeDeleteDigit() ? .handled : .ignored }
     }
     .onAppear { if !model.frozen { keyFocus = true } }
   }

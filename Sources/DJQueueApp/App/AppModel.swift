@@ -899,13 +899,33 @@ final class AppModel {
     digitBuffer += c
     let done = digitBuffer.count >= 3 || (digitBuffer.count == 2 && digitBuffer != "10")
     show("Score \(digitBuffer)\(done ? "" : "…")")
+    commitTypedDigits(now: done)
+  }
+
+  /// ⌫ while a typed score is still waiting (round 40): takes the last digit back, so "8" → ⌫ → "5" scores 5. Taking
+  /// the only digit back leaves the score as it was. False (the key isn't ours) when nothing is waiting.
+  @discardableResult
+  func typeDeleteDigit() -> Bool {
+    guard !digitBuffer.isEmpty else { return false }
+    digitCommit?.cancel()
+    digitBuffer.removeLast()
+    if digitBuffer.isEmpty {
+      show("Score not changed")
+      return true
+    }
+    show("Score \(digitBuffer)…")
+    commitTypedDigits(now: false)
+    return true
+  }
+
+  private func commitTypedDigits(now: Bool) {
     let commit = DispatchWorkItem { [weak self] in
       guard let self, let n = Int(self.digitBuffer), n <= 100 else { self?.digitBuffer = ""; return }
       self.digitBuffer = ""
       self.setScore(self.digitTargets, n)
     }
     digitCommit = commit
-    if done { commit.perform() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: commit) }
+    if now { commit.perform() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: commit) }
   }
 
   // MARK: Video actions
